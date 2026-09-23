@@ -14,14 +14,16 @@ pub enum Flash {
     LoggedOut,
     Registered,
     AwaitingApproval,
+    Saved,
 }
 
 impl Flash {
-    const ALL: [Flash; 4] = [
+    const ALL: [Flash; 5] = [
         Flash::LoggedIn,
         Flash::LoggedOut,
         Flash::Registered,
         Flash::AwaitingApproval,
+        Flash::Saved,
     ];
 
     fn key(self) -> &'static str {
@@ -30,6 +32,7 @@ impl Flash {
             Flash::LoggedOut => "logged_out",
             Flash::Registered => "registered",
             Flash::AwaitingApproval => "awaiting_approval",
+            Flash::Saved => "saved",
         }
     }
 
@@ -41,6 +44,7 @@ impl Flash {
             Flash::AwaitingApproval => {
                 "Your account was created and is waiting for approval by the staff."
             }
+            Flash::Saved => "Saved.",
         }
     }
 

@@ -40,6 +40,9 @@ impl Templates {
                     )
                 })
         });
+        env.add_function("search_url", |query: &str| {
+            Value::from_safe_string(search_url(query))
+        });
         let templates = Self { env };
         for name in Embedded::iter() {
             templates.env.get_template(&name)?;
@@ -50,6 +53,20 @@ impl Templates {
     pub fn render(&self, name: &str, context: impl Serialize) -> Result<String, Error> {
         self.env.get_template(name)?.render(context)
     }
+}
+
+/// The search results page for `query`. Only URL-safe characters remain
+/// after encoding, so the result needs no HTML escaping.
+pub fn search_url(query: &str) -> String {
+    let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes()).collect();
+    format!("/posts?tags={encoded}")
+}
+
+/// A local URL whose query string was built with `form_urlencoded`, ready
+/// for an HTML attribute. Encoding leaves `&` as the only character HTML
+/// cares about, so escaping it is enough.
+pub fn url_value(url: &str) -> Value {
+    Value::from_safe_string(url.replace('&', "&amp;"))
 }
 
 fn load_source(override_dir: Option<&PathBuf>, name: &str) -> Result<Option<String>, Error> {

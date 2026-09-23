@@ -136,6 +136,11 @@ mod tests {
         );
         assert!(response.body.contains("href=\"/login\""));
         assert!(response.body.contains("/static/css/main."));
+        assert!(
+            response
+                .body
+                .contains("<script type=\"module\" src=\"/static/js/main.")
+        );
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

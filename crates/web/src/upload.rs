@@ -51,6 +51,8 @@ pub struct UploadFields {
     /// Download the file from here when no file was sent.
     pub url: String,
     pub rating: Option<Rating>,
+    /// Whitespace-separated, as typed.
+    pub tags: String,
     pub source: String,
     pub description: String,
 }
@@ -84,6 +86,15 @@ pub enum UploadError {
     Duplicate(i64),
     #[error("{0}")]
     Internal(String),
+}
+
+impl From<crate::tags::TagFieldError> for UploadError {
+    fn from(error: crate::tags::TagFieldError) -> Self {
+        match error {
+            crate::tags::TagFieldError::Invalid(message) => Self::Invalid(message),
+            crate::tags::TagFieldError::Db(error) => error.into(),
+        }
+    }
 }
 
 impl From<sqlx::Error> for UploadError {
@@ -129,6 +140,7 @@ fn render_form(
             form => context! {
                 rating => fields.rating.map(Rating::code),
                 url => fields.url,
+                tags => fields.tags,
                 source => fields.source,
                 description => fields.description,
             },
@@ -146,8 +158,8 @@ async fn upload(
 ) -> Result<Response, AppError> {
     page.current.require(Permission::Upload)?;
     let (mut fields, file) = match receive(&state, multipart).await {
-        Ok(received) => received,
-        Err((fields, error)) => return Ok(failed(&page, &fields, error)),
+        (fields, Ok(file)) => (fields, file),
+        (fields, Err(error)) => return Ok(failed(&page, &fields, error)),
     };
     let file = match file {
         Some(file) => file,
@@ -193,19 +205,19 @@ fn failed(page: &Page, fields: &UploadFields, error: UploadError) -> Response {
     render_form(page, fields, Some(&error), StatusCode::UNPROCESSABLE_ENTITY)
 }
 
-/// Reads the form, streaming the file to disk. Errors come back with the
-/// fields read so far, so the form can be shown again filled in.
+/// Reads the form, streaming the file to disk. The fields read so far come
+/// back even on error, so the form can be shown again filled in.
 async fn receive(
     state: &AppState,
     mut multipart: Multipart,
-) -> Result<(UploadFields, Option<TempUpload>), (UploadFields, UploadError)> {
+) -> (UploadFields, Result<Option<TempUpload>, UploadError>) {
     let mut fields = UploadFields::default();
     let mut file = None;
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(field)) => field,
             Ok(None) => break,
-            Err(error) => return Err((fields, multipart_error(state, &error))),
+            Err(error) => return (fields, Err(multipart_error(state, &error))),
         };
         let name = field.name().unwrap_or_default().to_owned();
         match name.as_str() {
@@ -216,17 +228,18 @@ async fn receive(
                 }
                 match save_to_temp(state, field).await {
                     Ok(saved) => file = Some(saved),
-                    Err(error) => return Err((fields, error)),
+                    Err(error) => return (fields, Err(error)),
                 }
             }
-            "url" | "rating" | "source" | "description" => {
+            "url" | "rating" | "tags" | "source" | "description" => {
                 let text = match field.text().await {
                     Ok(text) => text,
-                    Err(error) => return Err((fields, multipart_error(state, &error))),
+                    Err(error) => return (fields, Err(multipart_error(state, &error))),
                 };
                 match name.as_str() {
                     "url" => fields.url = text.trim().to_owned(),
                     "rating" => fields.rating = text.parse().ok(),
+                    "tags" => fields.tags = text,
                     "source" => fields.source = text.trim().to_owned(),
                     _ => fields.description = text.trim().to_owned(),
                 }
@@ -234,7 +247,7 @@ async fn receive(
             _ => {}
         }
     }
-    Ok((fields, file))
+    (fields, Ok(file))
 }
 
 fn multipart_error(state: &AppState, error: &MultipartError) -> UploadError {
@@ -351,6 +364,7 @@ pub async fn ingest(
     }
 
     let db = state.db.primary();
+    let tags = crate::tags::parse_field(db, &fields.tags).await?;
     if let Some(existing) = media::post_with_sha256(db, &file.sha256).await? {
         return Err(UploadError::Duplicate(existing));
     }
@@ -392,6 +406,15 @@ pub async fn ingest(
     let as_i32 = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
 
     let mut tx = db.begin().await?;
+    let tag_ids: Vec<i32> = uwuu_db::tags::for_post(
+        &mut tx,
+        &tags.wanted(),
+        uploader.can(Permission::ManageTags),
+    )
+    .await?
+    .iter()
+    .map(|t| t.id)
+    .collect();
     let post_id = posts::insert(
         &mut *tx,
         NewPost {
@@ -400,6 +423,7 @@ pub async fn ingest(
             status,
             source: &fields.source,
             description: &fields.description,
+            tag_ids: &tag_ids,
         },
     )
     .await?;
@@ -673,6 +697,45 @@ mod tests {
                 .await
                 .unwrap(),
             0
+        );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn tags_are_created_and_bad_ones_explained(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let session = session_for(&pool, "alice", SystemRole::Member).await;
+        let png = fixture::png(16, 16);
+        let mut form = fields("g");
+        form.push(("tags", "Long_Hair -solo artist:someone".to_owned()));
+        let response = app
+            .post_multipart("/upload", Some(&session), &form, Some(("a.png", &png)))
+            .await;
+        assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            response.body.contains("`-solo` may not start with `-`"),
+            "{}",
+            response.body
+        );
+        assert!(response.body.contains("Long_Hair -solo artist:someone"));
+
+        form.last_mut().unwrap().1 = "Long_Hair artist:someone".to_owned();
+        let response = app
+            .post_multipart("/upload", Some(&session), &form, Some(("a.png", &png)))
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .parse()
+            .unwrap();
+        let post = posts::by_id(&pool, id).await.unwrap().unwrap();
+        let tags = uwuu_db::tags::by_ids(&pool, &post.tag_ids).await.unwrap();
+        let mut summary: Vec<(String, i16, i32)> = tags
+            .into_iter()
+            .map(|t| (t.name, t.category_id, t.post_count))
+            .collect();
+        summary.sort();
+        assert_eq!(
+            summary,
+            [("long_hair".into(), 0, 1), ("someone".into(), 1, 1)]
         );
     }
 

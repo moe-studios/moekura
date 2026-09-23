@@ -524,6 +524,21 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn login_page_keeps_next_for_registering(pool: PgPool) {
+        let app = app(&pool).await;
+        let response = app.get("/login?next=%2Fupload%3Fa%3D1", None).await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        // urlencode keeps `/`, which HTML escaping writes as `&#x2f;`.
+        assert!(
+            response
+                .body
+                .contains("href=\"/register?next=&#x2f;upload%3Fa%3D1\""),
+            "{}",
+            response.body
+        );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
     async fn repeated_login_failures_are_rate_limited(pool: PgPool) {
         let app = app(&pool).await;
         let wrong = form(&[("name", "alice"), ("password", "wrong horse")]);

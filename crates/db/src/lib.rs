@@ -6,9 +6,12 @@ pub mod jobs;
 pub mod media;
 pub mod posts;
 pub mod roles;
+pub mod search;
 pub mod sessions;
 pub mod settings;
 pub mod site_cache;
+pub mod tag_relations;
+pub mod tags;
 pub mod users;
 
 #[cfg(test)]

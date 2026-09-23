@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{% if search.tags %}{{ search.tags }} · {% endif %}{{ site.name }}{% endblock %}
+{% block content %}
+{% if search.error %}
+<p class="form-error" role="alert">{{ search.error }}</p>
+<p class="hint">See the <a href="https://github.com/uwuumoe/uwuubooru/blob/main/docs/search.md">search syntax</a>.</p>
+{% else %}
+<div class="results-layout">
+  <aside class="results-sidebar">
+    {% if sidebar %}
+    <h2>Tags</h2>
+    <ul class="tag-list">
+      {% for tag in sidebar %}
+      <li>
+        <a class="refine" href="{{ tag.include_url }}" title="Add to search" aria-label="Add {{ tag.name }} to search">+</a>
+        <a class="refine" href="{{ tag.exclude_url }}" title="Exclude from search" aria-label="Exclude {{ tag.name }} from search">–</a>
+        <a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </aside>
+  <section class="results">
+    {% if count %}<p class="result-count">{{ count }}</p>{% endif %}
+    {% if cards %}
+    <ul class="post-grid">
+      {% for card in cards %}
+      <li>
+        <a href="{{ card.href }}" class="card rating-{{ card.rating }}{% if card.pending %} is-pending{% endif %}{% if card.deleted %} is-deleted{% endif %}">
+          {% if card.thumb %}
+          <img class="thumb" src="{{ card.thumb }}"{% if card.thumb_2x %} srcset="{{ card.thumb }} 1x, {{ card.thumb_2x }} 2x"{% endif %}
+               width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}" loading="lazy" decoding="async">
+          {% else %}
+          <img class="thumb pending-media" src="{{ asset('processing.svg') }}"
+               width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }} (still processing)">
+          {% endif %}
+          {% if card.video %}<span class="badge">video</span>{% elif card.animated %}<span class="badge">anim</span>{% endif %}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% if pager.previous or pager.next or pager.numbers %}
+    <nav class="pager" aria-label="Pages">
+      {% if pager.previous %}<a class="button" href="{{ pager.previous }}" rel="prev">Previous</a>{% endif %}
+      {% for n in pager.numbers %}
+        {% if n.gap %}<span class="gap">…</span>
+        {% elif n.current %}<span class="current" aria-current="page">{{ n.number }}</span>
+        {% else %}<a href="{{ n.url }}">{{ n.number }}</a>{% endif %}
+      {% endfor %}
+      {% if pager.next %}<a class="button" href="{{ pager.next }}" rel="next">Next</a>{% endif %}
+    </nav>
+    {% endif %}
+    {% elif search.tags %}
+    <section class="empty">
+      <h1>Nothing found</h1>
+      <p>No posts match <strong>{{ search.tags }}</strong>.</p>
+    </section>
+    {% else %}
+    <section class="empty">
+      <h1>No posts yet</h1>
+      {% if can_upload %}<p><a href="/upload">Upload the first one</a></p>{% endif %}
+    </section>
+    {% endif %}
+  </section>
+</div>
+{% endif %}
+{% endblock %}

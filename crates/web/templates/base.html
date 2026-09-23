@@ -6,12 +6,18 @@
   <title>{% block title %}{{ site.name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ asset('css/main.css') }}">
   <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml">
+  <script type="module" src="{{ asset('js/main.js') }}"></script>
 </head>
 <body>
   <header class="site-header">
     <a class="brand" href="/">{{ site.name }}</a>
+    <form class="search" method="get" action="/posts" role="search">
+      <input type="search" name="tags" value="{{ search.tags if search else '' }}" placeholder="Search tags" aria-label="Search tags"
+             autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+    </form>
     <nav class="primary" aria-label="Main">
       <a href="/">Posts</a>
+      <a href="/tags">Tags</a>
       {% if can_upload %}<a href="/upload">Upload</a>{% endif %}
     </nav>
     <nav class="account" aria-label="Account">

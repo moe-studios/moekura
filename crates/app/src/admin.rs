@@ -47,6 +47,8 @@ pub enum AdminCommand {
         #[arg(required_unless_present = "all")]
         posts: Vec<i64>,
     },
+    /// Recompute every tag's post count. Post edits wait while it runs.
+    RecountTags,
     /// Show site settings, or change one
     Settings {
         #[command(subcommand)]
@@ -82,6 +84,10 @@ pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
         AdminCommand::RegenerateMedia { all, posts } => {
             let queued = regenerate_media(db, (!all).then_some(posts.as_slice())).await?;
             println!("queued {queued} file(s) for processing");
+        }
+        AdminCommand::RecountTags => {
+            let fixed = uwuu_db::tags::recount(db).await?;
+            println!("corrected {fixed} tag count(s)");
         }
         AdminCommand::Settings { action: None } => {
             for (key, value) in settings::load(db).await?.to_map() {

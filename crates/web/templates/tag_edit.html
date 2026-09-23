@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ tag.name }} · {{ site.name }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Edit <a href="{{ tag.url }}">{{ tag.name }}</a></h1>
+  <p class="hint">Used on {{ tag.count }} post{% if tag.count != 1 %}s{% endif %}.</p>
+  <form method="post" action="/tags/{{ tag.id }}/edit">
+    <label for="category">Category</label>
+    <select id="category" name="category">
+      {% for category in categories %}
+      <option value="{{ category.id }}"{% if category.id == category_id %} selected{% endif %}>{{ category.label }}</option>
+      {% endfor %}
+    </select>
+    <label class="choice">
+      <input type="checkbox" name="deprecated"{% if tag.deprecated %} checked{% endif %}>
+      Deprecated (can no longer be added to posts)
+    </label>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}

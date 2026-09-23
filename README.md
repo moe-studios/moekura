@@ -4,9 +4,10 @@ A self-hostable booru (tag-based image board) that scales from a private
 single-user instance to a public site with millions of posts, using the same
 binary and schema at every size.
 
-> **Status: early development.** Accounts, uploads, thumbnails and a post
-> grid work; tags and search come next. See [docs/design.md](docs/design.md)
-> for the plan and roadmap.
+> **Status: early development.** Accounts, uploads, thumbnails, tags,
+> aliases, implications and search work; the post UI (editing, favourites)
+> comes next. See [docs/design.md](docs/design.md) for the plan and roadmap,
+> and [docs/search.md](docs/search.md) for the search syntax.
 
 ## Running
 
@@ -104,6 +105,18 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
 
+The page scripts are TypeScript in `frontend/`, bundled with esbuild into
+`crates/web/static/js/`. The bundle is committed, so building the binary
+needs no Node; after changing `frontend/src`, rebuild it (Node 24+):
+
+```sh
+cd frontend
+npm ci
+npm run check     # typecheck
+npm test          # unit tests (node --test)
+npm run build     # or `npm run watch`
+```
+
 Layout:
 
 ```
@@ -114,7 +127,8 @@ crates/media    identifying and processing media with vips and ffmpeg
 crates/jobs     the Postgres job queue's workers and job handlers
 crates/web      axum router, middleware, pages
 crates/app      the `uwuubooru` binary: CLI, config loading, logging
-deploy/       compose files and deployment examples
+frontend/       TypeScript for the pages (built into crates/web/static/js)
+deploy/         compose files and deployment examples
 ```
 
 ## License

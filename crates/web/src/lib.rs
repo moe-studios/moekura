@@ -5,6 +5,7 @@ mod account;
 mod assets;
 pub mod auth;
 mod client_ip;
+mod edit;
 pub mod error;
 mod fetch;
 mod files;
@@ -126,6 +127,7 @@ pub fn router(state: AppState) -> Router {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
     let routes = posts::routes()
         .merge(account::routes())
+        .merge(edit::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(upload::routes(max_upload_bytes));

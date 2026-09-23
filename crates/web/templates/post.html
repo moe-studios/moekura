@@ -14,6 +14,45 @@
     </a>
     {% endif %}
     {% if post.description %}<p class="description">{{ post.description }}</p>{% endif %}
+    {% if family %}
+    <section class="family" aria-label="Related posts">
+      <p>{% if family.is_child %}This post belongs to <a href="/posts/{{ family.root }}">a parent post</a>.{% else %}This post has child posts.{% endif %}</p>
+      <ul class="family-cards">
+        {% for card in family.cards %}
+        <li{% if card.current %} class="current"{% endif %}>
+          <a href="{{ card.href }}">
+            {% if card.thumb %}<img src="{{ card.thumb }}" width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}" loading="lazy">
+            {% else %}<img class="pending-media" src="{{ asset('processing.svg') }}" width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}">{% endif %}
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if edit %}
+    <details id="edit" class="edit"{% if edit.error %} open{% endif %}>
+      <summary>Edit</summary>
+      {% if edit.error %}<p class="form-error" role="alert">{{ edit.error }}</p>{% endif %}
+      <form method="post" action="/posts/{{ post.id }}/edit{% if search.tags %}?q={{ search.tags|urlencode }}{% endif %}">
+        <input type="hidden" name="old_tags" value="{{ edit.old_tags }}">
+        <label for="edit-tags">Tags</label>
+        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="tags">{{ edit.tags }}</textarea>
+        <fieldset class="ratings">
+          <legend>Rating</legend>
+          {% for rating in ratings %}
+          <label class="choice"><input type="radio" name="rating" value="{{ rating.code }}"{% if edit.rating == rating.code %} checked{% endif %}> {{ rating.label }}</label>
+          {% endfor %}
+        </fieldset>
+        <label for="edit-source">Source</label>
+        <input id="edit-source" name="source" type="url" value="{{ edit.source }}" maxlength="2048">
+        <label for="edit-parent">Parent post</label>
+        <input id="edit-parent" name="parent" value="{{ edit.parent }}" inputmode="numeric" placeholder="none">
+        <label for="edit-description">Description</label>
+        <textarea id="edit-description" name="description" rows="3" maxlength="20000">{{ edit.description }}</textarea>
+        <button type="submit">Save</button>
+      </form>
+    </details>
+    {% endif %}
   </section>
   <aside class="post-info">
     {% if search.back_url %}<p class="back"><a href="{{ search.back_url }}">« {{ search.tags }}</a></p>{% endif %}

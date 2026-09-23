@@ -9,10 +9,10 @@ use minijinja::{Value, context};
 use serde::Deserialize;
 use time::format_description::well_known::Rfc3339;
 use uwuu_core::permissions::Permission;
-use uwuu_core::posts::PostStatus;
+use uwuu_core::posts::{PostStatus, Rating};
 use uwuu_core::search::{Order, Query as SearchQuery};
 use uwuu_db::media::{self, Variant};
-use uwuu_db::posts::{self, Card, Visibility};
+use uwuu_db::posts::{self, Card, Post, Visibility};
 use uwuu_db::search::{Count, PageRef, Plan, SearchError};
 use uwuu_db::{tags, users};
 use uwuu_storage::Key;
@@ -352,6 +352,22 @@ async fn show(
     Path(id): Path<i64>,
     Query(params): Query<ShowQuery>,
 ) -> Result<Response, AppError> {
+    render_post(&page, id, &params.q, None).await
+}
+
+/// The edit form as submitted, shown again with an error.
+pub(crate) struct FailedEdit<'a> {
+    pub form: &'a crate::edit::EditForm,
+    pub error: String,
+}
+
+/// The post page. `failed` refills the edit form after a rejected edit.
+pub(crate) async fn render_post(
+    page: &Page,
+    id: i64,
+    search: &str,
+    failed: Option<FailedEdit<'_>>,
+) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
     // The primary, so an uploader redirected here sees their post even if
@@ -364,7 +380,12 @@ async fn show(
     let asset = media::for_post(db, id).await?.ok_or(AppError::NotFound)?;
     let variants = media::variants(db, asset.id).await?;
     let categories = tags::categories(db).await?;
-    let tag_groups = crate::tags::grouped(&categories, tags::by_ids(db, &post.tag_ids).await?);
+    let post_tags = tags::by_ids(db, &post.tag_ids).await?;
+    let mut tag_names: Vec<&str> = post_tags.iter().map(|t| t.name.as_str()).collect();
+    tag_names.sort_unstable();
+    let tag_string = tag_names.join(" ");
+    let tag_groups = crate::tags::grouped(&categories, post_tags.clone());
+    let family = family_context(page, &post).await?;
     let uploader = match post.uploader_id {
         Some(user_id) => users::by_id(db, user_id).await?.map(|u| u.name),
         None => None,
@@ -410,20 +431,82 @@ async fn show(
         created => created.get(..10).unwrap_or_default(),
         created_iso => created,
     };
-    Ok(page.render(
+    let edit = page
+        .current
+        .can(Permission::EditPosts)
+        .then(|| match &failed {
+            Some(failed) => context! {
+                tags => failed.form.tags,
+                old_tags => failed.form.old_tags,
+                rating => failed.form.rating,
+                source => failed.form.source,
+                description => failed.form.description,
+                parent => failed.form.parent,
+                error => failed.error,
+            },
+            None => context! {
+                tags => tag_string,
+                old_tags => tag_string,
+                rating => post.rating.code(),
+                source => post.source,
+                description => post.description,
+                parent => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
+            },
+        });
+    let ratings: Vec<Value> = Rating::ALL
+        .iter()
+        .map(|r| context! { code => r.code(), label => r.label() })
+        .collect();
+    let status = if failed.is_some() {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        StatusCode::OK
+    };
+    Ok(page.render_with_status(
+        status,
         "post.html",
         context! {
             post => post_context,
             file => file,
             uploader => uploader,
             tag_groups => tag_groups,
+            family => family,
+            edit => edit,
+            ratings => ratings,
             search => context! {
-                tags => params.q,
-                back_url => (!params.q.is_empty()).then(|| Value::from_safe_string(search_url(&params.q))),
+                tags => search,
+                back_url => (!search.is_empty()).then(|| Value::from_safe_string(search_url(search))),
             },
             processing => asset.processed_at.is_none(),
         },
     ))
+}
+
+/// The parent/children bar: the post's parent and its other children, or
+/// the post's own children. `None` when the post has no family.
+async fn family_context(page: &Page, post: &Post) -> Result<Option<Value>, AppError> {
+    let state = page.state();
+    let db = state.db.primary();
+    let root = post.parent_id.unwrap_or(post.id);
+    let ids = posts::family(db, root, &visibility(&page.current)).await?;
+    if ids.len() < 2 {
+        return Ok(None);
+    }
+    let sizes = &state.media.config().thumbnail_sizes;
+    let box_size = sizes.first().copied().unwrap_or(250);
+    let kind = format!("thumb-{box_size}");
+    let cards = posts::cards(db, &ids, (&kind, &kind)).await?;
+    Ok(Some(context! {
+        is_child => post.parent_id.is_some(),
+        root => root,
+        cards => cards
+            .iter()
+            .map(|card| context! {
+                ..card_context(state, card, box_size, None),
+                ..context! { current => card.id == post.id }
+            })
+            .collect::<Vec<_>>(),
+    }))
 }
 
 fn is_web_url(value: &str) -> bool {

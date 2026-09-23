@@ -10,7 +10,7 @@ use minijinja::{Value, context};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uwuu_core::permissions::Permission;
-use uwuu_core::tags::{POST_MAX_TAGS, TagName, parse_input};
+use uwuu_core::tags::{InvalidTag, POST_MAX_TAGS, TagInput, TagName, parse_input};
 use uwuu_db::tags::{self, Category, ListOrder, Tag, WantedTag};
 
 use crate::AppState;
@@ -66,18 +66,66 @@ pub async fn parse_field(db: &PgPool, input: &str) -> Result<ParsedTags, TagFiel
     let categories = tags::categories(db).await?;
     let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
     let (inputs, invalid) = parse_input(input, &names);
-    if !invalid.is_empty() {
-        let list: Vec<String> = invalid.iter().map(ToString::to_string).collect();
-        return Err(TagFieldError::Invalid(format!(
-            "Some tags aren't valid: {}.",
-            list.join("; ")
-        )));
-    }
+    reject_invalid(&invalid)?;
     if inputs.len() > POST_MAX_TAGS {
-        return Err(TagFieldError::Invalid(format!(
-            "A post can have at most {POST_MAX_TAGS} tags."
-        )));
+        return Err(too_many());
     }
+    checked(db, &categories, inputs).await
+}
+
+/// Tag changes from an edit form.
+#[derive(Debug, Default)]
+pub struct TagEdit {
+    pub added: ParsedTags,
+    /// Names taken out.
+    pub removed: Vec<String>,
+}
+
+/// Compares the tags an edit form started with (`old`) with what was
+/// submitted (`new`). Only tags added in the form are checked, so a tag
+/// deprecated since it was added doesn't block other edits.
+pub async fn parse_edit(db: &PgPool, old: &str, new: &str) -> Result<TagEdit, TagFieldError> {
+    let categories = tags::categories(db).await?;
+    let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
+    let (before, _) = parse_input(old, &names);
+    let (after, invalid) = parse_input(new, &names);
+    reject_invalid(&invalid)?;
+    let removed = before
+        .iter()
+        .filter(|b| !after.iter().any(|a| a.name == b.name))
+        .map(|b| b.name.to_string())
+        .collect();
+    let added = after
+        .into_iter()
+        .filter(|a| !before.iter().any(|b| b.name == a.name))
+        .collect();
+    Ok(TagEdit {
+        added: checked(db, &categories, added).await?,
+        removed,
+    })
+}
+
+pub fn too_many() -> TagFieldError {
+    TagFieldError::Invalid(format!("A post can have at most {POST_MAX_TAGS} tags."))
+}
+
+fn reject_invalid(invalid: &[InvalidTag]) -> Result<(), TagFieldError> {
+    if invalid.is_empty() {
+        return Ok(());
+    }
+    let list: Vec<String> = invalid.iter().map(ToString::to_string).collect();
+    Err(TagFieldError::Invalid(format!(
+        "Some tags aren't valid: {}.",
+        list.join("; ")
+    )))
+}
+
+/// Refuses deprecated tags and resolves category prefixes.
+async fn checked(
+    db: &PgPool,
+    categories: &[Category],
+    inputs: Vec<TagInput>,
+) -> Result<ParsedTags, TagFieldError> {
     let lookup: Vec<&str> = inputs.iter().map(|t| t.name.as_str()).collect();
     let mut deprecated: Vec<String> = tags::by_names(db, &lookup)
         .await?
@@ -388,6 +436,29 @@ mod tests {
         );
         let empty = app.get("/tags/autocomplete?q=", None).await;
         assert_eq!(empty.body, "[]");
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn edits_only_check_added_tags(pool: PgPool) {
+        sqlx::query("INSERT INTO tags (name, is_deprecated) VALUES ('old', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let edit = parse_edit(&pool, "old keep gone", "keep old artist:new")
+            .await
+            .unwrap();
+        assert_eq!(edit.removed, ["gone"]);
+        let added: Vec<_> = edit
+            .added
+            .tags
+            .iter()
+            .map(|(n, c)| (n.as_str(), *c))
+            .collect();
+        assert_eq!(added, [("new", Some(1))]);
+        assert!(matches!(
+            parse_edit(&pool, "keep", "keep old").await,
+            Err(TagFieldError::Invalid(m)) if m.contains("deprecated")
+        ));
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

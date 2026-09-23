@@ -365,3 +365,13 @@ button.secondary { background: var(--border); color: var(--text); }
 .autocomplete [aria-selected="true"], .autocomplete [role="option"]:hover { background: var(--bg); }
 .autocomplete .count { margin-left: auto; }
 .autocomplete .antecedent, .autocomplete .metatag { color: var(--muted); }
+
+/* Post family and editing */
+
+.family { margin-top: 16px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.family p { margin: 0 0 8px; }
+.family-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.family-cards img { display: block; max-width: 110px; max-height: 110px; width: auto; height: auto; border-radius: calc(var(--radius) / 2); }
+.family-cards .current img { outline: 2px solid var(--accent); outline-offset: 2px; }
+.edit { margin-top: 16px; max-width: 640px; }
+.edit summary { cursor: pointer; font-weight: 600; color: var(--accent); }

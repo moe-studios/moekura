@@ -46,18 +46,22 @@ mod tests {
     use sqlx::PgPool;
     use sqlx::postgres::PgPoolOptions;
     use tower::ServiceExt;
-    use uwuu_core::config::ServerConfig;
+
+    use uwuu_core::config::Config;
+    use uwuu_core::settings::SiteSettings;
     use uwuu_db::Db;
+    use uwuu_db::site_cache::{SiteCache, SiteSnapshot};
 
     use crate::{AppState, router};
 
     fn app(pool: PgPool) -> axum::Router {
-        router(
-            AppState {
-                db: Db::from_pools(pool, vec![]),
-            },
-            &ServerConfig::default(),
+        let state = AppState::new(
+            Config::default(),
+            Db::from_pools(pool, vec![]),
+            SiteCache::from_snapshot(SiteSnapshot::new(SiteSettings::default(), vec![])),
         )
+        .unwrap();
+        router(state)
     }
 
     /// A pool pointing at a port nothing listens on.

@@ -32,6 +32,26 @@ UWUU_DATABASE__URL=postgres://uwuu:secret@localhost/uwuu target/release/uwuuboor
 | `uwuubooru serve` | Run the HTTP server (applies migrations first unless `database.auto_migrate = false`) |
 | `uwuubooru migrate` | Apply pending migrations and exit, for release pipelines |
 | `uwuubooru check-config` | Validate configuration and print it with secrets redacted |
+| `uwuubooru admin …` | Create users, change roles, view and change site settings |
+
+### First admin account
+
+Create it from the shell (it prompts for a password, or reads one line from
+stdin when piped):
+
+```sh
+uwuubooru admin create-user yourname --role admin
+# with compose:
+docker compose -f deploy/compose.tiny.yml exec app uwuubooru admin create-user yourname --role admin
+```
+
+Registration is open by default. To change that before the admin panel
+exists:
+
+```sh
+uwuubooru admin settings                               # show all settings
+uwuubooru admin settings set registration_mode closed  # open | invite | approval | closed
+```
 
 `GET /healthz` reports that the process is up. `GET /readyz` also checks
 the database; point load balancers at it.

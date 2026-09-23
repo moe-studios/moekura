@@ -12,14 +12,27 @@ publish.workspace = true
 uwuu-core.workspace = true
 uwuu-db.workspace = true
 axum.workspace = true
+axum-extra.workspace = true
+governor.workspace = true
+hex.workspace = true
+ipnet.workspace = true
+mime_guess.workspace = true
+minijinja.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+sqlx.workspace = true
+time.workspace = true
 tokio.workspace = true
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
-sqlx.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

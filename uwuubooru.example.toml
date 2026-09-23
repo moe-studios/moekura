@@ -10,6 +10,13 @@
 [server]
 # Address the HTTP server listens on.
 bind = "0.0.0.0:8080"
+# The URL users reach the site at. Set this to your https:// address in
+# production: it marks cookies Secure and limits which origin may submit forms.
+public_url = "http://localhost:8080"
+# Reverse proxies (addresses or CIDR ranges) allowed to report the client's
+# IP in X-Forwarded-For. Set this when running behind Caddy, nginx or a load
+# balancer, or every visitor will appear to come from the proxy.
+trusted_proxies = []   # e.g. ["127.0.0.1/32", "10.0.0.0/8"]
 # Requests running longer than this are aborted with 408.
 request_timeout_secs = 30
 
@@ -29,9 +36,21 @@ statement_timeout_ms = 30000
 # set this to false and run `uwuubooru migrate` as a release step.
 auto_migrate = true
 
+[auth]
+# A login session ends after this many days without use...
+session_idle_days = 30
+# ...or this many days after logging in, however active.
+session_max_days = 365
+
+[paths]
+# Directories whose files replace built-in templates and static files with
+# the same relative path, e.g. <templates_override>/base.html. Unset by default.
+# templates_override = "/etc/uwuubooru/templates"
+# static_override = "/etc/uwuubooru/static"
+
 [telemetry]
 # "text" or "json".
 log_format = "text"
 # tracing filter directive. RUST_LOG overrides it.
 # "info,tower_http=debug" also logs every request.
-log_filter = "info"
+log_filter = "info,sqlx::postgres::notice=warn"

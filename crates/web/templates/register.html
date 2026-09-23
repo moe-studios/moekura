@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Register · {{ site.name }}{% endblock %}
+{% macro field_error(message) %}{% if message %}<p class="field-error">{{ message }}</p>{% endif %}{% endmacro %}
+{% block content %}
+<section class="card narrow">
+  <h1>Create an account</h1>
+  {% if needs_approval %}<p class="aside">New accounts are reviewed by the staff before they can log in.</p>{% endif %}
+  <form method="post" action="/register">
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    <label for="name">Name</label>
+    <input id="name" name="name" value="{{ form.name }}" autocomplete="username" required autofocus
+           minlength="2" maxlength="32" pattern="[A-Za-z0-9_.\-]+">
+    <p class="hint">Letters, digits, underscores, dots and hyphens.</p>
+    {{ field_error(errors.name) }}
+    <label for="email">Email <span class="optional">(optional)</span></label>
+    <input id="email" name="email" type="email" value="{{ form.email }}" autocomplete="email">
+    {{ field_error(errors.email) }}
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="256">
+    <label for="password_confirm">Repeat password</label>
+    <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required>
+    {{ field_error(errors.password) }}
+    {% if needs_invite %}
+    <label for="invite">Invite code</label>
+    <input id="invite" name="invite" value="{{ form.invite }}" required autocomplete="off">
+    {{ field_error(errors.invite) }}
+    {% endif %}
+    <button type="submit">Register</button>
+  </form>
+  <p class="aside">Already registered? <a href="/login">Log in</a></p>
+</section>
+{% endblock %}

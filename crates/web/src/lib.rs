@@ -1,34 +1,110 @@
 //! HTTP server for uwuubooru: HTML pages, the JSON API and operational
 //! endpoints, all sharing one router.
 
+mod account;
+mod assets;
+pub mod auth;
+mod client_ip;
+pub mod error;
+pub mod flash;
 mod health;
+pub mod pages;
+pub mod rate_limit;
+mod templates;
+#[cfg(test)]
+mod test_support;
 
 use std::future::Future;
 use std::io;
+use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::http::{Request, StatusCode};
+use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS};
+use axum::http::{HeaderValue, Request, StatusCode};
+use axum::middleware;
+use axum::routing::get;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::compression::CompressionLayer;
+use tower_http::csrf::CsrfLayer;
 use tower_http::request_id::{
     MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
 };
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
-use uwuu_core::config::ServerConfig;
+use uwuu_core::config::Config;
 use uwuu_db::Db;
+use uwuu_db::site_cache::SiteCache;
+
+use crate::assets::Assets;
+use crate::rate_limit::RateLimits;
+use crate::templates::Templates;
+
+/// Scripts, styles and media only from our own origin; no framing, no
+/// plugins, forms only to ourselves.
+const CSP: &str = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; \
+    style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
+    frame-ancestors 'none'; form-action 'self'";
 
 /// Shared state handed to every handler.
 #[derive(Clone)]
 pub struct AppState {
+    pub config: Arc<Config>,
     pub db: Db,
+    /// Site settings and roles, kept current across nodes.
+    pub site: SiteCache,
+    pub rate_limits: Arc<RateLimits>,
+    templates: Arc<Templates>,
+    assets: Arc<Assets>,
 }
 
-pub fn router(state: AppState, config: &ServerConfig) -> Router {
+#[derive(Debug, thiserror::Error)]
+pub enum StartupError {
+    #[error("could not load static files: {0}")]
+    Assets(#[from] io::Error),
+    #[error("could not load templates: {0:#}")]
+    Templates(#[from] minijinja::Error),
+}
+
+impl AppState {
+    /// Loads static files and compiles templates, honouring the override
+    /// directories in `config.paths`.
+    pub fn new(config: Config, db: Db, site: SiteCache) -> Result<Self, StartupError> {
+        let assets = Arc::new(Assets::load(config.paths.static_override.as_deref())?);
+        let templates = Arc::new(Templates::load(
+            config.paths.templates_override.clone(),
+            assets.clone(),
+        )?);
+        Ok(Self {
+            config: Arc::new(config),
+            db,
+            site,
+            rate_limits: Arc::new(RateLimits::default()),
+            templates,
+            assets,
+        })
+    }
+}
+
+pub fn router(state: AppState) -> Router {
+    with_middleware(pages::routes().merge(account::routes()), state)
+}
+
+/// Wraps `routes` (the pages and API) in session handling and the global
+/// middleware stack. Split out so tests can mount extra routes.
+pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Router {
+    let server = &state.config.server;
+    // Accept form posts from the public origin even when a proxy rewrites Host.
+    let public_origin = server.public_url.origin().ascii_serialization();
+    let csrf = CsrfLayer::new()
+        .add_trusted_origin(&public_origin)
+        .expect("an http(s) origin is a valid trusted origin");
+
     let middleware = ServiceBuilder::new()
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(TraceLayer::new_for_http().make_span_with(request_span))
@@ -36,12 +112,38 @@ pub fn router(state: AppState, config: &ServerConfig) -> Router {
         .layer(CatchPanicLayer::new())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(config.request_timeout_secs),
+            Duration::from_secs(server.request_timeout_secs),
         ))
-        .layer(CompressionLayer::new());
+        .layer(CompressionLayer::new())
+        .layer(csrf)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(CSP),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ));
 
-    Router::new()
+    routes
+        .fallback(error::not_found)
+        // Inner layer: runs after the session is known, so error pages can
+        // show who is logged in.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            error::render_errors,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::resolve_session,
+        ))
+        // Probes and static files skip session handling.
         .merge(health::routes())
+        .route("/static/{*path}", get(assets::serve))
         .layer(middleware)
         .with_state(state)
 }
@@ -67,7 +169,11 @@ pub async fn serve(
     router: Router,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<()> {
-    axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown)
-        .await
+    // Connection info gives handlers the peer address.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown)
+    .await
 }

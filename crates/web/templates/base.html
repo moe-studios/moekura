@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ site.name }}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ asset('css/main.css') }}">
+  <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="/">{{ site.name }}</a>
+    <nav class="primary" aria-label="Main">
+      <a href="/">Posts</a>
+    </nav>
+    <nav class="account" aria-label="Account">
+      {% if me %}
+        <span class="who">{{ me.name }}</span>
+        <form method="post" action="/logout">
+          <button type="submit" class="link">Log out</button>
+        </form>
+      {% else %}
+        <a href="/login">Log in</a>
+        {% if site.registration_open %}<a class="button" href="/register">Register</a>{% endif %}
+      {% endif %}
+    </nav>
+  </header>
+  {% if flash %}<div class="flash" role="status">{{ flash }}</div>{% endif %}
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="site-footer">
+    Powered by <a href="https://github.com/uwuumoe/uwuubooru">uwuubooru</a>
+  </footer>
+</body>
+</html>

@@ -10,11 +10,15 @@ publish.workspace = true
 
 [dependencies]
 uwuu-core.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
-tokio.workspace = true
+argon2.workspace = true
 
 [lints]
 workspace = true

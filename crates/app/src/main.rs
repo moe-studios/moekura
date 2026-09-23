@@ -1,3 +1,4 @@
+mod admin;
 mod config;
 mod telemetry;
 
@@ -9,6 +10,7 @@ use clap::{Parser, Subcommand};
 use tokio::net::TcpListener;
 use uwuu_core::config::{Config, DatabaseConfig};
 use uwuu_db::Db;
+use uwuu_db::site_cache::SiteCache;
 use uwuu_web::AppState;
 
 /// How long startup keeps retrying an unreachable database, so the app can
@@ -34,6 +36,11 @@ enum Command {
     Migrate,
     /// Validate the configuration and print the effective settings, with secrets redacted
     CheckConfig,
+    /// Manage accounts and site settings
+    Admin {
+        #[command(subcommand)]
+        command: admin::AdminCommand,
+    },
 }
 
 #[tokio::main]
@@ -53,6 +60,18 @@ async fn main() -> anyhow::Result<()> {
             db.close().await;
             Ok(())
         }
+        Command::Admin { command } => {
+            // Fails fast rather than retrying: someone is waiting at a shell.
+            let db = Db::connect(&config.database)
+                .await
+                .context("could not connect to the database")?;
+            if config.database.auto_migrate {
+                migrate(&db).await?;
+            }
+            let result = admin::run(db.primary(), command).await;
+            db.close().await;
+            result
+        }
         Command::Serve => {
             telemetry::init(&config.telemetry)?;
             serve(config).await
@@ -71,12 +90,39 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         .with_context(|| format!("could not bind {}", config.server.bind))?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
 
-    let app = uwuu_web::router(AppState { db: db.clone() }, &config.server);
+    let site = SiteCache::load(db.primary())
+        .await
+        .context("could not load site settings")?;
+    let state = AppState::new(config, db.clone(), site.clone())?;
+    let background = [
+        tokio::spawn(site.listen(db.primary().clone())),
+        tokio::spawn(hourly_maintenance(state.clone())),
+    ];
+
+    let app = uwuu_web::router(state);
     uwuu_web::serve(listener, app, shutdown_signal()).await?;
 
+    for task in background {
+        task.abort();
+    }
     db.close().await;
     tracing::info!("shut down");
     Ok(())
+}
+
+/// Deletes expired sessions and forgets idle rate-limit counters. Moves to
+/// the job queue in M3.
+async fn hourly_maintenance(state: AppState) {
+    let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+    loop {
+        interval.tick().await;
+        state.rate_limits.retain_recent();
+        match uwuu_db::sessions::prune_expired(state.db.primary()).await {
+            Ok(0) => {}
+            Ok(removed) => tracing::info!(removed, "pruned expired sessions"),
+            Err(error) => tracing::warn!(%error, "could not prune expired sessions"),
+        }
+    }
 }
 
 async fn connect(config: &DatabaseConfig) -> anyhow::Result<Db> {

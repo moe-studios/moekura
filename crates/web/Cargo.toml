@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 uwuu-core.workspace = true
 uwuu-db.workspace = true
+uwuu-storage.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
 governor.workspace = true

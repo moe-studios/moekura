@@ -51,6 +51,28 @@ run_in_serve = true
 # Seconds before a job whose worker stopped responding is retried elsewhere.
 lock_timeout_secs = 300
 
+[storage]
+# "local" (a directory) or "s3" (any S3-compatible store).
+backend = "local"
+# Directory for the local backend. Back it up along with the database.
+path = "data"
+# Where browsers load files from, e.g. a CDN in front of your bucket. When
+# unset, the app serves files itself under /data/.
+# public_base_url = "https://cdn.example.com"
+
+[storage.s3]
+bucket = ""
+region = "us-east-1"
+# For MinIO, Garage, R2, B2 etc. Leave unset for AWS.
+# endpoint = "http://localhost:9000"
+# Leave empty to use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or instance
+# credentials. Prefer UWUU_STORAGE__S3__SECRET_ACCESS_KEY over this file.
+access_key_id = ""
+secret_access_key = ""
+# Put the bucket in the path (http://host/bucket/key); most self-hosted
+# stores need this.
+path_style = false
+
 [paths]
 # Directories whose files replace built-in templates and static files with
 # the same relative path, e.g. <templates_override>/base.html. Unset by default.

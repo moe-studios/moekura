@@ -12,6 +12,7 @@ publish.workspace = true
 uwuu-core.workspace = true
 uwuu-db.workspace = true
 uwuu-jobs.workspace = true
+uwuu-storage.workspace = true
 uwuu-web.workspace = true
 anyhow.workspace = true
 clap.workspace = true

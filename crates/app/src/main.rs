@@ -52,6 +52,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    uwuu_storage::install_crypto_provider();
     let cli = Cli::parse();
     let config = config::load(cli.config.as_deref())?;
 

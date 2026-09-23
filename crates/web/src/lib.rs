@@ -6,6 +6,7 @@ mod assets;
 pub mod auth;
 mod client_ip;
 pub mod error;
+mod files;
 pub mod flash;
 mod health;
 pub mod pages;
@@ -44,6 +45,7 @@ use uwuu_db::site_cache::SiteCache;
 use crate::assets::Assets;
 use crate::rate_limit::RateLimits;
 use crate::templates::Templates;
+use uwuu_storage::Storage;
 
 /// Scripts, styles and media only from our own origin; no framing, no
 /// plugins, forms only to ourselves.
@@ -59,6 +61,7 @@ pub struct AppState {
     /// Site settings and roles, kept current across nodes.
     pub site: SiteCache,
     pub rate_limits: Arc<RateLimits>,
+    pub storage: Storage,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -69,12 +72,15 @@ pub enum StartupError {
     Assets(#[from] io::Error),
     #[error("could not load templates: {0:#}")]
     Templates(#[from] minijinja::Error),
+    #[error("could not open file storage: {0}")]
+    Storage(#[from] uwuu_storage::StorageError),
 }
 
 impl AppState {
     /// Loads static files and compiles templates, honouring the override
     /// directories in `config.paths`.
     pub fn new(config: Config, db: Db, site: SiteCache) -> Result<Self, StartupError> {
+        let storage = Storage::from_config(&config.storage)?;
         let assets = Arc::new(Assets::load(config.paths.static_override.as_deref())?);
         let templates = Arc::new(Templates::load(
             config.paths.templates_override.clone(),
@@ -85,6 +91,7 @@ impl AppState {
             db,
             site,
             rate_limits: Arc::new(RateLimits::default()),
+            storage,
             templates,
             assets,
         })
@@ -144,6 +151,7 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         // Probes and static files skip session handling.
         .merge(health::routes())
         .route("/static/{*path}", get(assets::serve))
+        .route("/data/{*key}", get(files::serve))
         .layer(middleware)
         .with_state(state)
 }

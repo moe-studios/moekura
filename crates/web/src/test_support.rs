@@ -17,9 +17,19 @@ use uwuu_db::site_cache::SiteCache;
 use crate::auth::SESSION_COOKIE;
 use crate::{AppState, with_middleware};
 
+/// Defaults, with file storage in a fresh temporary directory.
+pub fn test_config() -> Config {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut config = Config::default();
+    config.storage.path =
+        std::env::temp_dir().join(format!("uwuu-web-test-{}-{n}", std::process::id()));
+    config
+}
+
 pub async fn test_state(pool: &PgPool) -> AppState {
     AppState::new(
-        Config::default(),
+        test_config(),
         Db::from_pools(pool.clone(), vec![]),
         SiteCache::load(pool).await.unwrap(),
     )

@@ -20,6 +20,7 @@ pub struct Config {
     pub auth: AuthConfig,
     pub jobs: JobsConfig,
     pub paths: PathsConfig,
+    pub storage: StorageConfig,
     pub telemetry: TelemetryConfig,
 }
 
@@ -122,6 +123,66 @@ impl Default for JobsConfig {
             workers: 2,
             run_in_serve: true,
             lock_timeout_secs: 300,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StorageConfig {
+    pub backend: StorageBackend,
+    /// Directory for the `local` backend.
+    pub path: PathBuf,
+    /// Where browsers fetch files from, e.g. a CDN in front of the bucket.
+    /// When unset, the app serves files itself under `/data/`.
+    pub public_base_url: Option<Url>,
+    pub s3: S3Config,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: StorageBackend::Local,
+            path: PathBuf::from("data"),
+            public_base_url: None,
+            s3: S3Config::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    Local,
+    S3,
+}
+
+/// Any S3-compatible store: AWS, MinIO, Garage, Cloudflare R2, Backblaze B2…
+/// Empty credentials fall back to the standard `AWS_*` environment variables
+/// and instance credentials.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct S3Config {
+    pub bucket: String,
+    pub region: String,
+    /// For non-AWS stores, e.g. `http://minio:9000`.
+    pub endpoint: Option<Url>,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    /// `bucket` in the path rather than the host name; most self-hosted
+    /// stores need this.
+    pub path_style: bool,
+}
+
+impl Default for S3Config {
+    fn default() -> Self {
+        Self {
+            bucket: String::new(),
+            region: "us-east-1".to_owned(),
+            endpoint: None,
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            path_style: false,
         }
     }
 }
@@ -240,6 +301,20 @@ impl Config {
                 });
             }
         }
+        if self.storage.backend == StorageBackend::S3 && self.storage.s3.bucket.is_empty() {
+            problems.push(ConfigProblem {
+                key: "storage.s3.bucket",
+                message: "is required when storage.backend is s3".into(),
+            });
+        }
+        if let Some(url) = &self.storage.public_base_url
+            && !matches!(url.scheme(), "http" | "https")
+        {
+            problems.push(ConfigProblem {
+                key: "storage.public_base_url",
+                message: "must be an http:// or https:// URL".into(),
+            });
+        }
         if self.jobs.workers == 0 {
             problems.push(ConfigProblem {
                 key: "jobs.workers",
@@ -272,6 +347,9 @@ impl Config {
         config.database.url = redact_url(&config.database.url);
         for replica in &mut config.database.replicas {
             *replica = redact_url(replica);
+        }
+        if !config.storage.s3.secret_access_key.is_empty() {
+            config.storage.s3.secret_access_key = REDACTED.to_owned();
         }
         config
     }
@@ -422,6 +500,19 @@ mod tests {
         assert!(!redact_url("uwuu:hunter2 garbage").contains("hunter2"));
         assert!(!redact_url("not even a url hunter2").contains("hunter2"));
         assert!(!redact_url("mysql://u:hunter2@db/x").contains("hunter2"));
+    }
+
+    #[test]
+    fn s3_needs_a_bucket_and_its_secret_is_redacted() {
+        let mut config = valid();
+        config.storage.backend = StorageBackend::S3;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "storage.s3.bucket");
+
+        config.storage.s3.bucket = "posts".into();
+        config.storage.s3.secret_access_key = "very secret".into();
+        config.validate().unwrap();
+        assert_eq!(config.redacted().storage.s3.secret_access_key, "REDACTED");
     }
 
     #[test]

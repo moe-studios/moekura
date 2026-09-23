@@ -11,6 +11,7 @@ publish.workspace = true
 [dependencies]
 uwuu-core.workspace = true
 uwuu-db.workspace = true
+uwuu-jobs.workspace = true
 uwuu-web.workspace = true
 anyhow.workspace = true
 clap.workspace = true
@@ -19,6 +20,7 @@ rpassword.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 toml.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

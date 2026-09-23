@@ -42,6 +42,15 @@ session_idle_days = 30
 # ...or this many days after logging in, however active.
 session_max_days = 365
 
+[jobs]
+# Background jobs (thumbnails, hashing) processed concurrently per process.
+workers = 2
+# Also run workers inside `serve`. Set to false when you run separate
+# `uwuubooru worker` processes.
+run_in_serve = true
+# Seconds before a job whose worker stopped responding is retried elsewhere.
+lock_timeout_secs = 300
+
 [paths]
 # Directories whose files replace built-in templates and static files with
 # the same relative path, e.g. <templates_override>/base.html. Unset by default.

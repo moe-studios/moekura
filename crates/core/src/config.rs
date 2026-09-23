@@ -18,6 +18,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
+    pub jobs: JobsConfig,
     pub paths: PathsConfig,
     pub telemetry: TelemetryConfig,
 }
@@ -97,6 +98,30 @@ impl Default for AuthConfig {
         Self {
             session_idle_days: 30,
             session_max_days: 365,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct JobsConfig {
+    /// Jobs processed concurrently per process. Media processing is
+    /// CPU-bound, so around the number of cores is a sensible ceiling.
+    pub workers: usize,
+    /// Run workers inside `serve` too, so one process is enough for small
+    /// sites. Turn off when running separate `uwuubooru worker` processes.
+    pub run_in_serve: bool,
+    /// A job whose worker stops responding for this long is retried
+    /// elsewhere. Running jobs renew it continuously.
+    pub lock_timeout_secs: u64,
+}
+
+impl Default for JobsConfig {
+    fn default() -> Self {
+        Self {
+            workers: 2,
+            run_in_serve: true,
+            lock_timeout_secs: 300,
         }
     }
 }
@@ -214,6 +239,18 @@ impl Config {
                     message: format!("{} is not a directory", dir.display()),
                 });
             }
+        }
+        if self.jobs.workers == 0 {
+            problems.push(ConfigProblem {
+                key: "jobs.workers",
+                message: "must be at least 1".into(),
+            });
+        }
+        if self.jobs.lock_timeout_secs < 10 {
+            problems.push(ConfigProblem {
+                key: "jobs.lock_timeout_secs",
+                message: "must be at least 10".into(),
+            });
         }
         if self.server.request_timeout_secs == 0 {
             problems.push(ConfigProblem {

@@ -29,7 +29,8 @@ UWUU_DATABASE__URL=postgres://uwuu:secret@localhost/uwuu target/release/uwuuboor
 
 | Command | Purpose |
 |---|---|
-| `uwuubooru serve` | Run the HTTP server (applies migrations first unless `database.auto_migrate = false`) |
+| `uwuubooru serve` | Run the HTTP server, plus background job workers unless `jobs.run_in_serve = false` (applies migrations first unless `database.auto_migrate = false`) |
+| `uwuubooru worker` | Run background job workers only, for scaling them separately from the web nodes |
 | `uwuubooru migrate` | Apply pending migrations and exit, for release pipelines |
 | `uwuubooru check-config` | Validate configuration and print it with secrets redacted |
 | `uwuubooru admin …` | Create users, change roles, view and change site settings |

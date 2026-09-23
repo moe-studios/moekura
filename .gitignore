@@ -1,0 +1,4 @@
+/target
+# Local configuration and secrets
+/uwuubooru.toml
+.env

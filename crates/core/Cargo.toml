@@ -1,0 +1,19 @@
+[package]
+name = "uwuu-core"
+description = "Domain types and pure logic for uwuubooru"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+url = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+toml.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,39 @@
+# Smallest setup: the app plus Postgres on one machine.
+#
+#   echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > deploy/.env
+#   docker compose -f deploy/compose.tiny.yml up -d
+#
+# Then open http://localhost:8080. Migrations run automatically on start.
+
+name: uwuubooru
+
+services:
+  app:
+    build:
+      context: ..
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      UWUU_DATABASE__URL: postgres://uwuu:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@db/uwuu
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: docker.io/library/postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: uwuu
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}
+      POSTGRES_DB: uwuu
+    volumes:
+      - db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U uwuu -d uwuu"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db:

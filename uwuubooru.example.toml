@@ -1,0 +1,37 @@
+# uwuubooru configuration
+#
+# Copy to uwuubooru.toml (read from the working directory) or pass
+# --config <path>. Every key can also be set through the environment:
+# UWUU_<SECTION>__<KEY>, e.g. UWUU_DATABASE__URL. Environment variables win
+# over this file. Values shown are the defaults unless noted.
+#
+# `uwuubooru check-config` prints the effective settings.
+
+[server]
+# Address the HTTP server listens on.
+bind = "0.0.0.0:8080"
+# Requests running longer than this are aborted with 408.
+request_timeout_secs = 30
+
+[database]
+# Required. Connection URL of the primary.
+url = "postgres://uwuu:CHANGE_ME@localhost/uwuu"
+# Read replicas for search and listings. Leave empty to use the primary.
+replicas = []
+# Maximum connections per pool (the primary and each replica).
+max_connections = 16
+min_connections = 0
+# Seconds to wait for a free pooled connection.
+acquire_timeout_secs = 5
+# Server-side limit per statement in milliseconds; 0 disables it.
+statement_timeout_ms = 30000
+# Apply pending migrations when `serve` starts. For multi-node deployments,
+# set this to false and run `uwuubooru migrate` as a release step.
+auto_migrate = true
+
+[telemetry]
+# "text" or "json".
+log_format = "text"
+# tracing filter directive. RUST_LOG overrides it.
+# "info,tower_http=debug" also logs every request.
+log_filter = "info"

@@ -1,0 +1,20 @@
+[package]
+name = "uwuu-db"
+description = "PostgreSQL access and migrations for uwuubooru"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+uwuu-core.workspace = true
+sqlx.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

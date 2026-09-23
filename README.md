@@ -4,9 +4,10 @@ A self-hostable booru (tag-based image board) that scales from a private
 single-user instance to a public site with millions of posts, using the same
 binary and schema at every size.
 
-> **Status: early development.** Accounts, uploads, thumbnails and a post
-> grid work; tags and search come next. See [docs/design.md](docs/design.md)
-> for the plan and roadmap.
+> **Status: early development.** Accounts, uploads, thumbnails, tags,
+> aliases, implications and search work; the post UI (editing, favourites)
+> comes next. See [docs/design.md](docs/design.md) for the plan and roadmap,
+> and [docs/search.md](docs/search.md) for the search syntax.
 
 ## Running
 

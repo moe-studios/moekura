@@ -15,7 +15,7 @@ uwuubooru is an open-source, self-hostable booru (a tag-based image board). The 
 | Language / runtime | Rust (stable, 2024 edition), `tokio` | One static binary, low memory use, fast media handling |
 | HTTP | `axum` + `tower-http` (compression, timeouts, CORS, request IDs, tracing) | Mature and composable |
 | Database | PostgreSQL 16+ via `sqlx` (compile-time-checked queries, built-in migrations) | Needed for GIN tag arrays, SKIP LOCKED queues and replicas |
-| Queries | Static SQL strings with `sqlx::query_as` + `FromRow`; `sea-query` only for the dynamic tag-search builder | Every query is covered by a `#[sqlx::test]` against real Postgres, so builds need no database or `.sqlx` cache |
+| Queries | Static SQL strings with `sqlx::query_as` + `FromRow`; sqlx's `QueryBuilder` for the dynamic search SQL | Every query is covered by a `#[sqlx::test]` against real Postgres, so builds need no database or `.sqlx` cache |
 | Templates | `minijinja` | Loaded at runtime, so admins can override templates and themes without recompiling |
 | Frontend JS | TypeScript bundled with `esbuild`, plus `htmx` | Autocomplete, keyboard nav, note overlays, upload UI. Everything works without JS |
 | CSS | Plain modern CSS with custom properties (no framework) | Easy to theme; light and dark by default |
@@ -91,8 +91,8 @@ docs/          # mdBook: admin guide, API, search syntax, scaling guide
 - **posts**: `id bigserial` (users see sequential IDs), uploader_id, `rating` (g/s/q/e), `status` (pending/active/flagged/deleted), source, description, parent_id, score, fav_count, `tag_ids int4[]` (**GIN index with `intarray` `gin__int_ops`**), cached `tag_count_*` per category, created_at, updated_at.
 - **media_assets**: post_id, sha256 (unique), md5 (indexed), mime, width, height, duration, file_size, `phash bigint` (plus four `int2` chunk columns for the multi-index hamming search), storage key.
 - **media_variants**: asset_id, kind (thumb_sm/thumb_lg/sample/preview_video), format (webp/avif), dims, storage key.
-- **tags**: id, name (unique), category_id, post_count, is_deprecated, created_at. **tag_categories** are configurable; the defaults are general, artist, character, copyright and meta.
-- **tag_aliases** (antecedent → consequent, status) and **tag_implications**: both go through a request/approval workflow.
+- **tags**: id, name (unique), category_id, post_count, is_deprecated, created_at. `post_count` counts active and flagged posts and is kept exact by statement-level triggers on `posts`. **tag_categories** are configurable; the defaults are general, artist, character, copyright and meta, with Danbooru's ids.
+- **tag_relations**: aliases (antecedent → consequent) and implications in one table, by tag name, with status pending/active/rejected/deleted. Both go through a request/approval workflow; approval queues a job that rewrites existing posts.
 - **wiki_pages** (+ versions), **pools** (ordered `post_ids bigint[]`, category series/collection, + versions), **notes** (x, y, w, h, body, + versions), **comments** (+ votes), **favorites**, **post_votes**, **saved_searches**.
 - **post_versions**: diff history of tags, rating, source and parent, used for undo and history pages.
 - **flags**, **appeals**, **reports**, **bans**, **ip_bans**, **mod_actions** (audit log), **sessions**, **api_keys**, **invites**, **site_settings** (key/value jsonb), **jobs**.
@@ -103,18 +103,18 @@ Files are stored under content-addressed keys: `original/ab/cd/<sha256>.<ext>`, 
 
 ## 4. Tag search (the main scaling risk)
 
-**Syntax** is Danbooru-style, so it is familiar to users:
-`tag1 tag2 -excluded ~or_a ~or_b wild*card rating:e,q score:>=10 favcount:>5 user:name fav:name pool:123 parent:123 width:>1920 ratio:16:9 date:2026-01..2026-06 md5:… filetype:png,webm status:deleted order:score|favcount|random|id_asc|… limit:40`
+**Syntax** is Danbooru-style, so it is familiar to users (full reference in [search.md](search.md)):
+`tag1 tag2 -excluded ~or_a ~or_b wild*card rating:e,q score:>=10 favcount:>5 user:name parent:123 width:>1920 ratio:16:9 date:2026-01..2026-06 md5:… filetype:png,webm status:deleted order:score|favcount|random|id_asc|… limit:40`. `fav:`, `pool:` and `similar:` come with the features they search.
 
 **Pipeline:**
-1. `core::search::parse` turns the query into an AST. Errors come back as structured values that the UI shows inline.
-2. Aliases are resolved (cached) and wildcards expanded (capped, highest-count tags first).
-3. The planner sorts tags by `post_count` and picks a strategy:
+1. `uwuu_core::search::Query::parse` turns the query into an AST. Errors come back as structured values that the UI shows inline.
+2. `uwuu_db::search::Plan` resolves aliases and expands wildcards (capped, highest-count tags first).
+3. The planner estimates matches from exact tag counts (assuming independence) and picks a strategy:
    - AND/NOT/OR tags compile to `tag_ids @> '{…}'`, `NOT tag_ids && '{…}'` and `tag_ids && '{…}'`, all backed by GIN.
-   - For `order:id` with a common tag, it uses a keyset walk on the `id` btree with a tag filter, because a bitmap scan over millions of rows would be slow. The planner chooses using tag counts.
-   - Metatags compile to indexed column predicates.
-4. **Pagination:** numbered pages up to a configurable depth (default 1000), keyset `page=b<id>` / `page=a<id>` beyond that.
-5. **Counts:** a single-tag count reads `tags.post_count` (exact and free). Multi-tag counts are exact under a threshold, otherwise estimated from `EXPLAIN`, and cached in the cache layer.
+   - When many posts are expected to match, it walks the order's btree (`id`, `score`, `fav_count`) with the tag condition written as `(…) IS TRUE` so Postgres can't use GIN. When few are, it collects matches through GIN and sorts, with the order column written as `col + 0` so Postgres can't walk. Walking reads about (offset + limit) × total ÷ matches rows; collecting reads every match.
+   - Metatags compile to column predicates.
+4. **Pagination:** numbered pages up to a configurable depth (default 1000), keyset `page=b<id>` / `page=a<id>` beyond that (id order only).
+5. **Counts:** exact up to `search.count_limit` (default 10,000); above that, a single tag reads `tags.post_count`, an empty search reads the table estimate, and anything else shows "10,000+". Caching counts comes with the cache layer.
 6. Search sits behind a `SearchBackend` trait. The default Postgres backend should handle a few million posts. An optional external engine can be plugged in later for very large sites without changing callers.
 
 **Similar-image search:** a 64-bit perceptual hash split into four 16-bit chunks, each indexed. By the pigeonhole principle, any image within hamming distance ≤3 matches at least one chunk exactly, so indexed lookups narrow candidates and exact distance is checked in SQL. Similar images are shown as a warning on upload and exposed as a `similar:<post_id>` search.

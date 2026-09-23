@@ -16,6 +16,7 @@
     {% if post.description %}<p class="description">{{ post.description }}</p>{% endif %}
   </section>
   <aside class="post-info">
+    {% if search.back_url %}<p class="back"><a href="{{ search.back_url }}">« {{ search.tags }}</a></p>{% endif %}
     <h1>Post #{{ post.id }}</h1>
     <dl>
       <dt>Rating</dt><dd class="rating-{{ post.rating_code }}">{{ post.rating }}</dd>

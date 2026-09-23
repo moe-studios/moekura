@@ -102,10 +102,6 @@ impl Visibility {
                 && post.uploader_id.is_some()
                 && post.uploader_id == self.viewer)
     }
-
-    fn status_names(&self) -> Vec<&'static str> {
-        self.statuses.iter().map(|s| s.as_str()).collect()
-    }
 }
 
 /// A post as shown in a grid.
@@ -122,37 +118,6 @@ pub struct Card {
     /// Storage keys of the 1x and 2x thumbnails, once generated.
     pub thumb: Option<String>,
     pub thumb_2x: Option<String>,
-}
-
-/// Newest posts first, optionally only those older than `before` (keyset
-/// pagination). `thumb_kinds` names the 1x and 2x thumbnail variants.
-pub async fn recent(
-    db: impl PgExecutor<'_>,
-    visibility: &Visibility,
-    before: Option<i64>,
-    limit: i64,
-    thumb_kinds: (&str, &str),
-) -> sqlx::Result<Vec<Card>> {
-    sqlx::query_as(
-        "SELECT p.id, p.rating, p.status, a.media_type, a.width, a.height, a.frames, p.tag_ids,
-                t1.storage_key AS thumb, t2.storage_key AS thumb_2x
-         FROM posts p
-         JOIN media_assets a ON a.post_id = p.id
-         LEFT JOIN media_variants t1 ON t1.asset_id = a.id AND t1.kind = $4
-         LEFT JOIN media_variants t2 ON t2.asset_id = a.id AND t2.kind = $5
-         WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
-           AND ($3::bigint IS NULL OR p.id < $3)
-         ORDER BY p.id DESC
-         LIMIT $6",
-    )
-    .bind(visibility.status_names())
-    .bind(visibility.viewer)
-    .bind(before)
-    .bind(thumb_kinds.0)
-    .bind(thumb_kinds.1)
-    .bind(limit)
-    .fetch_all(db)
-    .await
 }
 
 /// Grid cards for `ids`, in the same order. Ids without a post (deleted
@@ -238,70 +203,28 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
-    async fn recent_respects_visibility_and_paginates(pool: PgPool) {
-        let uploader: i64 = sqlx::query_scalar(
-            "INSERT INTO users (name, role_id) SELECT 'up', id FROM roles WHERE system_key = 'member' RETURNING id",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    async fn cards_come_back_in_the_order_asked(pool: PgPool) {
         let a = post_with_file(&pool, PostStatus::Active, None, 1).await;
-        let pending = post_with_file(&pool, PostStatus::Pending, Some(uploader), 2).await;
-        let deleted = post_with_file(&pool, PostStatus::Deleted, None, 3).await;
-        let b = post_with_file(&pool, PostStatus::Flagged, None, 4).await;
+        let b = post_with_file(&pool, PostStatus::Active, None, 2).await;
+        let asset: i64 = sqlx::query_scalar("SELECT id FROM media_assets WHERE post_id = $1")
+            .bind(b)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         sqlx::query(
             "INSERT INTO media_variants VALUES ($1, 'thumb-250', 'webp', 10, 10, 1, 'thumb-key')",
         )
-        .bind(
-            sqlx::query_scalar::<_, i64>("SELECT id FROM media_assets WHERE post_id = $1")
-                .bind(b)
-                .fetch_one(&pool)
-                .await
-                .unwrap(),
-        )
+        .bind(asset)
         .execute(&pool)
         .await
         .unwrap();
-
-        let ids = |cards: Vec<Card>| cards.into_iter().map(|c| c.id).collect::<Vec<_>>();
-        let public = Visibility {
-            statuses: vec![PostStatus::Active, PostStatus::Flagged],
-            viewer: None,
-        };
         let kinds = ("thumb-250", "thumb-500");
-        let cards = recent(&pool, &public, None, 10, kinds).await.unwrap();
-        assert_eq!(cards[0].thumb.as_deref(), Some("thumb-key"));
-        assert_eq!(cards[0].thumb_2x, None);
-        assert_eq!(ids(cards), [b, a]);
-
-        let own = Visibility {
-            viewer: Some(uploader),
-            ..public.clone()
-        };
-        assert_eq!(
-            ids(recent(&pool, &own, None, 10, kinds).await.unwrap()),
-            [b, pending, a]
-        );
-
-        let staff = Visibility {
-            statuses: vec![
-                PostStatus::Active,
-                PostStatus::Flagged,
-                PostStatus::Pending,
-                PostStatus::Deleted,
-            ],
-            viewer: None,
-        };
-        assert_eq!(
-            ids(recent(&pool, &staff, None, 2, kinds).await.unwrap()),
-            [b, deleted]
-        );
-        assert_eq!(
-            ids(recent(&pool, &staff, Some(deleted), 2, kinds)
-                .await
-                .unwrap()),
-            [pending, a]
-        );
+        let found = cards(&pool, &[b, a + 100, a], kinds).await.unwrap();
+        let ids: Vec<i64> = found.iter().map(|c| c.id).collect();
+        assert_eq!(ids, [b, a]);
+        assert_eq!(found[0].thumb.as_deref(), Some("thumb-key"));
+        assert_eq!(found[0].thumb_2x, None);
+        assert_eq!(found[1].thumb, None);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

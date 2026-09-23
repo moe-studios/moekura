@@ -2,6 +2,7 @@
 
 use axum::Router;
 use axum::extract::{Path, Query};
+use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::get;
 use minijinja::{Value, context};
@@ -9,8 +10,10 @@ use serde::Deserialize;
 use time::format_description::well_known::Rfc3339;
 use uwuu_core::permissions::Permission;
 use uwuu_core::posts::PostStatus;
+use uwuu_core::search::{Order, Query as SearchQuery};
 use uwuu_db::media::{self, Variant};
 use uwuu_db::posts::{self, Card, Visibility};
+use uwuu_db::search::{Count, PageRef, Plan, SearchError};
 use uwuu_db::{tags, users};
 use uwuu_storage::Key;
 
@@ -18,13 +21,12 @@ use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::pages::Page;
-
-/// Posts per page of the grid.
-const PAGE_SIZE: i64 = 40;
+use crate::templates::search_url;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/", get(index))
+        .route("/posts", get(index))
         .route("/posts/{id}", get(show))
 }
 
@@ -43,39 +45,261 @@ pub fn visibility(current: &CurrentUser) -> Visibility {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct IndexQuery {
-    before: Option<i64>,
+    #[serde(default)]
+    tags: String,
+    #[serde(default)]
+    page: String,
 }
 
-async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, AppError> {
+/// Tags listed beside search results.
+const SIDEBAR_TAGS: usize = 25;
+
+/// Search results; the front page is the empty search.
+async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
+    let db = state.db.read();
+    let config = &state.config.search;
+    let input = params.tags.trim();
+    let page_ref: PageRef = if params.page.is_empty() {
+        PageRef::default()
+    } else {
+        params
+            .page
+            .parse()
+            .map_err(|()| AppError::BadRequest("That page doesn't exist".into()))?
+    };
+
+    let failed = |message: String| {
+        page.render_with_status(
+            StatusCode::BAD_REQUEST,
+            "posts.html",
+            context! { search => context! { tags => input, error => message } },
+        )
+    };
+    let query = match SearchQuery::parse(input) {
+        Ok(query) => query,
+        Err(error) => return Ok(failed(error.to_string())),
+    };
+    let plan = match Plan::resolve(db, &query, &visibility(&page.current), config).await {
+        Ok(plan) => plan,
+        Err(SearchError::Invalid(message)) => return Ok(failed(message)),
+        Err(SearchError::Db(error)) => return Err(error.into()),
+    };
+    let (ids, count) = match (plan.ids(db, page_ref).await, plan.count(db).await) {
+        (Ok(ids), Ok(count)) => (ids, count),
+        (Err(SearchError::Invalid(message)), _) => return Ok(failed(message)),
+        (Err(SearchError::Db(error)), _) | (_, Err(SearchError::Db(error))) => {
+            return Err(error.into());
+        }
+        (_, Err(SearchError::Invalid(message))) => return Ok(failed(message)),
+    };
+
     let sizes = &state.media.config().thumbnail_sizes;
     let box_size = sizes.first().copied().unwrap_or(250);
     let kinds = (
         format!("thumb-{box_size}"),
         format!("thumb-{}", sizes.get(1).copied().unwrap_or(box_size)),
     );
-    let cards = posts::recent(
-        state.db.read(),
-        &visibility(&page.current),
-        query.before,
-        PAGE_SIZE,
-        (&kinds.0, &kinds.1),
-    )
-    .await?;
-    let next_before = (cards.len() == PAGE_SIZE as usize)
-        .then(|| cards.last().map(|c| c.id))
-        .flatten();
-    let cards: Vec<Value> = cards
+    let cards = posts::cards(db, &ids, (&kinds.0, &kinds.1)).await?;
+    let normalized = query.to_string();
+    let post_query = (!normalized.is_empty()).then(|| {
+        url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("q", &normalized)
+            .finish()
+    });
+    let card_values: Vec<Value> = cards
         .iter()
-        .map(|card| card_context(state, card, box_size))
+        .map(|card| card_context(state, card, box_size, post_query.as_deref()))
         .collect();
+
+    let sidebar = sidebar_tags(db, &cards, &normalized).await?;
+    let pager = Pager {
+        query: &normalized,
+        page: page_ref,
+        per_page: plan.per_page(),
+        max_page: config.max_page,
+        keyset: plan.supports_keyset(),
+        descending: plan.order() == Order::IdDesc,
+        count,
+        first: cards.first().map(|c| c.id),
+        last: cards.last().map(|c| c.id),
+        full: ids.len() == plan.per_page() as usize,
+    };
     Ok(page.render(
-        "home.html",
-        context! { cards => cards, next_before => next_before },
+        "posts.html",
+        context! {
+            search => context! { tags => normalized },
+            cards => card_values,
+            count => count_text(count),
+            sidebar => sidebar,
+            pager => pager.context(),
+        },
     ))
+}
+
+/// The most used tags among `cards`, grouped as on post pages, each with
+/// links to narrow or exclude it from `query`.
+async fn sidebar_tags(
+    db: &sqlx::PgPool,
+    cards: &[Card],
+    query: &str,
+) -> Result<Vec<Value>, AppError> {
+    let mut ids: Vec<i32> = cards
+        .iter()
+        .flat_map(|c| c.tag_ids.iter().copied())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut found = tags::by_ids(db, &ids).await?;
+    found.truncate(SIDEBAR_TAGS);
+    let categories = tags::categories(db).await?;
+    Ok(found
+        .iter()
+        .map(|tag| {
+            let category = categories.iter().find(|c| c.id == tag.category_id);
+            let with = |term: String| {
+                Value::from_safe_string(search_url(format!("{query} {term}").trim()))
+            };
+            context! {
+                name => tag.name,
+                count => tag.post_count,
+                category => category.map(|c| c.name.clone()),
+                url => Value::from_safe_string(search_url(&tag.name)),
+                include_url => with(tag.name.clone()),
+                exclude_url => with(format!("-{}", tag.name)),
+            }
+        })
+        .collect())
+}
+
+fn count_text(count: Count) -> String {
+    let posts = |n: i64| if n == 1 { "post" } else { "posts" };
+    match count {
+        Count::Exact(n) => format!("{} {}", thousands(n), posts(n)),
+        Count::About(n) => format!("about {} {}", thousands(n), posts(n)),
+        Count::AtLeast(n) => format!("{}+ posts", thousands(n)),
+    }
+}
+
+/// `12345` as `12,345`.
+fn thousands(n: i64) -> String {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
+    if n < 0 {
+        out.push('-');
+    }
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Pagination links for a results page.
+struct Pager<'a> {
+    query: &'a str,
+    page: PageRef,
+    per_page: u32,
+    max_page: u32,
+    /// Whether keyset (`b…`/`a…`) links work for this order.
+    keyset: bool,
+    /// Id order is newest first.
+    descending: bool,
+    count: Count,
+    /// Ids of the first and last post shown.
+    first: Option<i64>,
+    last: Option<i64>,
+    /// The page was full, so there may be more.
+    full: bool,
+}
+
+impl Pager<'_> {
+    fn url(&self, page: &str) -> Value {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if !self.query.is_empty() {
+            query.append_pair("tags", self.query);
+        }
+        query.append_pair("page", page);
+        Value::from_safe_string(format!("/posts?{}", query.finish()))
+    }
+
+    /// Numbered pages there are, as far as known.
+    fn pages(&self) -> Option<u32> {
+        let per_page = i64::from(self.per_page.max(1));
+        let pages = match self.count {
+            Count::Exact(n) | Count::About(n) => (n + per_page - 1) / per_page,
+            Count::AtLeast(_) => return None,
+        };
+        Some(u32::try_from(pages).unwrap_or(u32::MAX).min(self.max_page))
+    }
+
+    fn context(&self) -> Value {
+        // Keyset links move away from the shown posts: "older" is lower
+        // ids in newest-first order, higher ids otherwise.
+        let (towards_end, towards_start) = if self.descending {
+            ('b', 'a')
+        } else {
+            ('a', 'b')
+        };
+        let keyset_next = || {
+            self.last
+                .filter(|_| self.keyset && self.full)
+                .map(|id| self.url(&format!("{towards_end}{id}")))
+        };
+        match self.page {
+            PageRef::Number(current) => {
+                let pages = self.pages();
+                let has_next = match pages {
+                    Some(pages) => current < pages,
+                    None => self.full,
+                };
+                let next = if has_next && current < self.max_page {
+                    Some(self.url(&(current + 1).to_string()))
+                } else if has_next {
+                    keyset_next()
+                } else {
+                    None
+                };
+                let last = pages.unwrap_or(current).max(current);
+                // A window around the current page, plus the first and
+                // (when known) the last.
+                let mut numbers: Vec<Value> = Vec::new();
+                let mut previous = 0;
+                for n in 1..=last {
+                    let shown = n == 1
+                        || (n + 2 >= current && n <= current + 2)
+                        || (n == last && pages.is_some());
+                    if !shown {
+                        continue;
+                    }
+                    if n > previous + 1 {
+                        numbers.push(context! { gap => true });
+                    }
+                    numbers.push(context! {
+                        number => n,
+                        url => self.url(&n.to_string()),
+                        current => n == current,
+                    });
+                    previous = n;
+                }
+                context! {
+                    previous => (current > 1).then(|| self.url(&(current - 1).to_string())),
+                    next => next,
+                    numbers => if last > 1 { numbers } else { Vec::new() },
+                }
+            }
+            PageRef::Before(_) | PageRef::After(_) => context! {
+                previous => self.first.map(|id| self.url(&format!("{towards_start}{id}"))),
+                next => keyset_next(),
+                numbers => Vec::<Value>::new(),
+            },
+        }
+    }
 }
 
 /// The URL of a stored file, for templates. Built from a validated key and
@@ -85,11 +309,18 @@ fn file_url(state: &AppState, key: &str) -> Option<Value> {
     Key::parse(key).map(|k| Value::from_safe_string(state.storage.url(&k)))
 }
 
-fn card_context(state: &AppState, card: &Card, box_size: u32) -> Value {
+/// A grid card. `post_query` (`q=…`) is added to the post link so the post
+/// page can lead back to the search.
+fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option<&str>) -> Value {
     let url = |key: &Option<String>| key.as_deref().and_then(|k| file_url(state, k));
     let (width, height) = fit(card.width, card.height, box_size);
+    let href = match post_query {
+        Some(query) => format!("/posts/{}?{query}", card.id),
+        None => format!("/posts/{}", card.id),
+    };
     context! {
         id => card.id,
+        href => Value::from_safe_string(href),
         thumb => url(&card.thumb),
         thumb_2x => url(&card.thumb_2x),
         width => width,
@@ -109,7 +340,18 @@ fn fit(width: i32, height: i32, size: u32) -> (u32, u32) {
     ((w * scale).round() as u32, (h * scale).round() as u32)
 }
 
-async fn show(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
+#[derive(Debug, Default, Deserialize)]
+struct ShowQuery {
+    /// The search the post was opened from.
+    #[serde(default)]
+    q: String,
+}
+
+async fn show(
+    page: Page,
+    Path(id): Path<i64>,
+    Query(params): Query<ShowQuery>,
+) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
     // The primary, so an uploader redirected here sees their post even if
@@ -175,6 +417,10 @@ async fn show(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
             file => file,
             uploader => uploader,
             tag_groups => tag_groups,
+            search => context! {
+                tags => params.q,
+                back_url => (!params.q.is_empty()).then(|| Value::from_safe_string(search_url(&params.q))),
+            },
             processing => asset.processed_at.is_none(),
         },
     ))
@@ -216,6 +462,73 @@ mod tests {
     }
 
     #[test]
+    fn counts_read_well() {
+        assert_eq!(count_text(Count::Exact(1)), "1 post");
+        assert_eq!(count_text(Count::Exact(12_345)), "12,345 posts");
+        assert_eq!(count_text(Count::About(1_000_000)), "about 1,000,000 posts");
+        assert_eq!(count_text(Count::AtLeast(10_000)), "10,000+ posts");
+        assert_eq!(thousands(-1234), "-1,234");
+        assert_eq!(thousands(999), "999");
+    }
+
+    fn pager(page: PageRef, count: Count, full: bool) -> Pager<'static> {
+        Pager {
+            query: "cat",
+            page,
+            per_page: 10,
+            max_page: 5,
+            keyset: true,
+            descending: true,
+            count,
+            first: Some(90),
+            last: Some(81),
+            full,
+        }
+    }
+
+    #[test]
+    fn pager_links() {
+        let links = |page, count, full| {
+            let value = pager(page, count, full).context();
+            let get = |key: &str| {
+                let v = value.get_attr(key).unwrap();
+                (!v.is_none()).then(|| v.to_string())
+            };
+            let numbers: Vec<String> = value
+                .get_attr("numbers")
+                .unwrap()
+                .try_iter()
+                .unwrap()
+                .map(|n| match n.get_attr("number").unwrap() {
+                    v if v.is_undefined() => "…".to_owned(),
+                    v if n.get_attr("current").unwrap().is_true() => format!("[{v}]"),
+                    v => v.to_string(),
+                })
+                .collect();
+            (get("previous"), get("next"), numbers.join(" "))
+        };
+        // 35 posts at 10 a page: 4 pages.
+        let (previous, next, numbers) = links(PageRef::Number(1), Count::Exact(35), true);
+        assert_eq!(previous, None);
+        assert_eq!(next.as_deref(), Some("/posts?tags=cat&page=2"));
+        assert_eq!(numbers, "[1] 2 3 4");
+        let (previous, next, _) = links(PageRef::Number(4), Count::Exact(35), false);
+        assert_eq!(previous.as_deref(), Some("/posts?tags=cat&page=3"));
+        assert_eq!(next, None);
+        // Beyond the numbered pages, "next" continues by id.
+        let (_, next, numbers) = links(PageRef::Number(5), Count::AtLeast(100), true);
+        assert_eq!(next.as_deref(), Some("/posts?tags=cat&page=b81"));
+        assert_eq!(numbers, "1 … 3 4 [5]");
+        let (previous, next, numbers) = links(PageRef::Before(100), Count::AtLeast(100), true);
+        assert_eq!(previous.as_deref(), Some("/posts?tags=cat&page=a90"));
+        assert_eq!(next.as_deref(), Some("/posts?tags=cat&page=b81"));
+        assert_eq!(numbers, "");
+        // Large counts show the last page too.
+        let (_, _, numbers) = links(PageRef::Number(1), Count::About(1_000), true);
+        assert_eq!(numbers, "[1] 2 3 … 5");
+    }
+
+    #[test]
     fn sizes_and_links() {
         assert_eq!(human_size(512), "512 B");
         assert_eq!(human_size(54_043), "52.8 KB");
@@ -246,7 +559,7 @@ mod tests {
             .await;
         response
             .location
-            .unwrap()
+            .unwrap_or_else(|| panic!("upload failed: {}", response.body))
             .strip_prefix("/posts/")
             .unwrap()
             .parse()
@@ -272,7 +585,7 @@ mod tests {
             page.body
         );
 
-        let page = app.get(&format!("/?before={newer}"), None).await;
+        let page = app.get(&format!("/?page=b{newer}"), None).await;
         assert!(!page.body.contains(&format!("href=\"/posts/{newer}\"")));
         assert!(page.body.contains(&format!("href=\"/posts/{older}\"")));
     }
@@ -332,6 +645,63 @@ mod tests {
         assert!(position(">apple<") < position(">zebra<"));
         assert!(body.contains("class=\"tag tag-artist\" href=\"/posts?tags=someone\""));
         assert!(body.contains("href=\"/posts?tags=c%2B%2B\""), "{body}");
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn searching_by_tags(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let session = session_for(&pool, "alice", SystemRole::Member).await;
+        let cat = upload(
+            &app,
+            &session,
+            &fixture::png(20, 20),
+            &[("tags", "cat cute")],
+        )
+        .await;
+        let dog = upload(
+            &app,
+            &session,
+            &fixture::png(24, 20),
+            &[("tags", "dog cute")],
+        )
+        .await;
+
+        let page = app.get("/posts?tags=Cute+-dog", None).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+        assert!(
+            page.body
+                .contains(&format!("href=\"/posts/{cat}?q=cute+-dog\"")),
+            "{}",
+            page.body
+        );
+        assert!(!page.body.contains(&format!("/posts/{dog}")));
+        assert!(page.body.contains("1 post"));
+        // The normalised query goes back into the search box.
+        assert!(page.body.contains("value=\"cute -dog\""), "{}", page.body);
+        // The sidebar lists the page's tags with links to refine.
+        assert!(
+            page.body.contains("href=\"/posts?tags=cute+-dog+cat\""),
+            "{}",
+            page.body
+        );
+        assert!(page.body.contains("href=\"/posts?tags=cute+-dog+-cat\""));
+
+        let post = app.get(&format!("/posts/{cat}?q=cute+-dog"), None).await;
+        assert!(
+            post.body.contains("href=\"/posts?tags=cute+-dog\""),
+            "{}",
+            post.body
+        );
+
+        let bad = app.get("/posts?tags=rating:x", None).await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+        assert!(bad.body.contains("expected ratings"), "{}", bad.body);
+        let nothing = app.get("/posts?tags=nonexistent", None).await;
+        assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
+        assert_eq!(
+            app.get("/posts?page=x", None).await.status,
+            StatusCode::BAD_REQUEST
+        );
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

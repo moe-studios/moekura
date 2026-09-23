@@ -95,6 +95,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn serve(config: Config) -> anyhow::Result<()> {
+    check_media_tools(&config).await?;
     let db = connect(&config.database).await?;
     if config.database.auto_migrate {
         migrate(&db).await?;
@@ -139,6 +140,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
 }
 
 async fn worker(config: Config) -> anyhow::Result<()> {
+    check_media_tools(&config).await?;
     let db = connect(&config.database).await?;
     if config.database.auto_migrate {
         migrate(&db).await?;
@@ -149,6 +151,17 @@ async fn worker(config: Config) -> anyhow::Result<()> {
     wait_for_workers(tokio::spawn(run(shutdown))).await;
     db.close().await;
     tracing::info!("shut down");
+    Ok(())
+}
+
+/// Fails early, with an explanation, when vips or ffmpeg is missing, rather
+/// than on the first upload.
+async fn check_media_tools(config: &Config) -> anyhow::Result<()> {
+    let versions = Media::new(config.media.clone())
+        .check_tools()
+        .await
+        .context("media tools are required (see the README for installing vips and ffmpeg)")?;
+    tracing::info!(tools = versions.join(", "), "media tools found");
     Ok(())
 }
 

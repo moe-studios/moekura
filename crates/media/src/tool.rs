@@ -109,8 +109,11 @@ where
 /// installed and to log which version is in use.
 pub async fn version(program: &Path, flag: &str) -> Result<String, ToolError> {
     let out = run(program, [flag], Duration::from_secs(10)).await?;
-    Ok(String::from_utf8_lossy(&out)
-        .lines()
+    let text = String::from_utf8_lossy(&out);
+    let first_line = text.lines().next().unwrap_or_default();
+    // ffmpeg appends its copyright notice to the version line.
+    Ok(first_line
+        .split(" Copyright")
         .next()
         .unwrap_or_default()
         .trim()

@@ -22,6 +22,9 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # The same Debian release as the container image, so media tests run
+    # against the vips and ffmpeg that ship.
+    container: rust:1.98-trixie
     services:
       postgres:
         image: postgres:18-alpine
@@ -29,8 +32,6 @@ jobs:
           POSTGRES_USER: uwuu
           POSTGRES_PASSWORD: uwuu
           POSTGRES_DB: uwuu
-        ports:
-          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U uwuu"
           --health-interval 5s
@@ -38,10 +39,14 @@ jobs:
           --health-retries 10
     env:
       # sqlx::test creates a throwaway database per test on this server.
-      DATABASE_URL: postgres://uwuu:uwuu@localhost:5432/uwuu
+      DATABASE_URL: postgres://uwuu:uwuu@postgres:5432/uwuu
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install media tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libvips-tools libheif-plugin-dav1d libheif-plugin-aomenc ffmpeg
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
 

@@ -4,8 +4,9 @@ A self-hostable booru (tag-based image board) that scales from a private
 single-user instance to a public site with millions of posts, using the same
 binary and schema at every size.
 
-> **Status: early development.** Only the server skeleton exists so far. See
-> [docs/design.md](docs/design.md) for the plan and roadmap.
+> **Status: early development.** Accounts, uploads, thumbnails and a post
+> grid work; tags and search come next. See [docs/design.md](docs/design.md)
+> for the plan and roadmap.
 
 ## Running
 
@@ -17,13 +18,34 @@ docker compose -f deploy/compose.tiny.yml up -d
 curl localhost:8080/readyz   # → ok
 ```
 
-Without containers, you need PostgreSQL 16 or newer and a database the app
-owns:
+The container image includes the media tools, which make up most of its
+size (about 640 MB).
+
+Without containers, you need PostgreSQL 16 or newer, a database the app
+owns, and the media tools:
+
+| Tool | Used for | Fedora | Debian / Ubuntu |
+|---|---|---|---|
+| libvips 8.15+ (`vips`, `vipsheader`, `vipsthumbnail`) | reading images, thumbnails, perceptual hashes | `vips-tools` (AVIF: `vips-heif`, JPEG XL: `vips-jxl`) | `libvips-tools libheif-plugin-dav1d libheif-plugin-aomenc` |
+| ffmpeg (`ffmpeg`, `ffprobe`) | reading videos, poster frames | `ffmpeg` (RPM Fusion) or `ffmpeg-free` | `ffmpeg` |
+
+`serve` and `worker` check for them at startup.
 
 ```sh
 cargo build --release
 UWUU_DATABASE__URL=postgres://uwuu:secret@localhost/uwuu target/release/uwuubooru serve
 ```
+
+### Files and scaling
+
+Uploads and thumbnails go to `storage.path` (`./data` by default), or to
+any S3-compatible bucket with `storage.backend = "s3"`. Back files up
+together with the database. Set `storage.public_base_url` when a CDN or
+public bucket serves the files; otherwise the app serves them at `/data/`.
+
+`serve` runs background jobs (thumbnails, hashing) itself. For busier sites,
+run one or more `uwuubooru worker` processes and set
+`jobs.run_in_serve = false` on the web nodes.
 
 ### Commands
 
@@ -68,7 +90,8 @@ See [`uwuubooru.example.toml`](uwuubooru.example.toml) for every option.
 
 ## Development
 
-Requires Rust 1.94+ and a Postgres server for the database tests:
+Requires Rust 1.94+, the media tools above, and a Postgres server for the
+database tests:
 
 ```sh
 podman run -d --name uwuu-pg -p 55432:5432 \
@@ -84,10 +107,13 @@ cargo fmt --all
 Layout:
 
 ```
-crates/core   domain types and pure logic (config, later: search parser, permissions)
-crates/db     Postgres pools, read-replica routing, migrations
-crates/web    axum router, middleware, HTTP handlers
-crates/app    the `uwuubooru` binary: CLI, config loading, logging
+crates/core     domain types and pure logic (config, permissions, accounts, settings)
+crates/db       Postgres pools, read-replica routing, migrations, queries
+crates/storage  file storage: local disk or S3
+crates/media    identifying and processing media with vips and ffmpeg
+crates/jobs     the Postgres job queue's workers and job handlers
+crates/web      axum router, middleware, pages
+crates/app      the `uwuubooru` binary: CLI, config loading, logging
 deploy/       compose files and deployment examples
 ```
 

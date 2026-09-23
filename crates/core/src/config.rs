@@ -21,6 +21,7 @@ pub struct Config {
     pub jobs: JobsConfig,
     pub media: MediaConfig,
     pub paths: PathsConfig,
+    pub search: SearchConfig,
     pub storage: StorageConfig,
     pub telemetry: TelemetryConfig,
 }
@@ -124,6 +125,37 @@ impl Default for JobsConfig {
             workers: 2,
             run_in_serve: true,
             lock_timeout_secs: 300,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SearchConfig {
+    /// Posts per page unless a search asks for another `limit:`.
+    pub per_page: u32,
+    /// Highest `limit:` a search may ask for.
+    pub max_per_page: u32,
+    /// Deepest numbered page. Further pages are reached with "next" links,
+    /// which don't get slower with depth.
+    pub max_page: u32,
+    /// Most tags and filters in one search.
+    pub max_terms: usize,
+    /// Most tags a wildcard expands to (the most used ones).
+    pub wildcard_limit: u32,
+    /// Result counts are exact up to this many posts, estimated above.
+    pub count_limit: u32,
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            per_page: 40,
+            max_per_page: 200,
+            max_page: 1000,
+            max_terms: 40,
+            wildcard_limit: 100,
+            count_limit: 10_000,
         }
     }
 }
@@ -394,7 +426,7 @@ impl Config {
                 message: "must be an http:// or https:// URL".into(),
             });
         }
-        const MEDIA_TYPES: [&str; 8] = ["jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm"];
+        const MEDIA_TYPES: &[&str] = crate::search::FILETYPES;
         if let Some(unknown) = self
             .media
             .allowed_types
@@ -407,6 +439,32 @@ impl Config {
                     "unknown type `{unknown}` (known: {})",
                     MEDIA_TYPES.join(", ")
                 ),
+            });
+        }
+        let search = &self.search;
+        for (key, value) in [
+            ("search.per_page", search.per_page),
+            ("search.max_page", search.max_page),
+            ("search.wildcard_limit", search.wildcard_limit),
+            ("search.count_limit", search.count_limit),
+        ] {
+            if value == 0 {
+                problems.push(ConfigProblem {
+                    key,
+                    message: "must be at least 1".into(),
+                });
+            }
+        }
+        if search.max_per_page < search.per_page {
+            problems.push(ConfigProblem {
+                key: "search.max_per_page",
+                message: "must not be less than search.per_page".into(),
+            });
+        }
+        if search.max_terms == 0 {
+            problems.push(ConfigProblem {
+                key: "search.max_terms",
+                message: "must be at least 1".into(),
             });
         }
         if !matches!(self.media.variant_format.as_str(), "webp" | "avif") {

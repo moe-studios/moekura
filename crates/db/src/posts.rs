@@ -118,6 +118,7 @@ pub struct Card {
     pub width: i32,
     pub height: i32,
     pub frames: i32,
+    pub tag_ids: Vec<i32>,
     /// Storage keys of the 1x and 2x thumbnails, once generated.
     pub thumb: Option<String>,
     pub thumb_2x: Option<String>,
@@ -133,7 +134,7 @@ pub async fn recent(
     thumb_kinds: (&str, &str),
 ) -> sqlx::Result<Vec<Card>> {
     sqlx::query_as(
-        "SELECT p.id, p.rating, p.status, a.media_type, a.width, a.height, a.frames,
+        "SELECT p.id, p.rating, p.status, a.media_type, a.width, a.height, a.frames, p.tag_ids,
                 t1.storage_key AS thumb, t2.storage_key AS thumb_2x
          FROM posts p
          JOIN media_assets a ON a.post_id = p.id
@@ -152,6 +153,31 @@ pub async fn recent(
     .bind(limit)
     .fetch_all(db)
     .await
+}
+
+/// Grid cards for `ids`, in the same order. Ids without a post (deleted
+/// meanwhile) are skipped.
+pub async fn cards(
+    db: impl PgExecutor<'_>,
+    ids: &[i64],
+    thumb_kinds: (&str, &str),
+) -> sqlx::Result<Vec<Card>> {
+    let mut cards: Vec<Card> = sqlx::query_as(
+        "SELECT p.id, p.rating, p.status, a.media_type, a.width, a.height, a.frames, p.tag_ids,
+                t1.storage_key AS thumb, t2.storage_key AS thumb_2x
+         FROM posts p
+         JOIN media_assets a ON a.post_id = p.id
+         LEFT JOIN media_variants t1 ON t1.asset_id = a.id AND t1.kind = $2
+         LEFT JOIN media_variants t2 ON t2.asset_id = a.id AND t2.kind = $3
+         WHERE p.id = ANY($1)",
+    )
+    .bind(ids)
+    .bind(thumb_kinds.0)
+    .bind(thumb_kinds.1)
+    .fetch_all(db)
+    .await?;
+    cards.sort_by_key(|card| ids.iter().position(|&id| id == card.id));
+    Ok(cards)
 }
 
 pub async fn insert(db: impl PgExecutor<'_>, post: NewPost<'_>) -> sqlx::Result<i64> {

@@ -51,6 +51,19 @@ run_in_serve = true
 # Seconds before a job whose worker stopped responding is retried elsewhere.
 lock_timeout_secs = 300
 
+[search]
+# Posts per page, and the most a search may ask for with limit:.
+per_page = 40
+max_per_page = 200
+# Deepest numbered page; "next" links keep working beyond it.
+max_page = 1000
+# Most tags and filters in one search.
+max_terms = 40
+# Most tags a wildcard like long_* expands to (the most used ones).
+wildcard_limit = 100
+# Result counts are exact up to this many posts and estimated above.
+count_limit = 10000
+
 [storage]
 # "local" (a directory) or "s3" (any S3-compatible store).
 backend = "local"

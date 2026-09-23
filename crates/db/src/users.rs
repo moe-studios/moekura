@@ -80,6 +80,14 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<User
         .await
 }
 
+/// The names of the users among `ids`, as (id, name).
+pub async fn names(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result<Vec<(i64, String)>> {
+    sqlx::query_as("SELECT id, name::text FROM users WHERE id = ANY($1)")
+        .bind(ids)
+        .fetch_all(db)
+        .await
+}
+
 /// Case-insensitive.
 pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> sqlx::Result<Option<User>> {
     sqlx::query_as(select_users!("WHERE name = $1::citext"))

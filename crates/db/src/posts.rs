@@ -172,6 +172,15 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post
     row.map(Post::try_from).transpose()
 }
 
+/// The posts among `ids` that exist, in no particular order.
+pub async fn by_ids(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result<Vec<Post>> {
+    let rows: Vec<PostRow> = sqlx::query_as(select_posts!("WHERE id = ANY($1)"))
+        .bind(ids)
+        .fetch_all(db)
+        .await?;
+    rows.into_iter().map(Post::try_from).collect()
+}
+
 /// Moves a post from one of `from` to `to`; false if it wasn't in one of
 /// them (so concurrent moderators can't both act).
 pub async fn set_status(

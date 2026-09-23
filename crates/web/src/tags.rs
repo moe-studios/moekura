@@ -23,9 +23,9 @@ use crate::pages::Page;
 use crate::templates::{search_url, url_value};
 
 /// Tags per page of the tag list.
-const PAGE_SIZE: i64 = 50;
+pub(crate) const PAGE_SIZE: i64 = 50;
 /// Deepest page of the tag list; narrow the pattern to see further.
-const MAX_PAGE: i64 = 200;
+pub(crate) const MAX_PAGE: i64 = 200;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -196,8 +196,9 @@ struct AutocompleteQuery {
     q: String,
 }
 
-#[derive(Debug, Serialize)]
-struct Suggestion {
+/// A tag suggested for what was typed so far.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct Suggestion {
     name: String,
     category: String,
     post_count: i32,
@@ -213,24 +214,33 @@ async fn autocomplete(
     Query(query): Query<AutocompleteQuery>,
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
-    let db = state.db.read();
-    let prefix = uwu_core::tags::normalize(&query.q);
+    let suggestions = suggestions(state.db.read(), &query.q).await?;
+    // Private: what a viewer may see depends on their session.
+    Ok(([(CACHE_CONTROL, "private, max-age=60")], Json(suggestions)).into_response())
+}
+
+/// Suggestions for the tag being typed (`input`, not yet normalized).
+pub(crate) async fn suggestions(db: &PgPool, input: &str) -> sqlx::Result<Vec<Suggestion>> {
+    let prefix = uwu_core::tags::normalize(input);
     let found = tags::autocomplete(db, &prefix, SUGGESTIONS).await?;
     let categories = tags::categories(db).await?;
-    let suggestions: Vec<Suggestion> = found
+    Ok(found
         .into_iter()
         .map(|s| Suggestion {
-            category: categories
-                .iter()
-                .find(|c| c.id == s.category_id)
-                .map_or_else(|| "general".to_owned(), |c| c.name.clone()),
+            category: category_name(&categories, s.category_id),
             name: s.name,
             post_count: s.post_count,
             antecedent: s.antecedent,
         })
-        .collect();
-    // Private: what a viewer may see depends on their session.
-    Ok(([(CACHE_CONTROL, "private, max-age=60")], Json(suggestions)).into_response())
+        .collect())
+}
+
+/// The name of category `id`; tags in an unknown one count as general.
+pub(crate) fn category_name(categories: &[Category], id: i16) -> String {
+    categories
+        .iter()
+        .find(|c| c.id == id)
+        .map_or_else(|| "general".to_owned(), |c| c.name.clone())
 }
 
 #[derive(Debug, Default, Deserialize)]

@@ -116,6 +116,14 @@ pub async fn for_post(db: impl PgExecutor<'_>, post_id: i64) -> sqlx::Result<Opt
         .await
 }
 
+/// The assets of the posts among `post_ids`, in no particular order.
+pub async fn for_posts(db: impl PgExecutor<'_>, post_ids: &[i64]) -> sqlx::Result<Vec<Asset>> {
+    sqlx::query_as(select_assets!("WHERE post_id = ANY($1)"))
+        .bind(post_ids)
+        .fetch_all(db)
+        .await
+}
+
 /// Asset ids for the given posts, or for every post when `None`.
 pub async fn asset_ids(
     db: impl PgExecutor<'_>,
@@ -168,6 +176,17 @@ pub async fn variants(db: impl PgExecutor<'_>, asset_id: i64) -> sqlx::Result<Ve
          FROM media_variants WHERE asset_id = $1 ORDER BY kind",
     )
     .bind(asset_id)
+    .fetch_all(db)
+    .await
+}
+
+/// The variants of all `asset_ids`, by asset and kind.
+pub async fn variants_of(db: impl PgExecutor<'_>, asset_ids: &[i64]) -> sqlx::Result<Vec<Variant>> {
+    sqlx::query_as(
+        "SELECT asset_id, kind, format, width, height, file_size, storage_key
+         FROM media_variants WHERE asset_id = ANY($1) ORDER BY asset_id, kind",
+    )
+    .bind(asset_ids)
     .fetch_all(db)
     .await
 }

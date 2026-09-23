@@ -32,8 +32,9 @@ struct BackQuery {
 
 #[derive(Debug, Deserialize)]
 struct FavoriteForm {
-    /// `add` or `remove`.
-    action: String,
+    /// `add` or `remove`. Not named `action`: a field by that name would
+    /// shadow `form.action` in the page's DOM.
+    favorite: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -105,7 +106,7 @@ async fn favorite(
 ) -> Result<Response, AppError> {
     let user = user_for(&page, id, Permission::Favorite).await?;
     let db = page.state().db.primary();
-    match form.action.as_str() {
+    match form.favorite.as_str() {
         "add" => favorites::add(db, user, id).await?,
         "remove" => favorites::remove(db, user, id).await?,
         _ => return Err(AppError::BadRequest("Unknown action".into())),
@@ -161,7 +162,7 @@ mod tests {
         let vote = format!("/posts/{post}/vote");
 
         assert_eq!(
-            app.post_form(&favorite, None, &[], "action=add")
+            app.post_form(&favorite, None, &[], "favorite=add")
                 .await
                 .status,
             StatusCode::UNAUTHORIZED
@@ -171,7 +172,7 @@ mod tests {
                 &format!("{favorite}?q=cat"),
                 Some(&alice),
                 &[],
-                "action=add",
+                "favorite=add",
             )
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER);
@@ -201,7 +202,7 @@ mod tests {
 
         let page = app.get(&format!("/posts/{post}"), Some(&alice)).await;
         assert!(
-            page.body.contains("name=\"action\" value=\"remove\""),
+            page.body.contains("name=\"favorite\" value=\"remove\""),
             "{}",
             page.body
         );

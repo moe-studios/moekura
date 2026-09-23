@@ -397,7 +397,7 @@ function update(root, state) {
     button.setAttribute("aria-pressed", String(pressed));
     button.value = String(pressed ? 0 : direction);
   }
-  const favorite = root.querySelector(".favorite button[name=action]");
+  const favorite = root.querySelector(".favorite button[name=favorite]");
   if (favorite) {
     favorite.setAttribute("aria-pressed", String(state.favorited));
     favorite.value = state.favorited ? "remove" : "add";
@@ -406,20 +406,24 @@ function update(root, state) {
 function enhanceReactions(root = document) {
   for (const form of root.querySelectorAll("form[data-reaction]")) {
     form.addEventListener("submit", (event) => {
+      if (form.dataset["plain"]) return;
       event.preventDefault();
       const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
       const body = new URLSearchParams();
       for (const [name, value] of new FormData(form, submitter)) {
         if (typeof value === "string") body.append(name, value);
       }
-      void fetch(form.action, {
+      void fetch(form.getAttribute("action") ?? "", {
         method: "POST",
         body,
         headers: { Accept: "application/json" }
       }).then(async (response) => {
         if (!response.ok) throw new Error(String(response.status));
         update(root, await response.json());
-      }).catch(() => form.submit());
+      }).catch(() => {
+        form.dataset["plain"] = "1";
+        form.requestSubmit(submitter);
+      });
     });
   }
 }

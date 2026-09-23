@@ -93,7 +93,7 @@
       <dd>
         {% if reactions.can_favorite %}
         <form class="favorite" method="post" action="/posts/{{ post.id }}/favorite{{ reactions.query or '' }}" data-reaction>
-          <button type="submit" name="action" value="{{ 'remove' if reactions.favorited else 'add' }}" class="icon" aria-pressed="{{ 'true' if reactions.favorited else 'false' }}" aria-label="Favorite" title="Favorite">♥</button>
+          <button type="submit" name="favorite" value="{{ 'remove' if reactions.favorited else 'add' }}" class="icon" aria-pressed="{{ 'true' if reactions.favorited else 'false' }}" aria-label="Favorite" title="Favorite">♥</button>
           <span class="fav-count">{{ reactions.fav_count }}</span>
         </form>
         {% else %}<span class="fav-count">{{ reactions.fav_count }}</span>{% endif %}

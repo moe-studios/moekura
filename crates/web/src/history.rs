@@ -85,10 +85,12 @@ async fn history(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> 
                 rating => changed(|v| v.rating.clone()).then(|| {
                     v.rating.parse::<Rating>().map(Rating::label).unwrap_or_default()
                 }),
-                source => changed(|v| v.source.clone()).then(|| v.source.clone()),
-                parent => changed(|v| format!("{:?}", v.parent_id)).then(|| {
-                    v.parent_id.map_or_else(|| "none".to_owned(), |p| format!("#{p}"))
-                }),
+                // The first version only lists what was set.
+                source => (changed(|v| v.source.clone()) && (previous.is_some() || !v.source.is_empty()))
+                    .then(|| v.source.clone()),
+                parent => (changed(|v| format!("{:?}", v.parent_id))
+                    && (previous.is_some() || v.parent_id.is_some()))
+                .then(|| v.parent_id.map_or_else(|| "none".to_owned(), |p| format!("#{p}"))),
                 description_changed => previous.is_some() && changed(|v| v.description.clone()),
                 current => i == 0,
                 can_revert => can_revert && i > 0,

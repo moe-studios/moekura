@@ -20,7 +20,7 @@ function update(root: ParentNode, state: Reactions): void {
     button.setAttribute("aria-pressed", String(pressed));
     button.value = String(pressed ? 0 : direction);
   }
-  const favorite = root.querySelector<HTMLButtonElement>(".favorite button[name=action]");
+  const favorite = root.querySelector<HTMLButtonElement>(".favorite button[name=favorite]");
   if (favorite) {
     favorite.setAttribute("aria-pressed", String(state.favorited));
     favorite.value = state.favorited ? "remove" : "add";
@@ -30,13 +30,16 @@ function update(root: ParentNode, state: Reactions): void {
 export function enhanceReactions(root: Document = document): void {
   for (const form of root.querySelectorAll<HTMLFormElement>("form[data-reaction]")) {
     form.addEventListener("submit", (event) => {
+      // Set when falling back to a normal submission.
+      if (form.dataset["plain"]) return;
       event.preventDefault();
       const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
       const body = new URLSearchParams();
       for (const [name, value] of new FormData(form, submitter)) {
         if (typeof value === "string") body.append(name, value);
       }
-      void fetch(form.action, {
+      // getAttribute: a control named "action" would shadow form.action.
+      void fetch(form.getAttribute("action") ?? "", {
         method: "POST",
         body,
         headers: { Accept: "application/json" },
@@ -46,7 +49,10 @@ export function enhanceReactions(root: Document = document): void {
           update(root, (await response.json()) as Reactions);
         })
         // Fall back to a normal submission, which shows any error.
-        .catch(() => form.submit());
+        .catch(() => {
+          form.dataset["plain"] = "1";
+          form.requestSubmit(submitter);
+        });
     });
   }
 }

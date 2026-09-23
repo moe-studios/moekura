@@ -417,6 +417,7 @@ button.icon {
 }
 button.icon:hover { color: var(--accent); border-color: var(--accent); }
 button.icon[aria-pressed="true"] { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+form.vote button[type="submit"], form.favorite button[type="submit"] { margin: 0; padding: 0 6px; }
 .score, .fav-count { font-variant-numeric: tabular-nums; min-width: 1.5em; text-align: center; }
 
 .facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; }

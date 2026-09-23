@@ -85,7 +85,12 @@ impl MediaJobs {
             self.render_variant(&asset, &source, source_type, &kind, size, work.path())
                 .await?;
         }
-        media::mark_processed(&self.db, asset_id, None).await?;
+        let phash = self
+            .media
+            .perceptual_hash(&source, source_type, work.path())
+            .await
+            .map_err(media_error)?;
+        media::mark_processed(&self.db, asset_id, Some(phash)).await?;
         tracing::info!(asset_id, post_id = asset.post_id, "media processed");
         Ok(())
     }
@@ -277,14 +282,9 @@ mod tests {
             assert!(jobs.storage.exists(&key).await.unwrap(), "{key}");
             assert_eq!(variant.format, "webp");
         }
-        assert!(
-            media::by_id(&pool, asset_id)
-                .await
-                .unwrap()
-                .unwrap()
-                .processed_at
-                .is_some()
-        );
+        let processed = media::by_id(&pool, asset_id).await.unwrap().unwrap();
+        assert!(processed.processed_at.is_some());
+        assert!(processed.phash.is_some());
         // Scratch space is cleaned up.
         assert_eq!(std::fs::read_dir(dir.join("work")).unwrap().count(), 0);
 

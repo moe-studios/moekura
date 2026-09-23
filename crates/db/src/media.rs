@@ -196,6 +196,54 @@ pub async fn mark_processed(
     Ok(())
 }
 
+/// Hashes within this many bits are always found: by pigeonhole, a hash
+/// differing in at most 3 bits matches at least one 16-bit chunk exactly,
+/// and each chunk is indexed.
+pub const SIMILAR_MAX_DISTANCE: u32 = 3;
+
+/// A post whose file looks like another.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Similar {
+    pub post_id: i64,
+    pub distance: i32,
+}
+
+/// Posts whose perceptual hash is within `max_distance` bits of `hash`,
+/// closest first. Candidates come from the chunk indexes, so results are
+/// complete up to [`SIMILAR_MAX_DISTANCE`]; larger distances only find
+/// matches that happen to share a chunk.
+pub async fn similar(
+    db: impl PgExecutor<'_>,
+    hash: u64,
+    max_distance: u32,
+    exclude_post: Option<i64>,
+    limit: i64,
+) -> sqlx::Result<Vec<Similar>> {
+    let [c0, c1, c2, c3] = phash_chunks(hash);
+    sqlx::query_as(
+        "SELECT post_id, distance FROM (
+             SELECT post_id, bit_count((phash # $1)::bit(64))::int AS distance
+             FROM media_assets
+             WHERE phash IS NOT NULL
+               AND (phash_0 = $2 OR phash_1 = $3 OR phash_2 = $4 OR phash_3 = $5)
+               AND post_id IS DISTINCT FROM $6
+         ) candidates
+         WHERE distance <= $7
+         ORDER BY distance, post_id DESC
+         LIMIT $8",
+    )
+    .bind(hash as i64)
+    .bind(c0)
+    .bind(c1)
+    .bind(c2)
+    .bind(c3)
+    .bind(exclude_post)
+    .bind(i32::try_from(max_distance).unwrap_or(64))
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// A 64-bit hash as four 16-bit values (stored as smallint).
 pub fn phash_chunks(hash: u64) -> [i16; 4] {
     [0, 1, 2, 3].map(|i| (hash >> (48 - 16 * i)) as u16 as i16)
@@ -295,6 +343,74 @@ mod tests {
                 .processed_at
                 .is_some()
         );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn finds_similar_hashes_through_the_chunk_index(pool: PgPool) {
+        let base = 0x0123_4567_89AB_CDEFu64;
+        // 0, 1, 3 and 4 bits away, spread over different chunks; plus an
+        // unrelated hash.
+        let hashes = [
+            base,
+            base ^ 1,
+            base ^ (1 << 20 | 1 << 40 | 1 << 60),
+            base ^ (1 | 1 << 20 | 1 << 40 | 1 << 60),
+            !base,
+        ];
+        let mut posts_by_hash = Vec::new();
+        for (n, hash) in hashes.iter().enumerate() {
+            let post_id = post(&pool).await;
+            let sha = [n as u8; 32];
+            let id = insert(&pool, asset(post_id, &sha)).await.unwrap();
+            mark_processed(&pool, id, Some(*hash)).await.unwrap();
+            posts_by_hash.push(post_id);
+        }
+
+        let found = similar(
+            &pool,
+            base,
+            SIMILAR_MAX_DISTANCE,
+            Some(posts_by_hash[0]),
+            10,
+        )
+        .await
+        .unwrap();
+        let summary: Vec<(i64, i32)> = found.iter().map(|s| (s.post_id, s.distance)).collect();
+        assert_eq!(summary, [(posts_by_hash[1], 1), (posts_by_hash[2], 3)]);
+
+        // At realistic sizes the chunk indexes do the finding.
+        sqlx::query(
+            "WITH p AS (
+                 INSERT INTO posts (rating) SELECT 'g' FROM generate_series(1, 5000) RETURNING id
+             )
+             INSERT INTO media_assets
+                 (post_id, sha256, md5, media_type, width, height, file_size, storage_key,
+                  phash, phash_0, phash_1, phash_2, phash_3, processed_at)
+             SELECT id, sha256(id::text::bytea), '\\x00000000000000000000000000000000', 'png', 1, 1, 1, 'k',
+                    (random() * 9e18)::bigint,
+                    (random() * 65535 - 32768)::smallint, (random() * 65535 - 32768)::smallint,
+                    (random() * 65535 - 32768)::smallint, (random() * 65535 - 32768)::smallint, now()
+             FROM p",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("ANALYZE media_assets")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let plan: Vec<String> = sqlx::query_scalar(
+            "EXPLAIN SELECT post_id FROM media_assets
+             WHERE phash IS NOT NULL
+               AND (phash_0 = 1::int2 OR phash_1 = 2::int2 OR phash_2 = 3::int2 OR phash_3 = 4::int2)",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        for index in ["phash_0", "phash_1", "phash_2", "phash_3"] {
+            let name = format!("media_assets_{index}_idx");
+            assert!(plan.iter().any(|line| line.contains(&name)), "{plan:#?}");
+        }
     }
 
     #[test]

@@ -9,4 +9,5 @@ pub mod jobs;
 pub mod permissions;
 pub mod posts;
 pub mod settings;
+pub mod tags;
 pub mod tokens;

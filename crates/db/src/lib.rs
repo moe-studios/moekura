@@ -9,6 +9,7 @@ pub mod roles;
 pub mod sessions;
 pub mod settings;
 pub mod site_cache;
+pub mod tags;
 pub mod users;
 
 #[cfg(test)]

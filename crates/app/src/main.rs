@@ -2,6 +2,7 @@ mod config;
 mod telemetry;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -75,19 +76,38 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let site = SiteCache::load(db.primary())
         .await
         .context("could not load site settings")?;
-    let cache_listener = tokio::spawn(site.clone().listen(db.primary().clone()));
+    let background = [
+        tokio::spawn(site.clone().listen(db.primary().clone())),
+        tokio::spawn(prune_sessions(db.clone())),
+    ];
 
     let state = AppState {
+        config: Arc::new(config),
         db: db.clone(),
         site,
     };
-    let app = uwuu_web::router(state, &config.server);
+    let app = uwuu_web::router(state);
     uwuu_web::serve(listener, app, shutdown_signal()).await?;
 
-    cache_listener.abort();
+    for task in background {
+        task.abort();
+    }
     db.close().await;
     tracing::info!("shut down");
     Ok(())
+}
+
+/// Deletes expired sessions hourly. Moves to the job queue in M3.
+async fn prune_sessions(db: Db) {
+    let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
+    loop {
+        interval.tick().await;
+        match uwuu_db::sessions::prune_expired(db.primary()).await {
+            Ok(0) => {}
+            Ok(removed) => tracing::info!(removed, "pruned expired sessions"),
+            Err(error) => tracing::warn!(%error, "could not prune expired sessions"),
+        }
+    }
 }
 
 async fn connect(config: &DatabaseConfig) -> anyhow::Result<Db> {

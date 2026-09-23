@@ -1,0 +1,420 @@
+//! Who is making the request: session cookies, [`CurrentUser`], logging in
+//! and out.
+
+use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
+
+use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
+use axum::http::header::{SET_COOKIE, USER_AGENT};
+use axum::http::request::Parts;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, SameSite};
+use time::OffsetDateTime;
+use uwuu_core::permissions::{Permission, Permissions, Role, SystemRole};
+use uwuu_db::sessions::{self, Lifetime, NewSession};
+use uwuu_db::site_cache::SiteSnapshot;
+use uwuu_db::users::User;
+
+use crate::AppState;
+use crate::error::AppError;
+
+pub const SESSION_COOKIE: &str = "uwuu_session";
+
+const DAY: Duration = Duration::from_secs(86_400);
+
+/// The requester. Logged-out visitors get the Anonymous role.
+#[derive(Debug, Clone)]
+pub struct CurrentUser {
+    pub user: Option<User>,
+    pub role: Role,
+}
+
+impl CurrentUser {
+    fn anonymous(site: &SiteSnapshot) -> Self {
+        Self {
+            user: None,
+            role: anonymous_role(site),
+        }
+    }
+
+    fn for_user(user: User, site: &SiteSnapshot) -> Self {
+        // A user whose role was deleted keeps only what visitors can do.
+        let role = site
+            .role(user.role_id)
+            .cloned()
+            .unwrap_or_else(|| anonymous_role(site));
+        Self {
+            user: Some(user),
+            role,
+        }
+    }
+
+    pub fn is_logged_in(&self) -> bool {
+        self.user.is_some()
+    }
+
+    pub fn can(&self, permission: Permission) -> bool {
+        self.role.can(permission)
+    }
+
+    /// `Unauthorized` for visitors who might gain the permission by logging
+    /// in, `Forbidden` for users who lack it.
+    pub fn require(&self, permission: Permission) -> Result<(), AppError> {
+        match (self.can(permission), self.is_logged_in()) {
+            (true, _) => Ok(()),
+            (false, false) => Err(AppError::Unauthorized),
+            (false, true) => Err(AppError::Forbidden),
+        }
+    }
+}
+
+fn anonymous_role(site: &SiteSnapshot) -> Role {
+    site.system_role(SystemRole::Anonymous)
+        .cloned()
+        .unwrap_or(Role {
+            id: 0,
+            name: "Anonymous".into(),
+            permissions: Permissions::NONE,
+            rank: 0,
+            system: Some(SystemRole::Anonymous),
+        })
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for CurrentUser {
+    type Rejection = AppError;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        parts
+            .extensions
+            .get::<CurrentUser>()
+            .cloned()
+            .ok_or_else(|| {
+                AppError::Internal("CurrentUser requested outside the session middleware".into())
+            })
+    }
+}
+
+/// Middleware: resolves the session cookie into a [`CurrentUser`] request
+/// extension, and clears cookies that no longer name a live session.
+pub async fn resolve_session(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let site = state.site.get();
+    let mut stale_cookie = false;
+
+    let current = match jar.get(SESSION_COOKIE) {
+        None => CurrentUser::anonymous(&site),
+        Some(cookie) => match sessions::lookup(state.db.primary(), cookie.value()).await {
+            Ok(Some(session)) => {
+                if session.needs_touch(OffsetDateTime::now_utc()) {
+                    // Best effort: failing to extend a session shouldn't fail the request.
+                    if let Err(error) =
+                        sessions::touch(state.db.primary(), session.session_id, lifetime(&state))
+                            .await
+                    {
+                        tracing::warn!(%error, "could not touch session");
+                    }
+                }
+                CurrentUser::for_user(session.user, &site)
+            }
+            Ok(None) => {
+                stale_cookie = true;
+                CurrentUser::anonymous(&site)
+            }
+            Err(error) => return AppError::from(error).into_response(),
+        },
+    };
+
+    request.extensions_mut().insert(current);
+    let mut response = next.run(request).await;
+
+    // Unless the handler just set a fresh session (e.g. logged in).
+    if stale_cookie && !sets_session_cookie(&response) {
+        let removal = removal_cookie(&state).to_string();
+        if let Ok(value) = removal.parse() {
+            response.headers_mut().append(SET_COOKIE, value);
+        }
+    }
+    response
+}
+
+fn sets_session_cookie(response: &Response) -> bool {
+    let prefix = format!("{SESSION_COOKIE}=");
+    response
+        .headers()
+        .get_all(SET_COOKIE)
+        .iter()
+        .any(|v| v.to_str().is_ok_and(|v| v.starts_with(&prefix)))
+}
+
+/// Starts a session for `user` and adds its cookie to `jar`.
+pub async fn log_in(
+    state: &AppState,
+    jar: CookieJar,
+    parts: &RequestInfo,
+    user: &User,
+) -> Result<CookieJar, AppError> {
+    let session = NewSession {
+        user_id: user.id,
+        user_agent: parts.user_agent.as_deref(),
+        ip: parts.ip,
+    };
+    let token = sessions::create(state.db.primary(), session, lifetime(state)).await?;
+    Ok(jar.add(session_cookie(state, token)))
+}
+
+/// Ends the current session, if any, and removes its cookie.
+pub async fn log_out(state: &AppState, jar: CookieJar) -> Result<CookieJar, AppError> {
+    if let Some(cookie) = jar.get(SESSION_COOKIE) {
+        sessions::delete(state.db.primary(), cookie.value()).await?;
+    }
+    Ok(jar.add(removal_cookie(state)))
+}
+
+/// Request details recorded with a new session.
+#[derive(Debug, Clone, Default)]
+pub struct RequestInfo {
+    pub user_agent: Option<String>,
+    pub ip: Option<IpAddr>,
+}
+
+impl<S: Send + Sync> FromRequestParts<S> for RequestInfo {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+        let user_agent = parts
+            .headers
+            .get(USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let ip = parts
+            .extensions
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.ip());
+        Ok(Self { user_agent, ip })
+    }
+}
+
+fn lifetime(state: &AppState) -> Lifetime {
+    let auth = &state.config.auth;
+    Lifetime {
+        idle: DAY * auth.session_idle_days,
+        max: DAY * auth.session_max_days,
+    }
+}
+
+fn secure_cookies(state: &AppState) -> bool {
+    state.config.server.public_url.scheme() == "https"
+}
+
+fn session_cookie(state: &AppState, token: String) -> Cookie<'static> {
+    // The browser keeps the cookie for the absolute maximum; the server
+    // enforces the shorter idle expiry.
+    let max_age = time::Duration::days(i64::from(state.config.auth.session_max_days));
+    Cookie::build((SESSION_COOKIE, token))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(secure_cookies(state))
+        .max_age(max_age)
+        .build()
+}
+
+fn removal_cookie(state: &AppState) -> Cookie<'static> {
+    Cookie::build((SESSION_COOKIE, ""))
+        .path("/")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(secure_cookies(state))
+        .max_age(time::Duration::ZERO)
+        .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::Router;
+    use axum::http::StatusCode;
+    use axum::routing::{get, post};
+    use sqlx::PgPool;
+    use uwuu_db::users::{self, NewUser, UserStatus};
+
+    use super::*;
+    use crate::test_support::{TestApp, test_state};
+
+    async fn whoami(current: CurrentUser) -> String {
+        let upload = current.can(Permission::Upload);
+        let name = current.user.map_or("anonymous".to_owned(), |u| u.name);
+        format!("{name} upload={upload}")
+    }
+
+    /// Logs in as the user named in the path, regardless of any cookie.
+    async fn login_as(
+        State(state): State<AppState>,
+        jar: CookieJar,
+        info: RequestInfo,
+        axum::extract::Path(name): axum::extract::Path<String>,
+    ) -> Result<CookieJar, AppError> {
+        let user = users::by_name(state.db.primary(), &name)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        log_in(&state, jar, &info, &user).await
+    }
+
+    async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<CookieJar, AppError> {
+        log_out(&state, jar).await
+    }
+
+    async fn app(pool: &PgPool) -> TestApp {
+        let routes = Router::new()
+            .route("/whoami", get(whoami))
+            .route("/login/{name}", post(login_as))
+            .route("/logout", post(logout));
+        TestApp::new(test_state(pool).await, routes)
+    }
+
+    async fn member(pool: &PgPool, name: &str) -> User {
+        let role_id = uwuu_db::roles::by_system(pool, SystemRole::Member)
+            .await
+            .unwrap()
+            .id;
+        let new = NewUser {
+            name,
+            email: None,
+            password_hash: None,
+            role_id,
+            status: UserStatus::Active,
+        };
+        users::insert(pool, new).await.unwrap()
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn visitors_are_anonymous(pool: PgPool) {
+        let app = app(&pool).await;
+        assert_eq!(
+            app.get("/whoami", None).await.body,
+            "anonymous upload=false"
+        );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn login_sets_a_cookie_that_identifies_the_user(pool: PgPool) {
+        member(&pool, "alice").await;
+        let app = app(&pool).await;
+        let login = app.post("/login/alice", None, &[]).await;
+        let cookie = login.session_cookie().expect("session cookie set");
+        assert!(
+            login
+                .set_cookie
+                .iter()
+                .any(|c| c.contains("HttpOnly") && c.contains("SameSite=Lax"))
+        );
+        // http:// public URL, so no Secure flag.
+        assert!(!login.set_cookie.iter().any(|c| c.contains("Secure")));
+
+        let me = app.get("/whoami", Some(&cookie)).await;
+        assert_eq!(me.body, "alice upload=true");
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn stale_cookies_are_cleared(pool: PgPool) {
+        let app = app(&pool).await;
+        let response = app.get("/whoami", Some("not-a-session")).await;
+        assert_eq!(response.body, "anonymous upload=false");
+        assert!(
+            response
+                .set_cookie
+                .iter()
+                .any(|c| c.starts_with("uwuu_session=;") && c.contains("Max-Age=0"))
+        );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn logging_in_over_a_stale_cookie_keeps_the_new_session(pool: PgPool) {
+        member(&pool, "alice").await;
+        let app = app(&pool).await;
+        let login = app.post("/login/alice", Some("not-a-session"), &[]).await;
+        let session_cookies: Vec<_> = login
+            .set_cookie
+            .iter()
+            .filter(|c| c.starts_with("uwuu_session="))
+            .collect();
+        assert_eq!(session_cookies.len(), 1, "{session_cookies:?}");
+        let cookie = login.session_cookie().unwrap();
+        assert_eq!(
+            app.get("/whoami", Some(&cookie)).await.body,
+            "alice upload=true"
+        );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn logout_ends_the_session(pool: PgPool) {
+        member(&pool, "alice").await;
+        let app = app(&pool).await;
+        let cookie = app
+            .post("/login/alice", None, &[])
+            .await
+            .session_cookie()
+            .unwrap();
+        let logout = app.post("/logout", Some(&cookie), &[]).await;
+        assert!(logout.set_cookie.iter().any(|c| c.contains("Max-Age=0")));
+        assert_eq!(
+            app.get("/whoami", Some(&cookie)).await.body,
+            "anonymous upload=false"
+        );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn deactivated_users_lose_their_sessions(pool: PgPool) {
+        let alice = member(&pool, "alice").await;
+        let app = app(&pool).await;
+        let cookie = app
+            .post("/login/alice", None, &[])
+            .await
+            .session_cookie()
+            .unwrap();
+        users::set_status(&pool, alice.id, UserStatus::Deactivated)
+            .await
+            .unwrap();
+        assert_eq!(
+            app.get("/whoami", Some(&cookie)).await.body,
+            "anonymous upload=false"
+        );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn cross_site_posts_are_rejected(pool: PgPool) {
+        member(&pool, "alice").await;
+        let app = app(&pool).await;
+        let cross_site = app
+            .post("/login/alice", None, &[("sec-fetch-site", "cross-site")])
+            .await;
+        assert_eq!(cross_site.status, StatusCode::FORBIDDEN);
+        let foreign_origin = app
+            .post("/login/alice", None, &[("origin", "https://evil.example")])
+            .await;
+        assert_eq!(foreign_origin.status, StatusCode::FORBIDDEN);
+        let same_origin = app
+            .post("/login/alice", None, &[("sec-fetch-site", "same-origin")])
+            .await;
+        assert_eq!(same_origin.status, StatusCode::OK);
+        let our_origin = app
+            .post("/login/alice", None, &[("origin", "http://localhost:8080")])
+            .await;
+        assert_eq!(our_origin.status, StatusCode::OK);
+    }
+
+    #[test]
+    fn require_distinguishes_visitors_from_users() {
+        let snapshot = SiteSnapshot::new(Default::default(), vec![]);
+        let visitor = CurrentUser::anonymous(&snapshot);
+        assert!(matches!(
+            visitor.require(Permission::Upload),
+            Err(AppError::Unauthorized)
+        ));
+    }
+}

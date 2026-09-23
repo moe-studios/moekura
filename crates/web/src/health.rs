@@ -45,8 +45,10 @@ mod tests {
     use http_body_util::BodyExt;
     use sqlx::PgPool;
     use sqlx::postgres::PgPoolOptions;
+    use std::sync::Arc;
     use tower::ServiceExt;
-    use uwuu_core::config::ServerConfig;
+
+    use uwuu_core::config::Config;
     use uwuu_core::settings::SiteSettings;
     use uwuu_db::Db;
     use uwuu_db::site_cache::{SiteCache, SiteSnapshot};
@@ -55,10 +57,11 @@ mod tests {
 
     fn app(pool: PgPool) -> axum::Router {
         let state = AppState {
+            config: Arc::new(Config::default()),
             db: Db::from_pools(pool, vec![]),
             site: SiteCache::from_snapshot(SiteSnapshot::new(SiteSettings::default(), vec![])),
         };
-        router(state, &ServerConfig::default())
+        router(state)
     }
 
     /// A pool pointing at a port nothing listens on.

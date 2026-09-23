@@ -15,6 +15,7 @@ use url::Url;
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
+    pub auth: AuthConfig,
     pub telemetry: TelemetryConfig,
 }
 
@@ -23,6 +24,9 @@ pub struct Config {
 pub struct ServerConfig {
     /// Address the HTTP server listens on.
     pub bind: SocketAddr,
+    /// The URL users reach the site at. Cookies are marked `Secure` when it
+    /// is `https`, and form posts are only accepted from this origin.
+    pub public_url: Url,
     /// Requests running longer than this are aborted with `408`.
     pub request_timeout_secs: u64,
 }
@@ -31,6 +35,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
+            public_url: Url::parse("http://localhost:8080").expect("valid default URL"),
             request_timeout_secs: 30,
         }
     }
@@ -66,6 +71,24 @@ impl Default for DatabaseConfig {
             acquire_timeout_secs: 5,
             statement_timeout_ms: 30_000,
             auto_migrate: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AuthConfig {
+    /// A session ends after this many days without use.
+    pub session_idle_days: u32,
+    /// A session ends this many days after login, however active.
+    pub session_max_days: u32,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            session_idle_days: 30,
+            session_max_days: 365,
         }
     }
 }
@@ -144,6 +167,24 @@ impl Config {
             problems.push(ConfigProblem {
                 key: "database.min_connections",
                 message: "must not exceed database.max_connections".into(),
+            });
+        }
+        if !matches!(self.server.public_url.scheme(), "http" | "https") {
+            problems.push(ConfigProblem {
+                key: "server.public_url",
+                message: "must be an http:// or https:// URL".into(),
+            });
+        }
+        if self.auth.session_idle_days == 0 {
+            problems.push(ConfigProblem {
+                key: "auth.session_idle_days",
+                message: "must be at least 1".into(),
+            });
+        }
+        if self.auth.session_max_days < self.auth.session_idle_days {
+            problems.push(ConfigProblem {
+                key: "auth.session_max_days",
+                message: "must not be less than auth.session_idle_days".into(),
             });
         }
         if self.server.request_timeout_secs == 0 {
@@ -259,6 +300,21 @@ mod tests {
                 "database.max_connections"
             ]
         );
+    }
+
+    #[test]
+    fn checks_public_url_and_session_lengths() {
+        let mut config = valid();
+        config.server.public_url = Url::parse("ftp://example.com").unwrap();
+        config.auth.session_idle_days = 10;
+        config.auth.session_max_days = 5;
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(keys, ["server.public_url", "auth.session_max_days"]);
     }
 
     #[test]

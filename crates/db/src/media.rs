@@ -116,6 +116,19 @@ pub async fn for_post(db: impl PgExecutor<'_>, post_id: i64) -> sqlx::Result<Opt
         .await
 }
 
+/// Asset ids for the given posts, or for every post when `None`.
+pub async fn asset_ids(
+    db: impl PgExecutor<'_>,
+    post_ids: Option<&[i64]>,
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT id FROM media_assets WHERE $1::bigint[] IS NULL OR post_id = ANY($1) ORDER BY id",
+    )
+    .bind(post_ids)
+    .fetch_all(db)
+    .await
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Variant {
     pub asset_id: i64,

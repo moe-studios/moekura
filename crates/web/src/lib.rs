@@ -88,11 +88,7 @@ impl AppState {
     /// directories in `config.paths`.
     pub fn new(config: Config, db: Db, site: SiteCache) -> Result<Self, StartupError> {
         let storage = Storage::from_config(&config.storage)?;
-        let work_dir = config
-            .media
-            .work_dir
-            .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join("uwuubooru"));
+        let work_dir = config.media.work_dir_or_default();
         std::fs::create_dir_all(&work_dir).map_err(StartupError::WorkDir)?;
         let assets = Arc::new(Assets::load(config.paths.static_override.as_deref())?);
         let templates = Arc::new(Templates::load(

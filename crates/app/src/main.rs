@@ -9,10 +9,13 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use uwuu_core::config::{Config, DatabaseConfig, JobsConfig};
+use uwuu_core::config::{Config, DatabaseConfig};
 use uwuu_db::Db;
 use uwuu_db::site_cache::SiteCache;
+use uwuu_jobs::media::MediaJobs;
 use uwuu_jobs::{PoolConfig, Registry};
+use uwuu_media::Media;
+use uwuu_storage::Storage;
 use uwuu_web::AppState;
 
 /// How long startup keeps retrying an unreachable database, so the app can
@@ -105,7 +108,12 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let site = SiteCache::load(db.primary())
         .await
         .context("could not load site settings")?;
-    let config_jobs = config.jobs.clone();
+    // Built before the config moves into the web state.
+    let workers = config
+        .jobs
+        .run_in_serve
+        .then(|| run_workers(&db, &config))
+        .transpose()?;
     let state = AppState::new(config, db.clone(), site.clone())?;
     let background = [
         tokio::spawn(site.listen(db.primary().clone())),
@@ -114,9 +122,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
 
     let shutdown = CancellationToken::new();
     tokio::spawn(cancel_on_signal(shutdown.clone()));
-    let workers = config_jobs
-        .run_in_serve
-        .then(|| tokio::spawn(run_workers(&db, &config_jobs, shutdown.clone())));
+    let workers = workers.map(|run| tokio::spawn(run(shutdown.clone())));
 
     let app = uwuu_web::router(state);
     uwuu_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
@@ -139,28 +145,46 @@ async fn worker(config: Config) -> anyhow::Result<()> {
     }
     let shutdown = CancellationToken::new();
     tokio::spawn(cancel_on_signal(shutdown.clone()));
-    wait_for_workers(tokio::spawn(run_workers(&db, &config.jobs, shutdown))).await;
+    let run = run_workers(&db, &config)?;
+    wait_for_workers(tokio::spawn(run(shutdown))).await;
     db.close().await;
     tracing::info!("shut down");
     Ok(())
 }
 
 /// Every job type the application knows how to run.
-fn job_registry() -> Registry {
-    Registry::new()
+fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
+    let mut registry = Registry::new();
+    let work_dir = config.media.work_dir_or_default();
+    std::fs::create_dir_all(&work_dir)
+        .with_context(|| format!("could not create {}", work_dir.display()))?;
+    MediaJobs {
+        db: db.primary().clone(),
+        storage: Storage::from_config(&config.storage).context("could not open file storage")?,
+        media: Media::new(config.media.clone()),
+        work_dir,
+    }
+    .register(&mut registry);
+    Ok(registry)
 }
 
+/// Prepares a worker pool; call the result with a shutdown token to run it.
 fn run_workers(
     db: &Db,
-    config: &JobsConfig,
-    shutdown: CancellationToken,
-) -> impl Future<Output = ()> + use<> {
+    config: &Config,
+) -> anyhow::Result<impl FnOnce(CancellationToken) -> BoxFuture + use<>> {
+    let registry = job_registry(db, config)?;
+    let pool = db.primary().clone();
     let pool_config = PoolConfig::new(
-        config.workers,
-        Duration::from_secs(config.lock_timeout_secs),
+        config.jobs.workers,
+        Duration::from_secs(config.jobs.lock_timeout_secs),
     );
-    uwuu_jobs::run(db.primary().clone(), job_registry(), pool_config, shutdown)
+    Ok(move |shutdown| -> BoxFuture {
+        Box::pin(uwuu_jobs::run(pool, registry, pool_config, shutdown))
+    })
 }
+
+type BoxFuture = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// Waits for running jobs after shutdown was requested, within reason; any
 /// cut short are retried elsewhere once their lock expires.

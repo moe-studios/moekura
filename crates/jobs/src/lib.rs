@@ -23,6 +23,8 @@ use tracing::Instrument;
 use uwuu_core::jobs::Job;
 use uwuu_db::jobs::{self, ClaimedJob};
 
+pub mod media;
+
 /// Why a job failed.
 #[derive(Debug, thiserror::Error)]
 pub enum JobError {
@@ -386,8 +388,15 @@ mod tests {
 
         push(&pool, &Count { fail_times: 1 }).await;
         // The retry waits out its backoff; skip it.
-        wait_until("the first failure", async || {
-            calls.load(Ordering::SeqCst) >= 1
+        // Wait for the worker to record the failure (not just for the handler
+        // to run), or its backoff would overwrite the run_at set below.
+        wait_until("the first failure to be recorded", async || {
+            let status: Option<String> =
+                sqlx::query_scalar("SELECT status FROM jobs WHERE last_error IS NOT NULL")
+                    .fetch_optional(&pool)
+                    .await
+                    .unwrap();
+            status.as_deref() == Some("queued")
         })
         .await;
         sqlx::query("UPDATE jobs SET run_at = now()")

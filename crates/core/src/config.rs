@@ -215,6 +215,15 @@ pub struct MediaConfig {
     pub tools: MediaTools,
 }
 
+impl MediaConfig {
+    /// `work_dir`, or a directory under the system temp dir.
+    pub fn work_dir_or_default(&self) -> PathBuf {
+        self.work_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("uwuubooru"))
+    }
+}
+
 impl Default for MediaConfig {
     fn default() -> Self {
         Self {

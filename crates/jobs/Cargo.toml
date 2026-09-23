@@ -11,14 +11,17 @@ publish.workspace = true
 [dependencies]
 uwuu-core.workspace = true
 uwuu-db.workspace = true
+uwuu-media.workspace = true
+uwuu-storage.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
 
 [dev-dependencies]
+hex.workspace = true
 serde.workspace = true
 
 [lints]

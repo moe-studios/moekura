@@ -3,6 +3,7 @@
 
 mod kind;
 mod probe;
+mod render;
 pub mod tool;
 
 use std::path::Path;
@@ -12,6 +13,7 @@ use uwuu_core::config::MediaConfig;
 
 pub use crate::kind::{MediaType, SNIFF_LEN};
 pub use crate::probe::Probe;
+pub use crate::render::Rendition;
 pub use crate::tool::ToolError;
 
 /// Why a file was refused or could not be processed. The messages are
@@ -158,12 +160,12 @@ pub(crate) mod fixtures {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::fixtures;
 
     /// Every type allowed, including opt-in JPEG XL.
-    fn media() -> Media {
+    pub(crate) fn media() -> Media {
         Media::new(MediaConfig {
             allowed_types: MediaType::ALL.iter().map(|t| t.name().to_owned()).collect(),
             ..MediaConfig::default()

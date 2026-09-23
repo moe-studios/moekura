@@ -37,34 +37,73 @@ ALTER TABLE posts ADD CONSTRAINT posts_tag_ids_normalized CHECK (tag_ids = uniq(
 
 -- Keeps tags.post_count equal to the number of active or flagged posts
 -- with each tag, across tag edits, status changes and deletions.
-CREATE FUNCTION posts_update_tag_counts() RETURNS trigger
+--
+-- Statement-level triggers with transition tables: a statement touching
+-- many posts (an import, an alias rewrite) updates each tag once with the
+-- net change, instead of once per post.
+
+-- Adds deltas[i] to the count of tag ids[i].
+CREATE FUNCTION add_tag_counts(ids integer[], deltas integer[]) RETURNS void
+LANGUAGE plpgsql AS $$
+BEGIN
+    -- Lock in id order: two statements sharing tags, running
+    -- concurrently, could otherwise deadlock.
+    PERFORM 1 FROM tags WHERE id = ANY (ids) ORDER BY id FOR NO KEY UPDATE;
+    UPDATE tags SET post_count = post_count + change.delta
+    FROM unnest(ids, deltas) AS change (id, delta)
+    WHERE tags.id = change.id;
+END
+$$;
+
+CREATE FUNCTION posts_count_tags() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE
-    before integer[] := '{}';
-    after integer[] := '{}';
-    added integer[];
-    removed integer[];
+    ids integer[];
+    deltas integer[];
 BEGIN
-    IF TG_OP <> 'INSERT' AND OLD.status IN ('active', 'flagged') THEN
-        before := OLD.tag_ids;
+    IF TG_OP = 'INSERT' THEN
+        SELECT array_agg(tag_id), array_agg(n) INTO ids, deltas FROM (
+            SELECT tag_id, count(*)::integer AS n
+            FROM new_rows, unnest(new_rows.tag_ids) AS tag_id
+            WHERE status IN ('active', 'flagged')
+            GROUP BY tag_id
+        ) AS counted;
+    ELSIF TG_OP = 'DELETE' THEN
+        SELECT array_agg(tag_id), array_agg(n) INTO ids, deltas FROM (
+            SELECT tag_id, -count(*)::integer AS n
+            FROM old_rows, unnest(old_rows.tag_ids) AS tag_id
+            WHERE status IN ('active', 'flagged')
+            GROUP BY tag_id
+        ) AS counted;
+    ELSE
+        SELECT array_agg(tag_id), array_agg(n) INTO ids, deltas FROM (
+            SELECT tag_id, sum(delta)::integer AS n FROM (
+                SELECT unnest(tag_ids) AS tag_id, 1 AS delta
+                FROM new_rows WHERE status IN ('active', 'flagged')
+                UNION ALL
+                SELECT unnest(tag_ids), -1
+                FROM old_rows WHERE status IN ('active', 'flagged')
+            ) AS changes
+            GROUP BY tag_id
+            HAVING sum(delta) <> 0
+        ) AS counted;
     END IF;
-    IF TG_OP <> 'DELETE' AND NEW.status IN ('active', 'flagged') THEN
-        after := NEW.tag_ids;
+    IF ids IS NOT NULL THEN
+        PERFORM add_tag_counts(ids, deltas);
     END IF;
-    added := after - before;
-    removed := before - after;
-    IF cardinality(added) = 0 AND cardinality(removed) = 0 THEN
-        RETURN NULL;
-    END IF;
-    -- Lock in id order: two posts sharing tags, updated concurrently,
-    -- would otherwise be able to deadlock.
-    PERFORM 1 FROM tags WHERE id = ANY (added | removed) ORDER BY id FOR NO KEY UPDATE;
-    UPDATE tags SET post_count = post_count + 1 WHERE id = ANY (added);
-    UPDATE tags SET post_count = post_count - 1 WHERE id = ANY (removed);
     RETURN NULL;
 END
 $$;
 
-CREATE TRIGGER posts_tag_counts
-    AFTER INSERT OR DELETE OR UPDATE OF tag_ids, status ON posts
-    FOR EACH ROW EXECUTE FUNCTION posts_update_tag_counts();
+-- Transition tables allow one event per trigger, and no column list, so
+-- the update trigger runs for every UPDATE; it only writes to tags when
+-- counts actually change.
+CREATE TRIGGER posts_tag_counts_insert
+    AFTER INSERT ON posts REFERENCING NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION posts_count_tags();
+CREATE TRIGGER posts_tag_counts_update
+    AFTER UPDATE ON posts REFERENCING OLD TABLE AS old_rows NEW TABLE AS new_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION posts_count_tags();
+CREATE TRIGGER posts_tag_counts_delete
+    AFTER DELETE ON posts REFERENCING OLD TABLE AS old_rows
+    FOR EACH STATEMENT EXECUTE FUNCTION posts_count_tags();

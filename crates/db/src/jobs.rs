@@ -1,14 +1,14 @@
 //! Queries on `jobs`: the queue itself. The worker loop lives in the
-//! `uwuu-jobs` crate.
+//! `uwu-jobs` crate.
 
 use std::time::Duration;
 
 use serde_json::Value;
 use sqlx::{PgConnection, PgExecutor};
-use uwuu_core::jobs::Job;
+use uwu_core::jobs::Job;
 
 /// Workers `LISTEN` here; enqueueing notifies it.
-pub const CHANNEL: &str = "uwuu_jobs";
+pub const CHANNEL: &str = "uwu_jobs";
 
 /// Adds a job, delivered to workers when the surrounding transaction (if
 /// any) commits. Returns the job id.

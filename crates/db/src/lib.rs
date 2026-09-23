@@ -1,4 +1,4 @@
-//! PostgreSQL access for uwuubooru.
+//! PostgreSQL access for uwubooru.
 
 pub mod accounts;
 pub mod bans;
@@ -31,7 +31,7 @@ use std::time::Duration;
 
 use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
-use uwuu_core::config::DatabaseConfig;
+use uwu_core::config::DatabaseConfig;
 
 /// Migrations embedded from `crates/db/migrations`.
 pub static MIGRATOR: Migrator = sqlx::migrate!();
@@ -115,7 +115,7 @@ fn pool_options(config: &DatabaseConfig) -> PgPoolOptions {
 }
 
 fn connect_options(url: &str, config: &DatabaseConfig) -> Result<PgConnectOptions, sqlx::Error> {
-    let mut options = PgConnectOptions::from_str(url)?.application_name("uwuubooru");
+    let mut options = PgConnectOptions::from_str(url)?.application_name("uwubooru");
     if config.statement_timeout_ms > 0 {
         options = options.options([("statement_timeout", config.statement_timeout_ms.to_string())]);
     }

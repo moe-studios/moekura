@@ -1,6 +1,6 @@
 [package]
-name = "uwuu-db"
-description = "PostgreSQL access and migrations for uwuubooru"
+name = "uwu-db"
+description = "PostgreSQL access and migrations for uwubooru"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-uwuu-core.workspace = true
+uwu-core.workspace = true
 hex.workspace = true
 ipnet.workspace = true
 serde.workspace = true

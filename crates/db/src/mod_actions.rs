@@ -3,7 +3,7 @@
 use serde_json::Value;
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
-use uwuu_core::moderation::ActionKind;
+use uwu_core::moderation::ActionKind;
 
 /// An action to record.
 #[derive(Debug, Clone)]

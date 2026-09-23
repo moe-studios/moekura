@@ -18,7 +18,7 @@ INSERT INTO tag_categories (id, name, label, position) VALUES
 CREATE TABLE tags (
     -- integer, not bigint: posts.tag_ids is an int4 array for intarray.
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    -- Normalised by uwuu_core::tags. The "C" collation lets the unique
+    -- Normalised by uwu_core::tags. The "C" collation lets the unique
     -- index serve prefix searches (name LIKE 'abc%').
     name text COLLATE "C" NOT NULL UNIQUE CHECK (length(name) BETWEEN 1 AND 170),
     category_id smallint NOT NULL DEFAULT 0 REFERENCES tag_categories (id),

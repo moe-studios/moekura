@@ -4,7 +4,7 @@
 //! rather than stalling the async workers.
 
 use sqlx::{PgExecutor, PgPool};
-use uwuu_core::accounts::{self, EmailError, NameError, PasswordError, UserName, Verification};
+use uwu_core::accounts::{self, EmailError, NameError, PasswordError, UserName, Verification};
 
 use crate::users::{self, InsertError, NewUser, User, UserStatus};
 
@@ -113,7 +113,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 
 #[cfg(test)]
 mod tests {
-    use uwuu_core::permissions::SystemRole;
+    use uwu_core::permissions::SystemRole;
 
     use super::*;
     use crate::roles;

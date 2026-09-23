@@ -47,9 +47,9 @@ mod tests {
     use sqlx::postgres::PgPoolOptions;
     use tower::ServiceExt;
 
-    use uwuu_core::settings::SiteSettings;
-    use uwuu_db::Db;
-    use uwuu_db::site_cache::{SiteCache, SiteSnapshot};
+    use uwu_core::settings::SiteSettings;
+    use uwu_db::Db;
+    use uwu_db::site_cache::{SiteCache, SiteSnapshot};
 
     use crate::{AppState, router};
 
@@ -68,7 +68,7 @@ mod tests {
     fn unreachable_pool() -> PgPool {
         PgPoolOptions::new()
             .acquire_timeout(std::time::Duration::from_millis(500))
-            .connect_lazy("postgres://uwuu@127.0.0.1:1/uwuu")
+            .connect_lazy("postgres://uwu@127.0.0.1:1/uwu")
             .unwrap()
     }
 
@@ -100,7 +100,7 @@ mod tests {
         assert_eq!(status, 503);
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn ready_succeeds_with_database(pool: PgPool) {
         let (status, body, _) = get(app(pool), "/readyz").await;
         assert_eq!((status, body.as_str()), (200, "ok"));

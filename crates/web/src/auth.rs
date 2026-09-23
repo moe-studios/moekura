@@ -12,17 +12,17 @@ use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use time::OffsetDateTime;
-use uwuu_core::permissions::{Permission, Permissions, Role, SystemRole};
-use uwuu_db::bans::ActiveBan;
-use uwuu_db::sessions::{self, Lifetime, NewSession};
-use uwuu_db::site_cache::SiteSnapshot;
-use uwuu_db::users::User;
+use uwu_core::permissions::{Permission, Permissions, Role, SystemRole};
+use uwu_db::bans::ActiveBan;
+use uwu_db::sessions::{self, Lifetime, NewSession};
+use uwu_db::site_cache::SiteSnapshot;
+use uwu_db::users::User;
 
 use crate::AppState;
 use crate::client_ip::client_ip;
 use crate::error::AppError;
 
-pub const SESSION_COOKIE: &str = "uwuu_session";
+pub const SESSION_COOKIE: &str = "uwu_session";
 
 const DAY: Duration = Duration::from_secs(86_400);
 
@@ -175,7 +175,7 @@ pub async fn block_banned_networks(
     }
     let (parts, body) = request.into_parts();
     if let Some(ip) = client_ip(&parts, &state.config.server.trusted_proxies) {
-        match uwuu_db::bans::network_ban(state.db.primary(), ip).await {
+        match uwu_db::bans::network_ban(state.db.primary(), ip).await {
             Ok(Some(reason)) => {
                 return AppError::Blocked(format!(
                     "Your network is banned from making changes: {reason}"
@@ -278,7 +278,7 @@ mod tests {
     use axum::http::StatusCode;
     use axum::routing::{get, post};
     use sqlx::PgPool;
-    use uwuu_db::users::{self, NewUser, UserStatus};
+    use uwu_db::users::{self, NewUser, UserStatus};
 
     use super::*;
     use crate::test_support::{TestApp, test_state};
@@ -315,7 +315,7 @@ mod tests {
     }
 
     async fn member(pool: &PgPool, name: &str) -> User {
-        let role_id = uwuu_db::roles::by_system(pool, SystemRole::Member)
+        let role_id = uwu_db::roles::by_system(pool, SystemRole::Member)
             .await
             .unwrap()
             .id;
@@ -329,7 +329,7 @@ mod tests {
         users::insert(pool, new).await.unwrap()
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn visitors_are_anonymous(pool: PgPool) {
         let app = app(&pool).await;
         assert_eq!(
@@ -338,7 +338,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn login_sets_a_cookie_that_identifies_the_user(pool: PgPool) {
         member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -357,7 +357,7 @@ mod tests {
         assert_eq!(me.body, "alice upload=true");
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn stale_cookies_are_cleared(pool: PgPool) {
         let app = app(&pool).await;
         let response = app.get("/whoami", Some("not-a-session")).await;
@@ -366,11 +366,11 @@ mod tests {
             response
                 .set_cookie
                 .iter()
-                .any(|c| c.starts_with("uwuu_session=;") && c.contains("Max-Age=0"))
+                .any(|c| c.starts_with("uwu_session=;") && c.contains("Max-Age=0"))
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn logging_in_over_a_stale_cookie_keeps_the_new_session(pool: PgPool) {
         member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -378,7 +378,7 @@ mod tests {
         let session_cookies: Vec<_> = login
             .set_cookie
             .iter()
-            .filter(|c| c.starts_with("uwuu_session="))
+            .filter(|c| c.starts_with("uwu_session="))
             .collect();
         assert_eq!(session_cookies.len(), 1, "{session_cookies:?}");
         let cookie = login.session_cookie().unwrap();
@@ -388,7 +388,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn logout_ends_the_session(pool: PgPool) {
         member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -405,7 +405,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn deactivated_users_lose_their_sessions(pool: PgPool) {
         let alice = member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -423,7 +423,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn cross_site_posts_are_rejected(pool: PgPool) {
         member(&pool, "alice").await;
         let app = app(&pool).await;

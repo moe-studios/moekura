@@ -1,6 +1,6 @@
 CREATE TABLE users (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    -- Full rules live in uwuu_core::accounts::UserName; this is a backstop.
+    -- Full rules live in uwu_core::accounts::UserName; this is a backstop.
     name citext NOT NULL CHECK (name ~ '^[A-Za-z0-9_.-]{2,32}$'),
     email citext,
     -- NULL for accounts that cannot log in with a password.

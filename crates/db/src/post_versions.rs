@@ -49,7 +49,7 @@ pub async fn attribute(
 ) -> sqlx::Result<()> {
     let text = |v: Option<String>| v.unwrap_or_default();
     sqlx::query(
-        "SELECT set_config('uwuu.updater_id', $1, true), set_config('uwuu.relation_id', $2, true)",
+        "SELECT set_config('uwu.updater_id', $1, true), set_config('uwu.relation_id', $2, true)",
     )
     .bind(text(updater_id.map(|id| id.to_string())))
     .bind(text(relation_id.map(|id| id.to_string())))

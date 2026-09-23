@@ -11,12 +11,12 @@ use std::time::Duration;
 
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
-use uwuu_core::permissions::{Role, SystemRole};
-use uwuu_core::settings::SiteSettings;
+use uwu_core::permissions::{Role, SystemRole};
+use uwu_core::settings::SiteSettings;
 
 use crate::{roles, settings};
 
-pub const CHANNEL: &str = "uwuu_site_cache";
+pub const CHANNEL: &str = "uwu_site_cache";
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
@@ -138,7 +138,7 @@ async fn fetch(db: &PgPool) -> sqlx::Result<SiteSnapshot> {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use uwuu_core::settings::RegistrationMode;
+    use uwu_core::settings::RegistrationMode;
 
     use super::*;
 

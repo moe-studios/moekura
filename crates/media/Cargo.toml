@@ -1,6 +1,6 @@
 [package]
-name = "uwuu-media"
-description = "Media identification and processing for uwuubooru"
+name = "uwu-media"
+description = "Media identification and processing for uwubooru"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-uwuu-core.workspace = true
+uwu-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -1,7 +1,7 @@
 //! Queries on `roles`.
 
 use sqlx::PgExecutor;
-use uwuu_core::permissions::{Permissions, Role, SystemRole};
+use uwu_core::permissions::{Permissions, Role, SystemRole};
 
 #[derive(sqlx::FromRow)]
 struct RoleRow {

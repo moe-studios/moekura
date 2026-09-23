@@ -9,12 +9,12 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::Deserialize;
 use serde_json::json;
-use uwuu_core::moderation::ActionKind;
-use uwuu_core::permissions::{Permission, Permissions};
-use uwuu_core::settings::{RegistrationMode, SiteSettings};
-use uwuu_db::mod_actions::{self, NewAction};
-use uwuu_db::users::{self, UserStatus};
-use uwuu_db::{jobs, roles, settings};
+use uwu_core::moderation::ActionKind;
+use uwu_core::permissions::{Permission, Permissions};
+use uwu_core::settings::{RegistrationMode, SiteSettings};
+use uwu_db::mod_actions::{self, NewAction};
+use uwu_db::users::{self, UserStatus};
+use uwu_db::{jobs, roles, settings};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -50,7 +50,7 @@ async fn overview(page: Page) -> Result<Response, AppError> {
         page.current.require(Permission::ManageSettings)?;
     }
     let db = page.state().db.primary();
-    let stats = uwuu_db::stats::overview(db).await?;
+    let stats = uwu_db::stats::overview(db).await?;
     let counts = jobs::counts_by_kind(db).await?;
     let dead = jobs::dead(db, 50).await?;
     let human = crate::posts::human_size;
@@ -258,7 +258,7 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
         .roles()
         .iter()
         .filter(|r| {
-            r.rank < my_rank && r.system != Some(uwuu_core::permissions::SystemRole::Anonymous)
+            r.rank < my_rank && r.system != Some(uwu_core::permissions::SystemRole::Anonymous)
         })
         .map(|r| context! { id => r.id, name => r.name })
         .collect();
@@ -323,7 +323,7 @@ async fn update_user(
     let role = site
         .role(form.role)
         .filter(|r| {
-            r.rank < my_rank && r.system != Some(uwuu_core::permissions::SystemRole::Anonymous)
+            r.rank < my_rank && r.system != Some(uwu_core::permissions::SystemRole::Anonymous)
         })
         .ok_or_else(|| AppError::BadRequest("You can't give that role".into()))?;
     let status =
@@ -437,7 +437,7 @@ async fn update_role(
 mod tests {
     use axum::http::StatusCode;
     use sqlx::PgPool;
-    use uwuu_core::permissions::SystemRole;
+    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, session_for, test_state};
 
@@ -448,7 +448,7 @@ mod tests {
         )
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn overview_and_dead_jobs(pool: PgPool) {
         let app = app(&pool).await;
         let admin = session_for(&pool, "root", SystemRole::Admin).await;
@@ -483,7 +483,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn site_settings(pool: PgPool) {
         let app = app(&pool).await;
         let admin = session_for(&pool, "root", SystemRole::Admin).await;
@@ -501,7 +501,7 @@ mod tests {
             )
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
-        let stored = uwuu_db::settings::load(&pool).await.unwrap();
+        let stored = uwu_db::settings::load(&pool).await.unwrap();
         assert_eq!(stored.site_name, "Tiny Booru");
         assert!(stored.upload_approval);
         // The page title follows at once on this node.
@@ -522,7 +522,7 @@ mod tests {
             .await;
         assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(
-            uwuu_db::settings::load(&pool).await.unwrap().site_name,
+            uwu_db::settings::load(&pool).await.unwrap().site_name,
             "Tiny Booru",
             "nothing changed"
         );
@@ -534,13 +534,13 @@ mod tests {
         assert_eq!(logged, 4);
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn users_and_roles(pool: PgPool) {
         let app = app(&pool).await;
         let admin = session_for(&pool, "root", SystemRole::Admin).await;
         let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
         session_for(&pool, "alice", SystemRole::Member).await;
-        let site = uwuu_db::site_cache::SiteCache::load(&pool)
+        let site = uwu_db::site_cache::SiteCache::load(&pool)
             .await
             .unwrap()
             .get();
@@ -582,12 +582,12 @@ mod tests {
             .post_form("/admin/users/alice", Some(&admin), &[], &form)
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
-        let alice = uwuu_db::users::by_name(&pool, "alice")
+        let alice = uwu_db::users::by_name(&pool, "alice")
             .await
             .unwrap()
             .unwrap();
         assert_eq!(alice.role_id, role_id(SystemRole::Contributor));
-        assert_eq!(alice.status, uwuu_db::users::UserStatus::Deactivated);
+        assert_eq!(alice.status, uwu_db::users::UserStatus::Deactivated);
 
         // Roles: admins edit lower roles, not their own.
         let roles = app.get("/admin/roles", Some(&admin)).await.body;

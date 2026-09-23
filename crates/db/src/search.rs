@@ -16,9 +16,9 @@
 use std::str::FromStr;
 
 use sqlx::{PgPool, Postgres, QueryBuilder};
-use uwuu_core::config::SearchConfig;
-use uwuu_core::posts::PostStatus;
-use uwuu_core::search::{
+use uwu_core::config::SearchConfig;
+use uwu_core::posts::PostStatus;
+use uwu_core::search::{
     Bound, Condition, Filter, Order, ParentFilter, Query, StatusFilter, TagTerm,
 };
 
@@ -791,7 +791,7 @@ fn push_float_bound(
 mod tests {
     use serde_json::Value;
     use sqlx::{Execute, PgPool};
-    use uwuu_core::posts::PostStatus;
+    use uwu_core::posts::PostStatus;
 
     use super::*;
     use crate::tags::WantedTag;

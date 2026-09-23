@@ -1,6 +1,6 @@
 [package]
-name = "uwuu-core"
-description = "Domain types and pure logic for uwuubooru"
+name = "uwu-core"
+description = "Domain types and pure logic for uwubooru"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

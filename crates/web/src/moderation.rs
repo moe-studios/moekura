@@ -7,17 +7,17 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::Deserialize;
-use uwuu_core::jobs::PurgePost;
-use uwuu_core::moderation::ActionKind;
-use uwuu_core::moderation::REASON_MAX_LEN;
-use uwuu_core::permissions::Permission;
-use uwuu_core::posts::PostStatus;
-use uwuu_db::flags::{self, FlagError};
-use uwuu_db::mod_actions::NewAction;
-use uwuu_db::mod_actions::{self, Entry, Filter};
-use uwuu_db::users;
-use uwuu_db::{jobs, posts, tags};
-use uwuu_storage::Key;
+use uwu_core::jobs::PurgePost;
+use uwu_core::moderation::ActionKind;
+use uwu_core::moderation::REASON_MAX_LEN;
+use uwu_core::permissions::Permission;
+use uwu_core::posts::PostStatus;
+use uwu_db::flags::{self, FlagError};
+use uwu_db::mod_actions::NewAction;
+use uwu_db::mod_actions::{self, Entry, Filter};
+use uwu_db::users;
+use uwu_db::{jobs, posts, tags};
+use uwu_storage::Key;
 
 use crate::AppState;
 use crate::error::AppError;
@@ -433,13 +433,13 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
 mod tests {
     use axum::http::StatusCode;
     use sqlx::PgPool;
-    use uwuu_core::moderation::ActionKind;
-    use uwuu_core::permissions::SystemRole;
-    use uwuu_db::mod_actions::{self, NewAction};
+    use uwu_core::moderation::ActionKind;
+    use uwu_core::permissions::SystemRole;
+    use uwu_db::mod_actions::{self, NewAction};
 
     use crate::test_support::{TestApp, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn delete_restore_and_purge(pool: PgPool) {
         let state = test_state(&pool).await;
         let max = state.config.media.max_upload_mb * 1024 * 1024;
@@ -464,7 +464,7 @@ mod tests {
             .parse()
             .unwrap();
         let count = || async {
-            uwuu_db::tags::by_name(&pool, "cat")
+            uwu_db::tags::by_name(&pool, "cat")
                 .await
                 .unwrap()
                 .unwrap()
@@ -541,9 +541,9 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn the_approval_queue(pool: PgPool) {
-        uwuu_db::settings::set(&pool, "upload_approval", serde_json::json!(true))
+        uwu_db::settings::set(&pool, "upload_approval", serde_json::json!(true))
             .await
             .unwrap();
         let state = test_state(&pool).await;
@@ -612,7 +612,7 @@ mod tests {
         assert_eq!(again.status, StatusCode::BAD_REQUEST);
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn flags_are_raised_and_settled(pool: PgPool) {
         let state = test_state(&pool).await;
         let max = state.config.media.max_upload_mb * 1024 * 1024;
@@ -719,7 +719,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn the_log_is_for_moderators(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, super::routes());
         let member = session_for(&pool, "alice", SystemRole::Member).await;

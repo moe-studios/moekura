@@ -1,8 +1,8 @@
 {
-  "name": "uwuubooru-frontend",
+  "name": "uwubooru-frontend",
   "private": true,
   "type": "module",
-  "description": "Progressive enhancements for uwuubooru's pages; every page works without them.",
+  "description": "Progressive enhancements for uwubooru's pages; every page works without them.",
   "license": "AGPL-3.0-only",
   "scripts": {
     "build": "esbuild src/main.ts --bundle --format=esm --target=es2022 --outfile=../crates/web/static/js/main.js --legal-comments=none --banner:js=\"// Built from frontend/src by npm run build. Do not edit.\"",

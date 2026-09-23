@@ -3,5 +3,5 @@ node_modules/
 # Default local storage directory
 /data
 # Local configuration and secrets
-/uwuubooru.toml
+/uwubooru.toml
 .env

@@ -1,4 +1,4 @@
-//! `uwuubooru admin …`: account and settings management from the shell,
+//! `uwubooru admin …`: account and settings management from the shell,
 //! for bootstrapping an instance before anyone can log in.
 
 use std::io::{BufRead, IsTerminal};
@@ -8,13 +8,13 @@ use anyhow::{Context, bail};
 use clap::Subcommand;
 use serde_json::Value;
 use sqlx::PgPool;
-use uwuu_core::jobs::ProcessMedia;
-use uwuu_core::moderation::ActionKind;
-use uwuu_core::permissions::{Role, SystemRole};
-use uwuu_db::accounts::{self, NewAccount};
-use uwuu_db::mod_actions::{self, NewAction};
-use uwuu_db::users::{self, User, UserStatus};
-use uwuu_db::{invites, roles, settings};
+use uwu_core::jobs::ProcessMedia;
+use uwu_core::moderation::ActionKind;
+use uwu_core::permissions::{Role, SystemRole};
+use uwu_db::accounts::{self, NewAccount};
+use uwu_db::mod_actions::{self, NewAction};
+use uwu_db::users::{self, User, UserStatus};
+use uwu_db::{invites, roles, settings};
 
 #[derive(Subcommand)]
 pub enum AdminCommand {
@@ -88,7 +88,7 @@ pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
             println!("queued {queued} file(s) for processing");
         }
         AdminCommand::RecountTags => {
-            let fixed = uwuu_db::tags::recount(db).await?;
+            let fixed = uwu_db::tags::recount(db).await?;
             println!("corrected {fixed} tag count(s)");
         }
         AdminCommand::Settings { action: None } => {
@@ -150,12 +150,12 @@ pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Rol
 /// Queues processing for the given posts' files (all when `None`).
 /// Returns how many were queued.
 pub async fn regenerate_media(db: &PgPool, posts: Option<&[i64]>) -> anyhow::Result<usize> {
-    let asset_ids = uwuu_db::media::asset_ids(db, posts).await?;
+    let asset_ids = uwu_db::media::asset_ids(db, posts).await?;
     // Batches keep each transaction short on large sites.
     for batch in asset_ids.chunks(1000) {
         let mut tx = db.begin().await?;
         for &asset_id in batch {
-            uwuu_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
+            uwu_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
         }
         tx.commit().await?;
     }
@@ -201,7 +201,7 @@ mod tests {
 
     use super::*;
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn creates_admins_by_key_or_name(pool: PgPool) {
         let user = create_user(&pool, "catherine", "admin", None, "correct horse")
             .await
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(user.role_id, admin.id);
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn reports_unknown_roles_and_users(pool: PgPool) {
         let err = create_user(&pool, "catherine", "wizard", None, "correct horse")
             .await
@@ -234,7 +234,7 @@ mod tests {
         assert!(err.to_string().contains("no user named nobody"), "{err}");
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn changes_roles(pool: PgPool) {
         create_user(&pool, "catherine", "member", None, "correct horse")
             .await
@@ -244,7 +244,7 @@ mod tests {
         assert_eq!(user.role_id, role.id);
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn regenerates_selected_or_all_media(pool: PgPool) {
         // Two posts with files, straight into the tables.
         for n in 1..=2u8 {
@@ -270,7 +270,7 @@ mod tests {
             1
         );
         assert_eq!(regenerate_media(&pool, None).await.unwrap(), 2);
-        assert_eq!(uwuu_db::jobs::counts(&pool).await.unwrap().queued, 3);
+        assert_eq!(uwu_db::jobs::counts(&pool).await.unwrap().queued, 3);
     }
 
     #[test]

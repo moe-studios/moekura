@@ -10,9 +10,9 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use sqlx::PgPool;
 use tower::ServiceExt;
-use uwuu_core::config::Config;
-use uwuu_db::Db;
-use uwuu_db::site_cache::SiteCache;
+use uwu_core::config::Config;
+use uwu_db::Db;
+use uwu_db::site_cache::SiteCache;
 
 use crate::auth::SESSION_COOKIE;
 use crate::{AppState, with_middleware};
@@ -22,7 +22,7 @@ use crate::{AppState, with_middleware};
 pub fn test_config() -> Config {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("uwuu-web-test-{}-{n}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("uwu-web-test-{}-{n}", std::process::id()));
     let mut config = Config::default();
     config.storage.path = root.join("storage");
     config.media.work_dir = Some(root.join("work"));
@@ -96,7 +96,7 @@ impl TestApp {
         fields: &[(&str, String)],
         file: Option<(&str, &[u8])>,
     ) -> TestResponse {
-        const BOUNDARY: &str = "uwuu-test-boundary";
+        const BOUNDARY: &str = "uwu-test-boundary";
         let mut body = Vec::new();
         for (name, value) in fields {
             let part = format!(
@@ -200,10 +200,10 @@ impl TestApp {
 pub async fn session_for(
     pool: &PgPool,
     name: &str,
-    role: uwuu_core::permissions::SystemRole,
+    role: uwu_core::permissions::SystemRole,
 ) -> String {
-    use uwuu_db::users::{NewUser, UserStatus};
-    let role_id = uwuu_db::roles::by_system(pool, role).await.unwrap().id;
+    use uwu_db::users::{NewUser, UserStatus};
+    let role_id = uwu_db::roles::by_system(pool, role).await.unwrap().id;
     let new = NewUser {
         name,
         email: None,
@@ -211,17 +211,17 @@ pub async fn session_for(
         role_id,
         status: UserStatus::Active,
     };
-    let user = uwuu_db::users::insert(pool, new).await.unwrap();
-    let session = uwuu_db::sessions::NewSession {
+    let user = uwu_db::users::insert(pool, new).await.unwrap();
+    let session = uwu_db::sessions::NewSession {
         user_id: user.id,
         user_agent: None,
         ip: None,
     };
-    let lifetime = uwuu_db::sessions::Lifetime {
+    let lifetime = uwu_db::sessions::Lifetime {
         idle: std::time::Duration::from_secs(3600),
         max: std::time::Duration::from_secs(3600),
     };
-    uwuu_db::sessions::create(pool, session, lifetime)
+    uwu_db::sessions::create(pool, session, lifetime)
         .await
         .unwrap()
 }

@@ -1,4 +1,4 @@
-//! Domain types and pure logic for uwuubooru.
+//! Domain types and pure logic for uwubooru.
 //!
 //! Nothing in this crate performs IO; it is shared by the database, web and
 //! binary crates.

@@ -3,10 +3,10 @@
 use std::collections::HashMap;
 
 use sqlx::PgPool;
-use uwuu_core::blacklist::Blacklist;
-use uwuu_core::posts::Rating;
-use uwuu_core::user_settings::UserSettings;
-use uwuu_db::{tag_relations, tags};
+use uwu_core::blacklist::Blacklist;
+use uwu_core::posts::Rating;
+use uwu_core::user_settings::UserSettings;
+use uwu_db::{tag_relations, tags};
 
 use crate::AppState;
 use crate::auth::CurrentUser;

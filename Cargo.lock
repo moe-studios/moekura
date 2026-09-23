@@ -3178,7 +3178,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "uwuu-core"
+name = "uwu-core"
 version = "0.1.0-dev"
 dependencies = [
  "argon2",
@@ -3195,7 +3195,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "uwuu-db"
+name = "uwu-db"
 version = "0.1.0-dev"
 dependencies = [
  "argon2",
@@ -3208,11 +3208,11 @@ dependencies = [
  "time",
  "tokio",
  "tracing",
- "uwuu-core",
+ "uwu-core",
 ]
 
 [[package]]
-name = "uwuu-jobs"
+name = "uwu-jobs"
 version = "0.1.0-dev"
 dependencies = [
  "hex",
@@ -3223,14 +3223,14 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "uwuu-core",
- "uwuu-db",
- "uwuu-media",
- "uwuu-storage",
+ "uwu-core",
+ "uwu-db",
+ "uwu-media",
+ "uwu-storage",
 ]
 
 [[package]]
-name = "uwuu-media"
+name = "uwu-media"
 version = "0.1.0-dev"
 dependencies = [
  "serde",
@@ -3238,11 +3238,11 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
- "uwuu-core",
+ "uwu-core",
 ]
 
 [[package]]
-name = "uwuu-storage"
+name = "uwu-storage"
 version = "0.1.0-dev"
 dependencies = [
  "bytes",
@@ -3254,11 +3254,11 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
- "uwuu-core",
+ "uwu-core",
 ]
 
 [[package]]
-name = "uwuu-web"
+name = "uwu-web"
 version = "0.1.0-dev"
 dependencies = [
  "axum",
@@ -3285,14 +3285,14 @@ dependencies = [
  "tower-http 0.7.1",
  "tracing",
  "url",
- "uwuu-core",
- "uwuu-db",
- "uwuu-media",
- "uwuu-storage",
+ "uwu-core",
+ "uwu-db",
+ "uwu-media",
+ "uwu-storage",
 ]
 
 [[package]]
-name = "uwuubooru"
+name = "uwubooru"
 version = "0.1.0-dev"
 dependencies = [
  "anyhow",
@@ -3306,12 +3306,12 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
- "uwuu-core",
- "uwuu-db",
- "uwuu-jobs",
- "uwuu-media",
- "uwuu-storage",
- "uwuu-web",
+ "uwu-core",
+ "uwu-db",
+ "uwu-jobs",
+ "uwu-media",
+ "uwu-storage",
+ "uwu-web",
 ]
 
 [[package]]

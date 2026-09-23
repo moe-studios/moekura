@@ -252,7 +252,7 @@ pub fn phash_chunks(hash: u64) -> [i16; 4] {
 #[cfg(test)]
 mod tests {
     use sqlx::PgPool;
-    use uwuu_core::posts::{PostStatus, Rating};
+    use uwu_core::posts::{PostStatus, Rating};
 
     use super::*;
     use crate::posts::{self, NewPost};

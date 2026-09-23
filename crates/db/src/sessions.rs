@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
-use uwuu_core::tokens::{NewToken, hash_token};
+use uwu_core::tokens::{NewToken, hash_token};
 
 use crate::bans::ActiveBan;
 use crate::users::User;
@@ -169,7 +169,7 @@ fn truncate(s: &str, max_bytes: usize) -> &str {
 #[cfg(test)]
 mod tests {
     use sqlx::PgPool;
-    use uwuu_core::permissions::SystemRole;
+    use uwu_core::permissions::SystemRole;
 
     use super::*;
     use crate::roles;

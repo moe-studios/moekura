@@ -2,6 +2,7 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
@@ -324,6 +325,105 @@ pub(crate) async fn relations(
     }))
 }
 
+/// Changes to a tag. Fields left out stay as they are.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TagChanges {
+    /// The category's name (`general`, `artist`, …).
+    category: Option<String>,
+    /// Deprecated tags can't be added to posts.
+    deprecated: Option<bool>,
+}
+
+/// Edit a tag.
+///
+/// Needs `manage_tags`. The change is recorded in the moderation log.
+#[utoipa::path(
+    patch,
+    path = "/tags/{name}",
+    tag = "tags",
+    params(("name" = String, Path, description = "The tag's name")),
+    request_body = TagChanges,
+    responses(
+        (status = 200, body = ApiTag),
+        (status = 404, body = ErrorBody),
+        (status = 422, body = ErrorBody, description = "There is no such category"),
+    ),
+)]
+pub(crate) async fn update(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(name): Path<String>,
+    Json(changes): Json<TagChanges>,
+) -> Result<Json<ApiTag>, AppError> {
+    current.require(Permission::ManageTags)?;
+    let db = state.db.primary();
+    let tag = tags::by_name(db, &uwu_core::tags::normalize(&name))
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let categories = tags::categories(db).await?;
+    let category = match &changes.category {
+        None => tag.category_id,
+        Some(name) => categories
+            .iter()
+            .find(|c| &c.name == name)
+            .map(|c| c.id)
+            .ok_or_else(|| AppError::Unprocessable(format!("There is no category `{name}`")))?,
+    };
+    let deprecated = changes.deprecated.unwrap_or(tag.is_deprecated);
+    crate::tags::update(&state, &current, &tag, category, deprecated).await?;
+    let tag = tags::by_id(db, tag.id).await?.ok_or(AppError::NotFound)?;
+    Ok(Json(ApiTag::new(tag, &categories)))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct NewRelation {
+    #[schema(inline)]
+    kind: RelationKind,
+    /// The tag that's aliased, or that implies the other.
+    antecedent: String,
+    /// The tag it's aliased to, or that it implies.
+    consequent: String,
+    /// Why, for whoever reviews the request.
+    #[serde(default)]
+    reason: String,
+}
+
+/// Request an alias or implication.
+///
+/// Needs `edit_posts`. Requests wait for someone with `manage_tags`,
+/// whose own requests take effect at once; either way the relation is then
+/// applied to existing posts in the background.
+#[utoipa::path(
+    post,
+    path = "/tag-relations",
+    tag = "tags",
+    request_body = NewRelation,
+    responses(
+        (status = 201, body = ApiRelation),
+        (status = 422, body = ErrorBody, description = "The tags aren't valid, or the relation would conflict with others"),
+    ),
+)]
+pub(crate) async fn request(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Json(new): Json<NewRelation>,
+) -> Result<(StatusCode, Json<ApiRelation>), AppError> {
+    let id = crate::tag_relations::request_relation(
+        &state,
+        &current,
+        new.kind.into(),
+        &new.antecedent,
+        &new.consequent,
+        &new.reason,
+    )
+    .await?;
+    let relation = tag_relations::by_id(state.db.primary(), id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok((StatusCode::CREATED, Json(relation.into())))
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
@@ -420,5 +520,68 @@ mod tests {
         assert_eq!(none["relations"], json!([]));
         let missing_kind = app.get("/api/v1/tag-relations", None).await;
         assert_eq!(missing_kind.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    async fn edits_tags_and_requests_relations(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        upload(&app, &alice, &fixture::png(20, 20), "someone").await;
+
+        let change = json!({"category": "artist", "deprecated": false});
+        let refused = app
+            .json(
+                "PATCH",
+                "/api/v1/tags/someone",
+                Some(&alice),
+                Some(change.clone()),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
+        let tag = json(
+            &app.json("PATCH", "/api/v1/tags/someone", Some(&admin), Some(change))
+                .await
+                .body,
+        );
+        assert_eq!(tag["category"], json!("artist"));
+        let unknown = app
+            .json(
+                "PATCH",
+                "/api/v1/tags/someone",
+                Some(&admin),
+                Some(json!({"category": "nope"})),
+            )
+            .await;
+        assert_eq!(unknown.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        let request =
+            json!({"kind": "alias", "antecedent": "kitty", "consequent": "cat", "reason": "same"});
+        let pending = app
+            .json("POST", "/api/v1/tag-relations", Some(&alice), Some(request))
+            .await;
+        assert_eq!(pending.status, StatusCode::CREATED, "{}", pending.body);
+        assert_eq!(json(&pending.body)["status"], json!("pending"));
+        let active = json(
+            &app.json(
+                "POST",
+                "/api/v1/tag-relations",
+                Some(&admin),
+                Some(json!({"kind": "implication", "antecedent": "cat", "consequent": "animal"})),
+            )
+            .await
+            .body,
+        );
+        assert_eq!(active["status"], json!("active"));
+        let same = app
+            .json(
+                "POST",
+                "/api/v1/tag-relations",
+                Some(&alice),
+                Some(json!({"kind": "alias", "antecedent": "a", "consequent": "a"})),
+            )
+            .await;
+        assert_eq!(same.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(same.body.contains("two different tags"), "{}", same.body);
     }
 }

@@ -15,6 +15,7 @@ use uwu_db::mod_actions::{self, NewAction};
 use uwu_db::tag_relations::{self, Kind, NewRequest, Relation, RelationError, Status};
 
 use crate::AppState;
+use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
@@ -169,66 +170,85 @@ async fn create(
     kind: Kind,
     form: RequestForm,
 ) -> Result<Response, AppError> {
-    page.current.require(Permission::EditPosts)?;
-    let Some(user) = page.current.user.clone() else {
-        return Err(AppError::Unauthorized);
-    };
-    let reject = |page, form, message: String| {
-        index(
-            page,
-            kind,
-            ListQuery::default(),
-            Some((form, message)),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        )
-    };
-    let parse =
-        |label: &str, raw: &str| TagName::parse(raw).map_err(|e| format!("The {label} tag {e}."));
-    let names = parse("first", &form.antecedent)
-        .and_then(|a| Ok((a, parse("second", &form.consequent)?)))
-        .and_then(|(a, c)| {
-            if a == c {
-                Err("Pick two different tags.".to_owned())
-            } else if form.reason.chars().count() > REASON_MAX_LEN {
-                Err(format!(
-                    "The reason may be at most {REASON_MAX_LEN} characters."
-                ))
-            } else {
-                Ok((a, c))
-            }
-        });
-    let (antecedent, consequent) = match names {
-        Ok(names) => names,
-        Err(message) => return reject(page, form, message).await,
-    };
+    let result = request_relation(
+        page.state(),
+        &page.current,
+        kind,
+        &form.antecedent,
+        &form.consequent,
+        &form.reason,
+    )
+    .await;
+    match result {
+        Ok(_) => Ok((flash::set(jar, Flash::Saved), Redirect::to(path(kind))).into_response()),
+        Err(AppError::Unprocessable(message)) => {
+            index(
+                page,
+                kind,
+                ListQuery::default(),
+                Some((form, message)),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            )
+            .await
+        }
+        Err(error) => Err(error),
+    }
+}
 
-    let db = page.state().db.primary();
+/// Requests an alias or implication and returns its id. Tag managers'
+/// own requests take effect at once. Problems with the tags come back as
+/// [`AppError::Unprocessable`].
+pub(crate) async fn request_relation(
+    state: &AppState,
+    current: &CurrentUser,
+    kind: Kind,
+    antecedent: &str,
+    consequent: &str,
+    reason: &str,
+) -> Result<i32, AppError> {
+    current.require(Permission::EditPosts)?;
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let invalid = AppError::Unprocessable;
+    let parse = |label: &str, raw: &str| {
+        TagName::parse(raw).map_err(|e| invalid(format!("The {label} tag {e}.")))
+    };
+    let antecedent = parse("first", antecedent)?;
+    let consequent = parse("second", consequent)?;
+    if antecedent == consequent {
+        return Err(invalid("Pick two different tags.".to_owned()));
+    }
+    if reason.chars().count() > REASON_MAX_LEN {
+        return Err(invalid(format!(
+            "The reason may be at most {REASON_MAX_LEN} characters."
+        )));
+    }
+
+    let db = state.db.primary();
     let request = NewRequest {
         kind,
         antecedent: antecedent.as_str(),
         consequent: consequent.as_str(),
-        reason: form.reason.trim(),
+        reason: reason.trim(),
         creator_id: Some(user.id),
     };
     let result = match tag_relations::request(db, request).await {
-        // Tag managers' own requests take effect at once.
-        Ok(id) if page.current.can(Permission::ManageTags) => {
+        Ok(id) if current.can(Permission::ManageTags) => {
             match tag_relations::approve(db, id, user.id).await {
                 Ok(()) => {
                     audit(db, user.id, ActionKind::TagRelationApprove, id).await?;
-                    Ok(())
+                    Ok(id)
                 }
                 Err(e) => Err(e),
             }
         }
-        other => other.map(|_| ()),
+        other => other,
     };
     match result {
-        Ok(()) => {
+        Ok(id) => {
             tracing::info!(%kind, %antecedent, %consequent, user = user.name, "tag relation requested");
-            Ok((flash::set(jar, Flash::Saved), Redirect::to(path(kind))).into_response())
+            Ok(id)
         }
-        Err(RelationError::Rule(rule)) => reject(page, form, rule.to_string()).await,
+        Err(RelationError::Rule(rule)) => Err(invalid(rule.to_string())),
         Err(RelationError::Db(e)) => Err(e.into()),
     }
 }

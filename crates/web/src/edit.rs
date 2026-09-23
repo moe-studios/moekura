@@ -13,6 +13,7 @@ use uwu_db::posts::{self, PostEdit};
 use uwu_db::tags::{self, WantedTag};
 
 use crate::AppState;
+use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
@@ -48,7 +49,7 @@ struct EditQuery {
 }
 
 /// Why an edit was refused, for the form.
-enum Refused {
+pub(crate) enum Refused {
     Invalid(String),
     Error(AppError),
 }
@@ -76,7 +77,7 @@ async fn edit(
     Form(form): Form<EditForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::EditPosts)?;
-    match apply(&page, id, &form).await {
+    match apply(page.state(), &page.current, id, &form).await {
         Ok(()) => {
             let mut back = format!("/posts/{id}");
             if !query.q.is_empty() {
@@ -102,9 +103,14 @@ async fn edit(
 }
 
 /// Validates `form` and saves it in one transaction with the post locked.
-async fn apply(page: &Page, id: i64, form: &EditForm) -> Result<(), Refused> {
+pub(crate) async fn apply(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    form: &EditForm,
+) -> Result<(), Refused> {
     let invalid = |message: &str| Err(Refused::Invalid(message.to_owned()));
-    let db = page.state().db.primary();
+    let db = state.db.primary();
     let Ok(rating) = form.rating.parse::<Rating>() else {
         return invalid("Choose a rating.");
     };
@@ -134,7 +140,7 @@ async fn apply(page: &Page, id: i64, form: &EditForm) -> Result<(), Refused> {
     let post = posts::lock(&mut *tx, id)
         .await?
         .ok_or(Refused::Error(AppError::NotFound))?;
-    if !visibility(&page.current).allows(&post) {
+    if !visibility(current).allows(&post) {
         return Err(Refused::Error(AppError::NotFound));
     }
     if let Some(parent) = parent_id
@@ -153,13 +159,13 @@ async fn apply(page: &Page, id: i64, form: &EditForm) -> Result<(), Refused> {
 
     // Apply this form's changes to the tags as they are now, so an edit
     // made by someone else meanwhile isn't undone.
-    let current: Vec<String> = tags::by_ids(&mut *tx, &post.tag_ids)
+    let kept: Vec<String> = tags::by_ids(&mut *tx, &post.tag_ids)
         .await?
         .into_iter()
         .map(|t| t.name)
         .filter(|name| !changes.removed.contains(name))
         .collect();
-    let mut wanted: Vec<WantedTag<'_>> = current
+    let mut wanted: Vec<WantedTag<'_>> = kept
         .iter()
         .map(|name| WantedTag {
             name,
@@ -174,15 +180,13 @@ async fn apply(page: &Page, id: i64, form: &EditForm) -> Result<(), Refused> {
     if wanted.len() > POST_MAX_TAGS {
         return Err(too_many().into());
     }
-    let tag_ids: Vec<i32> =
-        tags::for_post(&mut tx, &wanted, page.current.can(Permission::ManageTags))
-            .await?
-            .iter()
-            .map(|t| t.id)
-            .collect();
+    let tag_ids: Vec<i32> = tags::for_post(&mut tx, &wanted, current.can(Permission::ManageTags))
+        .await?
+        .iter()
+        .map(|t| t.id)
+        .collect();
 
-    uwu_db::post_versions::attribute(&mut tx, page.current.user.as_ref().map(|u| u.id), None)
-        .await?;
+    uwu_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None).await?;
     posts::update(
         &mut *tx,
         id,
@@ -198,7 +202,7 @@ async fn apply(page: &Page, id: i64, form: &EditForm) -> Result<(), Refused> {
     tx.commit().await?;
     tracing::info!(
         post_id = id,
-        user = page.current.user.as_ref().map(|u| u.name.as_str()),
+        user = current.user.as_ref().map(|u| u.name.as_str()),
         "post edited"
     );
     Ok(())

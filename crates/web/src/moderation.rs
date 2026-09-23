@@ -20,6 +20,7 @@ use uwu_db::{jobs, posts, tags};
 use uwu_storage::Key;
 
 use crate::AppState;
+use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
@@ -123,13 +124,24 @@ async fn flag(
     Path(id): Path<i64>,
     Form(form): Form<ReasonForm>,
 ) -> Result<Response, AppError> {
-    page.current.require(Permission::Flag)?;
-    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
-    let reason = check_reason(&form.reason)?;
+    flag_post(page.state(), &page.current, id, &form.reason).await?;
+    Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+/// Flags post `id` for deletion.
+pub(crate) async fn flag_post(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    reason: &str,
+) -> Result<(), AppError> {
+    current.require(Permission::Flag)?;
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let reason = check_reason(reason)?;
     if reason.is_empty() {
         return Err(AppError::BadRequest("Say why the post should go".into()));
     }
-    let mut tx = page.state().db.primary().begin().await?;
+    let mut tx = state.db.primary().begin().await?;
     match flags::create(&mut tx, id, user.id, reason).await {
         Ok(()) => {}
         Err(FlagError::Db(e)) => return Err(e.into()),
@@ -137,7 +149,7 @@ async fn flag(
     }
     tx.commit().await?;
     tracing::info!(post_id = id, user = user.name, "post flagged");
-    Ok(back_to(jar, &format!("/posts/{id}")))
+    Ok(())
 }
 
 /// Posts with open flags per page of the flag queue.

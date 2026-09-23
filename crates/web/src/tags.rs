@@ -343,35 +343,51 @@ async fn edit(
     Form(form): Form<EditForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ManageTags)?;
-    let db = page.state().db.primary();
-    let tag = tags::by_id(db, id).await?.ok_or(AppError::NotFound)?;
-    if !tags::categories(db)
+    let tag = tags::by_id(page.state().db.primary(), id)
         .await?
-        .iter()
-        .any(|c| c.id == form.category)
-    {
-        return Err(AppError::BadRequest("Unknown category".into()));
-    }
-    tags::update(db, id, form.category, form.deprecated.is_some()).await?;
-    mod_actions::record(
-        db,
-        NewAction::new(
-            page.current.user.as_ref().map(|u| u.id),
-            ActionKind::TagUpdate,
-        )
-        .details(serde_json::json!({
-            "tag": tag.name,
-            "category": form.category,
-            "deprecated": form.deprecated.is_some(),
-        })),
+        .ok_or(AppError::NotFound)?;
+    update(
+        page.state(),
+        &page.current,
+        &tag,
+        form.category,
+        form.deprecated.is_some(),
     )
     .await?;
-    tracing::info!(tag = tag.name, category = form.category, "tag edited");
     let query = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("name", &tag.name)
         .finish();
     let back = format!("/tags?{query}");
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&back)).into_response())
+}
+
+/// Changes a tag's category and whether it's deprecated, and logs it.
+pub(crate) async fn update(
+    state: &AppState,
+    current: &CurrentUser,
+    tag: &Tag,
+    category: i16,
+    deprecated: bool,
+) -> Result<(), AppError> {
+    current.require(Permission::ManageTags)?;
+    let db = state.db.primary();
+    if !tags::categories(db).await?.iter().any(|c| c.id == category) {
+        return Err(AppError::BadRequest("Unknown category".into()));
+    }
+    tags::update(db, tag.id, category, deprecated).await?;
+    mod_actions::record(
+        db,
+        NewAction::new(current.user.as_ref().map(|u| u.id), ActionKind::TagUpdate).details(
+            serde_json::json!({
+                "tag": tag.name,
+                "category": category,
+                "deprecated": deprecated,
+            }),
+        ),
+    )
+    .await?;
+    tracing::info!(tag = tag.name, category, deprecated, "tag edited");
+    Ok(())
 }
 
 #[cfg(test)]

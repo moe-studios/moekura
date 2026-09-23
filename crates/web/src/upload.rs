@@ -33,15 +33,20 @@ use crate::pages::Page;
 /// Room for the text fields and multipart framing on top of the file.
 const FORM_OVERHEAD: usize = 64 * 1024;
 
-pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
+/// The request body limit for an upload form of up to `max_upload_bytes`.
+pub(crate) fn body_limit(max_upload_bytes: u64) -> DefaultBodyLimit {
     let limit = usize::try_from(max_upload_bytes)
         .unwrap_or(usize::MAX)
         .saturating_add(FORM_OVERHEAD);
+    DefaultBodyLimit::max(limit)
+}
+
+pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new().route(
         "/upload",
         get(upload_form)
             .post(upload)
-            .layer(DefaultBodyLimit::max(limit)),
+            .layer(body_limit(max_upload_bytes)),
     )
 }
 
@@ -179,7 +184,10 @@ async fn upload(
 }
 
 /// Downloads `fields.url`, which also becomes the source if none was given.
-async fn fetch_url(state: &AppState, fields: &mut UploadFields) -> Result<TempUpload, UploadError> {
+pub(crate) async fn fetch_url(
+    state: &AppState,
+    fields: &mut UploadFields,
+) -> Result<TempUpload, UploadError> {
     let url = url::Url::parse(&fields.url)
         .map_err(|_| UploadError::Invalid("That isn't a valid link.".into()))?;
     let writer = TempWriter::create(&state.work_dir).await?;
@@ -207,7 +215,7 @@ fn failed(page: &Page, fields: &UploadFields, error: UploadError) -> Response {
 
 /// Reads the form, streaming the file to disk. The fields read so far come
 /// back even on error, so the form can be shown again filled in.
-async fn receive(
+pub(crate) async fn receive(
     state: &AppState,
     mut multipart: Multipart,
 ) -> (UploadFields, Result<Option<TempUpload>, UploadError>) {

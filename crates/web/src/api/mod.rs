@@ -85,26 +85,33 @@ impl Modify for Auth {
     }
 }
 
-fn api_router() -> OpenApiRouter<AppState> {
+/// The API's routes; uploads may be up to `max_upload_bytes`.
+fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
+    let uploads = OpenApiRouter::new()
+        .routes(routes!(posts::search, posts::upload))
+        .layer(crate::upload::body_limit(max_upload_bytes));
     OpenApiRouter::with_openapi(ApiDoc::openapi())
-        .routes(routes!(posts::search))
-        .routes(routes!(posts::show))
+        .merge(uploads)
+        .routes(routes!(posts::show, posts::update))
         .routes(routes!(posts::versions))
+        .routes(routes!(posts::favorite, posts::unfavorite))
+        .routes(routes!(posts::vote))
+        .routes(routes!(posts::flag))
         .routes(routes!(tags::list))
-        .routes(routes!(tags::show))
+        .routes(routes!(tags::show, tags::update))
         .routes(routes!(tags::autocomplete))
-        .routes(routes!(tags::relations))
+        .routes(routes!(tags::relations, tags::request))
         .routes(routes!(users::show))
         .routes(routes!(users::me))
 }
 
 /// The API's OpenAPI description.
 pub fn openapi() -> Spec {
-    api_router().into_openapi()
+    api_router(0).into_openapi()
 }
 
-pub fn routes() -> Router<AppState> {
-    let (router, spec) = api_router().split_for_parts();
+pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
+    let (router, spec) = api_router(max_upload_bytes).split_for_parts();
     let spec: Arc<str> = spec
         .to_pretty_json()
         .expect("the OpenAPI description serializes")
@@ -140,7 +147,7 @@ mod tests {
 
     #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn errors_are_json(pool: PgPool) {
-        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let app = TestApp::new(test_state(&pool).await, super::routes(1024));
         let response = app.get("/api/v1/nope", None).await;
         assert_eq!(response.status, StatusCode::NOT_FOUND);
         let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
@@ -164,7 +171,7 @@ mod tests {
 
     #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn serves_its_openapi_description(pool: PgPool) {
-        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let app = TestApp::new(test_state(&pool).await, super::routes(1024));
         let response = app.get("/api/v1/openapi.json", None).await;
         assert_eq!(response.status, StatusCode::OK);
         let spec: serde_json::Value = serde_json::from_str(&response.body).unwrap();
@@ -184,7 +191,7 @@ pub(crate) mod test_support {
     pub async fn app(pool: &PgPool) -> TestApp {
         let state = test_state(pool).await;
         let max = state.config.media.max_upload_mb * 1024 * 1024;
-        let routes = super::routes()
+        let routes = super::routes(max)
             .merge(crate::upload::routes(max))
             .merge(crate::edit::routes());
         TestApp::new(state, routes)

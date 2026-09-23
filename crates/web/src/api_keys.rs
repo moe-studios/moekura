@@ -149,7 +149,7 @@ mod tests {
     use crate::test_support::{TestApp, session_for, test_state};
 
     async fn app(pool: &PgPool) -> TestApp {
-        let routes = super::routes().merge(crate::api::routes());
+        let routes = super::routes().merge(crate::api::routes(1024));
         TestApp::new(test_state(pool).await, routes)
     }
 

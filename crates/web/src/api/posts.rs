@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 
 use axum::Json;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Multipart, Path, Query, State};
+use axum::http::header::LOCATION;
+use axum::http::{HeaderName, StatusCode};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -19,8 +21,11 @@ use uwu_storage::Key;
 use super::absolute_url;
 use crate::AppState;
 use crate::auth::CurrentUser;
+use crate::edit::{EditForm, Refused};
 use crate::error::{AppError, ErrorBody};
+use crate::favorites::{self, Reactions};
 use crate::posts::visibility;
+use crate::upload::UploadError;
 
 /// A post with its tags and files.
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -463,6 +468,308 @@ pub(crate) async fn versions(
     ))
 }
 
+/// The fields of an upload, for the description only: the handler reads
+/// the multipart body as the upload form does.
+#[derive(ToSchema)]
+#[allow(dead_code)]
+pub struct UploadRequest {
+    /// The file. Send either this or `url`.
+    #[schema(value_type = Option<String>, format = Binary)]
+    file: Option<Vec<u8>>,
+    /// A link to download the file from, instead of sending it. It also
+    /// becomes the source when none is given.
+    url: Option<String>,
+    /// `g`, `s`, `q` or `e`.
+    rating: String,
+    /// Whitespace-separated. A category prefix (`artist:name`) sets the
+    /// category of a tag that's new.
+    tags: Option<String>,
+    source: Option<String>,
+    description: Option<String>,
+}
+
+fn upload_error(error: UploadError) -> AppError {
+    match error {
+        UploadError::Invalid(message) => AppError::Unprocessable(message),
+        UploadError::Duplicate(id) => AppError::Duplicate(id),
+        UploadError::Internal(detail) => AppError::Internal(detail),
+    }
+}
+
+/// Upload a post.
+///
+/// Needs `upload`. The post is `pending` when the site reviews uploads and
+/// you lack `upload_without_approval`. Thumbnails are made in the
+/// background: `file.processed` turns true when they're ready.
+#[utoipa::path(
+    post,
+    path = "/posts",
+    tag = "posts",
+    request_body(content = UploadRequest, content_type = "multipart/form-data"),
+    responses(
+        (status = 201, body = ApiPost, headers(("Location" = String, description = "The new post"))),
+        (status = 409, body = ErrorBody, description = "The file was already uploaded; `post_id` names that post"),
+        (status = 413, body = ErrorBody, description = "The request is larger than the site allows"),
+        (status = 422, body = ErrorBody, description = "A field or the file isn't acceptable"),
+    ),
+)]
+pub(crate) async fn upload(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    multipart: Multipart,
+) -> Result<(StatusCode, [(HeaderName, String); 1], Json<ApiPost>), AppError> {
+    current.require(Permission::Upload)?;
+    let (mut fields, file) = crate::upload::receive(&state, multipart).await;
+    let file = match file.map_err(upload_error)? {
+        Some(file) => file,
+        None if !fields.url.is_empty() => crate::upload::fetch_url(&state, &mut fields)
+            .await
+            .map_err(upload_error)?,
+        None => {
+            return Err(AppError::Unprocessable(
+                "Send a `file`, or a `url` to download it from.".into(),
+            ));
+        }
+    };
+    let id = crate::upload::ingest(&state, &current, &file, &fields)
+        .await
+        .map_err(upload_error)?;
+    let post = one(&state, &current, id).await?;
+    Ok((
+        StatusCode::CREATED,
+        [(LOCATION, format!("{}/posts/{id}", super::BASE))],
+        Json(post),
+    ))
+}
+
+/// Changes to a post. Fields left out stay as they are.
+#[derive(Debug, Default, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PostChanges {
+    /// `g`, `s`, `q` or `e`.
+    rating: Option<String>,
+    source: Option<String>,
+    description: Option<String>,
+    /// Another post's number, or `null` for none.
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<i64>)]
+    parent_id: Option<Option<i64>>,
+    /// The complete new list of tags. A category prefix (`artist:name`)
+    /// sets the category of a tag that's new. Can't be combined with
+    /// `add_tags` or `remove_tags`.
+    tags: Option<Vec<String>>,
+    /// Tags to add, keeping the others.
+    #[serde(default)]
+    add_tags: Vec<String>,
+    /// Tags to take off, keeping the others.
+    #[serde(default)]
+    remove_tags: Vec<String>,
+}
+
+/// Tells a field set to `null` (`Some(None)`) from one left out (`None`).
+fn present<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+/// Edit a post.
+///
+/// Needs `edit_posts`. Tag changes are applied to the post's tags as they
+/// are when the change is saved, so edits made meanwhile by others are
+/// kept. Every change is recorded in the post's history.
+#[utoipa::path(
+    patch,
+    path = "/posts/{id}",
+    tag = "posts",
+    params(("id" = i64, Path, description = "Post number")),
+    request_body = PostChanges,
+    responses(
+        (status = 200, body = ApiPost),
+        (status = 404, body = ErrorBody),
+        (status = 422, body = ErrorBody, description = "A change isn't acceptable"),
+    ),
+)]
+pub(crate) async fn update(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+    Json(changes): Json<PostChanges>,
+) -> Result<Json<ApiPost>, AppError> {
+    current.require(Permission::EditPosts)?;
+    let db = state.db.primary();
+    let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    if !visibility(&current).allows(&post) {
+        return Err(AppError::NotFound);
+    }
+    let names: Vec<String> = tags::by_ids(db, &post.tag_ids)
+        .await?
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    let lists = [&changes.add_tags, &changes.remove_tags];
+    if lists
+        .iter()
+        .chain(changes.tags.as_ref().iter())
+        .any(|list| {
+            list.iter()
+                .any(|tag| tag.trim().contains(char::is_whitespace))
+        })
+    {
+        return Err(AppError::Unprocessable(
+            "Tags can't contain spaces; use `_`.".into(),
+        ));
+    }
+    let new_tags = match &changes.tags {
+        Some(_) if lists.iter().any(|l| !l.is_empty()) => {
+            return Err(AppError::Unprocessable(
+                "Send either `tags`, or `add_tags` and `remove_tags`.".into(),
+            ));
+        }
+        Some(all) => all.join(" "),
+        None => {
+            let removed: Vec<String> = changes
+                .remove_tags
+                .iter()
+                .map(|t| uwu_core::tags::normalize(t))
+                .collect();
+            names
+                .iter()
+                .filter(|name| !removed.contains(name))
+                .chain(changes.add_tags.iter())
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
+    };
+    let form = EditForm {
+        tags: new_tags,
+        old_tags: names.join(" "),
+        rating: changes
+            .rating
+            .unwrap_or_else(|| post.rating.code().to_owned()),
+        source: changes.source.unwrap_or(post.source),
+        description: changes.description.unwrap_or(post.description),
+        parent: match changes.parent_id {
+            None => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
+            Some(parent) => parent.map(|p| p.to_string()).unwrap_or_default(),
+        },
+    };
+    match crate::edit::apply(&state, &current, id, &form).await {
+        Ok(()) => Ok(Json(one(&state, &current, id).await?)),
+        Err(Refused::Invalid(message)) => Err(AppError::Unprocessable(message)),
+        Err(Refused::Error(error)) => Err(error),
+    }
+}
+
+/// Favorite a post.
+///
+/// Needs `favorite`. Favoriting twice is harmless.
+#[utoipa::path(
+    put,
+    path = "/posts/{id}/favorite",
+    tag = "posts",
+    params(("id" = i64, Path, description = "Post number")),
+    responses((status = 200, body = Reactions), (status = 404, body = ErrorBody)),
+)]
+pub(crate) async fn favorite(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Reactions>, AppError> {
+    let user = favorites::user_for(&state, &current, id, Permission::Favorite).await?;
+    let db = state.db.primary();
+    uwu_db::favorites::add(db, user, id).await?;
+    Ok(Json(favorites::reactions(db, id, user).await?))
+}
+
+/// Unfavorite a post.
+///
+/// Needs `favorite`.
+#[utoipa::path(
+    delete,
+    path = "/posts/{id}/favorite",
+    tag = "posts",
+    params(("id" = i64, Path, description = "Post number")),
+    responses((status = 200, body = Reactions), (status = 404, body = ErrorBody)),
+)]
+pub(crate) async fn unfavorite(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Reactions>, AppError> {
+    let user = favorites::user_for(&state, &current, id, Permission::Favorite).await?;
+    let db = state.db.primary();
+    uwu_db::favorites::remove(db, user, id).await?;
+    Ok(Json(favorites::reactions(db, id, user).await?))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct Vote {
+    /// 1 (up), -1 (down), or 0 to take your vote back.
+    score: i16,
+}
+
+/// Vote on a post.
+///
+/// Needs `vote`. A new vote replaces your earlier one.
+#[utoipa::path(
+    put,
+    path = "/posts/{id}/vote",
+    tag = "posts",
+    params(("id" = i64, Path, description = "Post number")),
+    request_body = Vote,
+    responses(
+        (status = 200, body = Reactions),
+        (status = 400, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+)]
+pub(crate) async fn vote(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+    Json(vote): Json<Vote>,
+) -> Result<Json<Reactions>, AppError> {
+    let user = favorites::user_for(&state, &current, id, Permission::Vote).await?;
+    let db = state.db.primary();
+    favorites::vote_on(db, id, user, vote.score).await?;
+    Ok(Json(favorites::reactions(db, id, user).await?))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct NewFlag {
+    /// Why the post should be deleted.
+    reason: String,
+}
+
+/// Flag a post for deletion.
+///
+/// Needs `flag`. Moderators review flags; a post can't have two open flags
+/// from the same user.
+#[utoipa::path(
+    post,
+    path = "/posts/{id}/flags",
+    tag = "posts",
+    params(("id" = i64, Path, description = "Post number")),
+    request_body = NewFlag,
+    responses(
+        (status = 204, description = "Flagged"),
+        (status = 400, body = ErrorBody, description = "No reason, or the post can't be flagged now"),
+    ),
+)]
+pub(crate) async fn flag(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+    Json(flag): Json<NewFlag>,
+) -> Result<StatusCode, AppError> {
+    crate::moderation::flag_post(&state, &current, id, &flag.reason).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
@@ -628,5 +935,220 @@ mod tests {
         assert_eq!(latest["removed"], json!(["cute"]));
         assert_eq!(latest["rating"], json!("e"));
         assert_eq!(versions[1]["added"], json!(["cat", "cute"]));
+    }
+
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    async fn uploads_through_the_api(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let png = fixture::png(40, 30);
+        let fields = vec![
+            ("rating", "q".to_owned()),
+            ("tags", "cat artist:someone".to_owned()),
+        ];
+        let created = app
+            .post_multipart(
+                "/api/v1/posts",
+                Some(&alice),
+                &fields,
+                Some(("a.png", &png)),
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+        let post = json(&created.body);
+        let id = post["id"].as_i64().unwrap();
+        assert_eq!(created.location, Some(format!("/api/v1/posts/{id}")));
+        assert_eq!(post["rating"], json!("q"));
+        assert_eq!(
+            post["tags"][1],
+            json!({"name": "someone", "category": "artist"})
+        );
+
+        let again = app
+            .post_multipart(
+                "/api/v1/posts",
+                Some(&alice),
+                &fields,
+                Some(("b.png", &png)),
+            )
+            .await;
+        assert_eq!(again.status, StatusCode::CONFLICT);
+        assert_eq!(json(&again.body)["error"]["post_id"], json!(id));
+
+        let no_rating = vec![("tags", "cat".to_owned())];
+        let response = app
+            .post_multipart(
+                "/api/v1/posts",
+                Some(&alice),
+                &no_rating,
+                Some(("c.png", &fixture::png(42, 30))),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            json(&response.body)["error"]["message"],
+            json!("Choose a rating.")
+        );
+        let response = app
+            .post_multipart("/api/v1/posts", Some(&alice), &fields, None)
+            .await;
+        assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        let visitor = app
+            .post_multipart("/api/v1/posts", None, &fields, Some(("d.png", &png)))
+            .await;
+        assert_eq!(visitor.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    async fn edits_through_the_api(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let parent = upload(&app, &alice, &fixture::png(20, 20), "a").await;
+        let id = upload(&app, &alice, &fixture::png(24, 20), "cat cute").await;
+        let path = format!("/api/v1/posts/{id}");
+        let tags = |post: &serde_json::Value| -> Vec<String> {
+            post["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|t| t["name"].as_str().unwrap().to_owned())
+                .collect()
+        };
+
+        let edited = app
+            .json(
+                "PATCH",
+                &path,
+                Some(&alice),
+                Some(json!({"add_tags": ["dog", "artist:someone"], "remove_tags": ["Cute"], "rating": "e", "parent_id": parent})),
+            )
+            .await;
+        assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+        let post = json(&edited.body);
+        assert_eq!(tags(&post), ["cat", "dog", "someone"]);
+        assert_eq!(
+            (&post["rating"], &post["parent_id"]),
+            (&json!("e"), &json!(parent))
+        );
+
+        // Left out stays; null clears.
+        let post = json(
+            &app.json(
+                "PATCH",
+                &path,
+                Some(&alice),
+                Some(json!({"source": "https://example.com"})),
+            )
+            .await
+            .body,
+        );
+        assert_eq!(post["parent_id"], json!(parent));
+        assert_eq!(post["rating"], json!("e"));
+        let post = json(
+            &app.json(
+                "PATCH",
+                &path,
+                Some(&alice),
+                Some(json!({"parent_id": null, "tags": ["bird"]})),
+            )
+            .await
+            .body,
+        );
+        assert_eq!(post["parent_id"], json!(null));
+        assert_eq!(tags(&post), ["bird"]);
+        assert_eq!(post["source"], json!("https://example.com"));
+
+        for (body, message) in [
+            (json!({"tags": ["a"], "add_tags": ["b"]}), "either"),
+            (json!({"add_tags": ["two words"]}), "spaces"),
+            (json!({"rating": "x"}), "Choose a rating."),
+            (json!({"parent_id": id}), "its own parent"),
+            (json!({"colour": "red"}), "unknown field"),
+        ] {
+            let response = app.json("PATCH", &path, Some(&alice), Some(body)).await;
+            assert_eq!(
+                response.status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{message}"
+            );
+            assert!(
+                json(&response.body)["error"]["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(message),
+                "{message}: {}",
+                response.body
+            );
+        }
+        let visitor = app
+            .json("PATCH", &path, None, Some(json!({"rating": "g"})))
+            .await;
+        assert_eq!(visitor.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    async fn reactions_and_flags(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = upload(&app, &alice, &fixture::png(20, 20), "cat").await;
+        let path = |rest: &str| format!("/api/v1/posts/{id}/{rest}");
+
+        let faved = json(
+            &app.json("PUT", &path("favorite"), Some(&alice), None)
+                .await
+                .body,
+        );
+        assert_eq!(
+            faved,
+            json!({"fav_count": 1, "favorited": true, "score": 0, "vote": 0})
+        );
+        let voted = json(
+            &app.json(
+                "PUT",
+                &path("vote"),
+                Some(&alice),
+                Some(json!({"score": -1})),
+            )
+            .await
+            .body,
+        );
+        assert_eq!((&voted["score"], &voted["vote"]), (&json!(-1), &json!(-1)));
+        let bad_vote = app
+            .json(
+                "PUT",
+                &path("vote"),
+                Some(&alice),
+                Some(json!({"score": 5})),
+            )
+            .await;
+        assert_eq!(bad_vote.status, StatusCode::BAD_REQUEST);
+        let unfaved = json(
+            &app.json("DELETE", &path("favorite"), Some(&alice), None)
+                .await
+                .body,
+        );
+        assert_eq!(unfaved["favorited"], json!(false));
+
+        let flagged = app
+            .json(
+                "POST",
+                &path("flags"),
+                Some(&alice),
+                Some(json!({"reason": "blurry"})),
+            )
+            .await;
+        assert_eq!(flagged.status, StatusCode::NO_CONTENT, "{}", flagged.body);
+        let again = app
+            .json(
+                "POST",
+                &path("flags"),
+                Some(&alice),
+                Some(json!({"reason": "blurry"})),
+            )
+            .await;
+        assert_eq!(again.status, StatusCode::BAD_REQUEST);
+        let post = json(&app.get(&format!("/api/v1/posts/{id}"), None).await.body);
+        assert_eq!(post["status"], json!("flagged"));
     }
 }

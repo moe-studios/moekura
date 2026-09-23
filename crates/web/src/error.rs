@@ -21,6 +21,10 @@ pub enum AppError {
     /// Not allowed, with the reason shown (a ban).
     Blocked(String),
     BadRequest(String),
+    /// Well-formed, but not acceptable (a field fails validation).
+    Unprocessable(String),
+    /// The uploaded file is already post `.0`.
+    Duplicate(i64),
     TooManyRequests {
         retry_after_secs: u64,
     },
@@ -35,6 +39,8 @@ impl AppError {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::Forbidden | AppError::Blocked(_) => StatusCode::FORBIDDEN,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::Unprocessable(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            AppError::Duplicate(_) => StatusCode::CONFLICT,
             AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -47,7 +53,8 @@ impl AppError {
             AppError::Unauthorized => "You need to log in first",
             AppError::Forbidden => "You don't have permission to do that",
             AppError::Blocked(message) => message,
-            AppError::BadRequest(message) => message,
+            AppError::BadRequest(message) | AppError::Unprocessable(message) => message,
+            AppError::Duplicate(_) => "This file was already uploaded",
             AppError::TooManyRequests { .. } => {
                 "Too many attempts. Please wait a moment and try again"
             }
@@ -64,6 +71,10 @@ impl IntoResponse for AppError {
         let page = ErrorPage {
             status: self.status(),
             message: self.public_message().to_owned(),
+            post_id: match self {
+                AppError::Duplicate(id) => Some(id),
+                _ => None,
+            },
         };
         // Plain text by default; `render_errors` upgrades it to a page.
         let mut response = (page.status, page.message.clone()).into_response();
@@ -82,6 +93,8 @@ impl IntoResponse for AppError {
 struct ErrorPage {
     status: StatusCode,
     message: String,
+    /// The post the error is about, for API clients.
+    post_id: Option<i64>,
 }
 
 /// Middleware: renders [`AppError`] responses as HTML pages. Visitors who
@@ -143,6 +156,9 @@ pub struct ErrorDetail {
     pub status: u16,
     /// What went wrong, for people.
     pub message: String,
+    /// For a duplicate upload, the post that already has the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_id: Option<i64>,
 }
 
 /// Turns an error response into an [`ErrorBody`]: [`AppError`]s keep their
@@ -158,7 +174,8 @@ pub(crate) async fn json_error(response: Response) -> Response {
         return response;
     }
     let (parts, body) = response.into_parts();
-    let message = match parts.extensions.get::<ErrorPage>() {
+    let page = parts.extensions.get::<ErrorPage>();
+    let message = match page {
         Some(page) => page.message.clone(),
         None => match axum::body::to_bytes(body, 16 * 1024).await {
             Ok(bytes) if !bytes.is_empty() => String::from_utf8_lossy(&bytes).trim().to_owned(),
@@ -169,6 +186,7 @@ pub(crate) async fn json_error(response: Response) -> Response {
         error: ErrorDetail {
             status: status.as_u16(),
             message,
+            post_id: page.and_then(|p| p.post_id),
         },
     };
     let mut rendered = (status, axum::Json(body)).into_response();

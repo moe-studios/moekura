@@ -125,6 +125,22 @@ impl TestApp {
         self.send(builder, None, Body::empty()).await
     }
 
+    /// A request with a JSON body (when given), as API clients send.
+    pub async fn json(
+        &self,
+        method: &str,
+        path: &str,
+        session: Option<&str>,
+        body: Option<serde_json::Value>,
+    ) -> TestResponse {
+        let builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json");
+        let body = body.map_or_else(Body::empty, |b| Body::from(b.to_string()));
+        self.send(builder, session, body).await
+    }
+
     /// A GET with extra headers (`Authorization`, …) and no session.
     pub async fn get_with_headers(&self, path: &str, headers: &[(&str, &str)]) -> TestResponse {
         let mut builder = Request::get(path);

@@ -131,6 +131,32 @@ pub async fn set_settings(
     Ok(())
 }
 
+/// Users whose names start with `prefix`, optionally only with `status`,
+/// by name.
+pub async fn list(
+    db: impl PgExecutor<'_>,
+    prefix: &str,
+    status: Option<UserStatus>,
+    offset: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<User>> {
+    sqlx::query_as(select_users!(
+        "WHERE name ILIKE $1 || '%' AND ($2::text IS NULL OR status = $2)
+         ORDER BY name OFFSET $3 LIMIT $4"
+    ))
+    .bind(
+        prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_"),
+    )
+    .bind(status)
+    .bind(offset)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn set_role(db: impl PgExecutor<'_>, id: i64, role_id: i32) -> sqlx::Result<()> {
     sqlx::query("UPDATE users SET role_id = $2 WHERE id = $1")
         .bind(id)

@@ -457,3 +457,13 @@ button.danger { background: var(--danger); }
 .status-open { color: var(--danger); }
 .status-dismissed, .status-upheld { color: var(--muted); }
 .flash.banned { border-left-color: var(--danger); }
+
+/* Admin */
+
+form.inline { flex-direction: row; flex-wrap: wrap; gap: 6px; align-items: center; }
+form.inline select { padding: 3px 6px; }
+form.inline button { margin: 0; padding: 3px 10px; font-size: 0.875rem; }
+.role { margin-bottom: 16px; }
+.role h2 { margin: 0 0 4px; font-size: 1.125rem; }
+fieldset.permissions { border: 0; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; }
+fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; }

@@ -2,6 +2,7 @@
 //! endpoints, all sharing one router.
 
 mod account;
+mod admin;
 mod assets;
 pub mod auth;
 mod bans;
@@ -133,6 +134,7 @@ pub fn router(state: AppState) -> Router {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
     let routes = posts::routes()
         .merge(account::routes())
+        .merge(admin::routes())
         .merge(bans::routes())
         .merge(edit::routes())
         .merge(favorites::routes())

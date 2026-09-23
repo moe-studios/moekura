@@ -106,6 +106,9 @@ pub(crate) fn render(
             until => ban.expires_at.map(|t| t.date().to_string()),
         }),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
+        can_admin => current.is_some_and(|c| {
+            c.can(Permission::ManageSettings) || c.can(Permission::ManageUsers)
+        }),
         moderation_url => current.and_then(|c| {
             if c.can(Permission::ApprovePosts) {
                 Some("/moderation/queue")

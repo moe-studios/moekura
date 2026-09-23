@@ -1,6 +1,8 @@
 //! PostgreSQL access for uwuubooru.
 
+pub mod accounts;
 pub mod roles;
+pub mod users;
 
 use std::str::FromStr;
 use std::sync::Arc;

@@ -16,6 +16,7 @@ uwuu-db = { path = "crates/db" }
 uwuu-web = { path = "crates/web" }
 
 anyhow = "1.0.104"
+argon2 = "0.6.0"
 axum = "0.8.9"
 clap = { version = "4.6.7", features = ["derive", "env"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
@@ -29,8 +30,11 @@ sqlx = { version = "0.9.0", default-features = false, features = [
     "macros",
     "migrate",
     "json",
+    "time",
+    "ipnet",
 ] }
 thiserror = "2.0.20"
+time = { version = "0.3.55", features = ["serde"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "signal", "net"] }
 toml = "1.1.6"
 tower = { version = "0.5.3", features = ["util"] }

@@ -3,5 +3,6 @@
 //! Nothing in this crate performs IO; it is shared by the database, web and
 //! binary crates.
 
+pub mod accounts;
 pub mod config;
 pub mod permissions;

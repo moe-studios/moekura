@@ -5,3 +5,5 @@ node_modules/
 # Local configuration and secrets
 /uwubooru.toml
 .env
+# Built documentation
+/docs/book

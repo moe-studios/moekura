@@ -422,3 +422,17 @@ button.icon[aria-pressed="true"] { color: var(--accent-text); background: var(--
 .facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; }
+
+.search-nav { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; }
+.search-nav .back { flex: 1; overflow-wrap: anywhere; }
+.search-nav a[rel] { font-size: 1.25rem; line-height: 1; padding: 2px 8px; border: 1px solid var(--border); border-radius: var(--radius); }
+.search-nav a[rel]:hover { border-color: var(--accent); text-decoration: none; }
+
+/* Keyboard shortcuts help (added by the script) */
+
+.shortcuts { border: 1px solid var(--border); border-radius: calc(var(--radius) * 1.5); background: var(--surface); color: var(--text); padding: 20px 24px; }
+.shortcuts::backdrop { background: rgb(0 0 0 / 0.4); }
+.shortcuts h2 { margin: 0 0 12px; font-size: 1.125rem; }
+.shortcuts dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0 0 16px; }
+.shortcuts dt { font-family: ui-monospace, monospace; font-weight: 600; }
+.shortcuts dd { margin: 0; }

@@ -91,7 +91,7 @@ async fn edit(
             render_post(
                 &page,
                 id,
-                &query.q,
+                (!query.q.is_empty()).then_some(query.q.as_str()),
                 true,
                 Some(FailedEdit { form: &form, error }),
             )

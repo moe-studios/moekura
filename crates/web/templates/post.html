@@ -67,7 +67,13 @@
     {% endif %}
   </section>
   <aside class="post-info">
-    {% if search.back_url %}<p class="back"><a href="{{ search.back_url }}">« {{ search.tags }}</a></p>{% endif %}
+    {% if search.back_url %}
+    <nav class="search-nav" aria-label="Search results">
+      {% if search.steps %}<a href="{{ search.steps.previous }}" rel="prev" title="Previous (a)">‹</a>{% endif %}
+      <a class="back" href="{{ search.back_url }}">{{ search.tags or "All posts" }}</a>
+      {% if search.steps %}<a href="{{ search.steps.next }}" rel="next" title="Next (d)">›</a>{% endif %}
+    </nav>
+    {% endif %}
     <h1>Post #{{ post.id }}</h1>
     <dl>
       <dt>Rating</dt><dd class="rating-{{ post.rating_code }}">{{ post.rating }}</dd>

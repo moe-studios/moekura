@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "tag_nav.html" %}
+<h1>{{ title }}</h1>
+<p class="hint">
+  {% if kind == "alias" %}An alias replaces one tag with another, on existing posts and whenever the old tag is used again.
+  {% else %}An implication adds a tag to every post that has another, now and whenever that tag is used again.{% endif %}
+</p>
+
+{% if can_request %}
+<section class="card request-form">
+  <h2>{% if can_manage %}Add {{ kind }}{% else %}Request {{ kind }}{% endif %}</h2>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="{{ path }}">
+    <div class="pair">
+      <div>
+        <label for="antecedent">{% if kind == "alias" %}Old tag{% else %}Tag{% endif %}</label>
+        <input id="antecedent" name="antecedent" value="{{ form.antecedent }}" required autocapitalize="none" spellcheck="false">
+      </div>
+      <span class="arrow" aria-hidden="true">→</span>
+      <div>
+        <label for="consequent">{% if kind == "alias" %}New tag{% else %}Implies{% endif %}</label>
+        <input id="consequent" name="consequent" value="{{ form.consequent }}" required autocapitalize="none" spellcheck="false">
+      </div>
+    </div>
+    <label for="reason">Reason <span class="optional">(optional)</span></label>
+    <textarea id="reason" name="reason" rows="2" maxlength="2000">{{ form.reason }}</textarea>
+    <button type="submit">{% if can_manage %}Add{% else %}Send request{% endif %}</button>
+  </form>
+</section>
+{% endif %}
+
+<form class="filters" method="get" action="{{ path }}">
+  <label for="filter-name">Tag</label>
+  <input id="filter-name" name="name" value="{{ query.name }}">
+  <label for="filter-status">Status</label>
+  <select id="filter-status" name="status">
+    <option value="">Any</option>
+    {% for status in statuses %}
+    <option value="{{ status }}"{% if query.status == status %} selected{% endif %}>{{ status|capitalize }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+</form>
+
+{% if relations %}
+<table class="tag-table relations">
+  <thead><tr><th scope="col">From</th><th scope="col">To</th><th scope="col">Status</th><th scope="col">Requested</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <tbody>
+    {% for r in relations %}
+    <tr>
+      <td><a class="tag" href="{{ r.antecedent_url }}">{{ r.antecedent }}</a></td>
+      <td><a class="tag" href="{{ r.consequent_url }}">{{ r.consequent }}</a></td>
+      <td><span class="status status-{{ r.status }}">{{ r.status }}</span>{% if r.approver and r.status != "pending" %} <span class="hint">by {{ r.approver }}</span>{% endif %}</td>
+      <td>{{ r.created }}{% if r.creator %} by {{ r.creator }}{% endif %}{% if r.reason %}<div class="hint">{{ r.reason }}</div>{% endif %}</td>
+      <td class="actions">
+        {% if r.can_approve %}
+        <form method="post" action="{{ path }}/{{ r.id }}/approve"><button type="submit">Approve</button></form>
+        <form method="post" action="{{ path }}/{{ r.id }}/reject"><button type="submit" class="secondary">Reject</button></form>
+        {% endif %}
+        {% if r.can_remove %}
+        <form method="post" action="{{ path }}/{{ r.id }}/remove"><button type="submit" class="secondary">{% if r.status == "pending" %}Withdraw{% else %}Remove{% endif %}</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Nothing here yet.</p>
+{% endif %}
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

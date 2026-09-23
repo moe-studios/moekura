@@ -13,6 +13,7 @@ use uwuu_core::config::{Config, DatabaseConfig};
 use uwuu_db::Db;
 use uwuu_db::site_cache::SiteCache;
 use uwuu_jobs::media::MediaJobs;
+use uwuu_jobs::tags::TagJobs;
 use uwuu_jobs::{PoolConfig, Registry};
 use uwuu_media::Media;
 use uwuu_storage::Storage;
@@ -176,6 +177,10 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
         storage: Storage::from_config(&config.storage).context("could not open file storage")?,
         media: Media::new(config.media.clone()),
         work_dir,
+    }
+    .register(&mut registry);
+    TagJobs {
+        db: db.primary().clone(),
     }
     .register(&mut registry);
     Ok(registry)

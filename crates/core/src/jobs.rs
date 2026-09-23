@@ -20,3 +20,14 @@ pub struct ProcessMedia {
 impl Job for ProcessMedia {
     const KIND: &'static str = "media.process";
 }
+
+/// Bring existing posts in line with a newly approved tag alias (replace
+/// the antecedent) or implication (add the implied tags).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyTagRelation {
+    pub relation_id: i32,
+}
+
+impl Job for ApplyTagRelation {
+    const KIND: &'static str = "tags.apply_relation";
+}

@@ -108,6 +108,46 @@ pub async fn ensure(
     by_names(&mut *conn, &names).await
 }
 
+/// The tags a post gets for `wanted`: aliases resolved, missing tags
+/// created (see [`ensure`]), and implied tags added. Sorted by id.
+pub async fn for_post(
+    conn: &mut PgConnection,
+    wanted: &[WantedTag<'_>],
+    recategorize: bool,
+) -> sqlx::Result<Vec<Tag>> {
+    let names: Vec<&str> = wanted.iter().map(|w| w.name).collect();
+    let aliases = crate::tag_relations::aliases_of(&mut *conn, &names).await?;
+    let mut resolved: Vec<WantedTag<'_>> = Vec::with_capacity(wanted.len());
+    for w in wanted {
+        let name = aliases
+            .iter()
+            .find(|(antecedent, _)| antecedent == w.name)
+            .map_or(w.name, |(_, consequent)| consequent.as_str());
+        if !resolved.iter().any(|r| r.name == name) {
+            resolved.push(WantedTag {
+                name,
+                category_id: w.category_id,
+            });
+        }
+    }
+    let mut tags = ensure(&mut *conn, &resolved, recategorize).await?;
+    let present: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
+    let implied = crate::tag_relations::implied_by(&mut *conn, &present).await?;
+    if !implied.is_empty() {
+        let extra: Vec<WantedTag<'_>> = implied
+            .iter()
+            .map(|name| WantedTag {
+                name,
+                category_id: None,
+            })
+            .collect();
+        tags.extend(ensure(&mut *conn, &extra, false).await?);
+    }
+    tags.sort_by_key(|t| t.id);
+    tags.dedup_by_key(|t| t.id);
+    Ok(tags)
+}
+
 /// Changes a tag's category and deprecation. Returns false if there is no
 /// such tag.
 pub async fn update(

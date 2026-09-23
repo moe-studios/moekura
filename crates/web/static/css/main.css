@@ -297,3 +297,18 @@ select {
   white-space: nowrap;
 }
 code { font-size: 0.875em; padding: 1px 4px; border-radius: 4px; background: var(--border); }
+
+.subnav { display: flex; gap: 16px; margin-bottom: 8px; font-size: 0.9375rem; }
+.request-form { margin: 16px 0 24px; }
+.request-form h2 { margin: 0 0 4px; font-size: 1.125rem; }
+.pair { display: flex; flex-wrap: wrap; align-items: end; gap: 0 12px; }
+.pair > div { display: flex; flex-direction: column; flex: 1 1 200px; }
+.pair .arrow { padding-bottom: 8px; color: var(--muted); }
+button.secondary { background: var(--border); color: var(--text); }
+.actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.actions form { margin: 0; }
+.actions button { padding: 3px 10px; font-size: 0.875rem; }
+.status { font-size: 0.8125rem; font-weight: 600; text-transform: capitalize; }
+.status-active { color: var(--tag-character); }
+.status-pending { color: var(--tag-meta); }
+.status-rejected, .status-deleted { color: var(--muted); }

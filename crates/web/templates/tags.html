@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Tags · {{ site.name }}{% endblock %}
 {% block content %}
+{% include "tag_nav.html" %}
 <h1>Tags</h1>
 <form class="filters" method="get" action="/tags">
   <label for="tag-name">Name</label>

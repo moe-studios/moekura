@@ -24,6 +24,7 @@ use uwuu_core::jobs::Job;
 use uwuu_db::jobs::{self, ClaimedJob};
 
 pub mod media;
+pub mod tags;
 
 /// Why a job failed.
 #[derive(Debug, thiserror::Error)]

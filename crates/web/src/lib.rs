@@ -13,6 +13,7 @@ mod health;
 pub mod pages;
 mod posts;
 pub mod rate_limit;
+mod tag_relations;
 mod tags;
 mod templates;
 #[cfg(test)]
@@ -126,6 +127,7 @@ pub fn router(state: AppState) -> Router {
     let routes = posts::routes()
         .merge(account::routes())
         .merge(tags::routes())
+        .merge(tag_relations::routes())
         .merge(upload::routes(max_upload_bytes));
     with_middleware(routes, state)
 }

@@ -406,7 +406,7 @@ pub async fn ingest(
     let as_i32 = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
 
     let mut tx = db.begin().await?;
-    let mut tag_ids: Vec<i32> = uwuu_db::tags::ensure(
+    let tag_ids: Vec<i32> = uwuu_db::tags::for_post(
         &mut tx,
         &tags.wanted(),
         uploader.can(Permission::ManageTags),
@@ -415,7 +415,6 @@ pub async fn ingest(
     .iter()
     .map(|t| t.id)
     .collect();
-    tag_ids.sort_unstable();
     let post_id = posts::insert(
         &mut *tx,
         NewPost {

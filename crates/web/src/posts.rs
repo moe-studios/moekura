@@ -21,7 +21,7 @@ use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::pages::Page;
-use crate::templates::search_url;
+use crate::templates::{search_url, url_value};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -225,7 +225,7 @@ impl Pager<'_> {
             query.append_pair("tags", self.query);
         }
         query.append_pair("page", page);
-        Value::from_safe_string(format!("/posts?{}", query.finish()))
+        url_value(&format!("/posts?{}", query.finish()))
     }
 
     /// Numbered pages there are, as far as known.
@@ -510,18 +510,18 @@ mod tests {
         // 35 posts at 10 a page: 4 pages.
         let (previous, next, numbers) = links(PageRef::Number(1), Count::Exact(35), true);
         assert_eq!(previous, None);
-        assert_eq!(next.as_deref(), Some("/posts?tags=cat&page=2"));
+        assert_eq!(next.as_deref(), Some("/posts?tags=cat&amp;page=2"));
         assert_eq!(numbers, "[1] 2 3 4");
         let (previous, next, _) = links(PageRef::Number(4), Count::Exact(35), false);
-        assert_eq!(previous.as_deref(), Some("/posts?tags=cat&page=3"));
+        assert_eq!(previous.as_deref(), Some("/posts?tags=cat&amp;page=3"));
         assert_eq!(next, None);
         // Beyond the numbered pages, "next" continues by id.
         let (_, next, numbers) = links(PageRef::Number(5), Count::AtLeast(100), true);
-        assert_eq!(next.as_deref(), Some("/posts?tags=cat&page=b81"));
+        assert_eq!(next.as_deref(), Some("/posts?tags=cat&amp;page=b81"));
         assert_eq!(numbers, "1 … 3 4 [5]");
         let (previous, next, numbers) = links(PageRef::Before(100), Count::AtLeast(100), true);
-        assert_eq!(previous.as_deref(), Some("/posts?tags=cat&page=a90"));
-        assert_eq!(next.as_deref(), Some("/posts?tags=cat&page=b81"));
+        assert_eq!(previous.as_deref(), Some("/posts?tags=cat&amp;page=a90"));
+        assert_eq!(next.as_deref(), Some("/posts?tags=cat&amp;page=b81"));
         assert_eq!(numbers, "");
         // Large counts show the last page too.
         let (_, _, numbers) = links(PageRef::Number(1), Count::About(1_000), true);

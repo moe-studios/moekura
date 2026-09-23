@@ -10,7 +10,10 @@
     "exactOptionalPropertyTypes": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
     "skipLibCheck": true
   },
   "include": ["src"]

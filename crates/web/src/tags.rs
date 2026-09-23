@@ -1,22 +1,24 @@
 //! The tag list, tag editing, and turning a tag input box into tags.
 
-use axum::extract::{Path, Query};
+use axum::extract::{Path, Query, State};
+use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
-use axum::{Form, Router};
+use axum::{Form, Json, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uwuu_core::permissions::Permission;
 use uwuu_core::tags::{POST_MAX_TAGS, TagName, parse_input};
 use uwuu_db::tags::{self, Category, ListOrder, Tag, WantedTag};
 
 use crate::AppState;
+use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
-use crate::templates::search_url;
+use crate::templates::{search_url, url_value};
 
 /// Tags per page of the tag list.
 const PAGE_SIZE: i64 = 50;
@@ -26,6 +28,7 @@ const MAX_PAGE: i64 = 200;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/tags", get(index))
+        .route("/tags/autocomplete", get(autocomplete))
         .route("/tags/{id}/edit", get(edit_form).post(edit))
 }
 
@@ -134,6 +137,52 @@ pub fn grouped(categories: &[Category], mut tags: Vec<Tag>) -> Vec<Value> {
         .collect()
 }
 
+/// Suggestions per autocomplete request.
+const SUGGESTIONS: i64 = 10;
+
+#[derive(Debug, Deserialize)]
+struct AutocompleteQuery {
+    #[serde(default)]
+    q: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Suggestion {
+    name: String,
+    category: String,
+    post_count: i32,
+    /// The alias that matched, when `name` is its target.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    antecedent: Option<String>,
+}
+
+/// Tag suggestions as JSON, for the autocomplete script.
+async fn autocomplete(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Query(query): Query<AutocompleteQuery>,
+) -> Result<Response, AppError> {
+    current.require(Permission::ViewPosts)?;
+    let db = state.db.read();
+    let prefix = uwuu_core::tags::normalize(&query.q);
+    let found = tags::autocomplete(db, &prefix, SUGGESTIONS).await?;
+    let categories = tags::categories(db).await?;
+    let suggestions: Vec<Suggestion> = found
+        .into_iter()
+        .map(|s| Suggestion {
+            category: categories
+                .iter()
+                .find(|c| c.id == s.category_id)
+                .map_or_else(|| "general".to_owned(), |c| c.name.clone()),
+            name: s.name,
+            post_count: s.post_count,
+            antecedent: s.antecedent,
+        })
+        .collect();
+    // Private: what a viewer may see depends on their session.
+    Ok(([(CACHE_CONTROL, "private, max-age=60")], Json(suggestions)).into_response())
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct IndexQuery {
     #[serde(default)]
@@ -190,7 +239,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
             .append_pair("order", &query.order)
             .append_pair("page", &n.to_string())
             .finish();
-        Value::from_safe_string(format!("/tags?{query}"))
+        url_value(&format!("/tags?{query}"))
     };
     Ok(page.render(
         "tags.html",
@@ -300,6 +349,45 @@ mod tests {
             parse(&pool, "fine old").await.unwrap_err(),
             "These tags are deprecated and can't be added: `old`."
         );
+    }
+
+    /// The autocomplete script keeps its own list of metatags.
+    #[test]
+    fn script_knows_the_metatags() {
+        let script = include_str!("../../../frontend/src/metatags.ts");
+        for name in uwuu_core::search::METATAGS {
+            assert!(script.contains(&format!("  {name}: [")), "{name}");
+        }
+        for (name, order) in uwuu_core::search::Order::NAMES {
+            if order.name() == *name {
+                assert!(script.contains(&format!("\"{name}\"")), "order:{name}");
+            }
+        }
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn autocomplete_returns_json(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, routes());
+        let id: i32 = sqlx::query_scalar(
+            "INSERT INTO tags (name, category_id) VALUES ('someone', 1) RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO posts (rating, tag_ids) VALUES ('g', ARRAY[$1])")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let response = app.get("/tags/autocomplete?q=Some", None).await;
+        assert_eq!(response.status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!([{ "name": "someone", "category": "artist", "post_count": 1 }])
+        );
+        let empty = app.get("/tags/autocomplete?q=", None).await;
+        assert_eq!(empty.body, "[]");
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

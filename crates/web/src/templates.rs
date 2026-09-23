@@ -62,6 +62,13 @@ pub fn search_url(query: &str) -> String {
     format!("/posts?tags={encoded}")
 }
 
+/// A local URL whose query string was built with `form_urlencoded`, ready
+/// for an HTML attribute. Encoding leaves `&` as the only character HTML
+/// cares about, so escaping it is enough.
+pub fn url_value(url: &str) -> Value {
+    Value::from_safe_string(url.replace('&', "&amp;"))
+}
+
 fn load_source(override_dir: Option<&PathBuf>, name: &str) -> Result<Option<String>, Error> {
     // Template names come from our own code, but keep overrides inside their directory.
     if name

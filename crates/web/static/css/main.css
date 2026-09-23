@@ -89,6 +89,8 @@ button.link {
   font-weight: inherit;
 }
 button.link:hover { text-decoration: underline; }
+/* Not the spacing of full-size form buttons. */
+form button.link[type="submit"] { margin: 0; padding: 0; }
 
 .flash {
   max-width: var(--max-width);
@@ -331,3 +333,35 @@ button.secondary { background: var(--border); color: var(--text); }
 .pager .gap { color: var(--muted); }
 .pager a:not(.button) { padding: 0 4px; }
 .back { margin: 0 0 8px; overflow-wrap: anywhere; }
+
+/* Autocomplete (added by the script) */
+
+.autocomplete-wrap { position: relative; display: flex; flex-direction: column; }
+.site-header .search .autocomplete-wrap { width: 100%; }
+.autocomplete {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 10;
+  min-width: 240px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.15);
+}
+.autocomplete [role="option"] {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.autocomplete [aria-selected="true"], .autocomplete [role="option"]:hover { background: var(--bg); }
+.autocomplete .count { margin-left: auto; }
+.autocomplete .antecedent, .autocomplete .metatag { color: var(--muted); }

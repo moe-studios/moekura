@@ -16,7 +16,7 @@ use crate::AppState;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
-use crate::templates::search_url;
+use crate::templates::{search_url, url_value};
 
 const PAGE_SIZE: i64 = 50;
 const MAX_PAGE: i64 = 200;
@@ -118,7 +118,7 @@ async fn index(
             .append_pair("status", &query.status)
             .append_pair("page", &n.to_string())
             .finish();
-        Value::from_safe_string(format!("{}?{query}", path(kind)))
+        url_value(&format!("{}?{query}", path(kind)))
     };
     let (form, error) = failed.unzip();
     let form = form.unwrap_or_default();

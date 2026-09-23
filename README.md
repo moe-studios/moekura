@@ -113,6 +113,7 @@ needs no Node; after changing `frontend/src`, rebuild it (Node 24+):
 cd frontend
 npm ci
 npm run check     # typecheck
+npm test          # unit tests (node --test)
 npm run build     # or `npm run watch`
 ```
 

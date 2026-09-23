@@ -7,9 +7,11 @@
   "scripts": {
     "build": "esbuild src/main.ts --bundle --format=esm --target=es2022 --outfile=../crates/web/static/js/main.js --legal-comments=none --banner:js=\"// Built from frontend/src by npm run build. Do not edit.\"",
     "watch": "npm run build -- --watch",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --test"
   },
   "devDependencies": {
+    "@types/node": "24.13.6",
     "esbuild": "0.28.2",
     "typescript": "7.0.2"
   }

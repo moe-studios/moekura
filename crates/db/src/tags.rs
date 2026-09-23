@@ -215,6 +215,92 @@ pub async fn list(
         .await
 }
 
+/// A tag suggested while typing.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Suggestion {
+    pub name: String,
+    pub category_id: i16,
+    pub post_count: i32,
+    /// The alias typed, when the suggestion is its target.
+    pub antecedent: Option<String>,
+}
+
+/// Up to `limit` used tags for `prefix`, most used first: tags starting
+/// with it, tags that aliases starting with it point to, and when those
+/// are few, similarly spelled tags.
+pub async fn autocomplete(db: &PgPool, prefix: &str, limit: i64) -> sqlx::Result<Vec<Suggestion>> {
+    if prefix.is_empty() {
+        return Ok(Vec::new());
+    }
+    // A range rather than LIKE, so the index is used even in generic
+    // (prepared) plans.
+    let end = prefix_end(prefix);
+    let mut found: Vec<Suggestion> = sqlx::query_as(
+        "(SELECT name, category_id, post_count, NULL::text AS antecedent FROM tags
+          WHERE name >= $1 AND ($2::text IS NULL OR name < $2) AND post_count > 0
+          ORDER BY post_count DESC, name LIMIT $3)
+         UNION ALL
+         (SELECT t.name, t.category_id, t.post_count, r.antecedent_name::text
+          FROM tag_relations r JOIN tags t ON t.name = r.consequent_name
+          WHERE r.kind = 'alias' AND r.status = 'active'
+            AND r.antecedent_name >= $1 AND ($2::text IS NULL OR r.antecedent_name < $2)
+            AND t.post_count > 0
+          ORDER BY t.post_count DESC, r.antecedent_name LIMIT $3)",
+    )
+    .bind(prefix)
+    .bind(end)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    found.sort_by(|a, b| {
+        b.post_count
+            .cmp(&a.post_count)
+            .then(a.antecedent.is_some().cmp(&b.antecedent.is_some()))
+    });
+    let mut seen = std::collections::HashSet::new();
+    found.retain(|s| seen.insert(s.name.clone()));
+    found.truncate(usize::try_from(limit).unwrap_or(0));
+
+    if found.len() < 3 && prefix.chars().count() >= 3 {
+        let similar: Vec<Suggestion> = sqlx::query_as(
+            "SELECT name, category_id, post_count, NULL::text AS antecedent FROM tags
+             WHERE name % $1 AND post_count > 0
+             ORDER BY similarity(name, $1) DESC, post_count DESC LIMIT $2",
+        )
+        .bind(prefix)
+        .bind(limit)
+        .fetch_all(db)
+        .await?;
+        for suggestion in similar {
+            if found.len() as i64 >= limit {
+                break;
+            }
+            if seen.insert(suggestion.name.clone()) {
+                found.push(suggestion);
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// The smallest string above every string starting with `prefix` (in
+/// the C collation tag names use), or `None` if there is none.
+fn prefix_end(prefix: &str) -> Option<String> {
+    let mut chars: Vec<char> = prefix.chars().collect();
+    while let Some(last) = chars.pop() {
+        // The next code point, skipping the surrogate gap.
+        let next = match u32::from(last) + 1 {
+            0xD800 => Some('\u{E000}'),
+            n => char::from_u32(n),
+        };
+        if let Some(next) = next {
+            chars.push(next);
+            return Some(chars.into_iter().collect());
+        }
+    }
+    None
+}
+
 /// A `LIKE` pattern for a tag name pattern: `*` matches anything, other
 /// characters (including `_` and `%`) only themselves. Without a `*`, the
 /// pattern is a prefix.
@@ -426,6 +512,69 @@ pub(crate) mod tests {
         assert_eq!(recount(&pool).await.unwrap(), 2);
         assert_eq!(counts(&pool, &ids).await, [2, 1]);
         assert_eq!(recount(&pool).await.unwrap(), 0);
+    }
+
+    #[test]
+    fn prefix_ends() {
+        assert_eq!(prefix_end("abc").as_deref(), Some("abd"));
+        assert_eq!(prefix_end("a_").as_deref(), Some("a`"));
+        assert_eq!(prefix_end("\u{D7FF}").as_deref(), Some("\u{E000}"));
+        assert_eq!(prefix_end("a\u{10FFFF}").as_deref(), Some("b"));
+        assert_eq!(prefix_end("\u{10FFFF}"), None);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn autocompletes(pool: PgPool) {
+        let ids = create(
+            &pool,
+            &[
+                "long_hair",
+                "long_sleeves",
+                "longcat",
+                "lone",
+                "unused_long",
+            ],
+        )
+        .await;
+        post(&pool, "active", &ids[..4]).await;
+        post(&pool, "active", &ids[..2]).await;
+        post(&pool, "active", &ids[1..2]).await;
+        sqlx::query(
+            "INSERT INTO tag_relations (kind, antecedent_name, consequent_name, status)
+             VALUES ('alias', 'longer_hair', 'long_hair', 'active'),
+                    ('alias', 'lo_old', 'gone', 'active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let names = |found: Vec<Suggestion>| {
+            found
+                .into_iter()
+                .map(|s| match s.antecedent {
+                    Some(a) => format!("{a}→{}", s.name),
+                    None => s.name,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(autocomplete(&pool, "long", 10).await.unwrap()),
+            ["long_sleeves", "long_hair", "longcat"]
+        );
+        // Aliases lead to their target; with few matches, similar
+        // spellings follow.
+        let found = names(autocomplete(&pool, "longer", 10).await.unwrap());
+        assert_eq!(found[0], "longer_hair→long_hair");
+        assert_eq!(found.iter().filter(|n| n.contains("long_hair")).count(), 1);
+        assert_eq!(
+            names(autocomplete(&pool, "lo", 2).await.unwrap()),
+            ["long_sleeves", "long_hair"]
+        );
+        // Few prefix matches: similar spellings help.
+        assert!(
+            names(autocomplete(&pool, "lnog_hair", 10).await.unwrap())
+                .contains(&"long_hair".to_owned())
+        );
+        assert!(autocomplete(&pool, "", 10).await.unwrap().is_empty());
     }
 
     #[test]

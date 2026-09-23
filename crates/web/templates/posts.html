@@ -7,7 +7,6 @@
 {% else %}
 <div class="results-layout">
   <aside class="results-sidebar">
-    {% if count %}<p class="result-count">{{ count }}</p>{% endif %}
     {% if sidebar %}
     <h2>Tags</h2>
     <ul class="tag-list">
@@ -22,6 +21,7 @@
     {% endif %}
   </aside>
   <section class="results">
+    {% if count %}<p class="result-count">{{ count }}</p>{% endif %}
     {% if cards %}
     <ul class="post-grid">
       {% for card in cards %}

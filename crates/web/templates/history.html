@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}History of post #{{ post_id }} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>
+<h1>History of post #{{ post_id }}</h1>
+{% if versions %}
+<ol class="history">
+  {% for v in versions %}
+  <li>
+    <div class="history-head">
+      <strong>Version {{ v.version }}</strong>{% if v.current %} <span class="hint">(current)</span>{% endif %}
+      <span class="hint">
+        {{ v.date }}
+        {% if v.relation %}· {{ v.relation.kind }} {{ v.relation.antecedent }} → {{ v.relation.consequent }}
+        {% elif v.updater %}· by {{ v.updater }}{% endif %}
+      </span>
+      {% if v.can_revert %}
+      <form method="post" action="/posts/{{ post_id }}/revert/{{ v.version }}"><button type="submit" class="secondary">Revert to this</button></form>
+      {% endif %}
+    </div>
+    <ul class="changes">
+      {% for tag in v.added %}<li class="added">+<a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a></li>{% endfor %}
+      {% for tag in v.removed %}<li class="removed">−<a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a></li>{% endfor %}
+      {% if v.rating %}<li>rating: {{ v.rating }}</li>{% endif %}
+      {% if v.source is not none %}<li class="source">source: {{ v.source or "none" }}</li>{% endif %}
+      {% if v.parent %}<li>parent: {{ v.parent }}</li>{% endif %}
+      {% if v.description_changed %}<li>description changed</li>{% endif %}
+    </ul>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="empty">No history recorded.</p>
+{% endif %}
+{% endblock %}

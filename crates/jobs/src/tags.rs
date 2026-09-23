@@ -64,8 +64,15 @@ impl TagJobs {
 
         let mut changed = 0;
         loop {
-            let n = tag_relations::apply_batch(&self.db, relation.kind, antecedent.id, &add, BATCH)
-                .await?;
+            let n = tag_relations::apply_batch(
+                &self.db,
+                Some(relation_id),
+                relation.kind,
+                antecedent.id,
+                &add,
+                BATCH,
+            )
+            .await?;
             if n == 0 {
                 break;
             }
@@ -165,6 +172,18 @@ mod tests {
         jobs.apply(alias).await.unwrap();
 
         assert_eq!(tag_names(&pool, first).await, ["animal", "cat", "cute"]);
+        // The rewrite shows in the post's history, credited to the alias.
+        let latest = uwuu_db::post_versions::list(&pool, first)
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(
+            (
+                latest.relation_kind.as_deref(),
+                latest.relation_antecedent.as_deref()
+            ),
+            (Some("alias"), Some("kitty"))
+        );
         assert_eq!(tag_names(&pool, second).await, ["animal", "cat"]);
         assert_eq!(tag_names(&pool, untouched).await, ["dog"]);
         let cat = tags::by_name(&pool, "cat").await.unwrap().unwrap();

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en"{% if theme %} data-theme="{{ theme }}"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -22,7 +22,8 @@
     </nav>
     <nav class="account" aria-label="Account">
       {% if me %}
-        <span class="who">{{ me.name }}</span>
+        <a class="who" href="/users/{{ me.name }}">{{ me.name }}</a>
+        <a href="/settings">Settings</a>
         <form method="post" action="/logout">
           <button type="submit" class="link">Log out</button>
         </form>

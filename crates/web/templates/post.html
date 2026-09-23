@@ -5,7 +5,9 @@
   <section class="post-media">
     {% if post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
-    {% if file.video %}
+    {% if blacklisted %}
+    <p class="notice blacklisted">This post matches your blacklist (<code>{{ blacklisted.rule }}</code>). <a href="{{ blacklisted.show_url }}">Show it anyway</a></p>
+    {% elif file.video %}
     <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
            width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
     {% else %}
@@ -14,21 +16,95 @@
     </a>
     {% endif %}
     {% if post.description %}<p class="description">{{ post.description }}</p>{% endif %}
+    {% if family %}
+    <section class="family" aria-label="Related posts">
+      <p>{% if family.is_child %}This post belongs to <a href="/posts/{{ family.root }}">a parent post</a>.{% else %}This post has child posts.{% endif %}</p>
+      <ul class="family-cards">
+        {% for card in family.cards %}
+        <li{% if card.current %} class="current"{% endif %}>
+          <a href="{{ card.href }}">
+            {% if card.thumb %}<img src="{{ card.thumb }}" width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}" loading="lazy">
+            {% else %}<img class="pending-media" src="{{ asset('processing.svg') }}" width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}">{% endif %}
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if similar %}
+    <section class="family similar" aria-label="Similar posts">
+      <p>Similar posts <a class="hint" href="{{ search_url('similar:' ~ post.id) }}">(search)</a></p>
+      <ul class="family-cards">
+        {% for card in similar %}
+        <li><a href="{{ card.href }}">{% if card.thumb %}<img src="{{ card.thumb }}" width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}" loading="lazy">{% else %}#{{ card.id }}{% endif %}</a></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if edit %}
+    <details id="edit" class="edit"{% if edit.error %} open{% endif %}>
+      <summary>Edit</summary>
+      {% if edit.error %}<p class="form-error" role="alert">{{ edit.error }}</p>{% endif %}
+      <form method="post" action="/posts/{{ post.id }}/edit{% if search.tags %}?q={{ search.tags|urlencode }}{% endif %}">
+        <input type="hidden" name="old_tags" value="{{ edit.old_tags }}">
+        <label for="edit-tags">Tags</label>
+        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="tags">{{ edit.tags }}</textarea>
+        <fieldset class="ratings">
+          <legend>Rating</legend>
+          {% for rating in ratings %}
+          <label class="choice"><input type="radio" name="rating" value="{{ rating.code }}"{% if edit.rating == rating.code %} checked{% endif %}> {{ rating.label }}</label>
+          {% endfor %}
+        </fieldset>
+        <label for="edit-source">Source</label>
+        <input id="edit-source" name="source" type="url" value="{{ edit.source }}" maxlength="2048">
+        <label for="edit-parent">Parent post</label>
+        <input id="edit-parent" name="parent" value="{{ edit.parent }}" inputmode="numeric" placeholder="none">
+        <label for="edit-description">Description</label>
+        <textarea id="edit-description" name="description" rows="3" maxlength="20000">{{ edit.description }}</textarea>
+        <button type="submit">Save</button>
+      </form>
+    </details>
+    {% endif %}
   </section>
   <aside class="post-info">
-    {% if search.back_url %}<p class="back"><a href="{{ search.back_url }}">« {{ search.tags }}</a></p>{% endif %}
+    {% if search.back_url %}
+    <nav class="search-nav" aria-label="Search results">
+      {% if search.steps %}<a href="{{ search.steps.previous }}" rel="prev" title="Previous (a)">‹</a>{% endif %}
+      <a class="back" href="{{ search.back_url }}">{{ search.tags or "All posts" }}</a>
+      {% if search.steps %}<a href="{{ search.steps.next }}" rel="next" title="Next (d)">›</a>{% endif %}
+    </nav>
+    {% endif %}
     <h1>Post #{{ post.id }}</h1>
     <dl>
       <dt>Rating</dt><dd class="rating-{{ post.rating_code }}">{{ post.rating }}</dd>
       <dt>Size</dt><dd>{{ file.width }}×{{ file.height }} · {{ file.size }}</dd>
       <dt>Type</dt><dd>{{ file.media_type }}{% if file.duration %} · {{ file.duration }}{% if not file.has_audio %} · no sound{% endif %}{% endif %}{% if file.animated %} · animated{% endif %}</dd>
+      <dt>Score</dt>
+      <dd>
+        {% if reactions.can_vote %}
+        <form class="vote" method="post" action="/posts/{{ post.id }}/vote{{ reactions.query or '' }}" data-reaction>
+          <button type="submit" name="score" value="{{ 0 if reactions.vote == 1 else 1 }}" class="icon" aria-pressed="{{ 'true' if reactions.vote == 1 else 'false' }}" aria-label="Vote up" title="Vote up">▲</button>
+          <span class="score">{{ reactions.score }}</span>
+          <button type="submit" name="score" value="{{ 0 if reactions.vote == -1 else -1 }}" class="icon" aria-pressed="{{ 'true' if reactions.vote == -1 else 'false' }}" aria-label="Vote down" title="Vote down">▼</button>
+        </form>
+        {% else %}<span class="score">{{ reactions.score }}</span>{% endif %}
+      </dd>
+      <dt>Favorites</dt>
+      <dd>
+        {% if reactions.can_favorite %}
+        <form class="favorite" method="post" action="/posts/{{ post.id }}/favorite{{ reactions.query or '' }}" data-reaction>
+          <button type="submit" name="favorite" value="{{ 'remove' if reactions.favorited else 'add' }}" class="icon" aria-pressed="{{ 'true' if reactions.favorited else 'false' }}" aria-label="Favorite" title="Favorite">♥</button>
+          <span class="fav-count">{{ reactions.fav_count }}</span>
+        </form>
+        {% else %}<span class="fav-count">{{ reactions.fav_count }}</span>{% endif %}
+      </dd>
       <dt>Uploaded</dt><dd><time datetime="{{ post.created_iso }}">{{ post.created }}</time>{% if uploader %} by {{ uploader }}{% endif %}</dd>
       {% if post.source %}
       <dt>Source</dt>
       <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
-    <p><a href="{{ file.original }}" download>Download original</a></p>
+    <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a></p>
     {% for group in tag_groups %}
     <section class="tag-group">
       <h2>{{ group.label }}</h2>

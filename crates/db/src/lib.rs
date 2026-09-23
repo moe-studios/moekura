@@ -1,9 +1,11 @@
 //! PostgreSQL access for uwuubooru.
 
 pub mod accounts;
+pub mod favorites;
 pub mod invites;
 pub mod jobs;
 pub mod media;
+pub mod post_versions;
 pub mod posts;
 pub mod roles;
 pub mod search;

@@ -9,6 +9,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use uwuu_core::permissions::Permission;
 use uwuu_core::settings::RegistrationMode;
+use uwuu_core::user_settings::{Theme, UserSettings};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -94,6 +95,11 @@ pub(crate) fn render(
             name => user.name,
             role => current.map(|c| c.role.name.clone()),
         }),
+        theme => current
+            .and_then(|c| c.user.as_ref())
+            .map(|user| UserSettings::from_json(&user.settings).theme)
+            .filter(|theme| *theme != Theme::System)
+            .map(Theme::as_str),
         flash => flash.map(Flash::text),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
     };

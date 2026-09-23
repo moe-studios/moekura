@@ -4,6 +4,7 @@
 //! binary crates.
 
 pub mod accounts;
+pub mod blacklist;
 pub mod config;
 pub mod jobs;
 pub mod permissions;
@@ -12,3 +13,4 @@ pub mod search;
 pub mod settings;
 pub mod tags;
 pub mod tokens;
+pub mod user_settings;

@@ -35,6 +35,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `favcount:` | `favcount:>5` | number of favourites |
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
+| `fav:` | `fav:alice` | favorited by this user |
 | `width:`, `height:` | `width:>=1920` | size in pixels |
 | `mpixels:` | `mpixels:>2` | megapixels (width × height ÷ 1,000,000) |
 | `ratio:` | `ratio:16:9`, `ratio:<1` | width ÷ height (`16:9` or a number; exact values match within 0.01) |
@@ -43,6 +44,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm` |
 | `date:` | `date:2026-01` | upload date (UTC): a day, month or year |
 | `md5:` | `md5:d41d8cd9…` | the file's MD5 hash |
+| `similar:` | `similar:123` | looks like post 123 (the post included); found once files are processed |
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
 | `tagcount:` | `tagcount:<5` | number of tags |
 | `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted` or `any` (see below) |
@@ -80,6 +82,7 @@ those allowed to see them.
 | `order:duration`, `order:duration_asc` | longest / shortest video |
 | `order:tagcount`, `order:tagcount_asc` | most / fewest tags |
 | `order:random` | shuffled |
+| `ordfav:alice` | alice's favorites, most recently favorited first |
 
 `limit:100` shows more posts per page (up to the site's maximum, 200 by
 default).

@@ -25,6 +25,9 @@ use uwuu_core::search::{
 use crate::posts::Visibility;
 use crate::tag_relations;
 
+/// Most posts a `similar:` search considers.
+const SIMILAR_LIMIT: i64 = 1000;
+
 /// Which page of results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageRef {
@@ -111,6 +114,12 @@ pub struct Plan {
     conditions: Vec<Condition>,
     /// `user:` filters resolved to ids.
     uploaders: Vec<(bool, i64)>,
+    /// `fav:` filters resolved to ids.
+    favorited_by: Vec<(bool, i64)>,
+    /// `ordfav:`'s user.
+    ordfav: Option<i64>,
+    /// `similar:` filters resolved to the matching posts.
+    similar_to: Vec<(bool, Vec<i64>)>,
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
@@ -152,6 +161,9 @@ impl Plan {
             excluded: Vec::new(),
             conditions: Vec::new(),
             uploaders: Vec::new(),
+            favorited_by: Vec::new(),
+            ordfav: None,
+            similar_to: Vec::new(),
             statuses,
             own_pending,
             order: query.order.unwrap_or_default(),
@@ -198,15 +210,54 @@ impl Plan {
             match &condition.filter {
                 // Already folded into `statuses`.
                 Filter::Status(_) => {}
-                Filter::User(name) => {
+                Filter::User(name) | Filter::Fav(name) => {
+                    let list = if matches!(condition.filter, Filter::User(_)) {
+                        &mut plan.uploaders
+                    } else {
+                        &mut plan.favorited_by
+                    };
                     match crate::users::by_name(db, name).await? {
-                        Some(user) => plan.uploaders.push((condition.negated, user.id)),
-                        // Nobody by that name uploaded anything.
+                        Some(user) => list.push((condition.negated, user.id)),
+                        // Nobody by that name uploaded or favorited anything.
+                        None if !condition.negated => plan.nothing = true,
+                        None => {}
+                    }
+                }
+                Filter::Similar(post) => {
+                    let hash = match crate::media::for_post(db, *post).await? {
+                        Some(asset) => asset.phash,
+                        None => None,
+                    };
+                    match hash {
+                        Some(hash) => {
+                            let ids = crate::media::similar(
+                                db,
+                                hash as u64,
+                                crate::media::SIMILAR_MAX_DISTANCE,
+                                None,
+                                SIMILAR_LIMIT,
+                            )
+                            .await?
+                            .into_iter()
+                            .map(|s| s.post_id)
+                            .collect();
+                            plan.similar_to.push((condition.negated, ids));
+                        }
+                        // Unknown or not yet processed: nothing to compare with.
                         None if !condition.negated => plan.nothing = true,
                         None => {}
                     }
                 }
                 _ => plan.conditions.push(condition.clone()),
+            }
+        }
+
+        if let Some(name) = &query.ordfav
+            && plan.order == Order::Favorited
+        {
+            match crate::users::by_name(db, name).await? {
+                Some(user) => plan.ordfav = Some(user.id),
+                None => plan.nothing = true,
             }
         }
 
@@ -382,6 +433,9 @@ impl Plan {
             Order::Random => {
                 sql.push("random()");
             }
+            Order::Favorited => {
+                sql.push("fo.created_at DESC, p.id DESC");
+            }
         }
         sql.push(" LIMIT ").push_bind(i64::from(self.per_page));
         if offset > 0 {
@@ -423,6 +477,10 @@ impl Plan {
     fn push_from_where(&self, sql: &mut QueryBuilder<Postgres>, strategy: Strategy) {
         if self.needs_media() {
             sql.push(" JOIN media_assets a ON a.post_id = p.id");
+        }
+        if let Some(user) = self.ordfav {
+            sql.push(" JOIN favorites fo ON fo.post_id = p.id AND fo.user_id = ")
+                .push_bind(user);
         }
         sql.push(" WHERE (p.status = ANY(")
             .push_bind(self.statuses.clone())
@@ -477,6 +535,21 @@ impl Plan {
             })
             .push_bind(*uploader);
         }
+        for (negated, ids) in &self.similar_to {
+            sql.push(if *negated {
+                " AND NOT p.id = ANY("
+            } else {
+                " AND p.id = ANY("
+            })
+            .push_bind(ids.clone())
+            .push(")");
+        }
+        for (negated, user) in &self.favorited_by {
+            sql.push(if *negated { " AND NOT" } else { " AND" })
+                .push(" EXISTS (SELECT 1 FROM favorites f WHERE f.post_id = p.id AND f.user_id = ")
+                .push_bind(*user)
+                .push(")");
+        }
         for condition in &self.conditions {
             sql.push(" AND (");
             push_filter(sql, &condition.filter);
@@ -499,6 +572,9 @@ impl Plan {
         let limit = i64::from(self.count_limit);
         let unfiltered = self.conditions.is_empty()
             && self.uploaders.is_empty()
+            && self.favorited_by.is_empty()
+            && self.similar_to.is_empty()
+            && self.ordfav.is_none()
             && self.excluded.is_empty()
             && self.any.is_none();
         let shortcut = match &self.required[..] {
@@ -642,7 +718,7 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
                 .push(" OR p.id = ")
                 .push_bind(*id);
         }
-        Filter::Status(_) | Filter::User(_) => {
+        Filter::Status(_) | Filter::User(_) | Filter::Fav(_) | Filter::Similar(_) => {
             unreachable!("resolved in Plan::resolve")
         }
     }
@@ -992,6 +1068,79 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn favorites(pool: PgPool) {
+        let alice: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let a = seed(
+            &pool,
+            Seed {
+                tags: &["x"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let b = seed(
+            &pool,
+            Seed {
+                tags: &["x"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let c = seed(&pool, Seed::default()).await;
+        // Favorited in the order b, then a.
+        for post in [b, a] {
+            crate::favorites::add(&pool, alice, post).await.unwrap();
+        }
+        sqlx::query(
+            "UPDATE favorites SET created_at = now() - make_interval(secs => post_id::int)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(search(&pool, "fav:alice").await, [b, a]);
+        assert_eq!(search(&pool, "-fav:alice").await, [c]);
+        assert_eq!(search(&pool, "x -fav:nobody").await, [b, a]);
+        assert!(search(&pool, "fav:nobody").await.is_empty());
+        // Newest favorite first: a's was made (a second) after b's.
+        assert_eq!(search(&pool, "ordfav:alice").await, [a, b]);
+        assert!(search(&pool, "ordfav:nobody").await.is_empty());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn similar_posts(pool: PgPool) {
+        let a = seed(&pool, Seed::default()).await;
+        let b = seed(&pool, Seed::default()).await;
+        let far = seed(&pool, Seed::default()).await;
+        let unprocessed = seed(&pool, Seed::default()).await;
+        let base: u64 = 0xF0F0_1234_5678_9ABC;
+        for (post, hash) in [(a, base), (b, base ^ 0b101), (far, !base)] {
+            let asset: i64 = sqlx::query_scalar("SELECT id FROM media_assets WHERE post_id = $1")
+                .bind(post)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            crate::media::mark_processed(&pool, asset, Some(hash))
+                .await
+                .unwrap();
+        }
+        assert_eq!(search(&pool, &format!("similar:{a}")).await, [b, a]);
+        assert_eq!(
+            search(&pool, &format!("-similar:{a}")).await,
+            [unprocessed, far]
+        );
+        assert!(
+            search(&pool, &format!("similar:{unprocessed}"))
+                .await
+                .is_empty()
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn statuses_and_visibility(pool: PgPool) {
         let viewer: i64 = sqlx::query_scalar(
             "INSERT INTO users (name, role_id) SELECT 'me', id FROM roles WHERE system_key = 'member' RETURNING id",
@@ -1218,6 +1367,9 @@ mod tests {
             excluded: Vec::new(),
             conditions: Vec::new(),
             uploaders: Vec::new(),
+            favorited_by: Vec::new(),
+            ordfav: None,
+            similar_to: Vec::new(),
             statuses: vec!["active"],
             own_pending: None,
             order,

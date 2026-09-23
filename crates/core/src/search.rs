@@ -28,6 +28,7 @@ pub const FILETYPES: &[&str] = &["jpeg", "png", "gif", "webp", "avif", "jxl", "m
 pub const METATAGS: &[&str] = &[
     "id", "rating", "status", "user", "score", "favcount", "width", "height", "mpixels", "ratio",
     "filesize", "duration", "date", "filetype", "md5", "parent", "tagcount", "order", "limit",
+    "fav", "ordfav", "similar",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -146,6 +147,10 @@ pub enum Filter {
     Md5(Vec<[u8; 16]>),
     Parent(ParentFilter),
     TagCount(Bound<i64>),
+    /// Favorited by this user (name as typed).
+    Fav(String),
+    /// Looks like this post (perceptual hash), the post included.
+    Similar(i64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -176,6 +181,8 @@ pub enum Order {
     TagCountDesc,
     TagCountAsc,
     Random,
+    /// Newest favorites of [`Query::ordfav`] first (`ordfav:name`).
+    Favorited,
 }
 
 impl Order {
@@ -227,6 +234,8 @@ pub struct Query {
     pub conditions: Vec<Condition>,
     pub order: Option<Order>,
     pub limit: Option<u32>,
+    /// With `ordfav:name`: the user whose favorites these are.
+    pub ordfav: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -339,7 +348,24 @@ impl Query {
         };
         const NUMBER: &str = "expected a number like 5, >=5, <5, 5..10 or 1,2,3";
         let filter = match name {
-            "order" | "limit" if negated => return Err(SearchError::CantNegate(word.into())),
+            "order" | "limit" | "ordfav" if negated => {
+                return Err(SearchError::CantNegate(word.into()));
+            }
+            "ordfav" => {
+                if value.is_empty() {
+                    return Err(invalid("expected a user name"));
+                }
+                self.ordfav = Some(value.into());
+                self.order = Some(Order::Favorited);
+                return Ok(());
+            }
+            "similar" => Filter::Similar(value.parse().map_err(|_| invalid("expected a post id"))?),
+            "fav" => {
+                if value.is_empty() {
+                    return Err(invalid("expected a user name"));
+                }
+                Filter::Fav(value.into())
+            }
             "order" => {
                 let order = Order::NAMES
                     .iter()
@@ -626,6 +652,8 @@ impl fmt::Display for Condition {
             Filter::Parent(ParentFilter::Any) => f.write_str("parent:any"),
             Filter::Parent(ParentFilter::Of(id)) => write!(f, "parent:{id}"),
             Filter::TagCount(b) => write!(f, "tagcount:{b}"),
+            Filter::Fav(name) => write!(f, "fav:{name}"),
+            Filter::Similar(id) => write!(f, "similar:{id}"),
         }
     }
 }
@@ -639,8 +667,10 @@ impl fmt::Display for Query {
         terms.extend(self.any.iter().map(|t| format!("~{t}")));
         terms.extend(self.none.iter().map(|t| format!("-{t}")));
         terms.extend(self.conditions.iter().map(ToString::to_string));
-        if let Some(order) = self.order {
-            terms.push(format!("order:{}", order.name()));
+        match (self.order, &self.ordfav) {
+            (Some(Order::Favorited), Some(user)) => terms.push(format!("ordfav:{user}")),
+            (Some(order), _) => terms.push(format!("order:{}", order.name())),
+            (None, _) => {}
         }
         if let Some(limit) = self.limit {
             terms.push(format!("limit:{limit}"));
@@ -816,6 +846,28 @@ mod tests {
     }
 
     #[test]
+    fn favorites() {
+        let query = parse("cat -fav:Bob ordfav:Alice");
+        assert_eq!(
+            query.conditions,
+            [Condition {
+                negated: true,
+                filter: Filter::Fav("bob".into())
+            }]
+        );
+        assert_eq!(
+            (query.order, query.ordfav.as_deref()),
+            (Some(Order::Favorited), Some("alice"))
+        );
+        assert_eq!(query.to_string(), "cat -fav:bob ordfav:alice");
+        assert_eq!(parse(&query.to_string()), query);
+        // A later order: replaces ordfav's order.
+        assert_eq!(parse("ordfav:a order:score").order, Some(Order::ScoreDesc));
+        assert!(error("-ordfav:a").contains("can't be negated"));
+        assert!(error("fav:").contains("expected a user name"));
+    }
+
+    #[test]
     fn negation_order_and_limit() {
         let query = parse("-rating:e -status:deleted order:score_asc limit:20 order:favcount");
         assert_eq!(
@@ -853,7 +905,9 @@ mod tests {
     fn malformed_terms() {
         assert_eq!(error("-~a"), "`-~a`: use either `-` or `~`, not both");
         assert_eq!(error("-"), "`-` is missing a tag");
-        assert_eq!(error("fav:someone"), "`fav:` searches aren't supported yet");
+        assert_eq!(error("pool:12"), "`pool:` searches aren't supported yet");
+        assert_eq!(filter("similar:12"), Filter::Similar(12));
+        assert!(error("similar:x").contains("expected a post id"));
         assert_eq!(
             error("a\u{7}b"),
             "`a\u{7}b`: the tag may not contain control characters"

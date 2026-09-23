@@ -453,9 +453,11 @@ pub async fn remove(db: &PgPool, id: i32, by: i64) -> sqlx::Result<bool> {
 /// Rewrites up to `limit` posts for an active relation: for an alias,
 /// posts with `antecedent` get it replaced by `add`; for an implication,
 /// posts with `antecedent` that lack some of `add` get them. Returns how
-/// many posts changed; call until it returns 0.
+/// many posts changed; call until it returns 0. The new post versions are
+/// attributed to `relation_id`.
 pub async fn apply_batch(
     db: &PgPool,
+    relation_id: Option<i32>,
     kind: Kind,
     antecedent: i32,
     add: &[i32],
@@ -480,12 +482,15 @@ pub async fn apply_batch(
              FROM batch WHERE posts.id = batch.id"
         }
     };
+    let mut tx = db.begin().await?;
+    crate::post_versions::attribute(&mut tx, None, relation_id).await?;
     let result = sqlx::query(query)
         .bind(antecedent)
         .bind(add)
         .bind(limit)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(result.rows_affected())
 }
 
@@ -673,7 +678,9 @@ mod tests {
         add.sort_unstable();
         let mut total = 0;
         loop {
-            let n = apply_batch(&pool, Kind::Alias, old, &add, 1).await.unwrap();
+            let n = apply_batch(&pool, None, Kind::Alias, old, &add, 1)
+                .await
+                .unwrap();
             if n == 0 {
                 break;
             }
@@ -697,7 +704,7 @@ mod tests {
 
         // Implication: posts with `other` gain `extra`, once.
         for _ in 0..2 {
-            while apply_batch(&pool, Kind::Implication, other, &[extra], 10)
+            while apply_batch(&pool, None, Kind::Implication, other, &[extra], 10)
                 .await
                 .unwrap()
                 > 0

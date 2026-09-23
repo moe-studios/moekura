@@ -102,6 +102,10 @@ impl Visibility {
                 && post.uploader_id.is_some()
                 && post.uploader_id == self.viewer)
     }
+
+    fn status_names(&self) -> Vec<&'static str> {
+        self.statuses.iter().map(|s| s.as_str()).collect()
+    }
 }
 
 /// A post as shown in a grid.
@@ -168,6 +172,90 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post
     row.map(Post::try_from).transpose()
 }
 
+/// How many posts a user uploaded, leaving out deleted ones.
+pub async fn count_by_uploader(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<i64> {
+    sqlx::query_scalar("SELECT count(*) FROM posts WHERE uploader_id = $1 AND status <> 'deleted'")
+        .bind(user_id)
+        .fetch_one(db)
+        .await
+}
+
+/// Like [`by_id`], locking the row until the transaction ends so edits
+/// don't overwrite each other.
+pub async fn lock(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post>> {
+    let row: Option<PostRow> = sqlx::query_as(select_posts!("WHERE id = $1 FOR UPDATE"))
+        .bind(id)
+        .fetch_optional(db)
+        .await?;
+    row.map(Post::try_from).transpose()
+}
+
+/// The editable fields of a post.
+pub struct PostEdit<'a> {
+    pub rating: Rating,
+    pub source: &'a str,
+    pub description: &'a str,
+    pub parent_id: Option<i64>,
+    /// Sorted and without duplicates.
+    pub tag_ids: &'a [i32],
+}
+
+pub async fn update(db: impl PgExecutor<'_>, id: i64, edit: PostEdit<'_>) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE posts SET rating = $2, source = $3, description = $4, parent_id = $5,
+                          tag_ids = $6, updated_at = now()
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(edit.rating.code())
+    .bind(edit.source)
+    .bind(edit.description)
+    .bind(edit.parent_id)
+    .bind(edit.tag_ids)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Whether `ancestor` is `post` or one of its parents, grandparents, …
+/// Setting `post` as `ancestor`'s parent would then make a loop.
+pub async fn has_ancestor(db: impl PgExecutor<'_>, post: i64, ancestor: i64) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "WITH RECURSIVE up (id, parent_id, depth) AS (
+             SELECT id, parent_id, 0 FROM posts WHERE id = $1
+             UNION ALL
+             SELECT p.id, p.parent_id, up.depth + 1
+             FROM posts p JOIN up ON p.id = up.parent_id
+             WHERE up.depth < 1000
+         )
+         SELECT EXISTS (SELECT 1 FROM up WHERE id = $2)",
+    )
+    .bind(post)
+    .bind(ancestor)
+    .fetch_one(db)
+    .await
+}
+
+/// A post's family as the viewer may see it: `root` and its children,
+/// oldest first.
+pub async fn family(
+    db: impl PgExecutor<'_>,
+    root: i64,
+    visibility: &Visibility,
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT id FROM posts
+         WHERE (id = $1 OR parent_id = $1)
+           AND (status = ANY($2) OR (status = 'pending' AND uploader_id = $3))
+         ORDER BY id LIMIT 100",
+    )
+    .bind(root)
+    .bind(visibility.status_names())
+    .bind(visibility.viewer)
+    .fetch_all(db)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::PgPool;
@@ -225,6 +313,47 @@ mod tests {
         assert_eq!(found[0].thumb.as_deref(), Some("thumb-key"));
         assert_eq!(found[0].thumb_2x, None);
         assert_eq!(found[1].thumb, None);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn edits_and_families(pool: PgPool) {
+        let parent = post_with_file(&pool, PostStatus::Active, None, 1).await;
+        let child = post_with_file(&pool, PostStatus::Active, None, 2).await;
+        let hidden = post_with_file(&pool, PostStatus::Deleted, None, 3).await;
+        for id in [child, hidden] {
+            let mut tx = pool.begin().await.unwrap();
+            let post = lock(&mut *tx, id).await.unwrap().unwrap();
+            update(
+                &mut *tx,
+                id,
+                PostEdit {
+                    rating: Rating::Explicit,
+                    source: "s",
+                    description: &post.description,
+                    parent_id: Some(parent),
+                    tag_ids: &[],
+                },
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+        }
+        let edited = by_id(&pool, child).await.unwrap().unwrap();
+        assert_eq!(
+            (edited.rating, edited.source.as_str(), edited.parent_id),
+            (Rating::Explicit, "s", Some(parent))
+        );
+        let public = Visibility {
+            statuses: vec![PostStatus::Active],
+            viewer: None,
+        };
+        assert_eq!(
+            family(&pool, parent, &public).await.unwrap(),
+            [parent, child]
+        );
+        assert!(has_ancestor(&pool, child, parent).await.unwrap());
+        assert!(has_ancestor(&pool, child, child).await.unwrap());
+        assert!(!has_ancestor(&pool, parent, child).await.unwrap());
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

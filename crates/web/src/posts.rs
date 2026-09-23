@@ -3,16 +3,17 @@
 use axum::Router;
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use minijinja::{Value, context};
 use serde::Deserialize;
 use time::format_description::well_known::Rfc3339;
 use uwuu_core::permissions::Permission;
-use uwuu_core::posts::PostStatus;
+use uwuu_core::posts::{PostStatus, Rating};
 use uwuu_core::search::{Order, Query as SearchQuery};
+use uwuu_core::user_settings::UserSettings;
 use uwuu_db::media::{self, Variant};
-use uwuu_db::posts::{self, Card, Visibility};
+use uwuu_db::posts::{self, Card, Post, Visibility};
 use uwuu_db::search::{Count, PageRef, Plan, SearchError};
 use uwuu_db::{tags, users};
 use uwuu_storage::Key;
@@ -28,6 +29,8 @@ pub fn routes() -> Router<AppState> {
         .route("/", get(index))
         .route("/posts", get(index))
         .route("/posts/{id}", get(show))
+        .route("/posts/{id}/next", get(next))
+        .route("/posts/{id}/prev", get(previous))
 }
 
 /// Which posts `current` may see.
@@ -51,6 +54,9 @@ struct IndexQuery {
     tags: String,
     #[serde(default)]
     page: String,
+    /// `off` shows posts the viewer's blacklist would hide.
+    #[serde(default)]
+    blacklist: String,
 }
 
 /// Tags listed beside search results.
@@ -61,7 +67,17 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
     let db = state.db.read();
-    let config = &state.config.search;
+    // The user's page size, within the site's limit.
+    let mut config = state.config.search.clone();
+    if let Some(per_page) = page
+        .current
+        .user
+        .as_ref()
+        .and_then(|u| UserSettings::from_json(&u.settings).per_page)
+    {
+        config.per_page = per_page.min(config.max_per_page);
+    }
+    let config = &config;
     let input = params.tags.trim();
     let page_ref: PageRef = if params.page.is_empty() {
         PageRef::default()
@@ -105,17 +121,48 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
     );
     let cards = posts::cards(db, &ids, (&kinds.0, &kinds.1)).await?;
     let normalized = query.to_string();
-    let post_query = (!normalized.is_empty()).then(|| {
+    // Even the empty search, so the post page can step through it.
+    let post_query = Some(
         url::form_urlencoded::Serializer::new(String::new())
             .append_pair("q", &normalized)
-            .finish()
+            .finish(),
+    );
+    // Blacklisted posts are left out of the page entirely, with a count
+    // and a link to show them.
+    let show_all = params.blacklist == "off";
+    let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
+    let (shown, hidden): (Vec<&Card>, Vec<&Card>) = cards.iter().partition(|card| {
+        show_all
+            || blacklist.as_ref().is_none_or(|list| {
+                let rating = card.rating.parse().unwrap_or(Rating::Explicit);
+                list.matching(rating, &card.tag_ids).is_none()
+            })
     });
-    let card_values: Vec<Value> = cards
+    let blacklist_url = |off: bool| {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if !normalized.is_empty() {
+            query.append_pair("tags", &normalized);
+        }
+        if !params.page.is_empty() {
+            query.append_pair("page", &params.page);
+        }
+        if off {
+            query.append_pair("blacklist", "off");
+        }
+        url_value(&format!("/posts?{}", query.finish()))
+    };
+    let blacklisted = context! {
+        hidden => hidden.len(),
+        show_url => (!hidden.is_empty()).then(|| blacklist_url(true)),
+        hide_url => (show_all && blacklist.is_some()).then(|| blacklist_url(false)),
+    };
+    let card_values: Vec<Value> = shown
         .iter()
         .map(|card| card_context(state, card, box_size, post_query.as_deref()))
         .collect();
 
-    let sidebar = sidebar_tags(db, &cards, &normalized).await?;
+    let shown: Vec<Card> = shown.into_iter().cloned().collect();
+    let sidebar = sidebar_tags(db, &shown, &normalized).await?;
     let pager = Pager {
         query: &normalized,
         page: page_ref,
@@ -133,6 +180,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         context! {
             search => context! { tags => normalized },
             cards => card_values,
+            blacklisted => blacklisted,
             count => count_text(count),
             sidebar => sidebar,
             pager => pager.context(),
@@ -341,10 +389,71 @@ fn fit(width: i32, height: i32, size: u32) -> (u32, u32) {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct ShowQuery {
-    /// The search the post was opened from.
+struct StepQuery {
     #[serde(default)]
     q: String,
+}
+
+async fn next(
+    page: Page,
+    Path(id): Path<i64>,
+    Query(params): Query<StepQuery>,
+) -> Result<Response, AppError> {
+    step(page, id, &params.q, true).await
+}
+
+async fn previous(
+    page: Page,
+    Path(id): Path<i64>,
+    Query(params): Query<StepQuery>,
+) -> Result<Response, AppError> {
+    step(page, id, &params.q, false).await
+}
+
+/// Redirects to the post after (or before) `id` in the search `q`, or
+/// back to the search at either end.
+async fn step(page: Page, id: i64, q: &str, forward: bool) -> Result<Response, AppError> {
+    page.current.require(Permission::ViewPosts)?;
+    let state = page.state();
+    let db = state.db.read();
+    let mut query = SearchQuery::parse(q).map_err(|e| AppError::BadRequest(e.to_string()))?;
+    query.limit = Some(1);
+    let plan =
+        match Plan::resolve(db, &query, &visibility(&page.current), &state.config.search).await {
+            Ok(plan) => plan,
+            Err(SearchError::Invalid(message)) => return Err(AppError::BadRequest(message)),
+            Err(SearchError::Db(error)) => return Err(error.into()),
+        };
+    // "Next" is further along the display order: lower ids when newest
+    // come first.
+    let towards_lower = forward == (plan.order() != Order::IdAsc);
+    let page_ref = if towards_lower {
+        PageRef::Before(id)
+    } else {
+        PageRef::After(id)
+    };
+    let found = match plan.ids(db, page_ref).await {
+        Ok(ids) => ids.first().copied(),
+        Err(SearchError::Invalid(message)) => return Err(AppError::BadRequest(message)),
+        Err(SearchError::Db(error)) => return Err(error.into()),
+    };
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("q", q)
+        .finish();
+    let target = match found {
+        Some(post) => format!("/posts/{post}?{encoded}"),
+        None => search_url(q),
+    };
+    Ok(Redirect::to(&target).into_response())
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ShowQuery {
+    /// The search the post was opened from, possibly empty (all posts).
+    q: Option<String>,
+    /// `off` shows the post even if the viewer's blacklist matches it.
+    #[serde(default)]
+    blacklist: String,
 }
 
 async fn show(
@@ -352,7 +461,33 @@ async fn show(
     Path(id): Path<i64>,
     Query(params): Query<ShowQuery>,
 ) -> Result<Response, AppError> {
+    render_post(
+        &page,
+        id,
+        params.q.as_deref(),
+        params.blacklist == "off",
+        None,
+    )
+    .await
+}
+
+/// The edit form as submitted, shown again with an error.
+pub(crate) struct FailedEdit<'a> {
+    pub form: &'a crate::edit::EditForm,
+    pub error: String,
+}
+
+/// The post page. `failed` refills the edit form after a rejected edit.
+pub(crate) async fn render_post(
+    page: &Page,
+    id: i64,
+    search: Option<&str>,
+    show_blacklisted: bool,
+    failed: Option<FailedEdit<'_>>,
+) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
+    let from_search = search.is_some();
+    let search = search.unwrap_or_default();
     let state = page.state();
     // The primary, so an uploader redirected here sees their post even if
     // a replica lags.
@@ -364,7 +499,50 @@ async fn show(
     let asset = media::for_post(db, id).await?.ok_or(AppError::NotFound)?;
     let variants = media::variants(db, asset.id).await?;
     let categories = tags::categories(db).await?;
-    let tag_groups = crate::tags::grouped(&categories, tags::by_ids(db, &post.tag_ids).await?);
+    let post_tags = tags::by_ids(db, &post.tag_ids).await?;
+    let mut tag_names: Vec<&str> = post_tags.iter().map(|t| t.name.as_str()).collect();
+    tag_names.sort_unstable();
+    let tag_string = tag_names.join(" ");
+    let tag_groups = crate::tags::grouped(&categories, post_tags.clone());
+    let family = family_context(page, &post).await?;
+    let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
+    let blacklisted = if show_blacklisted {
+        None
+    } else {
+        blacklist
+            .as_ref()
+            .and_then(|list| list.matching(post.rating, &post.tag_ids).map(str::to_owned))
+    };
+    let similar = similar_context(page, &asset, blacklist.as_ref()).await?;
+    let show_url = {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if !search.is_empty() {
+            query.append_pair("q", search);
+        }
+        query.append_pair("blacklist", "off");
+        url_value(&format!("/posts/{id}?{}", query.finish()))
+    };
+    let me = page.current.user.as_ref().map(|u| u.id);
+    let (favorited, vote) = match me {
+        Some(user) => (
+            uwuu_db::favorites::exists(db, user, id).await?,
+            uwuu_db::favorites::vote_of(db, user, id).await?,
+        ),
+        None => (false, 0),
+    };
+    let reactions = context! {
+        score => post.score,
+        fav_count => post.fav_count,
+        favorited => favorited,
+        vote => vote,
+        can_favorite => me.is_some() && page.current.can(Permission::Favorite),
+        can_vote => me.is_some() && page.current.can(Permission::Vote),
+        // Keeps the search across the form's redirect.
+        query => (!search.is_empty()).then(|| url_value(&format!(
+            "?{}",
+            url::form_urlencoded::Serializer::new(String::new()).append_pair("q", search).finish()
+        ))),
+    };
     let uploader = match post.uploader_id {
         Some(user_id) => users::by_id(db, user_id).await?.map(|u| u.name),
         None => None,
@@ -410,20 +588,139 @@ async fn show(
         created => created.get(..10).unwrap_or_default(),
         created_iso => created,
     };
-    Ok(page.render(
+    let edit = page
+        .current
+        .can(Permission::EditPosts)
+        .then(|| match &failed {
+            Some(failed) => context! {
+                tags => failed.form.tags,
+                old_tags => failed.form.old_tags,
+                rating => failed.form.rating,
+                source => failed.form.source,
+                description => failed.form.description,
+                parent => failed.form.parent,
+                error => failed.error,
+            },
+            None => context! {
+                tags => tag_string,
+                old_tags => tag_string,
+                rating => post.rating.code(),
+                source => post.source,
+                description => post.description,
+                parent => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
+            },
+        });
+    let ratings: Vec<Value> = Rating::ALL
+        .iter()
+        .map(|r| context! { code => r.code(), label => r.label() })
+        .collect();
+    let status = if failed.is_some() {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        StatusCode::OK
+    };
+    Ok(page.render_with_status(
+        status,
         "post.html",
         context! {
             post => post_context,
             file => file,
             uploader => uploader,
             tag_groups => tag_groups,
+            family => family,
+            similar => similar,
+            blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
+            reactions => reactions,
+            edit => edit,
+            ratings => ratings,
             search => context! {
-                tags => params.q,
-                back_url => (!params.q.is_empty()).then(|| Value::from_safe_string(search_url(&params.q))),
+                tags => search,
+                back_url => from_search.then(|| Value::from_safe_string(search_url(search))),
+                // Stepping works where keyset pages do: id order.
+                steps => (from_search && SearchQuery::parse(search).is_ok_and(|q| {
+                    matches!(q.order, None | Some(Order::IdDesc | Order::IdAsc))
+                }))
+                .then(|| {
+                    let q = url::form_urlencoded::Serializer::new(String::new())
+                        .append_pair("q", search)
+                        .finish();
+                    context! {
+                        previous => url_value(&format!("/posts/{id}/prev?{q}")),
+                        next => url_value(&format!("/posts/{id}/next?{q}")),
+                    }
+                }),
             },
             processing => asset.processed_at.is_none(),
         },
     ))
+}
+
+/// Posts that look like this one, as thumbnails, leaving out those the
+/// viewer can't see or has blacklisted.
+async fn similar_context(
+    page: &Page,
+    asset: &media::Asset,
+    blacklist: Option<&crate::blacklist::Active>,
+) -> Result<Vec<Value>, AppError> {
+    let Some(hash) = asset.phash else {
+        return Ok(Vec::new());
+    };
+    let state = page.state();
+    let db = state.db.primary();
+    let found = media::similar(
+        db,
+        hash as u64,
+        media::SIMILAR_MAX_DISTANCE,
+        Some(asset.post_id),
+        SIMILAR_SHOWN,
+    )
+    .await?;
+    let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
+    let sizes = &state.media.config().thumbnail_sizes;
+    let box_size = sizes.first().copied().unwrap_or(250);
+    let kind = format!("thumb-{box_size}");
+    let visible = visibility(&page.current);
+    Ok(posts::cards(db, &ids, (&kind, &kind))
+        .await?
+        .iter()
+        .filter(|card| {
+            let status: Option<PostStatus> = card.status.parse().ok();
+            let rating = card.rating.parse().unwrap_or(Rating::Explicit);
+            status.is_some_and(|s| visible.statuses.contains(&s))
+                && blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
+        })
+        .map(|card| card_context(state, card, box_size, None))
+        .collect())
+}
+
+/// Similar posts listed on a post page.
+const SIMILAR_SHOWN: i64 = 12;
+
+/// The parent/children bar: the post's parent and its other children, or
+/// the post's own children. `None` when the post has no family.
+async fn family_context(page: &Page, post: &Post) -> Result<Option<Value>, AppError> {
+    let state = page.state();
+    let db = state.db.primary();
+    let root = post.parent_id.unwrap_or(post.id);
+    let ids = posts::family(db, root, &visibility(&page.current)).await?;
+    if ids.len() < 2 {
+        return Ok(None);
+    }
+    let sizes = &state.media.config().thumbnail_sizes;
+    let box_size = sizes.first().copied().unwrap_or(250);
+    let kind = format!("thumb-{box_size}");
+    let cards = posts::cards(db, &ids, (&kind, &kind)).await?;
+    Ok(Some(context! {
+        is_child => post.parent_id.is_some(),
+        root => root,
+        cards => cards
+            .iter()
+            .map(|card| context! {
+                ..card_context(state, card, box_size, None),
+                ..context! { current => card.id == post.id }
+            })
+            .collect::<Vec<_>>(),
+    }))
 }
 
 fn is_web_url(value: &str) -> bool {
@@ -575,8 +872,14 @@ mod tests {
 
         let page = app.get("/", None).await;
         assert_eq!(page.status, StatusCode::OK);
-        let first = page.body.find(&format!("href=\"/posts/{newer}\"")).unwrap();
-        let second = page.body.find(&format!("href=\"/posts/{older}\"")).unwrap();
+        let first = page
+            .body
+            .find(&format!("href=\"/posts/{newer}?q="))
+            .unwrap();
+        let second = page
+            .body
+            .find(&format!("href=\"/posts/{older}?q="))
+            .unwrap();
         assert!(first < second);
         // Not processed yet: placeholders, not broken images.
         assert!(
@@ -586,8 +889,8 @@ mod tests {
         );
 
         let page = app.get(&format!("/?page=b{newer}"), None).await;
-        assert!(!page.body.contains(&format!("href=\"/posts/{newer}\"")));
-        assert!(page.body.contains(&format!("href=\"/posts/{older}\"")));
+        assert!(!page.body.contains(&format!("href=\"/posts/{newer}?q=")));
+        assert!(page.body.contains(&format!("href=\"/posts/{older}?q=")));
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
@@ -702,6 +1005,134 @@ mod tests {
             app.get("/posts?page=x", None).await.status,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn blacklists_hide_posts(pool: PgPool) {
+        uwuu_db::settings::set(
+            &pool,
+            "default_blacklist",
+            serde_json::json!("rating:e\nkitty"),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tag_relations (kind, antecedent_name, consequent_name, status)
+             VALUES ('alias', 'kitty', 'cat', 'active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let explicit = upload(&app, &alice, &fixture::png(20, 20), &[("rating", "e")]).await;
+        let cat = upload(&app, &alice, &fixture::png(24, 20), &[("tags", "cat")]).await;
+        let fine = upload(&app, &alice, &fixture::png(28, 20), &[]).await;
+
+        let grid = app.get("/", None).await.body;
+        assert!(grid.contains(&format!("href=\"/posts/{fine}?q=")));
+        assert!(!grid.contains(&format!("/posts/{explicit}")), "{grid}");
+        assert!(
+            !grid.contains(&format!("/posts/{cat}\"")),
+            "aliases count too"
+        );
+        assert!(grid.contains("2 hidden by your blacklist"), "{grid}");
+        assert!(grid.contains("href=\"/posts?blacklist=off\""));
+        let all = app.get("/posts?blacklist=off", None).await.body;
+        assert!(all.contains(&format!("/posts/{explicit}")));
+
+        let post = app.get(&format!("/posts/{explicit}"), None).await.body;
+        assert!(post.contains("matches your blacklist"), "{post}");
+        assert!(!post.contains("<img src=\"/data/"));
+        let shown = app
+            .get(&format!("/posts/{explicit}?blacklist=off"), None)
+            .await
+            .body;
+        assert!(!shown.contains("matches your blacklist"));
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn post_pages_list_similar_posts(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let a = upload(&app, &alice, &fixture::png(20, 20), &[]).await;
+        let b = upload(&app, &alice, &fixture::png(24, 20), &[]).await;
+        let c = upload(&app, &alice, &fixture::png(28, 20), &[("rating", "e")]).await;
+        // As if processing found them nearly identical.
+        for (post, hash) in [(a, 0x1234_i64), (b, 0x1235), (c, 0x1237)] {
+            sqlx::query(
+                "UPDATE media_assets SET phash = $2, phash_0 = ($2 >> 48)::int2,
+                     phash_1 = (($2 >> 32) & 65535)::int2, phash_2 = (($2 >> 16) & 65535)::int2,
+                     phash_3 = ($2 & 65535)::int2, processed_at = now()
+                 WHERE post_id = $1",
+            )
+            .bind(post)
+            .bind(hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        uwuu_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
+            .await
+            .unwrap();
+        let (app, _) = super::tests::app(&pool).await;
+        let page = app.get(&format!("/posts/{a}"), None).await.body;
+        assert!(page.contains("Similar posts"), "{page}");
+        assert!(page.contains(&format!("href=\"/posts/{b}\"")), "{page}");
+        assert!(
+            !page.contains(&format!("href=\"/posts/{c}\"")),
+            "blacklisted"
+        );
+        assert!(page.contains(&format!("href=\"/posts?tags=similar%3A{a}\"")));
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn stepping_through_a_search(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let first = upload(&app, &alice, &fixture::png(20, 20), &[("tags", "x")]).await;
+        upload(&app, &alice, &fixture::png(24, 20), &[]).await;
+        let second = upload(&app, &alice, &fixture::png(28, 20), &[("tags", "x")]).await;
+        let third = upload(&app, &alice, &fixture::png(32, 20), &[("tags", "x")]).await;
+        let step = |from: i64, way: &str, q: &str| {
+            let url = format!("/posts/{from}/{way}?q={q}");
+            let app = &app;
+            async move { app.get(&url, None).await.location.unwrap() }
+        };
+        // Newest first: "next" goes to older posts, skipping non-matches.
+        assert_eq!(
+            step(third, "next", "x").await,
+            format!("/posts/{second}?q=x")
+        );
+        assert_eq!(
+            step(second, "next", "x").await,
+            format!("/posts/{first}?q=x")
+        );
+        assert_eq!(
+            step(second, "prev", "x").await,
+            format!("/posts/{third}?q=x")
+        );
+        // Past either end: back to the search.
+        assert_eq!(step(first, "next", "x").await, "/posts?tags=x");
+        assert_eq!(step(third, "prev", "x").await, "/posts?tags=x");
+        // Oldest first flips the direction.
+        assert_eq!(
+            step(first, "next", "x+order%3Aid_asc").await,
+            format!("/posts/{second}?q=x+order%3Aid_asc")
+        );
+
+        let page = app.get(&format!("/posts/{second}?q=x"), None).await.body;
+        assert!(
+            page.contains(&format!("href=\"/posts/{second}/next?q=x\" rel=\"next\"")),
+            "{page}"
+        );
+        let from_home = app.get(&format!("/posts/{second}?q="), None).await.body;
+        assert!(from_home.contains("All posts"), "{from_home}");
+        let by_score = app
+            .get(&format!("/posts/{second}?q=order%3Ascore"), None)
+            .await
+            .body;
+        assert!(!by_score.contains("rel=\"next\""), "only id order steps");
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

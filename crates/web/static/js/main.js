@@ -38,7 +38,10 @@ var METATAGS = {
     "tagcount_asc",
     "random"
   ],
-  limit: []
+  limit: [],
+  fav: [],
+  ordfav: [],
+  similar: []
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 
@@ -277,6 +280,156 @@ function attachAll(root = document) {
   }
 }
 
+// src/keyboard.ts
+var SHORTCUTS = [
+  ["a, \u2190", "Previous post or page"],
+  ["d, \u2192", "Next post or page"],
+  ["e", "Edit the post"],
+  ["f", "Favorite the post"],
+  ["/", "Search"],
+  ["?", "Show these shortcuts"]
+];
+function actionFor(key) {
+  switch (key) {
+    case "a":
+    case "ArrowLeft":
+      return "prev";
+    case "d":
+    case "ArrowRight":
+      return "next";
+    case "e":
+      return "edit";
+    case "f":
+      return "favorite";
+    case "/":
+      return "search";
+    case "?":
+      return "help";
+    default:
+      return null;
+  }
+}
+function busy(target2) {
+  if (!(target2 instanceof Element)) return false;
+  return target2.closest("input, textarea, select, button, video, audio, [contenteditable]") !== null || document.querySelector("dialog[open]") !== null;
+}
+function showHelp() {
+  const existing = document.getElementById("shortcuts");
+  const dialog = existing instanceof HTMLDialogElement ? existing : document.createElement("dialog");
+  if (!existing) {
+    dialog.id = "shortcuts";
+    dialog.className = "shortcuts";
+    const title = document.createElement("h2");
+    title.textContent = "Keyboard shortcuts";
+    const list = document.createElement("dl");
+    for (const [keys, what] of SHORTCUTS) {
+      const dt = document.createElement("dt");
+      dt.textContent = keys;
+      const dd = document.createElement("dd");
+      dd.textContent = what;
+      list.append(dt, dd);
+    }
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "Close";
+    close.addEventListener("click", () => dialog.close());
+    dialog.append(title, list, close);
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) dialog.close();
+    });
+    document.body.append(dialog);
+  }
+  dialog.showModal();
+}
+function run(action) {
+  switch (action) {
+    case "prev":
+    case "next": {
+      const link = document.querySelector(`a[rel=${action}]`);
+      if (!link) return false;
+      window.location.assign(link.href);
+      return true;
+    }
+    case "edit": {
+      const details = document.querySelector("details#edit");
+      if (!details) return false;
+      details.open = true;
+      details.querySelector("textarea")?.focus();
+      return true;
+    }
+    case "favorite": {
+      const button = document.querySelector(".favorite button");
+      if (!button) return false;
+      button.click();
+      return true;
+    }
+    case "search": {
+      const input = document.querySelector(".site-header input[name=tags]");
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    }
+    case "help":
+      showHelp();
+      return true;
+    default:
+      return false;
+  }
+}
+function enableShortcuts() {
+  document.addEventListener("keydown", (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey || busy(event.target)) return;
+    const action = actionFor(event.key);
+    if (action && run(action)) event.preventDefault();
+  });
+}
+
+// src/reactions.ts
+function update(root, state) {
+  const score = root.querySelector(".vote .score");
+  if (score) score.textContent = String(state.score);
+  const favCount = root.querySelector(".favorite .fav-count");
+  if (favCount) favCount.textContent = String(state.fav_count);
+  for (const button of root.querySelectorAll(".vote button[name=score]")) {
+    const direction = button.getAttribute("aria-label") === "Vote up" ? 1 : -1;
+    const pressed = state.vote === direction;
+    button.setAttribute("aria-pressed", String(pressed));
+    button.value = String(pressed ? 0 : direction);
+  }
+  const favorite = root.querySelector(".favorite button[name=favorite]");
+  if (favorite) {
+    favorite.setAttribute("aria-pressed", String(state.favorited));
+    favorite.value = state.favorited ? "remove" : "add";
+  }
+}
+function enhanceReactions(root = document) {
+  for (const form of root.querySelectorAll("form[data-reaction]")) {
+    form.addEventListener("submit", (event) => {
+      if (form.dataset["plain"]) return;
+      event.preventDefault();
+      const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
+      const body = new URLSearchParams();
+      for (const [name, value] of new FormData(form, submitter)) {
+        if (typeof value === "string") body.append(name, value);
+      }
+      void fetch(form.getAttribute("action") ?? "", {
+        method: "POST",
+        body,
+        headers: { Accept: "application/json" }
+      }).then(async (response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        update(root, await response.json());
+      }).catch(() => {
+        form.dataset["plain"] = "1";
+        form.requestSubmit(submitter);
+      });
+    });
+  }
+}
+
 // src/main.ts
 document.documentElement.classList.add("js");
 attachAll();
+enhanceReactions();
+enableShortcuts();

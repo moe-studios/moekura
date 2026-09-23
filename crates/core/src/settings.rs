@@ -14,6 +14,9 @@ pub struct SiteSettings {
     /// New uploads wait in the approval queue unless the uploader's role
     /// has `UploadWithoutApproval`.
     pub upload_approval: bool,
+    /// Blacklist for visitors and for users who never saved their own
+    /// (see [`crate::blacklist`]); e.g. `rating:e` to hide explicit posts.
+    pub default_blacklist: String,
 }
 
 impl Default for SiteSettings {
@@ -22,6 +25,7 @@ impl Default for SiteSettings {
             site_name: "uwuubooru".to_owned(),
             registration_mode: RegistrationMode::Open,
             upload_approval: false,
+            default_blacklist: String::new(),
         }
     }
 }
@@ -104,6 +108,7 @@ impl SiteSettings {
         if name.chars().count() > SITE_NAME_MAX_LEN {
             return Err(format!("must be at most {SITE_NAME_MAX_LEN} characters"));
         }
+        crate::blacklist::Blacklist::parse(&self.default_blacklist).map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -118,7 +123,12 @@ mod tests {
     fn lists_keys() {
         assert_eq!(
             SiteSettings::keys(),
-            ["registration_mode", "site_name", "upload_approval"]
+            [
+                "default_blacklist",
+                "registration_mode",
+                "site_name",
+                "upload_approval"
+            ]
         );
     }
 

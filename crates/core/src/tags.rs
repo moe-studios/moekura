@@ -31,6 +31,7 @@ pub const RESERVED_PREFIXES: &[&str] = &[
     "mpixels",
     "note",
     "order",
+    "ordfav",
     "parent",
     "pool",
     "rating",

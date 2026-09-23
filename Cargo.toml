@@ -14,6 +14,7 @@ publish = false
 uwuu-core = { path = "crates/core" }
 uwuu-db = { path = "crates/db" }
 uwuu-jobs = { path = "crates/jobs" }
+uwuu-media = { path = "crates/media" }
 uwuu-storage = { path = "crates/storage" }
 uwuu-web = { path = "crates/web" }
 

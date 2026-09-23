@@ -1,0 +1,20 @@
+[package]
+name = "uwuu-media"
+description = "Media identification and processing for uwuubooru"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+uwuu-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process", "time"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

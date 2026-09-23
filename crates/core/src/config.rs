@@ -19,6 +19,7 @@ pub struct Config {
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
     pub jobs: JobsConfig,
+    pub media: MediaConfig,
     pub paths: PathsConfig,
     pub storage: StorageConfig,
     pub telemetry: TelemetryConfig,
@@ -187,6 +188,75 @@ impl Default for S3Config {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MediaConfig {
+    pub max_upload_mb: u64,
+    /// Larger images are refused before they are decoded (decompression
+    /// bombs).
+    pub max_pixels: u64,
+    pub max_duration_secs: u64,
+    /// Accepted types: jpeg, png, gif, webp, avif, jxl, mp4, webm. `jxl` is
+    /// off by default because libvips considers its JPEG XL decoder less
+    /// hardened against malicious files.
+    pub allowed_types: Vec<String>,
+    /// Bounding boxes for thumbnails, e.g. 1x and 2x for high-DPI screens.
+    pub thumbnail_sizes: Vec<u32>,
+    /// Images larger than this (longest side) also get a resized sample
+    /// that the post page shows instead of the original.
+    pub sample_size: u32,
+    /// `webp` or `avif`.
+    pub variant_format: String,
+    /// Kill media tools that run longer than this.
+    pub tool_timeout_secs: u64,
+    /// Scratch space for uploads and processing. Defaults to the system
+    /// temporary directory.
+    pub work_dir: Option<PathBuf>,
+    pub tools: MediaTools,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            max_upload_mb: 100,
+            max_pixels: 200_000_000,
+            max_duration_secs: 600,
+            allowed_types: ["jpeg", "png", "gif", "webp", "avif", "mp4", "webm"]
+                .map(String::from)
+                .to_vec(),
+            thumbnail_sizes: vec![250, 500],
+            sample_size: 1600,
+            variant_format: "webp".to_owned(),
+            tool_timeout_secs: 120,
+            work_dir: None,
+            tools: MediaTools::default(),
+        }
+    }
+}
+
+/// Paths to the external programs used for media, if not on `PATH`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MediaTools {
+    pub vips: PathBuf,
+    pub vipsheader: PathBuf,
+    pub vipsthumbnail: PathBuf,
+    pub ffmpeg: PathBuf,
+    pub ffprobe: PathBuf,
+}
+
+impl Default for MediaTools {
+    fn default() -> Self {
+        Self {
+            vips: "vips".into(),
+            vipsheader: "vipsheader".into(),
+            vipsthumbnail: "vipsthumbnail".into(),
+            ffmpeg: "ffmpeg".into(),
+            ffprobe: "ffprobe".into(),
+        }
+    }
+}
+
 /// Directories whose files replace the built-in ones with the same relative
 /// path, for theming without recompiling.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -313,6 +383,39 @@ impl Config {
             problems.push(ConfigProblem {
                 key: "storage.public_base_url",
                 message: "must be an http:// or https:// URL".into(),
+            });
+        }
+        const MEDIA_TYPES: [&str; 8] = ["jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm"];
+        if let Some(unknown) = self
+            .media
+            .allowed_types
+            .iter()
+            .find(|t| !MEDIA_TYPES.contains(&t.as_str()))
+        {
+            problems.push(ConfigProblem {
+                key: "media.allowed_types",
+                message: format!(
+                    "unknown type `{unknown}` (known: {})",
+                    MEDIA_TYPES.join(", ")
+                ),
+            });
+        }
+        if !matches!(self.media.variant_format.as_str(), "webp" | "avif") {
+            problems.push(ConfigProblem {
+                key: "media.variant_format",
+                message: "must be webp or avif".into(),
+            });
+        }
+        if self.media.thumbnail_sizes.is_empty() || self.media.thumbnail_sizes.contains(&0) {
+            problems.push(ConfigProblem {
+                key: "media.thumbnail_sizes",
+                message: "needs at least one size, all above 0".into(),
+            });
+        }
+        if self.media.max_upload_mb == 0 {
+            problems.push(ConfigProblem {
+                key: "media.max_upload_mb",
+                message: "must be at least 1".into(),
             });
         }
         if self.jobs.workers == 0 {

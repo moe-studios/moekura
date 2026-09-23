@@ -73,6 +73,33 @@ secret_access_key = ""
 # stores need this.
 path_style = false
 
+[media]
+max_upload_mb = 100
+# Images with more pixels are refused before decoding (decompression bombs).
+max_pixels = 200000000
+max_duration_secs = 600
+# Add "jxl" to accept JPEG XL. It is off by default because libvips marks
+# its JPEG XL decoder as not hardened against malicious files; the decoder
+# still runs in a separate, time-limited process.
+allowed_types = ["jpeg", "png", "gif", "webp", "avif", "mp4", "webm"]
+# Thumbnail bounding boxes: 1x and 2x for high-DPI screens.
+thumbnail_sizes = [250, 500]
+# Images larger than this also get a resized copy for the post page.
+sample_size = 1600
+# "webp" or "avif" (smaller, slower to encode).
+variant_format = "webp"
+tool_timeout_secs = 120
+# Scratch space for uploads and processing; the system temp dir by default.
+# work_dir = "/var/tmp/uwuubooru"
+
+[media.tools]
+# Paths to the media programs, if they are not on PATH.
+vips = "vips"
+vipsheader = "vipsheader"
+vipsthumbnail = "vipsthumbnail"
+ffmpeg = "ffmpeg"
+ffprobe = "ffprobe"
+
 [paths]
 # Directories whose files replace built-in templates and static files with
 # the same relative path, e.g. <templates_override>/base.html. Unset by default.

@@ -3205,6 +3205,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "uwuu-media"
+version = "0.1.0-dev"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uwuu-core",
+]
+
+[[package]]
 name = "uwuu-storage"
 version = "0.1.0-dev"
 dependencies = [

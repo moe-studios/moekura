@@ -3,7 +3,7 @@
 //! Password hashing is CPU-heavy, so it runs on tokio's blocking pool
 //! rather than stalling the async workers.
 
-use sqlx::PgPool;
+use sqlx::{PgExecutor, PgPool};
 use uwuu_core::accounts::{self, EmailError, NameError, PasswordError, UserName, Verification};
 
 use crate::users::{self, InsertError, NewUser, User, UserStatus};
@@ -32,7 +32,9 @@ pub enum CreateError {
     Db(#[from] sqlx::Error),
 }
 
-pub async fn create(db: &PgPool, account: NewAccount<'_>) -> Result<User, CreateError> {
+/// Validates and hashes before touching `db`, which may be a transaction
+/// (e.g. one that also redeems an invite).
+pub async fn create(db: impl PgExecutor<'_>, account: NewAccount<'_>) -> Result<User, CreateError> {
     let name = UserName::parse(account.name).map_err(CreateError::InvalidName)?;
     accounts::check_password(account.password).map_err(CreateError::InvalidPassword)?;
     let email = account.email.map(str::trim).filter(|e| !e.is_empty());

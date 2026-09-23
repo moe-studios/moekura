@@ -2,6 +2,7 @@
 //! for bootstrapping an instance before anyone can log in.
 
 use std::io::{BufRead, IsTerminal};
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use clap::Subcommand;
@@ -10,7 +11,7 @@ use sqlx::PgPool;
 use uwuu_core::permissions::{Role, SystemRole};
 use uwuu_db::accounts::{self, NewAccount};
 use uwuu_db::users::{self, User, UserStatus};
-use uwuu_db::{roles, settings};
+use uwuu_db::{invites, roles, settings};
 
 #[derive(Subcommand)]
 pub enum AdminCommand {
@@ -26,6 +27,16 @@ pub enum AdminCommand {
     },
     /// Change a user's role
     SetRole { name: String, role: String },
+    /// Create an invite code for registration_mode = invite. The code is
+    /// shown once.
+    CreateInvite {
+        /// How many accounts the code can create
+        #[arg(long, default_value_t = 1)]
+        uses: u16,
+        /// Days until the code expires; never by default
+        #[arg(long)]
+        expires_days: Option<u32>,
+    },
     /// Show site settings, or change one
     Settings {
         #[command(subcommand)]
@@ -49,6 +60,14 @@ pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
         AdminCommand::SetRole { name, role } => {
             let role = set_role(db, &name, &role).await?;
             println!("{name} is now {}", role.name);
+        }
+        AdminCommand::CreateInvite { uses, expires_days } => {
+            let invite = invites::NewInvite {
+                created_by: None,
+                max_uses: i32::from(uses.max(1)),
+                expires_in: expires_days.map(|d| Duration::from_secs(u64::from(d) * 86_400)),
+            };
+            println!("{}", invites::create(db, invite).await?);
         }
         AdminCommand::Settings { action: None } => {
             for (key, value) in settings::load(db).await?.to_map() {

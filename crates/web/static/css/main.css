@@ -112,3 +112,38 @@ button.link:hover { text-decoration: underline; }
   text-align: center;
   border-top: 1px solid var(--border);
 }
+
+/* Forms */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.5);
+  padding: 24px;
+}
+.narrow { max-width: 420px; margin: 32px auto; }
+.card h1 { margin: 0 0 16px; font-size: 1.5rem; }
+
+form { display: flex; flex-direction: column; }
+label { font-weight: 600; margin: 12px 0 4px; }
+.optional { font-weight: normal; color: var(--muted); }
+input {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+form button[type="submit"] { margin-top: 20px; padding: 10px; }
+
+.hint, .aside { color: var(--muted); font-size: 0.875rem; margin: 4px 0 0; }
+.aside { margin-top: 16px; }
+.field-error, .form-error { color: var(--danger); font-size: 0.875rem; margin: 4px 0 0; }
+.form-error {
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+}

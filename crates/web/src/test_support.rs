@@ -59,6 +59,12 @@ impl TestApp {
         self.router.clone().oneshot(request).await.unwrap()
     }
 
+    /// A GET carrying an arbitrary `name=value` cookie.
+    pub async fn get_with_cookie(&self, path: &str, cookie: &str) -> TestResponse {
+        let builder = Request::get(path).header(COOKIE, cookie);
+        self.send(builder, None, Body::empty()).await
+    }
+
     pub async fn get(&self, path: &str, session: Option<&str>) -> TestResponse {
         self.send(Request::get(path), session, Body::empty()).await
     }

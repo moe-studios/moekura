@@ -1,6 +1,7 @@
 //! HTTP server for uwuubooru: HTML pages, the JSON API and operational
 //! endpoints, all sharing one router.
 
+mod account;
 mod assets;
 pub mod auth;
 pub mod error;
@@ -86,7 +87,7 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
-    with_middleware(pages::routes(), state)
+    with_middleware(pages::routes().merge(account::routes()), state)
 }
 
 /// Wraps `routes` (the pages and API) in session handling and the global

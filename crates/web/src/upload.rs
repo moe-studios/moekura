@@ -413,7 +413,7 @@ mod tests {
 
     async fn app(pool: &PgPool) -> (TestApp, AppState) {
         let state = test_state(pool).await;
-        let routes = routes(max_bytes(&state)).merge(crate::pages::routes());
+        let routes = routes(max_bytes(&state)).merge(crate::posts::routes());
         (TestApp::new(state.clone(), routes), state)
     }
 

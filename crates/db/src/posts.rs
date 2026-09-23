@@ -83,6 +83,75 @@ macro_rules! select_posts {
     };
 }
 
+/// Which posts a viewer may see.
+#[derive(Debug, Clone, Default)]
+pub struct Visibility {
+    /// Statuses visible to everyone in this role (active and flagged at
+    /// least).
+    pub statuses: Vec<PostStatus>,
+    /// The viewer, whose own pending uploads are always visible.
+    pub viewer: Option<i64>,
+}
+
+impl Visibility {
+    pub fn allows(&self, post: &Post) -> bool {
+        self.statuses.contains(&post.status)
+            || (post.status == PostStatus::Pending
+                && post.uploader_id.is_some()
+                && post.uploader_id == self.viewer)
+    }
+
+    fn status_names(&self) -> Vec<&'static str> {
+        self.statuses.iter().map(|s| s.as_str()).collect()
+    }
+}
+
+/// A post as shown in a grid.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Card {
+    pub id: i64,
+    pub rating: String,
+    pub status: String,
+    pub media_type: String,
+    pub width: i32,
+    pub height: i32,
+    pub frames: i32,
+    /// Storage keys of the 1x and 2x thumbnails, once generated.
+    pub thumb: Option<String>,
+    pub thumb_2x: Option<String>,
+}
+
+/// Newest posts first, optionally only those older than `before` (keyset
+/// pagination). `thumb_kinds` names the 1x and 2x thumbnail variants.
+pub async fn recent(
+    db: impl PgExecutor<'_>,
+    visibility: &Visibility,
+    before: Option<i64>,
+    limit: i64,
+    thumb_kinds: (&str, &str),
+) -> sqlx::Result<Vec<Card>> {
+    sqlx::query_as(
+        "SELECT p.id, p.rating, p.status, a.media_type, a.width, a.height, a.frames,
+                t1.storage_key AS thumb, t2.storage_key AS thumb_2x
+         FROM posts p
+         JOIN media_assets a ON a.post_id = p.id
+         LEFT JOIN media_variants t1 ON t1.asset_id = a.id AND t1.kind = $4
+         LEFT JOIN media_variants t2 ON t2.asset_id = a.id AND t2.kind = $5
+         WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
+           AND ($3::bigint IS NULL OR p.id < $3)
+         ORDER BY p.id DESC
+         LIMIT $6",
+    )
+    .bind(visibility.status_names())
+    .bind(visibility.viewer)
+    .bind(before)
+    .bind(thumb_kinds.0)
+    .bind(thumb_kinds.1)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn insert(db: impl PgExecutor<'_>, post: NewPost<'_>) -> sqlx::Result<i64> {
     sqlx::query_scalar(
         "INSERT INTO posts (uploader_id, rating, status, source, description)
@@ -110,6 +179,100 @@ mod tests {
     use sqlx::PgPool;
 
     use super::*;
+
+    async fn post_with_file(
+        pool: &PgPool,
+        status: PostStatus,
+        uploader: Option<i64>,
+        n: u8,
+    ) -> i64 {
+        let new = NewPost {
+            uploader_id: uploader,
+            rating: Rating::General,
+            status,
+            source: "",
+            description: "",
+        };
+        let id = insert(pool, new).await.unwrap();
+        sqlx::query(
+            "INSERT INTO media_assets (post_id, sha256, md5, media_type, width, height, file_size, storage_key)
+             VALUES ($1, $2, $3, 'png', 10, 10, 1, 'k')",
+        )
+        .bind(id)
+        .bind(vec![n; 32])
+        .bind(vec![n; 16])
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn recent_respects_visibility_and_paginates(pool: PgPool) {
+        let uploader: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'up', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let a = post_with_file(&pool, PostStatus::Active, None, 1).await;
+        let pending = post_with_file(&pool, PostStatus::Pending, Some(uploader), 2).await;
+        let deleted = post_with_file(&pool, PostStatus::Deleted, None, 3).await;
+        let b = post_with_file(&pool, PostStatus::Flagged, None, 4).await;
+        sqlx::query(
+            "INSERT INTO media_variants VALUES ($1, 'thumb-250', 'webp', 10, 10, 1, 'thumb-key')",
+        )
+        .bind(
+            sqlx::query_scalar::<_, i64>("SELECT id FROM media_assets WHERE post_id = $1")
+                .bind(b)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ids = |cards: Vec<Card>| cards.into_iter().map(|c| c.id).collect::<Vec<_>>();
+        let public = Visibility {
+            statuses: vec![PostStatus::Active, PostStatus::Flagged],
+            viewer: None,
+        };
+        let kinds = ("thumb-250", "thumb-500");
+        let cards = recent(&pool, &public, None, 10, kinds).await.unwrap();
+        assert_eq!(cards[0].thumb.as_deref(), Some("thumb-key"));
+        assert_eq!(cards[0].thumb_2x, None);
+        assert_eq!(ids(cards), [b, a]);
+
+        let own = Visibility {
+            viewer: Some(uploader),
+            ..public.clone()
+        };
+        assert_eq!(
+            ids(recent(&pool, &own, None, 10, kinds).await.unwrap()),
+            [b, pending, a]
+        );
+
+        let staff = Visibility {
+            statuses: vec![
+                PostStatus::Active,
+                PostStatus::Flagged,
+                PostStatus::Pending,
+                PostStatus::Deleted,
+            ],
+            viewer: None,
+        };
+        assert_eq!(
+            ids(recent(&pool, &staff, None, 2, kinds).await.unwrap()),
+            [b, deleted]
+        );
+        assert_eq!(
+            ids(recent(&pool, &staff, Some(deleted), 2, kinds)
+                .await
+                .unwrap()),
+            [pending, a]
+        );
+    }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn insert_and_read_back(pool: PgPool) {

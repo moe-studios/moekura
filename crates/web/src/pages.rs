@@ -1,12 +1,10 @@
 //! Rendering HTML pages through the shared layout.
 
-use axum::Router;
 use axum::extract::FromRequestParts;
 use axum::http::StatusCode;
 use axum::http::header::SET_COOKIE;
 use axum::http::request::Parts;
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::get;
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use uwuu_core::permissions::Permission;
@@ -16,15 +14,6 @@ use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
-
-pub fn routes() -> Router<AppState> {
-    Router::new().route("/", get(home))
-}
-
-async fn home(page: Page) -> Result<Response, AppError> {
-    page.current.require(Permission::ViewPosts)?;
-    Ok(page.render("home.html", context! {}))
-}
 
 /// Everything a handler needs to render a page: extract it, then call
 /// [`Page::render`].
@@ -133,7 +122,7 @@ mod tests {
     use crate::test_support::{TestApp, test_state};
 
     async fn app(pool: &PgPool) -> TestApp {
-        TestApp::new(test_state(pool).await, super::routes())
+        TestApp::new(test_state(pool).await, crate::posts::routes())
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

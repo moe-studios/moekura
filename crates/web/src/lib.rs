@@ -10,6 +10,7 @@ mod files;
 pub mod flash;
 mod health;
 pub mod pages;
+mod posts;
 pub mod rate_limit;
 mod templates;
 #[cfg(test)]
@@ -49,11 +50,17 @@ use crate::templates::Templates;
 use uwuu_media::Media;
 use uwuu_storage::Storage;
 
-/// Scripts, styles and media only from our own origin; no framing, no
+/// Scripts and styles only from our own origin, images and video also from
+/// the file storage's public origin (a CDN) if there is one; no framing, no
 /// plugins, forms only to ourselves.
-const CSP: &str = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; \
-    style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
-    frame-ancestors 'none'; form-action 'self'";
+fn content_security_policy(storage_origin: Option<&str>) -> String {
+    let files = storage_origin.map(|o| format!(" {o}")).unwrap_or_default();
+    format!(
+        "default-src 'self'; img-src 'self' data: blob:{files}; media-src 'self' blob:{files}; \
+         style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
+         frame-ancestors 'none'; form-action 'self'"
+    )
+}
 
 /// Shared state handed to every handler.
 #[derive(Clone)]
@@ -112,7 +119,7 @@ impl AppState {
 
 pub fn router(state: AppState) -> Router {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
-    let routes = pages::routes()
+    let routes = posts::routes()
         .merge(account::routes())
         .merge(upload::routes(max_upload_bytes));
     with_middleware(routes, state)
@@ -141,7 +148,10 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .layer(csrf)
         .layer(SetResponseHeaderLayer::if_not_present(
             CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(CSP),
+            HeaderValue::from_str(&content_security_policy(
+                state.storage.public_origin().as_deref(),
+            ))
+            .expect("an ASCII origin makes a valid header"),
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             X_CONTENT_TYPE_OPTIONS,
@@ -200,4 +210,28 @@ pub async fn serve(
     )
     .with_graceful_shutdown(shutdown)
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::content_security_policy;
+
+    #[test]
+    fn csp_allows_media_from_the_storage_origin() {
+        let own = content_security_policy(None);
+        assert!(own.contains("img-src 'self' data: blob:;"), "{own}");
+        let cdn = content_security_policy(Some("https://cdn.example.com"));
+        assert!(
+            cdn.contains("img-src 'self' data: blob: https://cdn.example.com;"),
+            "{cdn}"
+        );
+        assert!(
+            cdn.contains("media-src 'self' blob: https://cdn.example.com;"),
+            "{cdn}"
+        );
+        assert!(
+            cdn.contains("script-src 'self';"),
+            "scripts stay local: {cdn}"
+        );
+    }
 }

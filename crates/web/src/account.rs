@@ -302,7 +302,7 @@ mod tests {
     async fn app(pool: &PgPool) -> TestApp {
         TestApp::new(
             test_state(pool).await,
-            routes().merge(crate::pages::routes()),
+            routes().merge(crate::posts::routes()),
         )
     }
 

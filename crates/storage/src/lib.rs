@@ -194,6 +194,14 @@ impl Storage {
         self.public_base_url.is_none()
     }
 
+    /// The origin (`https://cdn.example.com`) files are served from when it
+    /// is not this site, for the Content-Security-Policy.
+    pub fn public_origin(&self) -> Option<String> {
+        self.public_base_url
+            .as_ref()
+            .map(|url| url.origin().ascii_serialization())
+    }
+
     /// The URL browsers load `key` from.
     pub fn url(&self, key: &Key) -> String {
         match &self.public_base_url {

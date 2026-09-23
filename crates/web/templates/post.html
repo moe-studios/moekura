@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Post #{{ post.id }} · {{ site.name }}{% endblock %}
+{% block content %}
+<div class="post-layout">
+  <section class="post-media">
+    {% if post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
+    {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
+    {% if file.video %}
+    <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
+           width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
+    {% else %}
+    <a href="{{ file.original }}">
+      <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">
+    </a>
+    {% endif %}
+    {% if post.description %}<p class="description">{{ post.description }}</p>{% endif %}
+  </section>
+  <aside class="post-info">
+    <h1>Post #{{ post.id }}</h1>
+    <dl>
+      <dt>Rating</dt><dd class="rating-{{ post.rating_code }}">{{ post.rating }}</dd>
+      <dt>Size</dt><dd>{{ file.width }}×{{ file.height }} · {{ file.size }}</dd>
+      <dt>Type</dt><dd>{{ file.media_type }}{% if file.duration %} · {{ file.duration }}{% if not file.has_audio %} · no sound{% endif %}{% endif %}{% if file.animated %} · animated{% endif %}</dd>
+      <dt>Uploaded</dt><dd><time datetime="{{ post.created_iso }}">{{ post.created }}</time>{% if uploader %} by {{ uploader }}{% endif %}</dd>
+      {% if post.source %}
+      <dt>Source</dt>
+      <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
+      {% endif %}
+    </dl>
+    <p><a href="{{ file.original }}" download>Download original</a></p>
+  </aside>
+</div>
+{% endblock %}

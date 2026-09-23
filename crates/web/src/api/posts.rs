@@ -281,6 +281,7 @@ fn search_error(error: SearchError) -> AppError {
 #[utoipa::path(
     get,
     path = "/posts",
+    operation_id = "search_posts",
     tag = "posts",
     params(SearchParams),
     responses(
@@ -359,6 +360,7 @@ pub(crate) async fn search(
 #[utoipa::path(
     get,
     path = "/posts/{id}",
+    operation_id = "get_post",
     tag = "posts",
     params(("id" = i64, Path, description = "Post number")),
     responses(
@@ -409,6 +411,7 @@ pub struct VersionRelation {
 #[utoipa::path(
     get,
     path = "/posts/{id}/versions",
+    operation_id = "list_post_versions",
     tag = "posts",
     params(("id" = i64, Path, description = "Post number")),
     responses(
@@ -504,6 +507,7 @@ fn upload_error(error: UploadError) -> AppError {
 #[utoipa::path(
     post,
     path = "/posts",
+    operation_id = "upload_post",
     tag = "posts",
     request_body(content = UploadRequest, content_type = "multipart/form-data"),
     responses(
@@ -583,6 +587,7 @@ where
 #[utoipa::path(
     patch,
     path = "/posts/{id}",
+    operation_id = "update_post",
     tag = "posts",
     params(("id" = i64, Path, description = "Post number")),
     request_body = PostChanges,
@@ -670,6 +675,7 @@ pub(crate) async fn update(
 #[utoipa::path(
     put,
     path = "/posts/{id}/favorite",
+    operation_id = "favorite_post",
     tag = "posts",
     params(("id" = i64, Path, description = "Post number")),
     responses((status = 200, body = Reactions), (status = 404, body = ErrorBody)),
@@ -691,6 +697,7 @@ pub(crate) async fn favorite(
 #[utoipa::path(
     delete,
     path = "/posts/{id}/favorite",
+    operation_id = "unfavorite_post",
     tag = "posts",
     params(("id" = i64, Path, description = "Post number")),
     responses((status = 200, body = Reactions), (status = 404, body = ErrorBody)),
@@ -718,6 +725,7 @@ pub struct Vote {
 #[utoipa::path(
     put,
     path = "/posts/{id}/vote",
+    operation_id = "vote_on_post",
     tag = "posts",
     params(("id" = i64, Path, description = "Post number")),
     request_body = Vote,
@@ -752,6 +760,7 @@ pub struct NewFlag {
 #[utoipa::path(
     post,
     path = "/posts/{id}/flags",
+    operation_id = "flag_post",
     tag = "posts",
     params(("id" = i64, Path, description = "Post number")),
     request_body = NewFlag,

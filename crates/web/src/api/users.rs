@@ -41,6 +41,7 @@ fn status_name(status: UserStatus) -> &'static str {
 #[utoipa::path(
     get,
     path = "/users/{name}",
+    operation_id = "get_user",
     tag = "users",
     params(("name" = String, Path, description = "Case-insensitive")),
     responses((status = 200, body = ApiUser), (status = 404, body = ErrorBody)),
@@ -104,6 +105,7 @@ pub struct ApiActiveBan {
 #[utoipa::path(
     get,
     path = "/me",
+    operation_id = "get_me",
     tag = "users",
     responses((status = 200, body = ApiMe), (status = 401, body = ErrorBody)),
 )]

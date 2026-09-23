@@ -89,6 +89,7 @@ pub struct TagPage {
 #[utoipa::path(
     get,
     path = "/tags",
+    operation_id = "list_tags",
     tag = "tags",
     params(ListParams),
     responses((status = 200, body = TagPage), (status = 400, body = ErrorBody)),
@@ -144,6 +145,7 @@ pub(crate) async fn list(
 #[utoipa::path(
     get,
     path = "/tags/{name}",
+    operation_id = "get_tag",
     tag = "tags",
     params(("name" = String, Path, description = "The tag's name")),
     responses((status = 200, body = ApiTag), (status = 404, body = ErrorBody)),
@@ -178,9 +180,13 @@ pub struct AutocompleteParams {
 #[utoipa::path(
     get,
     path = "/tags/autocomplete",
+    operation_id = "autocomplete_tags",
     tag = "tags",
     params(AutocompleteParams),
-    responses((status = 200, body = Vec<Suggestion>)),
+    responses(
+        (status = 200, body = Vec<Suggestion>),
+        (status = 401, body = ErrorBody, description = "The site is private: authenticate"),
+    ),
 )]
 pub(crate) async fn autocomplete(
     State(state): State<AppState>,
@@ -296,6 +302,7 @@ pub struct RelationPage {
 #[utoipa::path(
     get,
     path = "/tag-relations",
+    operation_id = "list_tag_relations",
     tag = "tags",
     params(RelationParams),
     responses((status = 200, body = RelationPage), (status = 400, body = ErrorBody)),
@@ -341,6 +348,7 @@ pub struct TagChanges {
 #[utoipa::path(
     patch,
     path = "/tags/{name}",
+    operation_id = "update_tag",
     tag = "tags",
     params(("name" = String, Path, description = "The tag's name")),
     request_body = TagChanges,
@@ -397,6 +405,7 @@ pub struct NewRelation {
 #[utoipa::path(
     post,
     path = "/tag-relations",
+    operation_id = "request_tag_relation",
     tag = "tags",
     request_body = NewRelation,
     responses(

@@ -5,6 +5,7 @@
 //! rendered by [`crate::error::render_errors`]). The OpenAPI description is
 //! generated from the handlers' annotations, so it can't drift from them.
 
+mod docs;
 mod moderation;
 mod posts;
 mod tags;
@@ -13,20 +14,27 @@ mod users;
 use std::sync::Arc;
 
 use axum::Router;
+use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::routing::get;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
-use utoipa::openapi::{OpenApi as Spec, SecurityRequirement};
+use utoipa::openapi::{OpenApi as Spec, RefOr, SecurityRequirement};
 use utoipa::{Modify, OpenApi};
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_axum::routes;
 
+use minijinja::context;
+
 use crate::AppState;
 use crate::auth::SESSION_COOKIE;
 use crate::error::ErrorBody;
+use crate::pages::Page;
 
 /// Where the API is mounted.
 pub const BASE: &str = "/api/v1";
+
+/// The API reference page.
+pub const DOCS: &str = "/api/docs";
 
 pub fn is_api_path(path: &str) -> bool {
     path == "/api" || path.starts_with("/api/")
@@ -123,22 +131,64 @@ fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
         .routes(routes!(moderation::log))
 }
 
+/// Gives every response a description, which OpenAPI requires: the
+/// status's reason phrase where the handler didn't say more.
+fn complete(mut spec: Spec) -> Spec {
+    for item in spec.paths.paths.values_mut() {
+        let operations = [
+            &mut item.get,
+            &mut item.put,
+            &mut item.post,
+            &mut item.delete,
+            &mut item.patch,
+        ];
+        for operation in operations.into_iter().flatten() {
+            for (status, response) in &mut operation.responses.responses {
+                if let RefOr::T(response) = response
+                    && response.description.is_empty()
+                {
+                    response.description = status
+                        .parse::<u16>()
+                        .ok()
+                        .and_then(|s| StatusCode::from_u16(s).ok())
+                        .and_then(|s| s.canonical_reason())
+                        .unwrap_or("Response")
+                        .to_owned();
+                }
+            }
+        }
+    }
+    spec
+}
+
 /// The API's OpenAPI description.
 pub fn openapi() -> Spec {
-    api_router(0).into_openapi()
+    complete(api_router(0).into_openapi())
 }
 
 pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     let (router, spec) = api_router(max_upload_bytes).split_for_parts();
-    let spec: Arc<str> = spec
+    let spec = complete(spec);
+    let json: Arc<str> = spec
         .to_pretty_json()
         .expect("the OpenAPI description serializes")
         .into();
+    let reference =
+        docs::reference(&serde_json::to_value(&spec).expect("the OpenAPI description serializes"));
     let router = router.route(
         "/openapi.json",
-        get(move || async move { ([(CONTENT_TYPE, "application/json")], spec.to_string()) }),
+        get(move || async move { ([(CONTENT_TYPE, "application/json")], json.to_string()) }),
     );
-    Router::new().nest(BASE, router)
+    Router::new().nest(BASE, router).route(
+        DOCS,
+        get(move |page: Page| async move {
+            let base = absolute_url(page.state(), BASE);
+            page.render(
+                "api_docs.html",
+                context! { api => reference, base => base, spec_url => format!("{BASE}/openapi.json") },
+            )
+        }),
+    )
 }
 
 /// `url` as an absolute URL: stored files are usually served from a path
@@ -196,6 +246,47 @@ mod tests {
         assert!(spec["openapi"].as_str().unwrap().starts_with("3."));
         assert!(spec["paths"]["/posts/{id}"]["get"].is_object(), "{spec}");
         assert!(spec["components"]["securitySchemes"]["api_key"].is_object());
+        // OpenAPI requires every response to be described.
+        let created = &spec["paths"]["/posts"]["post"]["responses"]["201"];
+        assert_eq!(created["description"], "Created");
+    }
+
+    /// What OpenAPI linters check that the annotations could get wrong.
+    #[test]
+    fn operations_are_unique_and_described() {
+        let spec = serde_json::to_value(super::openapi()).unwrap();
+        let mut ids = std::collections::HashSet::new();
+        for (path, item) in spec["paths"].as_object().unwrap() {
+            for (method, operation) in item.as_object().unwrap() {
+                let id = operation["operationId"].as_str().unwrap();
+                assert!(ids.insert(id.to_owned()), "{id} is used twice");
+                assert!(
+                    operation["summary"].is_string(),
+                    "{method} {path} has no summary"
+                );
+                for (status, response) in operation["responses"].as_object().unwrap() {
+                    assert!(
+                        response["description"]
+                            .as_str()
+                            .is_some_and(|d| !d.is_empty()),
+                        "{method} {path} {status} has no description"
+                    );
+                }
+            }
+        }
+    }
+
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    async fn renders_a_reference_page(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes(1024));
+        let page = app.get("/api/docs", None).await;
+        assert_eq!(page.status, StatusCode::OK);
+        let body = &page.body;
+        assert!(body.contains("id=\"search_posts\""), "{body}");
+        assert!(body.contains("<code>view_posts</code>"), "{body}");
+        assert!(body.contains("href=\"#schema-ApiPost\""), "{body}");
+        assert!(body.contains("id=\"schema-ApiPost\""), "{body}");
+        assert!(body.contains("Authorization: Bearer"), "{body}");
     }
 }
 

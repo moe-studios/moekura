@@ -47,6 +47,8 @@ enum Command {
     Migrate,
     /// Validate the configuration and print the effective settings, with secrets redacted
     CheckConfig,
+    /// Print the API's OpenAPI description as JSON
+    Openapi,
     /// Manage accounts and site settings
     Admin {
         #[command(subcommand)]
@@ -58,9 +60,15 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     uwu_storage::install_crypto_provider();
     let cli = Cli::parse();
+    // Needs no configuration.
+    if let Command::Openapi = cli.command {
+        println!("{}", uwu_web::api::openapi().to_pretty_json()?);
+        return Ok(());
+    }
     let config = config::load(cli.config.as_deref())?;
 
     match cli.command {
+        Command::Openapi => unreachable!("handled before loading the configuration"),
         Command::CheckConfig => {
             print!("{}", toml::to_string_pretty(&config.redacted())?);
             Ok(())

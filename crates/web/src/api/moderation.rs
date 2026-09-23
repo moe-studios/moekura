@@ -44,6 +44,7 @@ async fn act(
 #[utoipa::path(
     post,
     path = "/posts/{id}/approve",
+    operation_id = "approve_post",
     tag = "moderation",
     params(("id" = i64, Path, description = "Post number")),
     responses(
@@ -65,6 +66,7 @@ pub(crate) async fn approve(
 #[utoipa::path(
     post,
     path = "/posts/{id}/reject",
+    operation_id = "reject_post",
     tag = "moderation",
     params(("id" = i64, Path, description = "Post number")),
     request_body = Reason,
@@ -89,6 +91,7 @@ pub(crate) async fn reject(
 #[utoipa::path(
     post,
     path = "/posts/{id}/delete",
+    operation_id = "delete_post",
     tag = "moderation",
     params(("id" = i64, Path, description = "Post number")),
     request_body = Reason,
@@ -112,6 +115,7 @@ pub(crate) async fn delete(
 #[utoipa::path(
     post,
     path = "/posts/{id}/restore",
+    operation_id = "restore_post",
     tag = "moderation",
     params(("id" = i64, Path, description = "Post number")),
     responses(
@@ -134,6 +138,7 @@ pub(crate) async fn restore(
 #[utoipa::path(
     post,
     path = "/posts/{id}/purge",
+    operation_id = "purge_post",
     tag = "moderation",
     params(("id" = i64, Path, description = "Post number")),
     responses(
@@ -162,6 +167,7 @@ pub struct Dismissed {
 #[utoipa::path(
     post,
     path = "/posts/{id}/flags/dismiss",
+    operation_id = "dismiss_flags",
     tag = "moderation",
     params(("id" = i64, Path, description = "Post number")),
     responses(
@@ -206,9 +212,13 @@ pub struct FlagParams {
 #[utoipa::path(
     get,
     path = "/flags",
+    operation_id = "list_flags",
     tag = "moderation",
     params(FlagParams),
-    responses((status = 200, body = Vec<FlaggedPost>)),
+    responses(
+        (status = 200, body = Vec<FlaggedPost>),
+        (status = 403, body = ErrorBody, description = "You can't review flags"),
+    ),
 )]
 pub(crate) async fn open_flags(
     State(state): State<AppState>,
@@ -255,6 +265,7 @@ async fn decide(
 #[utoipa::path(
     post,
     path = "/tag-relations/{id}/approve",
+    operation_id = "approve_tag_relation",
     tag = "moderation",
     params(("id" = i32, Path, description = "Relation id")),
     responses(
@@ -276,6 +287,7 @@ pub(crate) async fn approve_relation(
 #[utoipa::path(
     post,
     path = "/tag-relations/{id}/reject",
+    operation_id = "reject_tag_relation",
     tag = "moderation",
     params(("id" = i32, Path, description = "Relation id")),
     responses(
@@ -298,6 +310,7 @@ pub(crate) async fn reject_relation(
 #[utoipa::path(
     delete,
     path = "/tag-relations/{id}",
+    operation_id = "remove_tag_relation",
     tag = "moderation",
     params(("id" = i32, Path, description = "Relation id")),
     responses((status = 200, body = ApiRelation), (status = 403, body = ErrorBody)),
@@ -351,8 +364,12 @@ pub struct BanList {
 #[utoipa::path(
     get,
     path = "/bans",
+    operation_id = "list_bans",
     tag = "moderation",
-    responses((status = 200, body = BanList)),
+    responses(
+        (status = 200, body = BanList),
+        (status = 403, body = ErrorBody, description = "You can't ban users"),
+    ),
 )]
 pub(crate) async fn list_bans(
     State(state): State<AppState>,
@@ -416,6 +433,7 @@ pub struct NewBan {
 #[utoipa::path(
     post,
     path = "/users/{name}/ban",
+    operation_id = "ban_user",
     tag = "moderation",
     params(("name" = String, Path, description = "Case-insensitive")),
     request_body = NewBan,
@@ -442,6 +460,7 @@ pub(crate) async fn ban_user(
 #[utoipa::path(
     delete,
     path = "/users/{name}/ban",
+    operation_id = "unban_user",
     tag = "moderation",
     params(("name" = String, Path, description = "Case-insensitive")),
     responses(
@@ -475,6 +494,7 @@ pub struct NewNetworkBan {
 #[utoipa::path(
     post,
     path = "/network-bans",
+    operation_id = "ban_network",
     tag = "moderation",
     request_body = NewNetworkBan,
     responses(
@@ -523,6 +543,7 @@ pub(crate) async fn ban_network(
 #[utoipa::path(
     delete,
     path = "/network-bans/{id}",
+    operation_id = "lift_network_ban",
     tag = "moderation",
     params(("id" = i64, Path, description = "Network ban id")),
     responses((status = 204, description = "Lifted"), (status = 404, body = ErrorBody)),
@@ -586,6 +607,7 @@ const LOG_PAGE: i64 = 50;
 #[utoipa::path(
     get,
     path = "/moderation/log",
+    operation_id = "list_mod_actions",
     tag = "moderation",
     params(LogParams),
     responses((status = 200, body = LogPage), (status = 400, body = ErrorBody)),

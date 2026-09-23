@@ -86,7 +86,7 @@ async fn render(
                 .map(|(value, label, _)| context! { value => value, label => label })
                 .collect::<Vec<_>>(),
             name_max => NAME_MAX_LEN,
-            docs_url => format!("{}/openapi.json", crate::api::BASE),
+            docs_url => crate::api::DOCS,
         },
     );
     // The page may show a new key: keep it out of every cache.

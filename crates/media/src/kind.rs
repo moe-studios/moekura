@@ -205,4 +205,10 @@ mod tests {
         assert_eq!(MediaType::Jpeg.extension(), "jpg");
         assert!(MediaType::Webm.is_video() && !MediaType::Gif.is_video());
     }
+
+    #[test]
+    fn search_knows_every_type() {
+        let names: Vec<&str> = MediaType::ALL.iter().map(|t| t.name()).collect();
+        assert_eq!(names, uwuu_core::search::FILETYPES);
+    }
 }

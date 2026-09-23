@@ -2,8 +2,10 @@
 // makes things quicker to use.
 
 import { attachAll } from "./autocomplete.ts";
+import { enhanceReactions } from "./reactions.ts";
 
 // Lets styles tell whether scripts run.
 document.documentElement.classList.add("js");
 
 attachAll();
+enhanceReactions();

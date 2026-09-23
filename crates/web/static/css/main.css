@@ -388,3 +388,18 @@ button.secondary { background: var(--border); color: var(--text); }
 .changes .removed { color: var(--danger); }
 .changes .removed a { text-decoration: line-through; }
 .changes .source { overflow-wrap: anywhere; }
+
+/* Votes and favorites */
+
+.vote, .favorite { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }
+button.icon {
+  padding: 0 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.4;
+  border: 1px solid var(--border);
+}
+button.icon:hover { color: var(--accent); border-color: var(--accent); }
+button.icon[aria-pressed="true"] { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
+.score, .fav-count { font-variant-numeric: tabular-nums; min-width: 1.5em; text-align: center; }

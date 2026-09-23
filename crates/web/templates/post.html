@@ -61,6 +61,25 @@
       <dt>Rating</dt><dd class="rating-{{ post.rating_code }}">{{ post.rating }}</dd>
       <dt>Size</dt><dd>{{ file.width }}×{{ file.height }} · {{ file.size }}</dd>
       <dt>Type</dt><dd>{{ file.media_type }}{% if file.duration %} · {{ file.duration }}{% if not file.has_audio %} · no sound{% endif %}{% endif %}{% if file.animated %} · animated{% endif %}</dd>
+      <dt>Score</dt>
+      <dd>
+        {% if reactions.can_vote %}
+        <form class="vote" method="post" action="/posts/{{ post.id }}/vote{{ reactions.query or '' }}" data-reaction>
+          <button type="submit" name="score" value="{{ 0 if reactions.vote == 1 else 1 }}" class="icon" aria-pressed="{{ 'true' if reactions.vote == 1 else 'false' }}" aria-label="Vote up" title="Vote up">▲</button>
+          <span class="score">{{ reactions.score }}</span>
+          <button type="submit" name="score" value="{{ 0 if reactions.vote == -1 else -1 }}" class="icon" aria-pressed="{{ 'true' if reactions.vote == -1 else 'false' }}" aria-label="Vote down" title="Vote down">▼</button>
+        </form>
+        {% else %}<span class="score">{{ reactions.score }}</span>{% endif %}
+      </dd>
+      <dt>Favorites</dt>
+      <dd>
+        {% if reactions.can_favorite %}
+        <form class="favorite" method="post" action="/posts/{{ post.id }}/favorite{{ reactions.query or '' }}" data-reaction>
+          <button type="submit" name="action" value="{{ 'remove' if reactions.favorited else 'add' }}" class="icon" aria-pressed="{{ 'true' if reactions.favorited else 'false' }}" aria-label="Favorite" title="Favorite">♥</button>
+          <span class="fav-count">{{ reactions.fav_count }}</span>
+        </form>
+        {% else %}<span class="fav-count">{{ reactions.fav_count }}</span>{% endif %}
+      </dd>
       <dt>Uploaded</dt><dd><time datetime="{{ post.created_iso }}">{{ post.created }}</time>{% if uploader %} by {{ uploader }}{% endif %}</dd>
       {% if post.source %}
       <dt>Source</dt>

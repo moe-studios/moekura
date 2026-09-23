@@ -38,7 +38,9 @@ var METATAGS = {
     "tagcount_asc",
     "random"
   ],
-  limit: []
+  limit: [],
+  fav: [],
+  ordfav: []
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 
@@ -277,6 +279,46 @@ function attachAll(root = document) {
   }
 }
 
+// src/reactions.ts
+function update(root, state) {
+  const score = root.querySelector(".vote .score");
+  if (score) score.textContent = String(state.score);
+  const favCount = root.querySelector(".favorite .fav-count");
+  if (favCount) favCount.textContent = String(state.fav_count);
+  for (const button of root.querySelectorAll(".vote button[name=score]")) {
+    const direction = button.getAttribute("aria-label") === "Vote up" ? 1 : -1;
+    const pressed = state.vote === direction;
+    button.setAttribute("aria-pressed", String(pressed));
+    button.value = String(pressed ? 0 : direction);
+  }
+  const favorite = root.querySelector(".favorite button[name=action]");
+  if (favorite) {
+    favorite.setAttribute("aria-pressed", String(state.favorited));
+    favorite.value = state.favorited ? "remove" : "add";
+  }
+}
+function enhanceReactions(root = document) {
+  for (const form of root.querySelectorAll("form[data-reaction]")) {
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const submitter = event.submitter instanceof HTMLButtonElement ? event.submitter : null;
+      const body = new URLSearchParams();
+      for (const [name, value] of new FormData(form, submitter)) {
+        if (typeof value === "string") body.append(name, value);
+      }
+      void fetch(form.action, {
+        method: "POST",
+        body,
+        headers: { Accept: "application/json" }
+      }).then(async (response) => {
+        if (!response.ok) throw new Error(String(response.status));
+        update(root, await response.json());
+      }).catch(() => form.submit());
+    });
+  }
+}
+
 // src/main.ts
 document.documentElement.classList.add("js");
 attachAll();
+enhanceReactions();

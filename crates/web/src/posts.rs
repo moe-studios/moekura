@@ -386,6 +386,27 @@ pub(crate) async fn render_post(
     let tag_string = tag_names.join(" ");
     let tag_groups = crate::tags::grouped(&categories, post_tags.clone());
     let family = family_context(page, &post).await?;
+    let me = page.current.user.as_ref().map(|u| u.id);
+    let (favorited, vote) = match me {
+        Some(user) => (
+            uwuu_db::favorites::exists(db, user, id).await?,
+            uwuu_db::favorites::vote_of(db, user, id).await?,
+        ),
+        None => (false, 0),
+    };
+    let reactions = context! {
+        score => post.score,
+        fav_count => post.fav_count,
+        favorited => favorited,
+        vote => vote,
+        can_favorite => me.is_some() && page.current.can(Permission::Favorite),
+        can_vote => me.is_some() && page.current.can(Permission::Vote),
+        // Keeps the search across the form's redirect.
+        query => (!search.is_empty()).then(|| url_value(&format!(
+            "?{}",
+            url::form_urlencoded::Serializer::new(String::new()).append_pair("q", search).finish()
+        ))),
+    };
     let uploader = match post.uploader_id {
         Some(user_id) => users::by_id(db, user_id).await?.map(|u| u.name),
         None => None,
@@ -471,6 +492,7 @@ pub(crate) async fn render_post(
             uploader => uploader,
             tag_groups => tag_groups,
             family => family,
+            reactions => reactions,
             edit => edit,
             ratings => ratings,
             search => context! {

@@ -7,6 +7,7 @@ pub mod auth;
 mod client_ip;
 mod edit;
 pub mod error;
+mod favorites;
 mod fetch;
 mod files;
 pub mod flash;
@@ -129,6 +130,7 @@ pub fn router(state: AppState) -> Router {
     let routes = posts::routes()
         .merge(account::routes())
         .merge(edit::routes())
+        .merge(favorites::routes())
         .merge(history::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())

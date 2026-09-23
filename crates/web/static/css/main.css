@@ -147,3 +147,27 @@ form button[type="submit"] { margin-top: 20px; padding: 10px; }
   border: 1px solid var(--danger);
   border-radius: var(--radius);
 }
+
+.medium { max-width: 640px; margin: 32px auto; }
+textarea {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  resize: vertical;
+}
+textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+input[type="file"] { padding: 6px; }
+
+fieldset.ratings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  border: 0;
+}
+fieldset.ratings legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+label.choice { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }

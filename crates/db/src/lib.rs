@@ -3,6 +3,8 @@
 pub mod accounts;
 pub mod invites;
 pub mod jobs;
+pub mod media;
+pub mod posts;
 pub mod roles;
 pub mod sessions;
 pub mod settings;

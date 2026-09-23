@@ -14,6 +14,7 @@ pub mod rate_limit;
 mod templates;
 #[cfg(test)]
 mod test_support;
+mod upload;
 
 use std::future::Future;
 use std::io;
@@ -45,6 +46,7 @@ use uwuu_db::site_cache::SiteCache;
 use crate::assets::Assets;
 use crate::rate_limit::RateLimits;
 use crate::templates::Templates;
+use uwuu_media::Media;
 use uwuu_storage::Storage;
 
 /// Scripts, styles and media only from our own origin; no framing, no
@@ -62,6 +64,9 @@ pub struct AppState {
     pub site: SiteCache,
     pub rate_limits: Arc<RateLimits>,
     pub storage: Storage,
+    pub media: Media,
+    /// Scratch space for uploads in progress.
+    pub(crate) work_dir: std::path::PathBuf,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -72,6 +77,8 @@ pub enum StartupError {
     Assets(#[from] io::Error),
     #[error("could not load templates: {0:#}")]
     Templates(#[from] minijinja::Error),
+    #[error("could not create the media work directory: {0}")]
+    WorkDir(io::Error),
     #[error("could not open file storage: {0}")]
     Storage(#[from] uwuu_storage::StorageError),
 }
@@ -81,17 +88,26 @@ impl AppState {
     /// directories in `config.paths`.
     pub fn new(config: Config, db: Db, site: SiteCache) -> Result<Self, StartupError> {
         let storage = Storage::from_config(&config.storage)?;
+        let work_dir = config
+            .media
+            .work_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("uwuubooru"));
+        std::fs::create_dir_all(&work_dir).map_err(StartupError::WorkDir)?;
         let assets = Arc::new(Assets::load(config.paths.static_override.as_deref())?);
         let templates = Arc::new(Templates::load(
             config.paths.templates_override.clone(),
             assets.clone(),
         )?);
+        let media = Media::new(config.media.clone());
         Ok(Self {
             config: Arc::new(config),
             db,
             site,
             rate_limits: Arc::new(RateLimits::default()),
             storage,
+            media,
+            work_dir,
             templates,
             assets,
         })
@@ -99,7 +115,11 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
-    with_middleware(pages::routes().merge(account::routes()), state)
+    let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
+    let routes = pages::routes()
+        .merge(account::routes())
+        .merge(upload::routes(max_upload_bytes));
+    with_middleware(routes, state)
 }
 
 /// Wraps `routes` (the pages and API) in session handling and the global

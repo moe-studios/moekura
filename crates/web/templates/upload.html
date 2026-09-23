@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Upload · {{ site.name }}{% endblock %}
+{% block content %}
+<section class="card medium">
+  <h1>Upload</h1>
+  {% if duplicate_of %}
+  <p class="form-error" role="alert">This file was already uploaded as <a href="/posts/{{ duplicate_of }}">post #{{ duplicate_of }}</a>.</p>
+  {% elif error %}
+  <p class="form-error" role="alert">{{ error }}</p>
+  {% endif %}
+  <form method="post" action="/upload" enctype="multipart/form-data">
+    <label for="file">File</label>
+    <input id="file" name="file" type="file" required
+           accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/jxl,video/mp4,video/webm">
+    <p class="hint">Images or videos up to {{ max_mb }} MB.</p>
+
+    <fieldset class="ratings">
+      <legend>Rating</legend>
+      {% for rating in ratings %}
+      <label class="choice">
+        <input type="radio" name="rating" value="{{ rating.code }}" required{% if form.rating == rating.code %} checked{% endif %}>
+        {{ rating.label }}
+      </label>
+      {% endfor %}
+    </fieldset>
+
+    <label for="source">Source <span class="optional">(optional)</span></label>
+    <input id="source" name="source" type="url" value="{{ form.source }}" placeholder="https://" maxlength="2048">
+
+    <label for="description">Description <span class="optional">(optional)</span></label>
+    <textarea id="description" name="description" rows="4" maxlength="20000">{{ form.description }}</textarea>
+
+    <button type="submit">Upload</button>
+  </form>
+</section>
+{% endblock %}

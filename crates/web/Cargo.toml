@@ -11,11 +11,13 @@ publish.workspace = true
 [dependencies]
 uwuu-core.workspace = true
 uwuu-db.workspace = true
+uwuu-media.workspace = true
 uwuu-storage.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
 governor.workspace = true
 hex.workspace = true
+md-5.workspace = true
 ipnet.workspace = true
 mime_guess.workspace = true
 minijinja.workspace = true
@@ -25,7 +27,7 @@ sha2.workspace = true
 thiserror.workspace = true
 sqlx.workspace = true
 time.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true

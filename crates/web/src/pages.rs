@@ -106,6 +106,7 @@ pub(crate) fn render(
             role => current.map(|c| c.role.name.clone()),
         }),
         flash => flash.map(Flash::text),
+        can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
     };
     match state
         .templates

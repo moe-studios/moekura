@@ -11,6 +11,9 @@ pub const SITE_NAME_MAX_LEN: usize = 64;
 pub struct SiteSettings {
     pub site_name: String,
     pub registration_mode: RegistrationMode,
+    /// New uploads wait in the approval queue unless the uploader's role
+    /// has `UploadWithoutApproval`.
+    pub upload_approval: bool,
 }
 
 impl Default for SiteSettings {
@@ -18,6 +21,7 @@ impl Default for SiteSettings {
         Self {
             site_name: "uwuubooru".to_owned(),
             registration_mode: RegistrationMode::Open,
+            upload_approval: false,
         }
     }
 }
@@ -112,7 +116,10 @@ mod tests {
 
     #[test]
     fn lists_keys() {
-        assert_eq!(SiteSettings::keys(), ["registration_mode", "site_name"]);
+        assert_eq!(
+            SiteSettings::keys(),
+            ["registration_mode", "site_name", "upload_approval"]
+        );
     }
 
     #[test]

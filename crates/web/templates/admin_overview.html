@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Admin · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "admin_nav.html" %}
+<h1>Overview</h1>
+<dl class="stats">
+  <div><dt>Posts</dt><dd>{{ stats.active_posts }}</dd></div>
+  <div><dt>Pending</dt><dd><a href="/moderation/queue">{{ stats.pending_posts }}</a></dd></div>
+  <div><dt>Flagged</dt><dd><a href="/moderation/flags">{{ stats.flagged_posts }}</a></dd></div>
+  <div><dt>Deleted</dt><dd>{{ stats.deleted_posts }}</dd></div>
+  <div><dt>Users</dt><dd>{{ stats.users }}</dd></div>
+  <div><dt>Tags in use</dt><dd>{{ stats.tags }}</dd></div>
+  <div><dt>Files</dt><dd>{{ stats.files }}</dd></div>
+  <div><dt>Database</dt><dd>{{ stats.database }}</dd></div>
+</dl>
+
+<h2>Background jobs</h2>
+{% if jobs %}
+<table class="tag-table">
+  <thead><tr><th scope="col">Kind</th><th scope="col">Status</th><th scope="col" class="num">Jobs</th></tr></thead>
+  <tbody>{% for j in jobs %}<tr><td><code>{{ j.kind }}</code></td><td>{{ j.status }}</td><td class="num">{{ j.count }}</td></tr>{% endfor %}</tbody>
+</table>
+{% else %}
+<p class="hint">The queue is empty.</p>
+{% endif %}
+
+{% if dead %}
+<h2>Failed jobs</h2>
+<p class="hint">These ran out of attempts. Retry once the cause is fixed, or discard them.</p>
+<ul class="log">
+  {% for j in dead %}
+  <li>
+    <strong><code>{{ j.kind }}</code></strong> <span class="hint">#{{ j.id }} · {{ j.created }} · {{ j.attempts }} attempts · <code>{{ j.payload }}</code></span>
+    {% if j.error %}<div class="reason"><code>{{ j.error }}</code></div>{% endif %}
+    {% if can_manage_jobs %}
+    <div class="actions">
+      <form method="post" action="/admin/jobs/{{ j.id }}/retry"><button type="submit">Retry</button></form>
+      <form method="post" action="/admin/jobs/{{ j.id }}/discard"><button type="submit" class="secondary">Discard</button></form>
+    </div>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

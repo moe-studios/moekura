@@ -14,7 +14,7 @@ use uwuu_core::permissions::{Permission, Permissions};
 use uwuu_core::settings::{RegistrationMode, SiteSettings};
 use uwuu_db::mod_actions::{self, NewAction};
 use uwuu_db::users::{self, UserStatus};
-use uwuu_db::{roles, settings};
+use uwuu_db::{jobs, roles, settings};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -25,6 +25,8 @@ const USERS_PAGE: i64 = 50;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/admin", get(overview))
+        .route("/admin/jobs/{id}/{action}", post(job_action))
         .route("/admin/settings", get(settings_form).post(save_settings))
         .route("/admin/users", get(user_list))
         .route("/admin/users/{name}", post(update_user))
@@ -38,6 +40,68 @@ fn saved(jar: CookieJar, to: &str) -> Response {
 
 fn actor(page: &Page) -> Option<i64> {
     page.current.user.as_ref().map(|u| u.id)
+}
+
+// ---- overview -------------------------------------------------------------
+
+async fn overview(page: Page) -> Result<Response, AppError> {
+    if !(page.current.can(Permission::ManageSettings) || page.current.can(Permission::ManageUsers))
+    {
+        page.current.require(Permission::ManageSettings)?;
+    }
+    let db = page.state().db.primary();
+    let stats = uwuu_db::stats::overview(db).await?;
+    let counts = jobs::counts_by_kind(db).await?;
+    let dead = jobs::dead(db, 50).await?;
+    let human = crate::posts::human_size;
+    Ok(page.render(
+        "admin_overview.html",
+        context! {
+            stats => context! {
+                active_posts => stats.active_posts,
+                pending_posts => stats.pending_posts,
+                flagged_posts => stats.flagged_posts,
+                deleted_posts => stats.deleted_posts,
+                users => stats.users,
+                tags => stats.tags,
+                files => human(stats.file_bytes),
+                database => human(stats.database_bytes),
+            },
+            jobs => counts.iter().map(|(kind, status, n)| context! { kind => kind, status => status, count => n }).collect::<Vec<_>>(),
+            dead => dead.iter().map(|job| context! {
+                id => job.id,
+                kind => job.kind,
+                payload => job.payload.to_string(),
+                attempts => job.attempts,
+                error => job.last_error,
+                created => job.created_at.date().to_string(),
+            }).collect::<Vec<_>>(),
+            can_manage_jobs => page.current.can(Permission::ManageSettings),
+        },
+    ))
+}
+
+async fn job_action(
+    page: Page,
+    jar: CookieJar,
+    Path((id, action)): Path<(i64, String)>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ManageSettings)?;
+    let db = page.state().db.primary();
+    let (done, kind) = match action.as_str() {
+        "retry" => (jobs::retry(db, id).await?, ActionKind::JobRetry),
+        "discard" => (jobs::discard(db, id).await?, ActionKind::JobDiscard),
+        _ => return Err(AppError::NotFound),
+    };
+    if !done {
+        return Err(AppError::BadRequest("That job isn't dead any more".into()));
+    }
+    mod_actions::record(
+        db,
+        NewAction::new(actor(&page), kind).details(json!({ "job": id })),
+    )
+    .await?;
+    Ok(saved(jar, "/admin"))
 }
 
 // ---- site settings --------------------------------------------------------
@@ -382,6 +446,41 @@ mod tests {
             test_state(pool).await,
             super::routes().merge(crate::posts::routes()),
         )
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn overview_and_dead_jobs(pool: PgPool) {
+        let app = app(&pool).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let job: i64 = sqlx::query_scalar(
+            "INSERT INTO jobs (kind, status, attempts, last_error) VALUES ('media.process', 'dead', 5, 'vips crashed')
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let page = app.get("/admin", Some(&admin)).await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(page.body.contains("vips crashed"), "{}", page.body);
+        let response = app
+            .post(&format!("/admin/jobs/{job}/retry"), Some(&admin), &[])
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER);
+        let status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1")
+            .bind(job)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(status, "queued");
+        let again = app
+            .post(&format!("/admin/jobs/{job}/discard"), Some(&admin), &[])
+            .await;
+        assert_eq!(again.status, StatusCode::BAD_REQUEST, "only dead jobs");
+        let member = session_for(&pool, "alice", SystemRole::Member).await;
+        assert_eq!(
+            app.get("/admin", Some(&member)).await.status,
+            StatusCode::FORBIDDEN
+        );
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

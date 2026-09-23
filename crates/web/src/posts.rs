@@ -765,7 +765,7 @@ fn is_web_url(value: &str) -> bool {
     url::Url::parse(value).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
 }
 
-fn human_size(bytes: i64) -> String {
+pub(crate) fn human_size(bytes: i64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut size = bytes.max(0) as f64;
     let mut unit = 0;

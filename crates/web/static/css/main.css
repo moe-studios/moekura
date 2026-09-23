@@ -467,3 +467,8 @@ form.inline button { margin: 0; padding: 3px 10px; font-size: 0.875rem; }
 .role h2 { margin: 0 0 4px; font-size: 1.125rem; }
 fieldset.permissions { border: 0; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; }
 fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin: 0 0 24px; }
+.stats > div { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.stats dt { color: var(--muted); font-size: 0.875rem; }
+.stats dd { margin: 4px 0 0; font-size: 1.375rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.log .actions { margin-top: 6px; }

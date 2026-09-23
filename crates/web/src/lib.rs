@@ -6,13 +6,17 @@ mod assets;
 pub mod auth;
 mod client_ip;
 pub mod error;
+mod fetch;
+mod files;
 pub mod flash;
 mod health;
 pub mod pages;
+mod posts;
 pub mod rate_limit;
 mod templates;
 #[cfg(test)]
 mod test_support;
+mod upload;
 
 use std::future::Future;
 use std::io;
@@ -44,12 +48,20 @@ use uwuu_db::site_cache::SiteCache;
 use crate::assets::Assets;
 use crate::rate_limit::RateLimits;
 use crate::templates::Templates;
+use uwuu_media::Media;
+use uwuu_storage::Storage;
 
-/// Scripts, styles and media only from our own origin; no framing, no
+/// Scripts and styles only from our own origin, images and video also from
+/// the file storage's public origin (a CDN) if there is one; no framing, no
 /// plugins, forms only to ourselves.
-const CSP: &str = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; \
-    style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
-    frame-ancestors 'none'; form-action 'self'";
+fn content_security_policy(storage_origin: Option<&str>) -> String {
+    let files = storage_origin.map(|o| format!(" {o}")).unwrap_or_default();
+    format!(
+        "default-src 'self'; img-src 'self' data: blob:{files}; media-src 'self' blob:{files}; \
+         style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
+         frame-ancestors 'none'; form-action 'self'"
+    )
+}
 
 /// Shared state handed to every handler.
 #[derive(Clone)]
@@ -59,6 +71,11 @@ pub struct AppState {
     /// Site settings and roles, kept current across nodes.
     pub site: SiteCache,
     pub rate_limits: Arc<RateLimits>,
+    pub storage: Storage,
+    pub media: Media,
+    pub(crate) fetcher: fetch::Fetcher,
+    /// Scratch space for uploads in progress.
+    pub(crate) work_dir: std::path::PathBuf,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -69,22 +86,34 @@ pub enum StartupError {
     Assets(#[from] io::Error),
     #[error("could not load templates: {0:#}")]
     Templates(#[from] minijinja::Error),
+    #[error("could not create the media work directory: {0}")]
+    WorkDir(io::Error),
+    #[error("could not open file storage: {0}")]
+    Storage(#[from] uwuu_storage::StorageError),
 }
 
 impl AppState {
     /// Loads static files and compiles templates, honouring the override
     /// directories in `config.paths`.
     pub fn new(config: Config, db: Db, site: SiteCache) -> Result<Self, StartupError> {
+        let storage = Storage::from_config(&config.storage)?;
+        let work_dir = config.media.work_dir_or_default();
+        std::fs::create_dir_all(&work_dir).map_err(StartupError::WorkDir)?;
         let assets = Arc::new(Assets::load(config.paths.static_override.as_deref())?);
         let templates = Arc::new(Templates::load(
             config.paths.templates_override.clone(),
             assets.clone(),
         )?);
+        let media = Media::new(config.media.clone());
         Ok(Self {
             config: Arc::new(config),
             db,
             site,
             rate_limits: Arc::new(RateLimits::default()),
+            storage,
+            media,
+            fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
+            work_dir,
             templates,
             assets,
         })
@@ -92,7 +121,11 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
-    with_middleware(pages::routes().merge(account::routes()), state)
+    let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
+    let routes = posts::routes()
+        .merge(account::routes())
+        .merge(upload::routes(max_upload_bytes));
+    with_middleware(routes, state)
 }
 
 /// Wraps `routes` (the pages and API) in session handling and the global
@@ -118,7 +151,10 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .layer(csrf)
         .layer(SetResponseHeaderLayer::if_not_present(
             CONTENT_SECURITY_POLICY,
-            HeaderValue::from_static(CSP),
+            HeaderValue::from_str(&content_security_policy(
+                state.storage.public_origin().as_deref(),
+            ))
+            .expect("an ASCII origin makes a valid header"),
         ))
         .layer(SetResponseHeaderLayer::if_not_present(
             X_CONTENT_TYPE_OPTIONS,
@@ -144,6 +180,7 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         // Probes and static files skip session handling.
         .merge(health::routes())
         .route("/static/{*path}", get(assets::serve))
+        .route("/data/{*key}", get(files::serve))
         .layer(middleware)
         .with_state(state)
 }
@@ -176,4 +213,28 @@ pub async fn serve(
     )
     .with_graceful_shutdown(shutdown)
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::content_security_policy;
+
+    #[test]
+    fn csp_allows_media_from_the_storage_origin() {
+        let own = content_security_policy(None);
+        assert!(own.contains("img-src 'self' data: blob:;"), "{own}");
+        let cdn = content_security_policy(Some("https://cdn.example.com"));
+        assert!(
+            cdn.contains("img-src 'self' data: blob: https://cdn.example.com;"),
+            "{cdn}"
+        );
+        assert!(
+            cdn.contains("media-src 'self' blob: https://cdn.example.com;"),
+            "{cdn}"
+        );
+        assert!(
+            cdn.contains("script-src 'self';"),
+            "scripts stay local: {cdn}"
+        );
+    }
 }

@@ -41,15 +41,14 @@ uwuubooru is an open-source, self-hostable booru (a tag-based image board). The 
 ## 2. Architecture
 
 ### Process roles (one binary, `uwuubooru <cmd>`)
-- `serve`: HTTP (HTML + JSON API). Stateless, so it scales horizontally.
-- `worker`: background job runner. Can run as many worker processes as needed.
-- `all`: serve and worker in one process. This is the default for small instances.
+- `serve`: HTTP (HTML + JSON API). Stateless, so it scales horizontally. Also runs job workers when `jobs.run_in_serve` is on (the default), so one process is enough for small instances.
+- `worker`: background job runner. Can run as many worker processes as needed; set `jobs.run_in_serve = false` on web nodes when you do.
 - `migrate`, `admin` (create user, reindex, recount tags, regenerate thumbnails, import, export), `check-config`.
 
 ### Deployment tiers (configuration only)
 | Tier | Topology |
 |---|---|
-| Tiny/private | `uwuubooru all` + Postgres container, files on local disk, in-process cache and queue workers |
+| Tiny/private | `uwuubooru serve` (with built-in workers) + Postgres container, files on local disk, in-process cache and queue workers |
 | Medium | Reverse proxy (Caddy/nginx) serves `/data/*` directly (the app can emit `X-Accel-Redirect`), plus a separate `worker` process |
 | Large/public | N `serve` nodes behind a load balancer, a dedicated worker pool, a PG primary with read replicas (`database.replicas`) and PgBouncer, Valkey, S3 storage with a CDN in front, and an optional search accelerator (see §4) |
 

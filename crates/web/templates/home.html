@@ -1,7 +1,29 @@
 {% extends "base.html" %}
 {% block content %}
+{% if cards %}
+<ul class="post-grid">
+  {% for card in cards %}
+  <li>
+    <a href="/posts/{{ card.id }}" class="card rating-{{ card.rating }}{% if card.pending %} is-pending{% endif %}{% if card.deleted %} is-deleted{% endif %}">
+      {% if card.thumb %}
+      <img class="thumb" src="{{ card.thumb }}"{% if card.thumb_2x %} srcset="{{ card.thumb }} 1x, {{ card.thumb_2x }} 2x"{% endif %}
+           width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}" loading="lazy" decoding="async">
+      {% else %}
+      <img class="thumb pending-media" src="{{ asset('processing.svg') }}"
+           width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }} (still processing)">
+      {% endif %}
+      {% if card.video %}<span class="badge">video</span>{% elif card.animated %}<span class="badge">anim</span>{% endif %}
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% if next_before %}
+<nav class="pager"><a class="button" href="/?before={{ next_before }}" rel="next">Older posts</a></nav>
+{% endif %}
+{% else %}
 <section class="empty">
   <h1>No posts yet</h1>
-  <p>Uploads arrive in a later release. Until then, this is a very tidy booru.</p>
+  {% if can_upload %}<p><a href="/upload">Upload the first one</a></p>{% endif %}
 </section>
+{% endif %}
 {% endblock %}

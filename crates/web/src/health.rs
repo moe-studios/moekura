@@ -47,7 +47,6 @@ mod tests {
     use sqlx::postgres::PgPoolOptions;
     use tower::ServiceExt;
 
-    use uwuu_core::config::Config;
     use uwuu_core::settings::SiteSettings;
     use uwuu_db::Db;
     use uwuu_db::site_cache::{SiteCache, SiteSnapshot};
@@ -56,7 +55,7 @@ mod tests {
 
     fn app(pool: PgPool) -> axum::Router {
         let state = AppState::new(
-            Config::default(),
+            crate::test_support::test_config(),
             Db::from_pools(pool, vec![]),
             SiteCache::from_snapshot(SiteSnapshot::new(SiteSettings::default(), vec![])),
         )

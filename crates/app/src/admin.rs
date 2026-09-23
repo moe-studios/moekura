@@ -8,6 +8,7 @@ use anyhow::{Context, bail};
 use clap::Subcommand;
 use serde_json::Value;
 use sqlx::PgPool;
+use uwuu_core::jobs::ProcessMedia;
 use uwuu_core::permissions::{Role, SystemRole};
 use uwuu_db::accounts::{self, NewAccount};
 use uwuu_db::users::{self, User, UserStatus};
@@ -36,6 +37,15 @@ pub enum AdminCommand {
         /// Days until the code expires; never by default
         #[arg(long)]
         expires_days: Option<u32>,
+    },
+    /// Regenerate thumbnails and samples, e.g. after changing media settings
+    RegenerateMedia {
+        /// Every post
+        #[arg(long, conflicts_with = "posts")]
+        all: bool,
+        /// Post ids
+        #[arg(required_unless_present = "all")]
+        posts: Vec<i64>,
     },
     /// Show site settings, or change one
     Settings {
@@ -68,6 +78,10 @@ pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
                 expires_in: expires_days.map(|d| Duration::from_secs(u64::from(d) * 86_400)),
             };
             println!("{}", invites::create(db, invite).await?);
+        }
+        AdminCommand::RegenerateMedia { all, posts } => {
+            let queued = regenerate_media(db, (!all).then_some(posts.as_slice())).await?;
+            println!("queued {queued} file(s) for processing");
         }
         AdminCommand::Settings { action: None } => {
             for (key, value) in settings::load(db).await?.to_map() {
@@ -110,6 +124,21 @@ pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Rol
     };
     users::set_role(db, user.id, role.id).await?;
     Ok(role)
+}
+
+/// Queues processing for the given posts' files (all when `None`).
+/// Returns how many were queued.
+pub async fn regenerate_media(db: &PgPool, posts: Option<&[i64]>) -> anyhow::Result<usize> {
+    let asset_ids = uwuu_db::media::asset_ids(db, posts).await?;
+    // Batches keep each transaction short on large sites.
+    for batch in asset_ids.chunks(1000) {
+        let mut tx = db.begin().await?;
+        for &asset_id in batch {
+            uwuu_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
+        }
+        tx.commit().await?;
+    }
+    Ok(asset_ids.len())
 }
 
 /// By display name, then by built-in key, so `admin` works even if the
@@ -192,6 +221,35 @@ mod tests {
         let role = set_role(&pool, "Catherine", "moderator").await.unwrap();
         let user = users::by_name(&pool, "catherine").await.unwrap().unwrap();
         assert_eq!(user.role_id, role.id);
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn regenerates_selected_or_all_media(pool: PgPool) {
+        // Two posts with files, straight into the tables.
+        for n in 1..=2u8 {
+            sqlx::query(
+                "WITH p AS (INSERT INTO posts (rating) VALUES ('g') RETURNING id)
+                 INSERT INTO media_assets (post_id, sha256, md5, media_type, width, height, file_size, storage_key)
+                 SELECT id, $1, $2, 'png', 1, 1, 1, 'k' FROM p",
+            )
+            .bind(vec![n; 32])
+            .bind(vec![n; 16])
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let first_post: i64 = sqlx::query_scalar("SELECT min(id) FROM posts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            regenerate_media(&pool, Some(&[first_post, 999]))
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(regenerate_media(&pool, None).await.unwrap(), 2);
+        assert_eq!(uwuu_db::jobs::counts(&pool).await.unwrap().queued, 3);
     }
 
     #[test]

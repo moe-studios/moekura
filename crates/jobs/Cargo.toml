@@ -1,6 +1,6 @@
 [package]
-name = "uwuubooru"
-description = "A self-hostable booru, from private instances to millions of posts"
+name = "uwuu-jobs"
+description = "Background job workers for uwuubooru"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,24 +11,18 @@ publish.workspace = true
 [dependencies]
 uwuu-core.workspace = true
 uwuu-db.workspace = true
-uwuu-jobs.workspace = true
 uwuu-media.workspace = true
 uwuu-storage.workspace = true
-uwuu-web.workspace = true
-anyhow.workspace = true
-clap.workspace = true
-figment.workspace = true
-rpassword.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
-tokio.workspace = true
-tokio-util.workspace = true
-toml.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs"] }
+tokio-util = { workspace = true, features = ["rt"] }
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 [dev-dependencies]
-figment = { workspace = true, features = ["test"] }
+hex.workspace = true
+serde.workspace = true
 
 [lints]
 workspace = true

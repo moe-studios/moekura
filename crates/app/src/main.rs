@@ -8,14 +8,22 @@ use std::time::Duration;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio::net::TcpListener;
+use tokio_util::sync::CancellationToken;
 use uwuu_core::config::{Config, DatabaseConfig};
 use uwuu_db::Db;
 use uwuu_db::site_cache::SiteCache;
+use uwuu_jobs::media::MediaJobs;
+use uwuu_jobs::{PoolConfig, Registry};
+use uwuu_media::Media;
+use uwuu_storage::Storage;
 use uwuu_web::AppState;
 
 /// How long startup keeps retrying an unreachable database, so the app can
 /// start alongside Postgres (e.g. in docker compose) without crashing.
 const DB_STARTUP_WAIT: Duration = Duration::from_secs(60);
+
+/// How long shutdown waits for running jobs.
+const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
 #[command(name = "uwuubooru", version, about)]
@@ -30,8 +38,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the HTTP server
+    /// Run the HTTP server (and job workers, unless jobs.run_in_serve is off)
     Serve,
+    /// Run job workers only
+    Worker,
     /// Apply pending database migrations, then exit
     Migrate,
     /// Validate the configuration and print the effective settings, with secrets redacted
@@ -45,6 +55,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    uwuu_storage::install_crypto_provider();
     let cli = Cli::parse();
     let config = config::load(cli.config.as_deref())?;
 
@@ -76,10 +87,15 @@ async fn main() -> anyhow::Result<()> {
             telemetry::init(&config.telemetry)?;
             serve(config).await
         }
+        Command::Worker => {
+            telemetry::init(&config.telemetry)?;
+            worker(config).await
+        }
     }
 }
 
 async fn serve(config: Config) -> anyhow::Result<()> {
+    check_media_tools(&config).await?;
     let db = connect(&config.database).await?;
     if config.database.auto_migrate {
         migrate(&db).await?;
@@ -93,21 +109,105 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let site = SiteCache::load(db.primary())
         .await
         .context("could not load site settings")?;
+    // Built before the config moves into the web state.
+    let workers = config
+        .jobs
+        .run_in_serve
+        .then(|| run_workers(&db, &config))
+        .transpose()?;
     let state = AppState::new(config, db.clone(), site.clone())?;
     let background = [
         tokio::spawn(site.listen(db.primary().clone())),
         tokio::spawn(hourly_maintenance(state.clone())),
     ];
 
-    let app = uwuu_web::router(state);
-    uwuu_web::serve(listener, app, shutdown_signal()).await?;
+    let shutdown = CancellationToken::new();
+    tokio::spawn(cancel_on_signal(shutdown.clone()));
+    let workers = workers.map(|run| tokio::spawn(run(shutdown.clone())));
 
+    let app = uwuu_web::router(state);
+    uwuu_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
+
+    if let Some(workers) = workers {
+        wait_for_workers(workers).await;
+    }
     for task in background {
         task.abort();
     }
     db.close().await;
     tracing::info!("shut down");
     Ok(())
+}
+
+async fn worker(config: Config) -> anyhow::Result<()> {
+    check_media_tools(&config).await?;
+    let db = connect(&config.database).await?;
+    if config.database.auto_migrate {
+        migrate(&db).await?;
+    }
+    let shutdown = CancellationToken::new();
+    tokio::spawn(cancel_on_signal(shutdown.clone()));
+    let run = run_workers(&db, &config)?;
+    wait_for_workers(tokio::spawn(run(shutdown))).await;
+    db.close().await;
+    tracing::info!("shut down");
+    Ok(())
+}
+
+/// Fails early, with an explanation, when vips or ffmpeg is missing, rather
+/// than on the first upload.
+async fn check_media_tools(config: &Config) -> anyhow::Result<()> {
+    let versions = Media::new(config.media.clone())
+        .check_tools()
+        .await
+        .context("media tools are required (see the README for installing vips and ffmpeg)")?;
+    tracing::info!(tools = versions.join(", "), "media tools found");
+    Ok(())
+}
+
+/// Every job type the application knows how to run.
+fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
+    let mut registry = Registry::new();
+    let work_dir = config.media.work_dir_or_default();
+    std::fs::create_dir_all(&work_dir)
+        .with_context(|| format!("could not create {}", work_dir.display()))?;
+    MediaJobs {
+        db: db.primary().clone(),
+        storage: Storage::from_config(&config.storage).context("could not open file storage")?,
+        media: Media::new(config.media.clone()),
+        work_dir,
+    }
+    .register(&mut registry);
+    Ok(registry)
+}
+
+/// Prepares a worker pool; call the result with a shutdown token to run it.
+fn run_workers(
+    db: &Db,
+    config: &Config,
+) -> anyhow::Result<impl FnOnce(CancellationToken) -> BoxFuture + use<>> {
+    let registry = job_registry(db, config)?;
+    let pool = db.primary().clone();
+    let pool_config = PoolConfig::new(
+        config.jobs.workers,
+        Duration::from_secs(config.jobs.lock_timeout_secs),
+    );
+    Ok(move |shutdown| -> BoxFuture {
+        Box::pin(uwuu_jobs::run(pool, registry, pool_config, shutdown))
+    })
+}
+
+type BoxFuture = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// Waits for running jobs after shutdown was requested, within reason; any
+/// cut short are retried elsewhere once their lock expires.
+async fn wait_for_workers(workers: tokio::task::JoinHandle<()>) {
+    if tokio::time::timeout(WORKER_SHUTDOWN_GRACE, workers)
+        .await
+        .is_err()
+    {
+        tracing::warn!("jobs still running at shutdown; they will be retried");
+    }
 }
 
 /// Deletes expired sessions and forgets idle rate-limit counters. Moves to
@@ -154,6 +254,11 @@ async fn migrate(db: &Db) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn cancel_on_signal(token: CancellationToken) {
+    shutdown_signal().await;
+    token.cancel();
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
@@ -174,5 +279,5 @@ async fn shutdown_signal() {
         () = ctrl_c => {}
         () = terminate => {}
     }
-    tracing::info!("shutdown signal received, finishing in-flight requests");
+    tracing::info!("shutdown signal received, finishing in-flight work");
 }

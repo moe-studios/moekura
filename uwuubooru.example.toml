@@ -42,6 +42,64 @@ session_idle_days = 30
 # ...or this many days after logging in, however active.
 session_max_days = 365
 
+[jobs]
+# Background jobs (thumbnails, hashing) processed concurrently per process.
+workers = 2
+# Also run workers inside `serve`. Set to false when you run separate
+# `uwuubooru worker` processes.
+run_in_serve = true
+# Seconds before a job whose worker stopped responding is retried elsewhere.
+lock_timeout_secs = 300
+
+[storage]
+# "local" (a directory) or "s3" (any S3-compatible store).
+backend = "local"
+# Directory for the local backend. Back it up along with the database.
+path = "data"
+# Where browsers load files from, e.g. a CDN in front of your bucket. When
+# unset, the app serves files itself under /data/.
+# public_base_url = "https://cdn.example.com"
+
+[storage.s3]
+bucket = ""
+region = "us-east-1"
+# For MinIO, Garage, R2, B2 etc. Leave unset for AWS.
+# endpoint = "http://localhost:9000"
+# Leave empty to use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or instance
+# credentials. Prefer UWUU_STORAGE__S3__SECRET_ACCESS_KEY over this file.
+access_key_id = ""
+secret_access_key = ""
+# Put the bucket in the path (http://host/bucket/key); most self-hosted
+# stores need this.
+path_style = false
+
+[media]
+max_upload_mb = 100
+# Images with more pixels are refused before decoding (decompression bombs).
+max_pixels = 200000000
+max_duration_secs = 600
+# Add "jxl" to accept JPEG XL. It is off by default because libvips marks
+# its JPEG XL decoder as not hardened against malicious files; the decoder
+# still runs in a separate, time-limited process.
+allowed_types = ["jpeg", "png", "gif", "webp", "avif", "mp4", "webm"]
+# Thumbnail bounding boxes: 1x and 2x for high-DPI screens.
+thumbnail_sizes = [250, 500]
+# Images larger than this also get a resized copy for the post page.
+sample_size = 1600
+# "webp" or "avif" (smaller, slower to encode).
+variant_format = "webp"
+tool_timeout_secs = 120
+# Scratch space for uploads and processing; the system temp dir by default.
+# work_dir = "/var/tmp/uwuubooru"
+
+[media.tools]
+# Paths to the media programs, if they are not on PATH.
+vips = "vips"
+vipsheader = "vipsheader"
+vipsthumbnail = "vipsthumbnail"
+ffmpeg = "ffmpeg"
+ffprobe = "ffprobe"
+
 [paths]
 # Directories whose files replace built-in templates and static files with
 # the same relative path, e.g. <templates_override>/base.html. Unset by default.

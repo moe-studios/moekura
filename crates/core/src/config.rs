@@ -18,7 +18,10 @@ pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
+    pub jobs: JobsConfig,
+    pub media: MediaConfig,
     pub paths: PathsConfig,
+    pub storage: StorageConfig,
     pub telemetry: TelemetryConfig,
 }
 
@@ -97,6 +100,168 @@ impl Default for AuthConfig {
         Self {
             session_idle_days: 30,
             session_max_days: 365,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct JobsConfig {
+    /// Jobs processed concurrently per process. Media processing is
+    /// CPU-bound, so around the number of cores is a sensible ceiling.
+    pub workers: usize,
+    /// Run workers inside `serve` too, so one process is enough for small
+    /// sites. Turn off when running separate `uwuubooru worker` processes.
+    pub run_in_serve: bool,
+    /// A job whose worker stops responding for this long is retried
+    /// elsewhere. Running jobs renew it continuously.
+    pub lock_timeout_secs: u64,
+}
+
+impl Default for JobsConfig {
+    fn default() -> Self {
+        Self {
+            workers: 2,
+            run_in_serve: true,
+            lock_timeout_secs: 300,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StorageConfig {
+    pub backend: StorageBackend,
+    /// Directory for the `local` backend.
+    pub path: PathBuf,
+    /// Where browsers fetch files from, e.g. a CDN in front of the bucket.
+    /// When unset, the app serves files itself under `/data/`.
+    pub public_base_url: Option<Url>,
+    pub s3: S3Config,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            backend: StorageBackend::Local,
+            path: PathBuf::from("data"),
+            public_base_url: None,
+            s3: S3Config::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    Local,
+    S3,
+}
+
+/// Any S3-compatible store: AWS, MinIO, Garage, Cloudflare R2, Backblaze B2…
+/// Empty credentials fall back to the standard `AWS_*` environment variables
+/// and instance credentials.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct S3Config {
+    pub bucket: String,
+    pub region: String,
+    /// For non-AWS stores, e.g. `http://minio:9000`.
+    pub endpoint: Option<Url>,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    /// `bucket` in the path rather than the host name; most self-hosted
+    /// stores need this.
+    pub path_style: bool,
+}
+
+impl Default for S3Config {
+    fn default() -> Self {
+        Self {
+            bucket: String::new(),
+            region: "us-east-1".to_owned(),
+            endpoint: None,
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            path_style: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MediaConfig {
+    pub max_upload_mb: u64,
+    /// Larger images are refused before they are decoded (decompression
+    /// bombs).
+    pub max_pixels: u64,
+    pub max_duration_secs: u64,
+    /// Accepted types: jpeg, png, gif, webp, avif, jxl, mp4, webm. `jxl` is
+    /// off by default because libvips considers its JPEG XL decoder less
+    /// hardened against malicious files.
+    pub allowed_types: Vec<String>,
+    /// Bounding boxes for thumbnails, e.g. 1x and 2x for high-DPI screens.
+    pub thumbnail_sizes: Vec<u32>,
+    /// Images larger than this (longest side) also get a resized sample
+    /// that the post page shows instead of the original.
+    pub sample_size: u32,
+    /// `webp` or `avif`.
+    pub variant_format: String,
+    /// Kill media tools that run longer than this.
+    pub tool_timeout_secs: u64,
+    /// Scratch space for uploads and processing. Defaults to the system
+    /// temporary directory.
+    pub work_dir: Option<PathBuf>,
+    pub tools: MediaTools,
+}
+
+impl MediaConfig {
+    /// `work_dir`, or a directory under the system temp dir.
+    pub fn work_dir_or_default(&self) -> PathBuf {
+        self.work_dir
+            .clone()
+            .unwrap_or_else(|| std::env::temp_dir().join("uwuubooru"))
+    }
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            max_upload_mb: 100,
+            max_pixels: 200_000_000,
+            max_duration_secs: 600,
+            allowed_types: ["jpeg", "png", "gif", "webp", "avif", "mp4", "webm"]
+                .map(String::from)
+                .to_vec(),
+            thumbnail_sizes: vec![250, 500],
+            sample_size: 1600,
+            variant_format: "webp".to_owned(),
+            tool_timeout_secs: 120,
+            work_dir: None,
+            tools: MediaTools::default(),
+        }
+    }
+}
+
+/// Paths to the external programs used for media, if not on `PATH`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MediaTools {
+    pub vips: PathBuf,
+    pub vipsheader: PathBuf,
+    pub vipsthumbnail: PathBuf,
+    pub ffmpeg: PathBuf,
+    pub ffprobe: PathBuf,
+}
+
+impl Default for MediaTools {
+    fn default() -> Self {
+        Self {
+            vips: "vips".into(),
+            vipsheader: "vipsheader".into(),
+            vipsthumbnail: "vipsthumbnail".into(),
+            ffmpeg: "ffmpeg".into(),
+            ffprobe: "ffprobe".into(),
         }
     }
 }
@@ -215,6 +380,65 @@ impl Config {
                 });
             }
         }
+        if self.storage.backend == StorageBackend::S3 && self.storage.s3.bucket.is_empty() {
+            problems.push(ConfigProblem {
+                key: "storage.s3.bucket",
+                message: "is required when storage.backend is s3".into(),
+            });
+        }
+        if let Some(url) = &self.storage.public_base_url
+            && !matches!(url.scheme(), "http" | "https")
+        {
+            problems.push(ConfigProblem {
+                key: "storage.public_base_url",
+                message: "must be an http:// or https:// URL".into(),
+            });
+        }
+        const MEDIA_TYPES: [&str; 8] = ["jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm"];
+        if let Some(unknown) = self
+            .media
+            .allowed_types
+            .iter()
+            .find(|t| !MEDIA_TYPES.contains(&t.as_str()))
+        {
+            problems.push(ConfigProblem {
+                key: "media.allowed_types",
+                message: format!(
+                    "unknown type `{unknown}` (known: {})",
+                    MEDIA_TYPES.join(", ")
+                ),
+            });
+        }
+        if !matches!(self.media.variant_format.as_str(), "webp" | "avif") {
+            problems.push(ConfigProblem {
+                key: "media.variant_format",
+                message: "must be webp or avif".into(),
+            });
+        }
+        if self.media.thumbnail_sizes.is_empty() || self.media.thumbnail_sizes.contains(&0) {
+            problems.push(ConfigProblem {
+                key: "media.thumbnail_sizes",
+                message: "needs at least one size, all above 0".into(),
+            });
+        }
+        if self.media.max_upload_mb == 0 {
+            problems.push(ConfigProblem {
+                key: "media.max_upload_mb",
+                message: "must be at least 1".into(),
+            });
+        }
+        if self.jobs.workers == 0 {
+            problems.push(ConfigProblem {
+                key: "jobs.workers",
+                message: "must be at least 1".into(),
+            });
+        }
+        if self.jobs.lock_timeout_secs < 10 {
+            problems.push(ConfigProblem {
+                key: "jobs.lock_timeout_secs",
+                message: "must be at least 10".into(),
+            });
+        }
         if self.server.request_timeout_secs == 0 {
             problems.push(ConfigProblem {
                 key: "server.request_timeout_secs",
@@ -235,6 +459,9 @@ impl Config {
         config.database.url = redact_url(&config.database.url);
         for replica in &mut config.database.replicas {
             *replica = redact_url(replica);
+        }
+        if !config.storage.s3.secret_access_key.is_empty() {
+            config.storage.s3.secret_access_key = REDACTED.to_owned();
         }
         config
     }
@@ -385,6 +612,19 @@ mod tests {
         assert!(!redact_url("uwuu:hunter2 garbage").contains("hunter2"));
         assert!(!redact_url("not even a url hunter2").contains("hunter2"));
         assert!(!redact_url("mysql://u:hunter2@db/x").contains("hunter2"));
+    }
+
+    #[test]
+    fn s3_needs_a_bucket_and_its_secret_is_redacted() {
+        let mut config = valid();
+        config.storage.backend = StorageBackend::S3;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "storage.s3.bucket");
+
+        config.storage.s3.bucket = "posts".into();
+        config.storage.s3.secret_access_key = "very secret".into();
+        config.validate().unwrap();
+        assert_eq!(config.redacted().storage.s3.secret_access_key, "REDACTED");
     }
 
     #[test]

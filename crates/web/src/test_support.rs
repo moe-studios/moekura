@@ -17,9 +17,25 @@ use uwuu_db::site_cache::SiteCache;
 use crate::auth::SESSION_COOKIE;
 use crate::{AppState, with_middleware};
 
+/// Defaults, with file storage and scratch space in a fresh temporary
+/// directory.
+pub fn test_config() -> Config {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("uwuu-web-test-{}-{n}", std::process::id()));
+    let mut config = Config::default();
+    config.storage.path = root.join("storage");
+    config.media.work_dir = Some(root.join("work"));
+    config
+}
+
 pub async fn test_state(pool: &PgPool) -> AppState {
+    test_state_with(pool, test_config()).await
+}
+
+pub async fn test_state_with(pool: &PgPool, config: Config) -> AppState {
     AppState::new(
-        Config::default(),
+        config,
         Db::from_pools(pool.clone(), vec![]),
         SiteCache::load(pool).await.unwrap(),
     )
@@ -68,6 +84,38 @@ impl TestApp {
     pub async fn get_full(&self, path: &str) -> axum::response::Response {
         let request = Request::get(path).body(Body::empty()).unwrap();
         self.router.clone().oneshot(request).await.unwrap()
+    }
+
+    /// A `multipart/form-data` post with text `fields` and an optional
+    /// `(file name, bytes)` in the `file` field.
+    pub async fn post_multipart(
+        &self,
+        path: &str,
+        session: Option<&str>,
+        fields: &[(&str, String)],
+        file: Option<(&str, &[u8])>,
+    ) -> TestResponse {
+        const BOUNDARY: &str = "uwuu-test-boundary";
+        let mut body = Vec::new();
+        for (name, value) in fields {
+            let part = format!(
+                "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            );
+            body.extend_from_slice(part.as_bytes());
+        }
+        if let Some((file_name, bytes)) = file {
+            let head = format!(
+                "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; \
+                 filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+            );
+            body.extend_from_slice(head.as_bytes());
+            body.extend_from_slice(bytes);
+            body.extend_from_slice(b"\r\n");
+        }
+        body.extend_from_slice(format!("--{BOUNDARY}--\r\n").as_bytes());
+        let content_type = format!("multipart/form-data; boundary={BOUNDARY}");
+        let builder = Request::post(path).header("content-type", content_type);
+        self.send(builder, session, Body::from(body)).await
     }
 
     /// A GET carrying an arbitrary `name=value` cookie.
@@ -144,5 +192,64 @@ impl TestApp {
             location,
             retry_after,
         }
+    }
+}
+
+/// Logs a new user with `role` in and returns their session token.
+pub async fn session_for(
+    pool: &PgPool,
+    name: &str,
+    role: uwuu_core::permissions::SystemRole,
+) -> String {
+    use uwuu_db::users::{NewUser, UserStatus};
+    let role_id = uwuu_db::roles::by_system(pool, role).await.unwrap().id;
+    let new = NewUser {
+        name,
+        email: None,
+        password_hash: None,
+        role_id,
+        status: UserStatus::Active,
+    };
+    let user = uwuu_db::users::insert(pool, new).await.unwrap();
+    let session = uwuu_db::sessions::NewSession {
+        user_id: user.id,
+        user_agent: None,
+        ip: None,
+    };
+    let lifetime = uwuu_db::sessions::Lifetime {
+        idle: std::time::Duration::from_secs(3600),
+        max: std::time::Duration::from_secs(3600),
+    };
+    uwuu_db::sessions::create(pool, session, lifetime)
+        .await
+        .unwrap()
+}
+
+/// Media files made with ffmpeg on demand, so the repository carries no
+/// binary fixtures.
+pub mod fixture {
+    use std::process::Command;
+
+    fn encode(width: u32, height: u32, codec: &str) -> Vec<u8> {
+        let source = format!("testsrc2=size={width}x{height}:duration=1");
+        let output = Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                &source,
+            ])
+            .args(["-frames:v", "1", "-c:v", codec, "-f", "image2pipe", "-"])
+            .output()
+            .expect("ffmpeg is needed for upload tests");
+        assert!(output.status.success(), "ffmpeg failed");
+        output.stdout
+    }
+
+    pub fn png(width: u32, height: u32) -> Vec<u8> {
+        encode(width, height, "png")
     }
 }

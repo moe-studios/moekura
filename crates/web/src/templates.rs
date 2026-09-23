@@ -121,6 +121,25 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    /// The CSP forbids inline styles and scripts; browsers would silently
+    /// ignore them, so keep them out of the templates altogether.
+    #[test]
+    fn templates_have_no_inline_styles_or_scripts() {
+        for name in Embedded::iter() {
+            let source = load_source(None, &name).unwrap().unwrap();
+            for forbidden in [
+                " style=",
+                "<style",
+                "<script>",
+                " onclick=",
+                " onload=",
+                "javascript:",
+            ] {
+                assert!(!source.contains(forbidden), "{name} contains `{forbidden}`");
+            }
+        }
+    }
+
     #[test]
     fn refuses_path_traversal() {
         assert_eq!(load_source(None, "../Cargo.toml").unwrap(), None);

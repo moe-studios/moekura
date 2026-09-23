@@ -1,6 +1,6 @@
 [package]
-name = "uwuu-db"
-description = "PostgreSQL access and migrations for uwuubooru"
+name = "uwuu-media"
+description = "Media identification and processing for uwuubooru"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,17 +10,11 @@ publish.workspace = true
 
 [dependencies]
 uwuu-core.workspace = true
-hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sqlx.workspace = true
 thiserror.workspace = true
-time.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process", "time"] }
 tracing.workspace = true
-
-[dev-dependencies]
-argon2.workspace = true
 
 [lints]
 workspace = true

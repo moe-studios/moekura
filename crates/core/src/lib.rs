@@ -5,6 +5,8 @@
 
 pub mod accounts;
 pub mod config;
+pub mod jobs;
 pub mod permissions;
+pub mod posts;
 pub mod settings;
 pub mod tokens;

@@ -105,6 +105,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 ```
 
+The page scripts are TypeScript in `frontend/`, bundled with esbuild into
+`crates/web/static/js/`. The bundle is committed, so building the binary
+needs no Node; after changing `frontend/src`, rebuild it (Node 24+):
+
+```sh
+cd frontend
+npm ci
+npm run check     # typecheck
+npm run build     # or `npm run watch`
+```
+
 Layout:
 
 ```
@@ -115,7 +126,8 @@ crates/media    identifying and processing media with vips and ffmpeg
 crates/jobs     the Postgres job queue's workers and job handlers
 crates/web      axum router, middleware, pages
 crates/app      the `uwuubooru` binary: CLI, config loading, logging
-deploy/       compose files and deployment examples
+frontend/       TypeScript for the pages (built into crates/web/static/js)
+deploy/         compose files and deployment examples
 ```
 
 ## License

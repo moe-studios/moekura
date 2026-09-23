@@ -17,7 +17,7 @@ uwuubooru is an open-source, self-hostable booru (a tag-based image board). The 
 | Database | PostgreSQL 16+ via `sqlx` (compile-time-checked queries, built-in migrations) | Needed for GIN tag arrays, SKIP LOCKED queues and replicas |
 | Queries | Static SQL strings with `sqlx::query_as` + `FromRow`; sqlx's `QueryBuilder` for the dynamic search SQL | Every query is covered by a `#[sqlx::test]` against real Postgres, so builds need no database or `.sqlx` cache |
 | Templates | `minijinja` | Loaded at runtime, so admins can override templates and themes without recompiling |
-| Frontend JS | TypeScript bundled with `esbuild`, plus `htmx` | Autocomplete, keyboard nav, note overlays, upload UI. Everything works without JS |
+| Frontend JS | TypeScript bundled with `esbuild` (the bundle is committed, so the Rust build needs no Node); `htmx` only if pages come to need it | Autocomplete, keyboard nav, note overlays, upload UI. Everything works without JS |
 | CSS | Plain modern CSS with custom properties (no framework) | Easy to theme; light and dark by default |
 | Asset embedding | `rust-embed` (static assets, default templates, migrations) | Keeps the single-binary deploy |
 | Image processing | `libvips` via FFI (`libvips` crate) | Fast, low memory; handles JPEG/PNG/GIF/WebP/AVIF/JXL/APNG |
@@ -63,7 +63,7 @@ crates/
   jobs/        # PG job queue + job handlers
   web/         # axum routers: html/, api/v1/, compat/danbooru/, auth, middleware
   app/         # binary: clap CLI, config loading, wiring
-frontend/      # ts/ + esbuild config (added with the first JS, see M4) → built into web assets
+frontend/      # TypeScript + esbuild → crates/web/static/js (committed; CI checks it is current)
 crates/web/templates/  # default minijinja templates (overridable via paths.templates_override)
 crates/web/static/     # CSS, icons; served under content-hashed URLs (overridable via paths.static_override)
 locales/       # fluent .ftl files

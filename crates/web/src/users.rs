@@ -36,6 +36,15 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let site = page.state().site.get();
     let role = site.role(user.role_id).map(|r| r.name.clone());
     let uploads = posts::count_by_uploader(db, user.id).await?;
+    let staff =
+        page.current.can(Permission::BanUsers) || page.current.can(Permission::ViewAuditLog);
+    let ban_history = if staff {
+        uwuu_db::bans::for_user(db, user.id).await?
+    } else {
+        Vec::new()
+    };
+    let can_ban = crate::bans::may_ban(&page, &user);
+    let banned = ban_history.iter().any(|b| b.active);
     let favorites = favorites::count_by_user(db, user.id).await?;
     Ok(page.render(
         "profile.html",
@@ -50,6 +59,10 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             uploads_url => Value::from_safe_string(search_url(&format!("user:{}", user.name))),
             favorites => favorites,
             favorites_url => Value::from_safe_string(search_url(&format!("ordfav:{}", user.name))),
+            bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
+            can_ban => can_ban && !banned,
+            can_unban => can_ban && banned,
+            durations => crate::bans::durations(),
         },
     ))
 }

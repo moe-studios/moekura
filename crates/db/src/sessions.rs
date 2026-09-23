@@ -12,6 +12,7 @@ use sqlx::PgExecutor;
 use time::OffsetDateTime;
 use uwuu_core::tokens::{NewToken, hash_token};
 
+use crate::bans::ActiveBan;
 use crate::users::User;
 
 pub const TOUCH_INTERVAL: Duration = Duration::from_secs(60 * 60);
@@ -34,6 +35,8 @@ pub struct SessionUser {
     pub session_id: i64,
     pub last_used_at: OffsetDateTime,
     pub user: User,
+    /// The user's ban in force, if any.
+    pub ban: Option<ActiveBan>,
 }
 
 impl SessionUser {
@@ -71,11 +74,20 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
         last_used_at: OffsetDateTime,
         #[sqlx(flatten)]
         user: User,
+        banned: bool,
+        ban_reason: Option<String>,
+        ban_expires_at: Option<OffsetDateTime>,
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT s.id AS session_id, s.last_used_at,
-                u.id, u.name::text, u.email::text, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings
+                u.id, u.name::text, u.email::text, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings,
+                b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
          FROM sessions s JOIN users u ON u.id = s.user_id
+         LEFT JOIN LATERAL (
+             SELECT id, reason, expires_at FROM bans
+             WHERE user_id = u.id AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+             ORDER BY expires_at DESC NULLS FIRST LIMIT 1
+         ) b ON true
          WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'",
     )
     .bind(&hash_token(token)[..])
@@ -85,6 +97,10 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
         session_id: r.session_id,
         last_used_at: r.last_used_at,
         user: r.user,
+        ban: r.banned.then(|| ActiveBan {
+            reason: r.ban_reason.unwrap_or_default(),
+            expires_at: r.ban_expires_at,
+        }),
     }))
 }
 

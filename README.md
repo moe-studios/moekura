@@ -84,6 +84,16 @@ in, set a default blacklist (users can change their own under Settings):
 uwuubooru admin settings set default_blacklist "rating:e"
 ```
 
+### Private sites
+
+To keep everything behind a login, take “View posts” away from the
+Anonymous role (Admin → Roles). Visitors are then sent to log in, and file
+links on pages carry a signature that expires after an hour or two, so
+files can't be fetched by guessing or sharing their URLs. This needs the
+app to serve files: leave `storage.public_base_url` unset (S3 storage works
+too; the app streams from the bucket). A CDN or public bucket URL would hand
+files to anyone with the link, and the server warns about it at startup.
+
 `GET /healthz` reports that the process is up. `GET /readyz` also checks
 the database; point load balancers at it.
 

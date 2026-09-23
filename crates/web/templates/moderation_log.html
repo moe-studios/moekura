@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Moderation log · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Moderation log</h1>
+<form class="filters" method="get" action="/moderation/log">
+  <label for="log-action">Action</label>
+  <select id="log-action" name="action">
+    <option value="">Any</option>
+    {% for a in actions %}<option value="{{ a.name }}"{% if query.action == a.name %} selected{% endif %}>{{ a.label }}</option>{% endfor %}
+  </select>
+  <label for="log-by">By</label>
+  <input id="log-by" name="by" value="{{ query.by }}" size="12">
+  <label for="log-post">Post</label>
+  <input id="log-post" name="post" value="{{ query.post }}" size="8" inputmode="numeric">
+  <button type="submit">Filter</button>
+</form>
+{% if entries %}
+<ol class="log">
+  {% for e in entries %}
+  <li>
+    <span class="hint"><time>{{ e.when }} {{ e.time }}</time></span>
+    <strong>{{ e.actor or "command line" }}</strong> {{ e.label }}
+    {% if e.post_id %}<a href="/posts/{{ e.post_id }}">#{{ e.post_id }}</a>{% endif %}
+    {% if e.user %}<a href="/users/{{ e.user }}">{{ e.user }}</a>{% endif %}
+    {% if e.reason %}<div class="reason">“{{ e.reason }}”</div>{% endif %}
+    {% if e.details %}<div class="hint">{% for d in e.details %}{{ d.key }}: {{ d.value }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% if older_url %}<nav class="pager"><a class="button" href="{{ older_url }}" rel="next">Older</a></nav>{% endif %}
+{% else %}
+<p class="empty">Nothing logged.</p>
+{% endif %}
+{% endblock %}

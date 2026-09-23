@@ -67,6 +67,54 @@ impl Permission {
     const fn bit(self) -> u64 {
         1 << self as u8
     }
+
+    /// Stable machine name, as in forms.
+    pub fn key(self) -> &'static str {
+        match self {
+            Permission::ViewPosts => "view_posts",
+            Permission::Upload => "upload",
+            Permission::EditPosts => "edit_posts",
+            Permission::Comment => "comment",
+            Permission::Favorite => "favorite",
+            Permission::Vote => "vote",
+            Permission::Flag => "flag",
+            Permission::EditWiki => "edit_wiki",
+            Permission::ApprovePosts => "approve_posts",
+            Permission::DeletePosts => "delete_posts",
+            Permission::PurgePosts => "purge_posts",
+            Permission::ManageTags => "manage_tags",
+            Permission::ViewDeleted => "view_deleted",
+            Permission::BanUsers => "ban_users",
+            Permission::ManageUsers => "manage_users",
+            Permission::ManageSettings => "manage_settings",
+            Permission::ViewAuditLog => "view_audit_log",
+            Permission::UploadWithoutApproval => "upload_without_approval",
+        }
+    }
+
+    /// What admins see.
+    pub fn label(self) -> &'static str {
+        match self {
+            Permission::ViewPosts => "View posts",
+            Permission::Upload => "Upload",
+            Permission::EditPosts => "Edit posts and tags",
+            Permission::Comment => "Comment",
+            Permission::Favorite => "Favorite",
+            Permission::Vote => "Vote",
+            Permission::Flag => "Flag posts",
+            Permission::EditWiki => "Edit the wiki",
+            Permission::ApprovePosts => "Approve posts and handle flags",
+            Permission::DeletePosts => "Delete and restore posts",
+            Permission::PurgePosts => "Purge posts",
+            Permission::ManageTags => "Manage tags, aliases and implications",
+            Permission::ViewDeleted => "See deleted posts",
+            Permission::BanUsers => "Ban users and networks",
+            Permission::ManageUsers => "Manage users",
+            Permission::ManageSettings => "Manage site settings and roles",
+            Permission::ViewAuditLog => "Read the moderation log",
+            Permission::UploadWithoutApproval => "Upload without approval",
+        }
+    }
 }
 
 /// A set of [`Permission`]s.

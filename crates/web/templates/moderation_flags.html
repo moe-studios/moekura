@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Flags · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Flagged posts</h1>
+{% if posts %}
+<ul class="review">
+  {% for p in posts %}
+  <li>
+    <a class="review-thumb" href="/posts/{{ p.id }}">{% if p.thumb %}<img src="{{ p.thumb }}" alt="Post #{{ p.id }}" loading="lazy">{% else %}#{{ p.id }}{% endif %}</a>
+    <div class="review-body">
+      <p><a href="/posts/{{ p.id }}">#{{ p.id }}</a> · rating {{ p.rating }}</p>
+      <ul class="plain">
+        {% for f in p.flags %}<li>“{{ f.reason }}”{% if f.by %} <span class="hint">— {{ f.by }}</span>{% endif %}</li>{% endfor %}
+      </ul>
+      <div class="actions">
+        <form method="post" action="/posts/{{ p.id }}/flags/dismiss"><button type="submit" class="secondary">Dismiss</button></form>
+        <form class="reject" method="post" action="/posts/{{ p.id }}/delete">
+          <input name="reason" placeholder="Reason" maxlength="2000" aria-label="Reason for deleting #{{ p.id }}" required>
+          <button type="submit">Delete post</button>
+        </form>
+      </div>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">No open flags.</p>
+{% endif %}
+{% endblock %}

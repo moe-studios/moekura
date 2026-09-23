@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Approval queue · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Approval queue</h1>
+{% if posts %}
+<ul class="review">
+  {% for p in posts %}
+  <li>
+    <a class="review-thumb" href="/posts/{{ p.id }}">{% if p.thumb %}<img src="{{ p.thumb }}" alt="Post #{{ p.id }}" loading="lazy">{% else %}<img src="{{ asset('processing.svg') }}" alt="Post #{{ p.id }} (processing)">{% endif %}</a>
+    <div class="review-body">
+      <p><a href="/posts/{{ p.id }}">#{{ p.id }}</a> · rating {{ p.rating }}{% if p.uploader %} · by <a href="/users/{{ p.uploader }}">{{ p.uploader }}</a>{% endif %}</p>
+      <p class="review-tags">{{ p.tags or "no tags" }}</p>
+      <div class="actions">
+        <form method="post" action="/posts/{{ p.id }}/approve"><button type="submit">Approve</button></form>
+        <form class="reject" method="post" action="/posts/{{ p.id }}/reject">
+          <input name="reason" placeholder="Reason" maxlength="2000" aria-label="Reason for rejecting #{{ p.id }}" required>
+          <button type="submit" class="secondary">Reject</button>
+        </form>
+      </div>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% if more_url %}<nav class="pager"><a class="button" href="{{ more_url }}" rel="next">More</a></nav>{% endif %}
+{% else %}
+<p class="empty">Nothing waiting for approval.</p>
+{% endif %}
+{% endblock %}

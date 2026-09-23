@@ -2,6 +2,7 @@
 //! does it (`storage.public_base_url` unset).
 
 use axum::body::Body;
+use axum::extract::Query;
 use axum::extract::{Path, State};
 use axum::http::header::{
     ACCEPT_RANGES, CACHE_CONTROL, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_SECURITY_POLICY,
@@ -9,6 +10,9 @@ use axum::http::header::{
 };
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
+use hmac::{Hmac, KeyInit, Mac};
+use serde::Deserialize;
+use sha2::Sha256;
 use uwuu_storage::{GetRange, Key, StorageError};
 
 use crate::AppState;
@@ -16,6 +20,58 @@ use crate::error::AppError;
 
 /// Files are content-addressed, so a URL's bytes never change.
 const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+/// On private sites: browsers may keep files, shared caches may not.
+const PRIVATE: &str = "private, max-age=3600";
+
+/// How long a signed file URL stays valid: until the end of the next
+/// hour, so URLs on pages stay the same (and cacheable) for an hour at a
+/// time.
+const SIGNED_FOR_SECS: i64 = 3600;
+
+/// Signs file URLs on private sites, so files can only be loaded through
+/// pages the visitor was allowed to see.
+#[derive(Clone)]
+pub struct FileSigner {
+    key: std::sync::Arc<[u8; 32]>,
+}
+
+impl FileSigner {
+    pub fn new(key: [u8; 32]) -> Self {
+        Self {
+            key: std::sync::Arc::new(key),
+        }
+    }
+
+    fn mac(&self, key: &str, expires: i64) -> Hmac<Sha256> {
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(&self.key[..]).expect("HMAC takes keys of any length");
+        mac.update(key.as_bytes());
+        mac.update(b"\n");
+        mac.update(expires.to_string().as_bytes());
+        mac
+    }
+
+    /// `?expires=…&sig=…` for `key`, valid at least an hour from `now`.
+    pub fn query(&self, key: &str, now: i64) -> String {
+        let expires = (now / SIGNED_FOR_SECS + 2) * SIGNED_FOR_SECS;
+        let sig = hex::encode(self.mac(key, expires).finalize().into_bytes());
+        format!("?expires={expires}&sig={sig}")
+    }
+
+    /// Whether `sig` signs `key` until `expires`, and that hasn't passed.
+    pub fn verify(&self, key: &str, expires: i64, sig: &str, now: i64) -> bool {
+        let Ok(sig) = hex::decode(sig) else {
+            return false;
+        };
+        expires >= now && self.mac(key, expires).verify_slice(&sig).is_ok()
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct Signature {
+    expires: Option<i64>,
+    sig: Option<String>,
+}
 
 /// Even if a stored file were somehow opened as a document, it can't run
 /// scripts or act as a page of this site.
@@ -24,12 +80,25 @@ const FILE_CSP: &str = "default-src 'none'; img-src 'self'; media-src 'self'; sa
 pub async fn serve(
     State(state): State<AppState>,
     Path(raw_key): Path<String>,
+    Query(signature): Query<Signature>,
     headers: HeaderMap,
 ) -> Result<Response, AppError> {
     if !state.storage.served_by_app() {
         return Err(AppError::NotFound);
     }
     let key = Key::parse(&raw_key).ok_or(AppError::NotFound)?;
+    let private = state.is_private();
+    if private {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let valid = match (signature.expires, signature.sig.as_deref()) {
+            (Some(expires), Some(sig)) => state.file_signer.verify(key.as_str(), expires, sig, now),
+            _ => false,
+        };
+        // Not found rather than forbidden: don't confirm the file exists.
+        if !valid {
+            return Err(AppError::NotFound);
+        }
+    }
     let requested = match headers.get(RANGE).map(|v| v.to_str().map(parse_range)) {
         None => None,
         Some(Ok(Some(range))) => Some(range),
@@ -62,7 +131,10 @@ pub async fn serve(
     headers.insert(CONTENT_TYPE, header(content_type.essence_str()));
     headers.insert(CONTENT_LENGTH, HeaderValue::from(length));
     headers.insert(ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    headers.insert(CACHE_CONTROL, HeaderValue::from_static(IMMUTABLE));
+    headers.insert(
+        CACHE_CONTROL,
+        HeaderValue::from_static(if private { PRIVATE } else { IMMUTABLE }),
+    );
     headers.insert(CONTENT_SECURITY_POLICY, HeaderValue::from_static(FILE_CSP));
     if requested.is_some() {
         let content_range = format!(
@@ -134,6 +206,60 @@ mod tests {
         ] {
             assert!(parse_range(bad).is_none(), "{bad}");
         }
+    }
+
+    #[test]
+    fn signatures_expire_and_bind_the_key() {
+        let signer = FileSigner::new([3; 32]);
+        let now = 1_800_000_000;
+        let query = signer.query("original/ab/cd/x.png", now);
+        let (expires, sig) = query
+            .strip_prefix("?expires=")
+            .unwrap()
+            .split_once("&sig=")
+            .unwrap();
+        let expires: i64 = expires.parse().unwrap();
+        assert!(
+            expires >= now + SIGNED_FOR_SECS,
+            "valid for at least an hour"
+        );
+        assert!(signer.verify("original/ab/cd/x.png", expires, sig, now));
+        assert!(!signer.verify("original/ab/cd/y.png", expires, sig, now));
+        assert!(!signer.verify("original/ab/cd/x.png", expires + 1, sig, now));
+        assert!(!signer.verify("original/ab/cd/x.png", expires, sig, expires + 1));
+        assert!(!FileSigner::new([4; 32]).verify("original/ab/cd/x.png", expires, sig, now));
+        assert!(!signer.verify("original/ab/cd/x.png", expires, "zz", now));
+        // Stable within the hour, so pages can be cached.
+        assert_eq!(signer.query("k", now), signer.query("k", now + 60));
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn private_sites_need_signed_urls(pool: PgPool) {
+        sqlx::query("UPDATE roles SET permissions = 0 WHERE system_key = 'anonymous'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let state = test_state(&pool).await;
+        let key = Key::original(HASH, "png");
+        state
+            .storage
+            .put_bytes(&key, b"secret".to_vec().into())
+            .await
+            .unwrap();
+        let signed = state.file_url(&key);
+        assert!(
+            signed.starts_with(&format!("/data/{key}?expires=")),
+            "{signed}"
+        );
+        let app = crate::with_middleware(Router::new(), state);
+
+        let (status, _, _) = get(&app, &format!("/data/{key}"), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, headers, body) = get(&app, &signed, None).await;
+        assert_eq!((status, body.as_slice()), (StatusCode::OK, &b"secret"[..]));
+        assert_eq!(headers[CACHE_CONTROL], PRIVATE);
+        let tampered = signed.replace("expires=", "expires=9");
+        assert_eq!(get(&app, &tampered, None).await.0, StatusCode::NOT_FOUND);
     }
 
     async fn get(

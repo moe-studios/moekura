@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Bans · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Bans</h1>
+<h2>Users</h2>
+{% if bans %}
+<table class="tag-table">
+  <thead><tr><th scope="col">User</th><th scope="col">Reason</th><th scope="col">Until</th><th scope="col">By</th></tr></thead>
+  <tbody>
+    {% for b in bans %}
+    <tr><td><a href="/users/{{ b.user }}">{{ b.user }}</a></td><td>{{ b.reason }}</td><td>{{ b.until or "lifted" }}</td><td>{{ b.by or "" }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="hint">Ban or unban users from their profile pages.</p>
+{% else %}
+<p class="hint">No one is banned. Ban users from their profile pages.</p>
+{% endif %}
+
+<h2>Networks</h2>
+<p class="hint">Addresses in a banned network can't register, log in, post or change anything.</p>
+{% if networks %}
+<table class="tag-table">
+  <thead><tr><th scope="col">Network</th><th scope="col">Reason</th><th scope="col">Until</th><th scope="col">By</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <tbody>
+    {% for n in networks %}
+    <tr><td><code>{{ n.network }}</code></td><td>{{ n.reason }}</td><td>{{ n.until or "lifted" }}</td><td>{{ n.by or "" }}</td>
+      <td><form method="post" action="/moderation/ip-bans/{{ n.id }}/lift"><button type="submit" class="secondary">Lift</button></form></td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<section class="card request-form">
+  <h2>Ban a network</h2>
+  <form method="post" action="/moderation/ip-bans">
+    <label for="ban-network">Address or range</label>
+    <input id="ban-network" name="network" placeholder="203.0.113.7 or 203.0.113.0/24" required>
+    <label for="ban-network-reason">Reason</label>
+    <input id="ban-network-reason" name="reason" maxlength="2000" required>
+    <label for="ban-network-days">For</label>
+    <select id="ban-network-days" name="days">
+      {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ d.label }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="danger">Ban network</button>
+  </form>
+</section>
+{% endblock %}

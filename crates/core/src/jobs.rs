@@ -31,3 +31,13 @@ pub struct ApplyTagRelation {
 impl Job for ApplyTagRelation {
     const KIND: &'static str = "tags.apply_relation";
 }
+
+/// Remove a deleted post for good: its files, then its row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PurgePost {
+    pub post_id: i64,
+}
+
+impl Job for PurgePost {
+    const KIND: &'static str = "posts.purge";
+}

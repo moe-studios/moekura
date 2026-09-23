@@ -437,3 +437,38 @@ form.vote button[type="submit"], form.favorite button[type="submit"] { margin: 0
 .shortcuts dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0 0 16px; }
 .shortcuts dt { font-family: ui-monospace, monospace; font-weight: 600; }
 .shortcuts dd { margin: 0; }
+
+/* Moderation */
+
+.log { list-style: none; margin: 0; padding: 0; }
+.log > li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.log .reason { margin-top: 2px; }
+button.danger { background: var(--danger); }
+.moderate form + form { margin-top: 12px; }
+.review { list-style: none; margin: 0; padding: 0; }
+.review > li { display: flex; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.review-thumb img { display: block; max-width: 180px; max-height: 180px; width: auto; height: auto; border-radius: var(--radius); }
+.review-body { flex: 1; min-width: 0; }
+.review-body p { margin: 0 0 6px; }
+.review-tags { color: var(--muted); overflow-wrap: anywhere; }
+.actions form.reject { flex-direction: row; gap: 6px; }
+.actions form.reject input { padding: 3px 8px; }
+.plain { list-style: none; margin: 0 0 8px; padding: 0; }
+.status-open { color: var(--danger); }
+.status-dismissed, .status-upheld { color: var(--muted); }
+.flash.banned { border-left-color: var(--danger); }
+
+/* Admin */
+
+form.inline { flex-direction: row; flex-wrap: wrap; gap: 6px; align-items: center; }
+form.inline select { padding: 3px 6px; }
+form.inline button { margin: 0; padding: 3px 10px; font-size: 0.875rem; }
+.role { margin-bottom: 16px; }
+.role h2 { margin: 0 0 4px; font-size: 1.125rem; }
+fieldset.permissions { border: 0; padding: 0; margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 6px 16px; }
+fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin: 0 0 24px; }
+.stats > div { padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.stats dt { color: var(--muted); font-size: 0.875rem; }
+.stats dd { margin: 4px 0 0; font-size: 1.375rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.log .actions { margin-top: 6px; }

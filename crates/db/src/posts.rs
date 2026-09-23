@@ -172,6 +172,55 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post
     row.map(Post::try_from).transpose()
 }
 
+/// Moves a post from one of `from` to `to`; false if it wasn't in one of
+/// them (so concurrent moderators can't both act).
+pub async fn set_status(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    from: &[PostStatus],
+    to: PostStatus,
+) -> sqlx::Result<bool> {
+    let from: Vec<&str> = from.iter().map(|s| s.as_str()).collect();
+    let result = sqlx::query(
+        "UPDATE posts SET status = $3, updated_at = now() WHERE id = $1 AND status = ANY($2)",
+    )
+    .bind(id)
+    .bind(from)
+    .bind(to.as_str())
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Deletes a post row and everything hanging off it (media records,
+/// versions, favorites, votes). Files are the caller's business.
+pub async fn delete(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    let result = sqlx::query("DELETE FROM posts WHERE id = $1")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Posts with `status`, oldest first, after `after` (keyset), with their
+/// uploaders' names.
+pub async fn by_status(
+    db: impl PgExecutor<'_>,
+    status: PostStatus,
+    after: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<(i64, Option<String>)>> {
+    sqlx::query_as(
+        "SELECT p.id, u.name::text FROM posts p LEFT JOIN users u ON u.id = p.uploader_id
+         WHERE p.status = $1 AND p.id > $2 ORDER BY p.id LIMIT $3",
+    )
+    .bind(status.as_str())
+    .bind(after)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// How many posts a user uploaded, leaving out deleted ones.
 pub async fn count_by_uploader(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<i64> {
     sqlx::query_scalar("SELECT count(*) FROM posts WHERE uploader_id = $1 AND status <> 'deleted'")

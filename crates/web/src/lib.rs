@@ -2,8 +2,10 @@
 //! endpoints, all sharing one router.
 
 mod account;
+mod admin;
 mod assets;
 pub mod auth;
+mod bans;
 mod blacklist;
 mod client_ip;
 mod edit;
@@ -14,6 +16,7 @@ mod files;
 pub mod flash;
 mod health;
 mod history;
+mod moderation;
 pub mod pages;
 mod posts;
 pub mod rate_limit;
@@ -83,6 +86,7 @@ pub struct AppState {
     pub(crate) fetcher: fetch::Fetcher,
     /// Scratch space for uploads in progress.
     pub(crate) work_dir: std::path::PathBuf,
+    pub(crate) file_signer: files::FileSigner,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -102,7 +106,14 @@ pub enum StartupError {
 impl AppState {
     /// Loads static files and compiles templates, honouring the override
     /// directories in `config.paths`.
-    pub fn new(config: Config, db: Db, site: SiteCache) -> Result<Self, StartupError> {
+    /// `file_key` signs file URLs on private sites; every node needs the
+    /// same one (`uwuu_db::secrets`).
+    pub fn new(
+        config: Config,
+        db: Db,
+        site: SiteCache,
+        file_key: [u8; 32],
+    ) -> Result<Self, StartupError> {
         let storage = Storage::from_config(&config.storage)?;
         let work_dir = config.media.work_dir_or_default();
         std::fs::create_dir_all(&work_dir).map_err(StartupError::WorkDir)?;
@@ -121,9 +132,33 @@ impl AppState {
             media,
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
             work_dir,
+            file_signer: files::FileSigner::new(file_key),
             templates,
             assets,
         })
+    }
+}
+
+impl AppState {
+    /// Whether visitors are kept out (the Anonymous role can't view
+    /// posts). Files then need signed URLs.
+    pub fn is_private(&self) -> bool {
+        self.site
+            .get()
+            .system_role(uwuu_core::permissions::SystemRole::Anonymous)
+            .is_none_or(|role| !role.can(uwuu_core::permissions::Permission::ViewPosts))
+    }
+
+    /// The URL browsers load a stored file from, signed on private sites
+    /// when this server serves the files.
+    pub fn file_url(&self, key: &uwuu_storage::Key) -> String {
+        let url = self.storage.url(key);
+        if self.storage.served_by_app() && self.is_private() {
+            let now = time::OffsetDateTime::now_utc().unix_timestamp();
+            format!("{url}{}", self.file_signer.query(key.as_str(), now))
+        } else {
+            url
+        }
     }
 }
 
@@ -131,9 +166,12 @@ pub fn router(state: AppState) -> Router {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
     let routes = posts::routes()
         .merge(account::routes())
+        .merge(admin::routes())
+        .merge(bans::routes())
         .merge(edit::routes())
         .merge(favorites::routes())
         .merge(history::routes())
+        .merge(moderation::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(users::routes())
@@ -180,6 +218,10 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
 
     routes
         .fallback(error::not_found)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::block_banned_networks,
+        ))
         // Inner layer: runs after the session is known, so error pages can
         // show who is logged in.
         .layer(middleware::from_fn_with_state(

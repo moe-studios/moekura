@@ -1,17 +1,22 @@
 //! PostgreSQL access for uwuubooru.
 
 pub mod accounts;
+pub mod bans;
 pub mod favorites;
+pub mod flags;
 pub mod invites;
 pub mod jobs;
 pub mod media;
+pub mod mod_actions;
 pub mod post_versions;
 pub mod posts;
 pub mod roles;
 pub mod search;
+pub mod secrets;
 pub mod sessions;
 pub mod settings;
 pub mod site_cache;
+pub mod stats;
 pub mod tag_relations;
 pub mod tags;
 pub mod users;

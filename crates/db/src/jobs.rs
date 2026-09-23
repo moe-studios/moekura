@@ -187,6 +187,58 @@ pub async fn counts(db: impl PgExecutor<'_>) -> sqlx::Result<JobCounts> {
     .await
 }
 
+/// Job counts per kind and status.
+pub async fn counts_by_kind(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(String, String, i64)>> {
+    sqlx::query_as(
+        "SELECT kind, status, count(*) FROM jobs GROUP BY kind, status ORDER BY kind, status",
+    )
+    .fetch_all(db)
+    .await
+}
+
+/// A job that ran out of attempts.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct DeadJob {
+    pub id: i64,
+    pub kind: String,
+    pub payload: serde_json::Value,
+    pub attempts: i32,
+    pub last_error: Option<String>,
+    pub created_at: time::OffsetDateTime,
+}
+
+/// Dead jobs, newest first.
+pub async fn dead(db: impl PgExecutor<'_>, limit: i64) -> sqlx::Result<Vec<DeadJob>> {
+    sqlx::query_as(
+        "SELECT id, kind, payload, attempts, last_error, created_at FROM jobs
+         WHERE status = 'dead' ORDER BY id DESC LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// Gives a dead job a fresh set of attempts; false if it isn't dead.
+pub async fn retry(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE jobs SET status = 'queued', attempts = 0, run_at = now(), last_error = NULL
+         WHERE id = $1 AND status = 'dead'",
+    )
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Deletes a dead job; false if it isn't dead.
+pub async fn discard(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    let result = sqlx::query("DELETE FROM jobs WHERE id = $1 AND status = 'dead'")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
 #[cfg(test)]
 mod tests {
     use serde::{Deserialize, Serialize};

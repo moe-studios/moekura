@@ -42,6 +42,28 @@ pub async fn list(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<Role>> {
     Ok(rows.into_iter().map(Role::from).collect())
 }
 
+/// Renames a role and sets its permissions, telling every node's site
+/// cache.
+pub async fn update(
+    db: &sqlx::PgPool,
+    id: i32,
+    name: &str,
+    permissions: Permissions,
+) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE roles SET name = $2, permissions = $3 WHERE id = $1")
+        .bind(id)
+        .bind(name)
+        .bind(permissions.to_db())
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SELECT pg_notify($1, 'roles')")
+        .bind(crate::site_cache::CHANNEL)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await
+}
+
 pub async fn by_system(db: impl PgExecutor<'_>, role: SystemRole) -> sqlx::Result<Role> {
     let row: RoleRow = sqlx::query_as(select_roles!("WHERE system_key = $1"))
         .bind(role.key())

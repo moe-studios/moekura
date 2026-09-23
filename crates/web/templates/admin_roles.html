@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Roles · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "admin_nav.html" %}
+<h1>Roles</h1>
+<p class="hint">You can change roles ranked below your own. Anonymous is what logged-out visitors (and banned users) get.</p>
+{% for role in roles %}
+<section class="card role">
+  {% if role.editable %}
+  <form method="post" action="/admin/roles/{{ role.id }}">
+    <label for="role-{{ role.id }}">Name <span class="optional">(rank {{ role.rank }})</span></label>
+    <input id="role-{{ role.id }}" name="name" value="{{ role.name }}" maxlength="32" required>
+    <fieldset class="permissions">
+      <legend>Can</legend>
+      {% for p in role.permissions %}
+      <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.granted %} checked{% endif %}> {{ p.label }}</label>
+      {% endfor %}
+    </fieldset>
+    <button type="submit">Save {{ role.name }}</button>
+  </form>
+  {% else %}
+  <h2>{{ role.name }} <span class="optional">(rank {{ role.rank }})</span></h2>
+  <p class="hint">{% for p in role.permissions if p.granted %}{{ p.label }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

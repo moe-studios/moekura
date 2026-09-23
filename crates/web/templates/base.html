@@ -19,6 +19,8 @@
       <a href="/">Posts</a>
       <a href="/tags">Tags</a>
       {% if can_upload %}<a href="/upload">Upload</a>{% endif %}
+      {% if moderation_url %}<a href="{{ moderation_url }}">Moderation</a>{% endif %}
+      {% if can_admin %}<a href="/admin">Admin</a>{% endif %}
     </nav>
     <nav class="account" aria-label="Account">
       {% if me %}
@@ -33,6 +35,7 @@
       {% endif %}
     </nav>
   </header>
+  {% if banned %}<div class="flash banned" role="status">You are banned{% if banned.until %} until {{ banned.until }}{% endif %}: {{ banned.reason }}. You can look around but not post, edit or vote.</div>{% endif %}
   {% if flash %}<div class="flash" role="status">{{ flash }}</div>{% endif %}
   <main>
     {% block content %}{% endblock %}

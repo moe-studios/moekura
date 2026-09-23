@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use sqlx::PgPool;
-use uwuu_core::jobs::ProcessMedia;
+use uwuu_core::jobs::{ProcessMedia, PurgePost};
+use uwuu_core::posts::PostStatus;
 use uwuu_db::media::{self, Asset, Variant};
 use uwuu_media::{Media, MediaError, MediaType};
 use uwuu_storage::{Key, Storage};
@@ -22,10 +23,46 @@ pub struct MediaJobs {
 
 impl MediaJobs {
     pub fn register(self, registry: &mut Registry) {
+        let purger = self.clone();
         registry.register(move |job: ProcessMedia| {
             let jobs = self.clone();
             async move { jobs.process(job.asset_id).await }
         });
+        registry.register(move |job: PurgePost| {
+            let jobs = purger.clone();
+            async move { jobs.purge(job.post_id).await }
+        });
+    }
+
+    /// Removes a deleted post's files, then the post. Safe to repeat:
+    /// missing files and a missing post are fine. A post restored in the
+    /// meantime is left alone.
+    pub async fn purge(&self, post_id: i64) -> Result<(), JobError> {
+        let Some(post) = uwuu_db::posts::by_id(&self.db, post_id).await? else {
+            return Ok(());
+        };
+        if post.status != PostStatus::Deleted {
+            tracing::warn!(post_id, "purge skipped: the post is no longer deleted");
+            return Ok(());
+        }
+        if let Some(asset) = media::for_post(&self.db, post_id).await? {
+            let mut keys = vec![asset.storage_key.clone()];
+            keys.extend(
+                media::variants(&self.db, asset.id)
+                    .await?
+                    .into_iter()
+                    .map(|v| v.storage_key),
+            );
+            for key in keys.iter().filter_map(|k| Key::parse(k)) {
+                self.storage
+                    .delete(&key)
+                    .await
+                    .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
+            }
+        }
+        uwuu_db::posts::delete(&self.db, post_id).await?;
+        tracing::info!(post_id, "post purged");
+        Ok(())
     }
 
     /// Generates thumbnails at every configured size, plus a `sample` for
@@ -322,6 +359,45 @@ mod tests {
                 ("thumb-500".to_owned(), 320, 240),
             ]
         );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn purging_removes_files_then_the_post(pool: PgPool) {
+        let dir = scratch("purge");
+        let png = dir.join("p.png");
+        ffmpeg(
+            &png,
+            &["-f", "lavfi", "-i", "testsrc2=size=64x48", "-frames:v", "1"],
+        );
+        let (jobs, asset_id) = stored_asset(&pool, &dir, &png, "png", (64, 48)).await;
+        jobs.process(asset_id).await.unwrap();
+        let asset = media::by_id(&pool, asset_id).await.unwrap().unwrap();
+        let mut keys = vec![Key::parse(&asset.storage_key).unwrap()];
+        for v in media::variants(&pool, asset_id).await.unwrap() {
+            keys.push(Key::parse(&v.storage_key).unwrap());
+        }
+
+        // Not deleted: left alone.
+        jobs.purge(asset.post_id).await.unwrap();
+        assert!(jobs.storage.exists(&keys[0]).await.unwrap());
+
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(asset.post_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        jobs.purge(asset.post_id).await.unwrap();
+        for key in &keys {
+            assert!(!jobs.storage.exists(key).await.unwrap(), "{key}");
+        }
+        assert!(
+            uwuu_db::posts::by_id(&pool, asset.post_id)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // Again: nothing left to do.
+        jobs.purge(asset.post_id).await.unwrap();
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

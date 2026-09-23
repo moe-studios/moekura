@@ -172,6 +172,14 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post
     row.map(Post::try_from).transpose()
 }
 
+/// How many posts a user uploaded, leaving out deleted ones.
+pub async fn count_by_uploader(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<i64> {
+    sqlx::query_scalar("SELECT count(*) FROM posts WHERE uploader_id = $1 AND status <> 'deleted'")
+        .bind(user_id)
+        .fetch_one(db)
+        .await
+}
+
 /// Like [`by_id`], locking the row until the transaction ends so edits
 /// don't overwrite each other.
 pub async fn lock(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post>> {

@@ -22,6 +22,7 @@ mod templates;
 #[cfg(test)]
 mod test_support;
 mod upload;
+mod users;
 
 use std::future::Future;
 use std::io;
@@ -134,6 +135,7 @@ pub fn router(state: AppState) -> Router {
         .merge(history::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
+        .merge(users::routes())
         .merge(upload::routes(max_upload_bytes));
     with_middleware(routes, state)
 }

@@ -21,6 +21,8 @@ pub struct User {
     pub status: UserStatus,
     pub created_at: OffsetDateTime,
     pub last_seen_at: Option<OffsetDateTime>,
+    /// Preferences as stored; read with `uwuu_core::user_settings`.
+    pub settings: serde_json::Value,
 }
 
 pub struct NewUser<'a> {
@@ -45,7 +47,7 @@ pub enum InsertError {
 macro_rules! select_users {
     ($rest:literal) => {
         concat!(
-            "SELECT id, name::text, email::text, role_id, status, created_at, last_seen_at FROM users ",
+            "SELECT id, name::text, email::text, role_id, status, created_at, last_seen_at, settings FROM users ",
             $rest
         )
     };
@@ -55,7 +57,7 @@ pub async fn insert(db: impl PgExecutor<'_>, user: NewUser<'_>) -> Result<User, 
     sqlx::query_as(
         "INSERT INTO users (name, email, password_hash, role_id, status)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, name::text, email::text, role_id, status, created_at, last_seen_at",
+         RETURNING id, name::text, email::text, role_id, status, created_at, last_seen_at, settings",
     )
     .bind(user.name)
     .bind(user.email)
@@ -98,7 +100,7 @@ pub async fn credentials_by_name(
         password_hash: Option<String>,
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT id, name::text, email::text, role_id, status, created_at, last_seen_at, password_hash
+        "SELECT id, name::text, email::text, role_id, status, created_at, last_seen_at, settings, password_hash
          FROM users WHERE name = $1::citext",
     )
     .bind(name)
@@ -111,6 +113,19 @@ pub async fn set_password_hash(db: impl PgExecutor<'_>, id: i64, hash: &str) -> 
     sqlx::query("UPDATE users SET password_hash = $2 WHERE id = $1")
         .bind(id)
         .bind(hash)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_settings(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    settings: &serde_json::Value,
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET settings = $2 WHERE id = $1")
+        .bind(id)
+        .bind(settings)
         .execute(db)
         .await?;
     Ok(())

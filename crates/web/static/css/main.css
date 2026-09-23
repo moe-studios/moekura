@@ -18,8 +18,10 @@
   line-height: 1.5;
 }
 
+/* Dark colours: from the browser's preference unless the user picked a
+   theme (data-theme on <html>). Keep the two blocks the same. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #16141a;
     --surface: #1f1c24;
     --text: #ece9f1;
@@ -28,8 +30,30 @@
     --accent: #f06595;
     --accent-text: #16141a;
     --danger: #ff8787;
+    --tag-general: #4fa3ff;
+    --tag-artist: #ff8a8b;
+    --tag-copyright: #d98cff;
+    --tag-character: #35c64a;
+    --tag-meta: #ffb54a;
   }
 }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+    --bg: #16141a;
+    --surface: #1f1c24;
+    --text: #ece9f1;
+    --muted: #a39fad;
+    --border: #34303b;
+    --accent: #f06595;
+    --accent-text: #16141a;
+    --danger: #ff8787;
+    --tag-general: #4fa3ff;
+    --tag-artist: #ff8a8b;
+    --tag-copyright: #d98cff;
+    --tag-character: #35c64a;
+    --tag-meta: #ffb54a;
+}
+:root[data-theme="light"] { color-scheme: light; }
 
 * { box-sizing: border-box; }
 
@@ -255,15 +279,6 @@ label.choice { display: flex; align-items: center; gap: 6px; font-weight: normal
   --tag-character: #00ab2c;
   --tag-meta: #d57800;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --tag-general: #4fa3ff;
-    --tag-artist: #ff8a8b;
-    --tag-copyright: #d98cff;
-    --tag-character: #35c64a;
-    --tag-meta: #ffb54a;
-  }
-}
 .tag { color: var(--tag-general); overflow-wrap: anywhere; }
 .tag-artist { color: var(--tag-artist); }
 .tag-copyright { color: var(--tag-copyright); }
@@ -403,3 +418,7 @@ button.icon {
 button.icon:hover { color: var(--accent); border-color: var(--accent); }
 button.icon[aria-pressed="true"] { color: var(--accent-text); background: var(--accent); border-color: var(--accent); }
 .score, .fav-count { font-variant-numeric: tabular-nums; min-width: 1.5em; text-align: center; }
+
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; }

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Settings · {{ site.name }}{% endblock %}
+{% block content %}
+<section class="card medium">
+  <h1>Settings</h1>
+  <form method="post" action="/settings">
+    <label for="per_page">Posts per page</label>
+    <select id="per_page" name="per_page">
+      <option value="">Site default ({{ default_per_page }})</option>
+      {% for n in per_page_choices %}
+      <option value="{{ n }}"{% if per_page == n %} selected{% endif %}>{{ n }}</option>
+      {% endfor %}
+    </select>
+    <fieldset class="ratings">
+      <legend>Theme</legend>
+      {% for t in themes %}
+      <label class="choice"><input type="radio" name="theme" value="{{ t }}"{% if theme == t %} checked{% endif %}> {{ t|capitalize }}</label>
+      {% endfor %}
+    </fieldset>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}

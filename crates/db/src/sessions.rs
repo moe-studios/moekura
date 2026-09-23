@@ -74,7 +74,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT s.id AS session_id, s.last_used_at,
-                u.id, u.name::text, u.email::text, u.role_id, u.status, u.created_at, u.last_seen_at
+                u.id, u.name::text, u.email::text, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'",
     )

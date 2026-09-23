@@ -11,6 +11,7 @@ use time::format_description::well_known::Rfc3339;
 use uwuu_core::permissions::Permission;
 use uwuu_core::posts::{PostStatus, Rating};
 use uwuu_core::search::{Order, Query as SearchQuery};
+use uwuu_core::user_settings::UserSettings;
 use uwuu_db::media::{self, Variant};
 use uwuu_db::posts::{self, Card, Post, Visibility};
 use uwuu_db::search::{Count, PageRef, Plan, SearchError};
@@ -61,7 +62,17 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
     let db = state.db.read();
-    let config = &state.config.search;
+    // The user's page size, within the site's limit.
+    let mut config = state.config.search.clone();
+    if let Some(per_page) = page
+        .current
+        .user
+        .as_ref()
+        .and_then(|u| UserSettings::from_json(&u.settings).per_page)
+    {
+        config.per_page = per_page.min(config.max_per_page);
+    }
+    let config = &config;
     let input = params.tags.trim();
     let page_ref: PageRef = if params.page.is_empty() {
         PageRef::default()

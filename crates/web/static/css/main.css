@@ -445,3 +445,11 @@ form.vote button[type="submit"], form.favorite button[type="submit"] { margin: 0
 .log .reason { margin-top: 2px; }
 button.danger { background: var(--danger); }
 .moderate form + form { margin-top: 12px; }
+.review { list-style: none; margin: 0; padding: 0; }
+.review > li { display: flex; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.review-thumb img { display: block; max-width: 180px; max-height: 180px; width: auto; height: auto; border-radius: var(--radius); }
+.review-body { flex: 1; min-width: 0; }
+.review-body p { margin: 0 0 6px; }
+.review-tags { color: var(--muted); overflow-wrap: anywhere; }
+.actions form.reject { flex-direction: row; gap: 6px; }
+.actions form.reject input { padding: 3px 8px; }

@@ -202,6 +202,25 @@ pub async fn delete(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
     Ok(result.rows_affected() == 1)
 }
 
+/// Posts with `status`, oldest first, after `after` (keyset), with their
+/// uploaders' names.
+pub async fn by_status(
+    db: impl PgExecutor<'_>,
+    status: PostStatus,
+    after: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<(i64, Option<String>)>> {
+    sqlx::query_as(
+        "SELECT p.id, u.name::text FROM posts p LEFT JOIN users u ON u.id = p.uploader_id
+         WHERE p.status = $1 AND p.id > $2 ORDER BY p.id LIMIT $3",
+    )
+    .bind(status.as_str())
+    .bind(after)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// How many posts a user uploaded, leaving out deleted ones.
 pub async fn count_by_uploader(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<i64> {
     sqlx::query_scalar("SELECT count(*) FROM posts WHERE uploader_id = $1 AND status <> 'deleted'")

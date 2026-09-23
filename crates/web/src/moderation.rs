@@ -15,7 +15,8 @@ use uwuu_core::posts::PostStatus;
 use uwuu_db::mod_actions::NewAction;
 use uwuu_db::mod_actions::{self, Entry, Filter};
 use uwuu_db::users;
-use uwuu_db::{jobs, posts};
+use uwuu_db::{jobs, posts, tags};
+use uwuu_storage::Key;
 
 use crate::AppState;
 use crate::error::AppError;
@@ -29,6 +30,9 @@ const LOG_PAGE: i64 = 50;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/moderation/log", get(log))
+        .route("/moderation/queue", get(queue))
+        .route("/posts/{id}/approve", post(approve))
+        .route("/posts/{id}/reject", post(reject))
         .route("/posts/{id}/delete", post(delete))
         .route("/posts/{id}/restore", post(restore))
         .route("/posts/{id}/purge", post(purge))
@@ -134,6 +138,119 @@ async fn purge(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Respon
     jobs::enqueue(&mut tx, &PurgePost { post_id: id }).await?;
     tx.commit().await?;
     Ok(back_to(jar, "/posts?tags=status%3Adeleted"))
+}
+
+/// Posts per page of the approval queue.
+const QUEUE_PAGE: i64 = 30;
+
+#[derive(Debug, Default, Deserialize)]
+struct QueueQuery {
+    after: Option<i64>,
+}
+
+/// Grid-like cards for `ids` with their tag names, for queues.
+pub(crate) async fn review_cards(
+    state: &AppState,
+    ids: &[i64],
+    uploaders: &[(i64, Option<String>)],
+) -> Result<Vec<Value>, AppError> {
+    let db = state.db.primary();
+    let sizes = &state.media.config().thumbnail_sizes;
+    let size = sizes.get(1).or(sizes.first()).copied().unwrap_or(250);
+    let kind = format!("thumb-{size}");
+    let cards = posts::cards(db, ids, (&kind, &kind)).await?;
+    let mut tag_ids: Vec<i32> = cards
+        .iter()
+        .flat_map(|c| c.tag_ids.iter().copied())
+        .collect();
+    tag_ids.sort_unstable();
+    tag_ids.dedup();
+    let names: std::collections::HashMap<i32, String> = tags::by_ids(db, &tag_ids)
+        .await?
+        .into_iter()
+        .map(|t| (t.id, t.name))
+        .collect();
+    Ok(cards
+        .iter()
+        .map(|card| {
+            let mut card_tags: Vec<&str> = card
+                .tag_ids
+                .iter()
+                .filter_map(|id| names.get(id).map(String::as_str))
+                .collect();
+            card_tags.sort_unstable();
+            let thumb = card
+                .thumb
+                .as_deref()
+                .and_then(Key::parse)
+                .map(|k| Value::from_safe_string(state.storage.url(&k)));
+            context! {
+                id => card.id,
+                thumb => thumb,
+                rating => card.rating,
+                tags => card_tags.join(" "),
+                uploader => uploaders.iter().find(|(id, _)| *id == card.id).and_then(|(_, u)| u.clone()),
+            }
+        })
+        .collect())
+}
+
+async fn queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, AppError> {
+    page.current.require(Permission::ApprovePosts)?;
+    let state = page.state();
+    let pending = posts::by_status(
+        state.db.primary(),
+        PostStatus::Pending,
+        query.after.unwrap_or(0),
+        QUEUE_PAGE,
+    )
+    .await?;
+    let ids: Vec<i64> = pending.iter().map(|(id, _)| *id).collect();
+    let cards = review_cards(state, &ids, &pending).await?;
+    let more = (ids.len() == QUEUE_PAGE as usize)
+        .then(|| {
+            ids.last()
+                .map(|id| url_value(&format!("/moderation/queue?after={id}")))
+        })
+        .flatten();
+    Ok(page.render(
+        "moderation_queue.html",
+        context! { posts => cards, more_url => more },
+    ))
+}
+
+async fn approve(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
+    page.current.require(Permission::ApprovePosts)?;
+    change_status(
+        &page,
+        id,
+        &[PostStatus::Pending],
+        PostStatus::Active,
+        ActionKind::PostApprove,
+        "",
+    )
+    .await?;
+    Ok(back_to(jar, "/moderation/queue"))
+}
+
+async fn reject(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ApprovePosts)?;
+    let reason = check_reason(&form.reason)?;
+    change_status(
+        &page,
+        id,
+        &[PostStatus::Pending],
+        PostStatus::Deleted,
+        ActionKind::PostReject,
+        reason,
+    )
+    .await?;
+    Ok(back_to(jar, "/moderation/queue"))
 }
 
 /// The latest deletion or rejection of a post, for its page.
@@ -338,6 +455,77 @@ mod tests {
             logged,
             ["post.delete", "post.restore", "post.delete", "post.purge"]
         );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn the_approval_queue(pool: PgPool) {
+        uwuu_db::settings::set(&pool, "upload_approval", serde_json::json!(true))
+            .await
+            .unwrap();
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::posts::routes())
+                .merge(crate::upload::routes(max)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let mut ids = Vec::new();
+        for (i, tags) in ["cat", "dog"].iter().enumerate() {
+            let response = app
+                .post_multipart(
+                    "/upload",
+                    Some(&alice),
+                    &[("rating", "g".to_owned()), ("tags", (*tags).to_owned())],
+                    Some((
+                        "a.png",
+                        &crate::test_support::fixture::png(20 + 4 * i as u32, 20),
+                    )),
+                )
+                .await;
+            ids.push(
+                response.location.unwrap()["/posts/".len()..]
+                    .parse::<i64>()
+                    .unwrap(),
+            );
+        }
+        assert_eq!(
+            app.get("/moderation/queue", Some(&alice)).await.status,
+            StatusCode::FORBIDDEN
+        );
+        let queue = app.get("/moderation/queue", Some(&janitor)).await.body;
+        let first = queue.find(&format!("/posts/{}/approve", ids[0])).unwrap();
+        let second = queue.find(&format!("/posts/{}/approve", ids[1])).unwrap();
+        assert!(first < second, "oldest first");
+        assert!(queue.contains("class=\"review-tags\">cat<"), "{queue}");
+
+        app.post(&format!("/posts/{}/approve", ids[0]), Some(&janitor), &[])
+            .await;
+        app.post_form(
+            &format!("/posts/{}/reject", ids[1]),
+            Some(&janitor),
+            &[],
+            "reason=blurry",
+        )
+        .await;
+        let statuses: Vec<String> = sqlx::query_scalar("SELECT status FROM posts ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(statuses, ["active", "deleted"]);
+        assert!(
+            !app.get("/moderation/queue", Some(&janitor))
+                .await
+                .body
+                .contains("/approve")
+        );
+        // Approving twice is refused.
+        let again = app
+            .post(&format!("/posts/{}/approve", ids[0]), Some(&janitor), &[])
+            .await;
+        assert_eq!(again.status, StatusCode::BAD_REQUEST);
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

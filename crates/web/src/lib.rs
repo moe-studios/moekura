@@ -1,9 +1,13 @@
 //! HTTP server for uwuubooru: HTML pages, the JSON API and operational
 //! endpoints, all sharing one router.
 
+mod assets;
 pub mod auth;
 pub mod error;
+pub mod flash;
 mod health;
+pub mod pages;
+mod templates;
 #[cfg(test)]
 mod test_support;
 
@@ -14,8 +18,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
-use axum::http::{Request, StatusCode};
+use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_CONTENT_TYPE_OPTIONS};
+use axum::http::{HeaderValue, Request, StatusCode};
 use axum::middleware;
+use axum::routing::get;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -24,12 +30,22 @@ use tower_http::csrf::CsrfLayer;
 use tower_http::request_id::{
     MakeRequestUuid, PropagateRequestIdLayer, RequestId, SetRequestIdLayer,
 };
+use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
 use uwuu_core::config::Config;
 use uwuu_db::Db;
 use uwuu_db::site_cache::SiteCache;
+
+use crate::assets::Assets;
+use crate::templates::Templates;
+
+/// Scripts, styles and media only from our own origin; no framing, no
+/// plugins, forms only to ourselves.
+const CSP: &str = "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; \
+    style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
+    frame-ancestors 'none'; form-action 'self'";
 
 /// Shared state handed to every handler.
 #[derive(Clone)]
@@ -38,10 +54,39 @@ pub struct AppState {
     pub db: Db,
     /// Site settings and roles, kept current across nodes.
     pub site: SiteCache,
+    templates: Arc<Templates>,
+    assets: Arc<Assets>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum StartupError {
+    #[error("could not load static files: {0}")]
+    Assets(#[from] io::Error),
+    #[error("could not load templates: {0:#}")]
+    Templates(#[from] minijinja::Error),
+}
+
+impl AppState {
+    /// Loads static files and compiles templates, honouring the override
+    /// directories in `config.paths`.
+    pub fn new(config: Config, db: Db, site: SiteCache) -> Result<Self, StartupError> {
+        let assets = Arc::new(Assets::load(config.paths.static_override.as_deref())?);
+        let templates = Arc::new(Templates::load(
+            config.paths.templates_override.clone(),
+            assets.clone(),
+        )?);
+        Ok(Self {
+            config: Arc::new(config),
+            db,
+            site,
+            templates,
+            assets,
+        })
+    }
 }
 
 pub fn router(state: AppState) -> Router {
-    with_middleware(Router::new(), state)
+    with_middleware(pages::routes(), state)
 }
 
 /// Wraps `routes` (the pages and API) in session handling and the global
@@ -64,15 +109,35 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
             Duration::from_secs(server.request_timeout_secs),
         ))
         .layer(CompressionLayer::new())
-        .layer(csrf);
+        .layer(csrf)
+        .layer(SetResponseHeaderLayer::if_not_present(
+            CONTENT_SECURITY_POLICY,
+            HeaderValue::from_static(CSP),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ));
 
     routes
+        .fallback(error::not_found)
+        // Inner layer: runs after the session is known, so error pages can
+        // show who is logged in.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            error::render_errors,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::resolve_session,
         ))
-        // Probes skip session handling.
+        // Probes and static files skip session handling.
         .merge(health::routes())
+        .route("/static/{*path}", get(assets::serve))
         .layer(middleware)
         .with_state(state)
 }

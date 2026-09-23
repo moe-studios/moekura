@@ -1,0 +1,114 @@
+/* uwuubooru base styles. Override by placing css/main.css in
+   paths.static_override. Colours are tokens so themes can swap them. */
+
+:root {
+  color-scheme: light dark;
+  --bg: #fbfafc;
+  --surface: #ffffff;
+  --text: #1f1d24;
+  --muted: #6b6775;
+  --border: #e4e1ea;
+  --accent: #d6336c;
+  --accent-text: #ffffff;
+  --danger: #c92a2a;
+  --radius: 8px;
+  --gutter: 16px;
+  --max-width: 1200px;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16141a;
+    --surface: #1f1c24;
+    --text: #ece9f1;
+    --muted: #a39fad;
+    --border: #34303b;
+    --accent: #f06595;
+    --accent-text: #16141a;
+    --danger: #ff8787;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+main {
+  flex: 1;
+  width: 100%;
+  max-width: var(--max-width);
+  margin: 0 auto;
+  padding: var(--gutter);
+}
+
+.site-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 24px;
+  padding: 12px var(--gutter);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand { font-weight: 700; font-size: 1.15rem; color: var(--text); }
+.primary { display: flex; gap: 16px; flex: 1; }
+.account { display: flex; align-items: center; gap: 12px; }
+.account form { margin: 0; }
+.who { color: var(--muted); }
+
+.button, button {
+  display: inline-block;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.button:hover, button:hover { filter: brightness(1.08); text-decoration: none; }
+
+button.link {
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  font-weight: inherit;
+}
+button.link:hover { text-decoration: underline; }
+
+.flash {
+  max-width: var(--max-width);
+  margin: var(--gutter) auto 0;
+  width: calc(100% - 2 * var(--gutter));
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.empty { text-align: center; padding: 64px 0; color: var(--muted); }
+.empty h1 { color: var(--text); margin: 0 0 8px; }
+.status-code { font-size: 3rem; font-weight: 800; color: var(--accent); margin: 0; }
+
+.site-footer {
+  padding: 16px var(--gutter);
+  color: var(--muted);
+  font-size: 0.875rem;
+  text-align: center;
+  border-top: 1px solid var(--border);
+}

@@ -45,7 +45,6 @@ mod tests {
     use http_body_util::BodyExt;
     use sqlx::PgPool;
     use sqlx::postgres::PgPoolOptions;
-    use std::sync::Arc;
     use tower::ServiceExt;
 
     use uwuu_core::config::Config;
@@ -56,11 +55,12 @@ mod tests {
     use crate::{AppState, router};
 
     fn app(pool: PgPool) -> axum::Router {
-        let state = AppState {
-            config: Arc::new(Config::default()),
-            db: Db::from_pools(pool, vec![]),
-            site: SiteCache::from_snapshot(SiteSnapshot::new(SiteSettings::default(), vec![])),
-        };
+        let state = AppState::new(
+            Config::default(),
+            Db::from_pools(pool, vec![]),
+            SiteCache::from_snapshot(SiteSnapshot::new(SiteSettings::default(), vec![])),
+        )
+        .unwrap();
         router(state)
     }
 

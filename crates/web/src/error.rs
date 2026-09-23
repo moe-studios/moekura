@@ -1,7 +1,15 @@
-//! The error type handlers return.
+//! The error type handlers return, and the middleware that turns errors
+//! into HTML pages.
 
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
+use axum::extract::{Request, State};
+use axum::http::header::SET_COOKIE;
+use axum::http::{Method, StatusCode};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Redirect, Response};
+use minijinja::context;
+
+use crate::AppState;
+use crate::auth::CurrentUser;
 
 #[derive(Debug)]
 pub enum AppError {
@@ -43,8 +51,66 @@ impl IntoResponse for AppError {
         if let AppError::Internal(detail) = &self {
             tracing::error!(error = %detail, "internal error");
         }
-        (self.status(), self.public_message().to_owned()).into_response()
+        let page = ErrorPage {
+            status: self.status(),
+            message: self.public_message().to_owned(),
+        };
+        // Plain text by default; `render_errors` upgrades it to a page.
+        let mut response = (page.status, page.message.clone()).into_response();
+        response.extensions_mut().insert(page);
+        response
     }
+}
+
+/// Marks a response as an error for [`render_errors`].
+#[derive(Debug, Clone)]
+struct ErrorPage {
+    status: StatusCode,
+    message: String,
+}
+
+/// Middleware: renders [`AppError`] responses as HTML pages. Visitors who
+/// need to log in are sent to the login page and brought back afterwards.
+pub async fn render_errors(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let current = request.extensions().get::<CurrentUser>().cloned();
+    let is_get = request.method() == Method::GET;
+    let target = request
+        .uri()
+        .path_and_query()
+        .map_or_else(|| "/".to_owned(), ToString::to_string);
+
+    let response = next.run(request).await;
+    let Some(page) = response.extensions().get::<ErrorPage>().cloned() else {
+        return response;
+    };
+
+    let mut rendered = if page.status == StatusCode::UNAUTHORIZED && is_get {
+        let next: String = url::form_urlencoded::byte_serialize(target.as_bytes()).collect();
+        Redirect::to(&format!("/login?next={next}")).into_response()
+    } else {
+        let context = context! { status => page.status.as_u16(), message => page.message };
+        crate::pages::render(
+            &state,
+            current.as_ref(),
+            None,
+            page.status,
+            "error.html",
+            context,
+        )
+    };
+    // Keep cookies the handler set (e.g. clearing a stale session).
+    for cookie in response.headers().get_all(SET_COOKIE) {
+        rendered.headers_mut().append(SET_COOKIE, cookie.clone());
+    }
+    rendered
+}
+
+pub async fn not_found() -> AppError {
+    AppError::NotFound
 }
 
 impl From<sqlx::Error> for AppError {

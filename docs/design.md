@@ -64,8 +64,9 @@ crates/
   jobs/        # PG job queue + job handlers
   web/         # axum routers: html/, api/v1/, compat/danbooru/, auth, middleware
   app/         # binary: clap CLI, config loading, wiring
-frontend/      # ts/, css/, esbuild config → built into web assets
-templates/     # default minijinja templates (overridable)
+frontend/      # ts/ + esbuild config (added with the first JS, see M4) → built into web assets
+crates/web/templates/  # default minijinja templates (overridable via paths.templates_override)
+crates/web/static/     # CSS, icons; served under content-hashed URLs (overridable via paths.static_override)
 locales/       # fluent .ftl files
 deploy/        # compose (tiny + scaled), systemd unit, Caddy/nginx examples; Helm later (Dockerfile at repo root)
 docs/          # mdBook: admin guide, API, search syntax, scaling guide

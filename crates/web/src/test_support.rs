@@ -1,7 +1,5 @@
 //! Helpers for driving the router in tests.
 
-use std::sync::Arc;
-
 use axum::Router;
 use axum::body::Body;
 use axum::http::header::{COOKIE, SET_COOKIE};
@@ -17,11 +15,12 @@ use crate::auth::SESSION_COOKIE;
 use crate::{AppState, with_middleware};
 
 pub async fn test_state(pool: &PgPool) -> AppState {
-    AppState {
-        config: Arc::new(Config::default()),
-        db: Db::from_pools(pool.clone(), vec![]),
-        site: SiteCache::load(pool).await.unwrap(),
-    }
+    AppState::new(
+        Config::default(),
+        Db::from_pools(pool.clone(), vec![]),
+        SiteCache::load(pool).await.unwrap(),
+    )
+    .unwrap()
 }
 
 pub struct TestApp {
@@ -32,7 +31,6 @@ pub struct TestResponse {
     pub status: StatusCode,
     pub body: String,
     pub set_cookie: Vec<String>,
-    #[allow(dead_code)] // for the page tests in #7
     pub location: Option<String>,
 }
 
@@ -53,6 +51,12 @@ impl TestApp {
         Self {
             router: with_middleware(routes, state),
         }
+    }
+
+    /// The raw response, for checking headers.
+    pub async fn get_full(&self, path: &str) -> axum::response::Response {
+        let request = Request::get(path).body(Body::empty()).unwrap();
+        self.router.clone().oneshot(request).await.unwrap()
     }
 
     pub async fn get(&self, path: &str, session: Option<&str>) -> TestResponse {

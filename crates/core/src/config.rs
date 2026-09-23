@@ -6,6 +6,7 @@
 
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use url::Url;
@@ -16,6 +17,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
+    pub paths: PathsConfig,
     pub telemetry: TelemetryConfig,
 }
 
@@ -91,6 +93,15 @@ impl Default for AuthConfig {
             session_max_days: 365,
         }
     }
+}
+
+/// Directories whose files replace the built-in ones with the same relative
+/// path, for theming without recompiling.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PathsConfig {
+    pub templates_override: Option<PathBuf>,
+    pub static_override: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -186,6 +197,17 @@ impl Config {
                 key: "auth.session_max_days",
                 message: "must not be less than auth.session_idle_days".into(),
             });
+        }
+        for (key, dir) in [
+            ("paths.templates_override", &self.paths.templates_override),
+            ("paths.static_override", &self.paths.static_override),
+        ] {
+            if let Some(dir) = dir.as_ref().filter(|d| !d.is_dir()) {
+                problems.push(ConfigProblem {
+                    key,
+                    message: format!("{} is not a directory", dir.display()),
+                });
+            }
         }
         if self.server.request_timeout_secs == 0 {
             problems.push(ConfigProblem {

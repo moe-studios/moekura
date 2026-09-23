@@ -38,6 +38,12 @@ session_idle_days = 30
 # ...or this many days after logging in, however active.
 session_max_days = 365
 
+[paths]
+# Directories whose files replace built-in templates and static files with
+# the same relative path, e.g. <templates_override>/base.html. Unset by default.
+# templates_override = "/etc/uwuubooru/templates"
+# static_override = "/etc/uwuubooru/static"
+
 [telemetry]
 # "text" or "json".
 log_format = "text"

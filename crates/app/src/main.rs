@@ -3,7 +3,6 @@ mod config;
 mod telemetry;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -99,11 +98,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         tokio::spawn(prune_sessions(db.clone())),
     ];
 
-    let state = AppState {
-        config: Arc::new(config),
-        db: db.clone(),
-        site,
-    };
+    let state = AppState::new(config, db.clone(), site)?;
     let app = uwuu_web::router(state);
     uwuu_web::serve(listener, app, shutdown_signal()).await?;
 

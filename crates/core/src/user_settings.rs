@@ -38,6 +38,8 @@ pub struct UserSettings {
     /// `None` uses the site's default.
     pub per_page: Option<u32>,
     pub theme: Theme,
+    /// `None` until the user saves one: the site's default applies.
+    pub blacklist: Option<String>,
 }
 
 impl UserSettings {
@@ -52,7 +54,15 @@ impl UserSettings {
             .and_then(Value::as_str)
             .and_then(Theme::parse)
             .unwrap_or_default();
-        Self { per_page, theme }
+        let blacklist = value
+            .get("blacklist")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        Self {
+            per_page,
+            theme,
+            blacklist,
+        }
     }
 
     /// `previous` with these settings written over it, keeping fields this
@@ -64,6 +74,10 @@ impl UserSettings {
             None => map.remove("per_page"),
         };
         map.insert("theme".into(), self.theme.as_str().into());
+        match &self.blacklist {
+            Some(text) => map.insert("blacklist".into(), text.as_str().into()),
+            None => map.remove("blacklist"),
+        };
         Value::Object(map)
     }
 }
@@ -91,7 +105,8 @@ mod tests {
             settings,
             UserSettings {
                 per_page: Some(100),
-                theme: Theme::Dark
+                theme: Theme::Dark,
+                blacklist: None,
             }
         );
     }
@@ -102,6 +117,7 @@ mod tests {
         let settings = UserSettings {
             per_page: None,
             theme: Theme::Light,
+            blacklist: None,
         };
         assert_eq!(
             settings.to_json(&previous),

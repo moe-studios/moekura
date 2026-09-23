@@ -1,12 +1,14 @@
 //! User profiles and the logged-in user's settings.
 
 use axum::extract::Path;
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::Deserialize;
+use uwuu_core::blacklist::Blacklist;
 use uwuu_core::permissions::Permission;
 use uwuu_core::user_settings::{PER_PAGE_CHOICES, Theme, UserSettings};
 use uwuu_db::users::{self, UserStatus};
@@ -55,17 +57,35 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
 async fn settings_form(page: Page) -> Result<Response, AppError> {
     let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
     let settings = UserSettings::from_json(&user.settings);
+    let blacklist = crate::blacklist::text_for(page.state(), &page.current);
+    Ok(render_settings(&page, &settings, &blacklist, None))
+}
+
+fn render_settings(
+    page: &Page,
+    settings: &UserSettings,
+    blacklist: &str,
+    error: Option<String>,
+) -> Response {
     let max = page.state().config.search.max_per_page;
-    Ok(page.render(
+    let status = if error.is_some() {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        StatusCode::OK
+    };
+    page.render_with_status(
+        status,
         "settings.html",
         context! {
+            error => error,
+            blacklist => blacklist,
             per_page => settings.per_page,
             default_per_page => page.state().config.search.per_page,
             per_page_choices => PER_PAGE_CHOICES.iter().filter(|&&n| n <= max).collect::<Vec<_>>(),
-            theme => settings.theme.as_str(),
+            current_theme => settings.theme.as_str(),
             themes => Theme::ALL.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         },
-    ))
+    )
 }
 
 #[derive(Debug, Deserialize)]
@@ -75,6 +95,8 @@ struct SettingsForm {
     per_page: String,
     #[serde(default)]
     theme: String,
+    #[serde(default)]
+    blacklist: String,
 }
 
 async fn save_settings(
@@ -95,7 +117,20 @@ async fn save_settings(
     };
     let theme =
         Theme::parse(&form.theme).ok_or_else(|| AppError::BadRequest("Unknown theme".into()))?;
-    let settings = UserSettings { per_page, theme };
+    let blacklist = form.blacklist.replace("\r\n", "\n");
+    let settings = UserSettings {
+        per_page,
+        theme,
+        blacklist: Some(blacklist.trim().to_owned()),
+    };
+    if let Err(error) = Blacklist::parse(&blacklist) {
+        return Ok(render_settings(
+            &page,
+            &settings,
+            &blacklist,
+            Some(error.to_string()),
+        ));
+    }
     users::set_settings(
         page.state().db.primary(),
         user.id,
@@ -115,6 +150,9 @@ mod tests {
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
     async fn profiles_and_settings(pool: PgPool) {
+        uwuu_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
+            .await
+            .unwrap();
         let app = TestApp::new(
             test_state(&pool).await,
             super::routes().merge(crate::posts::routes()),
@@ -148,6 +186,25 @@ mod tests {
         // The page size applies to searches.
         let grid = app.get("/", Some(&alice)).await;
         assert_eq!(grid.status, StatusCode::OK);
+
+        // The blacklist starts as the site default.
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let page = app.get("/settings", Some(&bob)).await;
+        assert!(page.body.contains(">rating:e</textarea>"), "{}", page.body);
+        let response = app
+            .post_form(
+                "/settings",
+                Some(&bob),
+                &[],
+                "theme=system&blacklist=score%3A1",
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            response.body.contains("only tags, -tags and rating:"),
+            "{}",
+            response.body
+        );
 
         let bad = app
             .post_form("/settings", Some(&alice), &[], "per_page=7&theme=dark")

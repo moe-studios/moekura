@@ -5,7 +5,9 @@
   <section class="post-media">
     {% if post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
-    {% if file.video %}
+    {% if blacklisted %}
+    <p class="notice blacklisted">This post matches your blacklist (<code>{{ blacklisted.rule }}</code>). <a href="{{ blacklisted.show_url }}">Show it anyway</a></p>
+    {% elif file.video %}
     <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
            width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
     {% else %}

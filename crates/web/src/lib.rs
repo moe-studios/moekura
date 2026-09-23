@@ -4,6 +4,7 @@
 mod account;
 mod assets;
 pub mod auth;
+mod blacklist;
 mod client_ip;
 mod edit;
 pub mod error;

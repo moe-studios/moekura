@@ -77,6 +77,13 @@ uwuubooru admin settings                               # show all settings
 uwuubooru admin settings set registration_mode closed  # open | invite | approval | closed
 ```
 
+Every post is shown to visitors by default. To hide some unless people opt
+in, set a default blacklist (users can change their own under Settings):
+
+```sh
+uwuubooru admin settings set default_blacklist "rating:e"
+```
+
 `GET /healthz` reports that the process is up. `GET /readyz` also checks
 the database; point load balancers at it.
 

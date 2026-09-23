@@ -52,6 +52,9 @@ struct IndexQuery {
     tags: String,
     #[serde(default)]
     page: String,
+    /// `off` shows posts the viewer's blacklist would hide.
+    #[serde(default)]
+    blacklist: String,
 }
 
 /// Tags listed beside search results.
@@ -121,12 +124,42 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             .append_pair("q", &normalized)
             .finish()
     });
-    let card_values: Vec<Value> = cards
+    // Blacklisted posts are left out of the page entirely, with a count
+    // and a link to show them.
+    let show_all = params.blacklist == "off";
+    let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
+    let (shown, hidden): (Vec<&Card>, Vec<&Card>) = cards.iter().partition(|card| {
+        show_all
+            || blacklist.as_ref().is_none_or(|list| {
+                let rating = card.rating.parse().unwrap_or(Rating::Explicit);
+                list.matching(rating, &card.tag_ids).is_none()
+            })
+    });
+    let blacklist_url = |off: bool| {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if !normalized.is_empty() {
+            query.append_pair("tags", &normalized);
+        }
+        if !params.page.is_empty() {
+            query.append_pair("page", &params.page);
+        }
+        if off {
+            query.append_pair("blacklist", "off");
+        }
+        url_value(&format!("/posts?{}", query.finish()))
+    };
+    let blacklisted = context! {
+        hidden => hidden.len(),
+        show_url => (!hidden.is_empty()).then(|| blacklist_url(true)),
+        hide_url => (show_all && blacklist.is_some()).then(|| blacklist_url(false)),
+    };
+    let card_values: Vec<Value> = shown
         .iter()
         .map(|card| card_context(state, card, box_size, post_query.as_deref()))
         .collect();
 
-    let sidebar = sidebar_tags(db, &cards, &normalized).await?;
+    let shown: Vec<Card> = shown.into_iter().cloned().collect();
+    let sidebar = sidebar_tags(db, &shown, &normalized).await?;
     let pager = Pager {
         query: &normalized,
         page: page_ref,
@@ -144,6 +177,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         context! {
             search => context! { tags => normalized },
             cards => card_values,
+            blacklisted => blacklisted,
             count => count_text(count),
             sidebar => sidebar,
             pager => pager.context(),
@@ -356,6 +390,9 @@ struct ShowQuery {
     /// The search the post was opened from.
     #[serde(default)]
     q: String,
+    /// `off` shows the post even if the viewer's blacklist matches it.
+    #[serde(default)]
+    blacklist: String,
 }
 
 async fn show(
@@ -363,7 +400,7 @@ async fn show(
     Path(id): Path<i64>,
     Query(params): Query<ShowQuery>,
 ) -> Result<Response, AppError> {
-    render_post(&page, id, &params.q, None).await
+    render_post(&page, id, &params.q, params.blacklist == "off", None).await
 }
 
 /// The edit form as submitted, shown again with an error.
@@ -377,6 +414,7 @@ pub(crate) async fn render_post(
     page: &Page,
     id: i64,
     search: &str,
+    show_blacklisted: bool,
     failed: Option<FailedEdit<'_>>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
@@ -397,6 +435,21 @@ pub(crate) async fn render_post(
     let tag_string = tag_names.join(" ");
     let tag_groups = crate::tags::grouped(&categories, post_tags.clone());
     let family = family_context(page, &post).await?;
+    let blacklisted = if show_blacklisted {
+        None
+    } else {
+        crate::blacklist::for_viewer(state, db, &page.current)
+            .await?
+            .and_then(|list| list.matching(post.rating, &post.tag_ids).map(str::to_owned))
+    };
+    let show_url = {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if !search.is_empty() {
+            query.append_pair("q", search);
+        }
+        query.append_pair("blacklist", "off");
+        url_value(&format!("/posts/{id}?{}", query.finish()))
+    };
     let me = page.current.user.as_ref().map(|u| u.id);
     let (favorited, vote) = match me {
         Some(user) => (
@@ -503,6 +556,7 @@ pub(crate) async fn render_post(
             uploader => uploader,
             tag_groups => tag_groups,
             family => family,
+            blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
             reactions => reactions,
             edit => edit,
             ratings => ratings,
@@ -818,6 +872,50 @@ mod tests {
             app.get("/posts?page=x", None).await.status,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn blacklists_hide_posts(pool: PgPool) {
+        uwuu_db::settings::set(
+            &pool,
+            "default_blacklist",
+            serde_json::json!("rating:e\nkitty"),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tag_relations (kind, antecedent_name, consequent_name, status)
+             VALUES ('alias', 'kitty', 'cat', 'active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let explicit = upload(&app, &alice, &fixture::png(20, 20), &[("rating", "e")]).await;
+        let cat = upload(&app, &alice, &fixture::png(24, 20), &[("tags", "cat")]).await;
+        let fine = upload(&app, &alice, &fixture::png(28, 20), &[]).await;
+
+        let grid = app.get("/", None).await.body;
+        assert!(grid.contains(&format!("href=\"/posts/{fine}\"")));
+        assert!(!grid.contains(&format!("/posts/{explicit}")), "{grid}");
+        assert!(
+            !grid.contains(&format!("/posts/{cat}\"")),
+            "aliases count too"
+        );
+        assert!(grid.contains("2 hidden by your blacklist"), "{grid}");
+        assert!(grid.contains("href=\"/posts?blacklist=off\""));
+        let all = app.get("/posts?blacklist=off", None).await.body;
+        assert!(all.contains(&format!("/posts/{explicit}")));
+
+        let post = app.get(&format!("/posts/{explicit}"), None).await.body;
+        assert!(post.contains("matches your blacklist"), "{post}");
+        assert!(!post.contains("<img src=\"/data/"));
+        let shown = app
+            .get(&format!("/posts/{explicit}?blacklist=off"), None)
+            .await
+            .body;
+        assert!(!shown.contains("matches your blacklist"));
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

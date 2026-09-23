@@ -3,6 +3,7 @@
 {% block content %}
 <section class="card medium">
   <h1>Settings</h1>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/settings">
     <label for="per_page">Posts per page</label>
     <select id="per_page" name="per_page">
@@ -14,9 +15,12 @@
     <fieldset class="ratings">
       <legend>Theme</legend>
       {% for t in themes %}
-      <label class="choice"><input type="radio" name="theme" value="{{ t }}"{% if theme == t %} checked{% endif %}> {{ t|capitalize }}</label>
+      <label class="choice"><input type="radio" name="theme" value="{{ t }}"{% if current_theme == t %} checked{% endif %}> {{ t|capitalize }}</label>
       {% endfor %}
     </fieldset>
+    <label for="blacklist">Blacklist</label>
+    <textarea id="blacklist" name="blacklist" rows="5" autocapitalize="none" spellcheck="false">{{ blacklist }}</textarea>
+    <p class="hint">Posts matching a line are hidden. One rule per line; every term on a line must match: <code>tag</code>, <code>-tag</code>, <code>rating:e,q</code>.</p>
     <button type="submit">Save</button>
   </form>
 </section>

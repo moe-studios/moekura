@@ -88,7 +88,14 @@ async fn edit(
             Ok((flash::set(jar, Flash::Saved), Redirect::to(&back)).into_response())
         }
         Err(Refused::Invalid(error)) => {
-            render_post(&page, id, &query.q, Some(FailedEdit { form: &form, error })).await
+            render_post(
+                &page,
+                id,
+                &query.q,
+                true,
+                Some(FailedEdit { form: &form, error }),
+            )
+            .await
         }
         Err(Refused::Error(error)) => Err(error),
     }

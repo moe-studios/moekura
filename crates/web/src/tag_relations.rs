@@ -258,28 +258,56 @@ async fn act(
     jar: CookieJar,
     Path((id, action)): Path<(i32, String)>,
 ) -> Result<Response, AppError> {
-    let Some(user) = page.current.user.clone() else {
-        return Err(AppError::Unauthorized);
+    let decision = match action.as_str() {
+        "approve" => Decision::Approve,
+        "reject" => Decision::Reject,
+        "remove" => Decision::Remove,
+        _ => return Err(AppError::NotFound),
     };
-    let db = page.state().db.primary();
+    let relation = decide(page.state(), &page.current, id, decision).await?;
+    Ok((
+        flash::set(jar, Flash::Saved),
+        Redirect::to(path(relation.kind)),
+    )
+        .into_response())
+}
+
+/// What can be done with a relation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Decision {
+    Approve,
+    Reject,
+    /// Take back a pending request (its creator may), or end an active
+    /// relation.
+    Remove,
+}
+
+/// Applies `decision` to relation `id` and returns it as it was before.
+pub(crate) async fn decide(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i32,
+    decision: Decision,
+) -> Result<Relation, AppError> {
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let db = state.db.primary();
     let relation = tag_relations::by_id(db, id)
         .await?
         .ok_or(AppError::NotFound)?;
-    let manage = page.current.can(Permission::ManageTags);
-    let allowed = match action.as_str() {
-        "approve" | "reject" => manage,
-        "remove" => {
+    let manage = current.can(Permission::ManageTags);
+    let allowed = match decision {
+        Decision::Approve | Decision::Reject => manage,
+        Decision::Remove => {
             manage || (relation.status == Status::Pending && relation.creator_id == Some(user.id))
         }
-        _ => return Err(AppError::NotFound),
     };
     if !allowed {
         return Err(AppError::Forbidden);
     }
-    let result = match action.as_str() {
-        "approve" => tag_relations::approve(db, id, user.id).await,
-        "reject" => tag_relations::reject(db, id, user.id).await,
-        _ => tag_relations::remove(db, id, user.id)
+    let result = match decision {
+        Decision::Approve => tag_relations::approve(db, id, user.id).await,
+        Decision::Reject => tag_relations::reject(db, id, user.id).await,
+        Decision::Remove => tag_relations::remove(db, id, user.id)
             .await
             .map(|_| ())
             .map_err(RelationError::Db),
@@ -287,21 +315,17 @@ async fn act(
     match result {
         Ok(()) => {
             if manage {
-                let kind = match action.as_str() {
-                    "approve" => ActionKind::TagRelationApprove,
-                    "reject" => ActionKind::TagRelationReject,
-                    _ => ActionKind::TagRelationRemove,
+                let kind = match decision {
+                    Decision::Approve => ActionKind::TagRelationApprove,
+                    Decision::Reject => ActionKind::TagRelationReject,
+                    Decision::Remove => ActionKind::TagRelationRemove,
                 };
                 audit(db, user.id, kind, id).await?;
             }
-            tracing::info!(id, action, user = user.name, "tag relation updated");
-            Ok((
-                flash::set(jar, Flash::Saved),
-                Redirect::to(path(relation.kind)),
-            )
-                .into_response())
+            tracing::info!(id, ?decision, user = user.name, "tag relation updated");
+            Ok(relation)
         }
-        Err(RelationError::Rule(rule)) => Err(AppError::BadRequest(rule.to_string())),
+        Err(RelationError::Rule(rule)) => Err(AppError::Unprocessable(rule.to_string())),
         Err(RelationError::Db(e)) => Err(e.into()),
     }
 }
@@ -392,7 +416,7 @@ mod tests {
         assert_eq!(status_of(&pool, id).await, Status::Active);
         // Approving twice is refused with an explanation.
         let again = app.post(&approve, Some(&admin), &[]).await;
-        assert_eq!(again.status, StatusCode::BAD_REQUEST);
+        assert_eq!(again.status, StatusCode::UNPROCESSABLE_ENTITY);
 
         // Rule violations come back on the form.
         let chain = form(&[("antecedent", "kitten"), ("consequent", "kitty")]);

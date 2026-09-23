@@ -16,7 +16,7 @@ use uwu_db::mod_actions::{self, NewAction};
 use uwu_db::users::{self, User};
 
 use crate::AppState;
-use crate::auth::RequestInfo;
+use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
@@ -36,8 +36,8 @@ pub fn routes() -> Router<AppState> {
         .route("/moderation/bans", get(index))
         .route("/users/{name}/ban", post(ban_user))
         .route("/users/{name}/unban", post(unban_user))
-        .route("/moderation/ip-bans", post(ban_network))
-        .route("/moderation/ip-bans/{id}/lift", post(lift_network))
+        .route("/moderation/ip-bans", post(ban_network_form))
+        .route("/moderation/ip-bans/{id}/lift", post(lift_network_form))
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,17 +73,13 @@ fn reason(text: &str) -> Result<&str, AppError> {
     Ok(text)
 }
 
-/// Whether the viewer may ban `target`: `BanUsers`, and a higher rank.
-pub fn may_ban(page: &Page, target: &User) -> bool {
-    let site = page.state().site.get();
+/// Whether `current` may ban `target`: `BanUsers`, and a higher rank.
+pub fn may_ban(state: &AppState, current: &CurrentUser, target: &User) -> bool {
+    let site = state.site.get();
     let target_rank = site.role(target.role_id).map_or(0, |r| r.rank);
-    page.current.can(Permission::BanUsers)
-        && page
-            .current
-            .user
-            .as_ref()
-            .is_some_and(|me| me.id != target.id)
-        && page.current.role.rank > target_rank
+    current.can(Permission::BanUsers)
+        && current.user.as_ref().is_some_and(|me| me.id != target.id)
+        && current.role.rank > target_rank
 }
 
 pub fn ban_context(ban: &Ban) -> Value {
@@ -98,11 +94,12 @@ pub fn ban_context(ban: &Ban) -> Value {
     }
 }
 
-async fn target(page: &Page, name: &str) -> Result<User, AppError> {
-    let user = users::by_name(page.state().db.primary(), name)
+/// The user called `name`, if `current` may ban them.
+async fn target(state: &AppState, current: &CurrentUser, name: &str) -> Result<User, AppError> {
+    let user = users::by_name(state.db.primary(), name)
         .await?
         .ok_or(AppError::NotFound)?;
-    if !may_ban(page, &user) {
+    if !may_ban(state, current, &user) {
         return Err(AppError::Forbidden);
     }
     Ok(user)
@@ -118,11 +115,23 @@ async fn ban_user(
     Path(name): Path<String>,
     Form(form): Form<BanForm>,
 ) -> Result<Response, AppError> {
-    let user = target(&page, &name).await?;
-    let reason = reason(&form.reason)?;
     let expires_at = expiry(&form.days)?;
-    let actor = page.current.user.as_ref().map(|u| u.id);
-    let mut tx = page.state().db.primary().begin().await?;
+    let user = ban(page.state(), &page.current, &name, &form.reason, expires_at).await?;
+    Ok(saved(jar, &format!("/users/{}", user.name)))
+}
+
+/// Bans the user called `name` until `expires_at` (or until lifted).
+pub(crate) async fn ban(
+    state: &AppState,
+    current: &CurrentUser,
+    name: &str,
+    reason_text: &str,
+    expires_at: Option<OffsetDateTime>,
+) -> Result<User, AppError> {
+    let user = target(state, current, name).await?;
+    let reason = reason(reason_text)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = state.db.primary().begin().await?;
     bans::ban(&mut *tx, user.id, reason, expires_at, actor).await?;
     mod_actions::record(
         &mut *tx,
@@ -136,7 +145,7 @@ async fn ban_user(
     .await?;
     tx.commit().await?;
     tracing::info!(user = user.name, "user banned");
-    Ok(saved(jar, &format!("/users/{}", user.name)))
+    Ok(user)
 }
 
 async fn unban_user(
@@ -144,9 +153,19 @@ async fn unban_user(
     jar: CookieJar,
     Path(name): Path<String>,
 ) -> Result<Response, AppError> {
-    let user = target(&page, &name).await?;
-    let actor = page.current.user.as_ref().map(|u| u.id);
-    let mut tx = page.state().db.primary().begin().await?;
+    let user = unban(page.state(), &page.current, &name).await?;
+    Ok(saved(jar, &format!("/users/{}", user.name)))
+}
+
+/// Lifts the ban on the user called `name`.
+pub(crate) async fn unban(
+    state: &AppState,
+    current: &CurrentUser,
+    name: &str,
+) -> Result<User, AppError> {
+    let user = target(state, current, name).await?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = state.db.primary().begin().await?;
     if bans::lift(&mut *tx, user.id, actor).await? == 0 {
         return Err(AppError::BadRequest("That user isn't banned".into()));
     }
@@ -156,7 +175,7 @@ async fn unban_user(
     )
     .await?;
     tx.commit().await?;
-    Ok(saved(jar, &format!("/users/{}", user.name)))
+    Ok(user)
 }
 
 #[derive(Debug, Deserialize)]
@@ -170,14 +189,39 @@ struct NetworkForm {
     days: String,
 }
 
-async fn ban_network(
+async fn ban_network_form(
     page: Page,
     jar: CookieJar,
     info: RequestInfo,
     Form(form): Form<NetworkForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::BanUsers)?;
-    let text = form.network.trim();
+    let expires_at = expiry(&form.days)?;
+    ban_network(
+        page.state(),
+        &page.current,
+        info.ip,
+        &form.network,
+        &form.reason,
+        expires_at,
+    )
+    .await?;
+    Ok(saved(jar, "/moderation/bans"))
+}
+
+/// Bans a network (an address or a CIDR range) from making changes.
+/// `own_ip` is the requester's address, which the range may not include:
+/// they couldn't lift the ban.
+pub(crate) async fn ban_network(
+    state: &AppState,
+    current: &CurrentUser,
+    own_ip: Option<std::net::IpAddr>,
+    text: &str,
+    reason_text: &str,
+    expires_at: Option<OffsetDateTime>,
+) -> Result<IpNet, AppError> {
+    current.require(Permission::BanUsers)?;
+    let text = text.trim();
     let network: IpNet = text
         .parse()
         .or_else(|_| text.parse::<std::net::IpAddr>().map(IpNet::from))
@@ -188,16 +232,14 @@ async fn ban_network(
     if network.prefix_len() < if network.addr().is_ipv4() { 8 } else { 16 } {
         return Err(AppError::BadRequest("That range is too wide".into()));
     }
-    // Banning yourself would also stop you lifting the ban.
-    if info.ip.is_some_and(|ip| network.contains(&ip)) {
+    if own_ip.is_some_and(|ip| network.contains(&ip)) {
         return Err(AppError::BadRequest(
             "That range includes your own address".into(),
         ));
     }
-    let reason = reason(&form.reason)?;
-    let expires_at = expiry(&form.days)?;
-    let actor = page.current.user.as_ref().map(|u| u.id);
-    let mut tx = page.state().db.primary().begin().await?;
+    let reason = reason(reason_text)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = state.db.primary().begin().await?;
     bans::ban_network(&mut *tx, network, reason, expires_at, actor).await?;
     mod_actions::record(
         &mut *tx,
@@ -207,17 +249,27 @@ async fn ban_network(
     )
     .await?;
     tx.commit().await?;
-    Ok(saved(jar, "/moderation/bans"))
+    Ok(network.trunc())
 }
 
-async fn lift_network(
+async fn lift_network_form(
     page: Page,
     jar: CookieJar,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    page.current.require(Permission::BanUsers)?;
-    let actor = page.current.user.as_ref().map(|u| u.id);
-    let mut tx = page.state().db.primary().begin().await?;
+    lift_network(page.state(), &page.current, id).await?;
+    Ok(saved(jar, "/moderation/bans"))
+}
+
+/// Lifts network ban `id`.
+pub(crate) async fn lift_network(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+) -> Result<(), AppError> {
+    current.require(Permission::BanUsers)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = state.db.primary().begin().await?;
     let network = bans::lift_network(&mut *tx, id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -228,7 +280,7 @@ async fn lift_network(
     )
     .await?;
     tx.commit().await?;
-    Ok(saved(jar, "/moderation/bans"))
+    Ok(())
 }
 
 async fn index(page: Page) -> Result<Response, AppError> {

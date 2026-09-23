@@ -5,6 +5,7 @@
 //! rendered by [`crate::error::render_errors`]). The OpenAPI description is
 //! generated from the handlers' annotations, so it can't drift from them.
 
+mod moderation;
 mod posts;
 mod tags;
 mod users;
@@ -49,6 +50,8 @@ pub fn is_api_path(path: &str) -> bool {
         (name = "posts", description = "Searching, viewing and changing posts."),
         (name = "tags", description = "Tags, their categories, aliases and implications."),
         (name = "users", description = "Users and the account making the request."),
+        (name = "moderation", description = "Reviewing posts and flags, deciding tag relations, bans \
+                                             and the moderation log."),
     ),
     components(schemas(ErrorBody)),
 )]
@@ -103,6 +106,21 @@ fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
         .routes(routes!(tags::relations, tags::request))
         .routes(routes!(users::show))
         .routes(routes!(users::me))
+        .routes(routes!(moderation::approve))
+        .routes(routes!(moderation::reject))
+        .routes(routes!(moderation::delete))
+        .routes(routes!(moderation::restore))
+        .routes(routes!(moderation::purge))
+        .routes(routes!(moderation::dismiss_flags))
+        .routes(routes!(moderation::open_flags))
+        .routes(routes!(moderation::approve_relation))
+        .routes(routes!(moderation::reject_relation))
+        .routes(routes!(moderation::remove_relation))
+        .routes(routes!(moderation::list_bans))
+        .routes(routes!(moderation::ban_user, moderation::unban_user))
+        .routes(routes!(moderation::ban_network))
+        .routes(routes!(moderation::lift_network_ban))
+        .routes(routes!(moderation::log))
 }
 
 /// The API's OpenAPI description.

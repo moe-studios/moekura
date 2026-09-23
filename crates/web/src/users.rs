@@ -43,7 +43,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     } else {
         Vec::new()
     };
-    let can_ban = crate::bans::may_ban(&page, &user);
+    let can_ban = crate::bans::may_ban(page.state(), &page.current, &user);
     let banned = ban_history.iter().any(|b| b.active);
     let favorites = favorites::count_by_user(db, user.id).await?;
     Ok(page.render(

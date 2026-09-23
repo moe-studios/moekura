@@ -220,6 +220,7 @@ mod tests {
                 status: PostStatus::Active,
                 source: "",
                 description: "",
+                tag_ids: &[],
             },
         )
         .await

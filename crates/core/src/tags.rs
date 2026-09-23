@@ -4,6 +4,8 @@ use std::fmt;
 
 /// Longest tag name, in characters.
 pub const TAG_MAX_LEN: usize = 170;
+/// Most tags one post may carry.
+pub const POST_MAX_TAGS: usize = 1000;
 
 /// Words that can't begin a tag name when followed by `:`, because search
 /// reads `word:value` as a metatag or a tag category prefix.
@@ -132,6 +134,58 @@ impl AsRef<str> for TagName {
     }
 }
 
+/// A tag from a tag input box: `name`, or `category:name` to choose the
+/// category of a new tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagInput {
+    pub name: TagName,
+    pub category: Option<String>,
+}
+
+/// A word from a tag input box that isn't a valid tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidTag {
+    pub input: String,
+    pub error: TagNameError,
+}
+
+impl fmt::Display for InvalidTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "`{}` {}", self.input, self.error)
+    }
+}
+
+/// Splits whitespace-separated tags, recognising the prefixes in
+/// `categories` (lower-case category names). Duplicates are dropped; the
+/// first category given for a tag wins.
+pub fn parse_input(input: &str, categories: &[&str]) -> (Vec<TagInput>, Vec<InvalidTag>) {
+    let mut tags: Vec<TagInput> = Vec::new();
+    let mut invalid = Vec::new();
+    for word in input.split_whitespace() {
+        let (category, raw) = match word.split_once(':') {
+            Some((prefix, rest))
+                if !rest.is_empty() && categories.contains(&prefix.to_lowercase().as_str()) =>
+            {
+                (Some(prefix.to_lowercase()), rest)
+            }
+            _ => (None, word),
+        };
+        match TagName::parse(raw) {
+            Ok(name) => match tags.iter_mut().find(|t| t.name == name) {
+                Some(existing) => {
+                    existing.category = existing.category.take().or(category);
+                }
+                None => tags.push(TagInput { name, category }),
+            },
+            Err(error) => invalid.push(InvalidTag {
+                input: word.to_owned(),
+                error,
+            }),
+        }
+    }
+    (tags, invalid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,5 +243,37 @@ mod tests {
         );
         // Characters, not bytes.
         assert!(parse(&"ミ".repeat(TAG_MAX_LEN)).is_ok());
+    }
+
+    #[test]
+    fn parses_tag_input() {
+        let categories = ["artist", "character"];
+        let (tags, invalid) = parse_input(
+            "1girl  Artist:Some_One solo\ncharacter:saber_(fate) 1girl artist:solo re:zero -x",
+            &categories,
+        );
+        let summary: Vec<(&str, Option<&str>)> = tags
+            .iter()
+            .map(|t| (t.name.as_str(), t.category.as_deref()))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("1girl", None),
+                ("some_one", Some("artist")),
+                ("solo", Some("artist")),
+                ("saber_(fate)", Some("character")),
+                ("re:zero", None),
+            ]
+        );
+        assert_eq!(invalid.len(), 1);
+        assert_eq!(invalid[0].to_string(), "`-x` may not start with `-`");
+        // A bare prefix is a (reserved) tag, not a category.
+        let (tags, invalid) = parse_input("artist:", &categories);
+        assert!(tags.is_empty());
+        assert_eq!(
+            invalid[0].error,
+            TagNameError::ReservedPrefix("artist".into())
+        );
     }
 }

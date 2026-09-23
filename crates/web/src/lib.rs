@@ -13,6 +13,7 @@ mod health;
 pub mod pages;
 mod posts;
 pub mod rate_limit;
+mod tags;
 mod templates;
 #[cfg(test)]
 mod test_support;
@@ -124,6 +125,7 @@ pub fn router(state: AppState) -> Router {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
     let routes = posts::routes()
         .merge(account::routes())
+        .merge(tags::routes())
         .merge(upload::routes(max_upload_bytes));
     with_middleware(routes, state)
 }

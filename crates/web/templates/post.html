@@ -28,6 +28,16 @@
       {% endif %}
     </dl>
     <p><a href="{{ file.original }}" download>Download original</a></p>
+    {% for group in tag_groups %}
+    <section class="tag-group">
+      <h2>{{ group.label }}</h2>
+      <ul class="tag-list">
+        {% for tag in group.tags %}
+        <li><a class="tag tag-{{ group.name }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
   </aside>
 </div>
 {% endblock %}

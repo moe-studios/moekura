@@ -11,7 +11,7 @@ use uwuu_core::permissions::Permission;
 use uwuu_core::posts::PostStatus;
 use uwuu_db::media::{self, Variant};
 use uwuu_db::posts::{self, Card, Visibility};
-use uwuu_db::users;
+use uwuu_db::{tags, users};
 use uwuu_storage::Key;
 
 use crate::AppState;
@@ -121,6 +121,8 @@ async fn show(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
     }
     let asset = media::for_post(db, id).await?.ok_or(AppError::NotFound)?;
     let variants = media::variants(db, asset.id).await?;
+    let categories = tags::categories(db).await?;
+    let tag_groups = crate::tags::grouped(&categories, tags::by_ids(db, &post.tag_ids).await?);
     let uploader = match post.uploader_id {
         Some(user_id) => users::by_id(db, user_id).await?.map(|u| u.name),
         None => None,
@@ -172,6 +174,7 @@ async fn show(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
             post => post_context,
             file => file,
             uploader => uploader,
+            tag_groups => tag_groups,
             processing => asset.processed_at.is_none(),
         },
     ))
@@ -306,6 +309,29 @@ mod tests {
             app.get(&format!("/posts/{}", id + 100), None).await.status,
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn post_page_groups_tags_by_category(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let session = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = upload(
+            &app,
+            &session,
+            &fixture::png(20, 20),
+            &[("tags", "zebra apple artist:someone c++")],
+        )
+        .await;
+        let body = app.get(&format!("/posts/{id}"), None).await.body;
+        let position = |needle: &str| {
+            body.find(needle)
+                .unwrap_or_else(|| panic!("{needle} missing from {body}"))
+        };
+        assert!(position("<h2>Artist</h2>") < position("<h2>General</h2>"));
+        // Alphabetical within a group.
+        assert!(position(">apple<") < position(">zebra<"));
+        assert!(body.contains("class=\"tag tag-artist\" href=\"/posts?tags=someone\""));
+        assert!(body.contains("href=\"/posts?tags=c%2B%2B\""), "{body}");
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

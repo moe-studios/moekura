@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Tags · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>Tags</h1>
+<form class="filters" method="get" action="/tags">
+  <label for="tag-name">Name</label>
+  <input id="tag-name" name="name" value="{{ query.name }}" placeholder="long_ha or *_hair">
+  <label for="tag-category">Category</label>
+  <select id="tag-category" name="category">
+    <option value="">Any</option>
+    {% for category in categories %}
+    <option value="{{ category.name }}"{% if query.category == category.name %} selected{% endif %}>{{ category.label }}</option>
+    {% endfor %}
+  </select>
+  <label for="tag-order">Order</label>
+  <select id="tag-order" name="order">
+    <option value="count">Most used</option>
+    <option value="name"{% if query.order == "name" %} selected{% endif %}>Name</option>
+    <option value="newest"{% if query.order == "newest" %} selected{% endif %}>Newest</option>
+  </select>
+  <button type="submit">Search</button>
+</form>
+{% if tags %}
+<table class="tag-table">
+  <thead><tr><th scope="col">Name</th><th scope="col">Category</th><th scope="col" class="num">Posts</th>{% if can_edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
+  <tbody>
+    {% for tag in tags %}
+    <tr>
+      <td><a class="tag tag-{{ tag.category }}{% if tag.deprecated %} is-deprecated{% endif %}" href="{{ tag.url }}">{{ tag.name }}</a>{% if tag.deprecated %} <span class="hint">deprecated</span>{% endif %}</td>
+      <td>{{ tag.category_label }}</td>
+      <td class="num">{{ tag.count }}</td>
+      {% if can_edit %}<td><a href="/tags/{{ tag.id }}/edit">Edit</a></td>{% endif %}
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No tags found.</p>
+{% endif %}
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

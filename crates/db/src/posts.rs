@@ -10,6 +10,8 @@ pub struct NewPost<'a> {
     pub status: PostStatus,
     pub source: &'a str,
     pub description: &'a str,
+    /// Sorted and without duplicates.
+    pub tag_ids: &'a [i32],
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +25,7 @@ pub struct Post {
     pub parent_id: Option<i64>,
     pub score: i32,
     pub fav_count: i32,
-    pub tag_count: i32,
+    pub tag_ids: Vec<i32>,
     pub created_at: OffsetDateTime,
 }
 
@@ -38,7 +40,7 @@ struct PostRow {
     parent_id: Option<i64>,
     score: i32,
     fav_count: i32,
-    tag_count: i32,
+    tag_ids: Vec<i32>,
     created_at: OffsetDateTime,
 }
 
@@ -65,7 +67,7 @@ impl TryFrom<PostRow> for Post {
             parent_id: row.parent_id,
             score: row.score,
             fav_count: row.fav_count,
-            tag_count: row.tag_count,
+            tag_ids: row.tag_ids,
             created_at: row.created_at,
         })
     }
@@ -76,7 +78,7 @@ macro_rules! select_posts {
     ($rest:literal) => {
         concat!(
             "SELECT id, uploader_id, rating, status, source, description, parent_id, score,
-                    fav_count, tag_count, created_at
+                    fav_count, tag_ids, created_at
              FROM posts ",
             $rest
         )
@@ -154,14 +156,15 @@ pub async fn recent(
 
 pub async fn insert(db: impl PgExecutor<'_>, post: NewPost<'_>) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "INSERT INTO posts (uploader_id, rating, status, source, description)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        "INSERT INTO posts (uploader_id, rating, status, source, description, tag_ids)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     )
     .bind(post.uploader_id)
     .bind(post.rating.code())
     .bind(post.status.as_str())
     .bind(post.source)
     .bind(post.description)
+    .bind(post.tag_ids)
     .fetch_one(db)
     .await
 }
@@ -192,6 +195,7 @@ mod tests {
             status,
             source: "",
             description: "",
+            tag_ids: &[],
         };
         let id = insert(pool, new).await.unwrap();
         sqlx::query(
@@ -282,6 +286,7 @@ mod tests {
             status: PostStatus::Pending,
             source: "https://example.com/art",
             description: "a description",
+            tag_ids: &[],
         };
         let id = insert(&pool, new).await.unwrap();
         let post = by_id(&pool, id).await.unwrap().unwrap();
@@ -290,7 +295,7 @@ mod tests {
             (Rating::Questionable, PostStatus::Pending)
         );
         assert_eq!(post.source, "https://example.com/art");
-        assert_eq!(post.tag_count, 0);
+        assert!(post.tag_ids.is_empty());
         assert!(by_id(&pool, id + 1).await.unwrap().is_none());
     }
 }

@@ -1,6 +1,6 @@
 //! Queries on `tags` and `tag_categories`.
 
-use sqlx::{PgExecutor, PgPool};
+use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -61,6 +61,139 @@ pub async fn by_ids(db: impl PgExecutor<'_>, ids: &[i32]) -> sqlx::Result<Vec<Ta
     .bind(ids)
     .fetch_all(db)
     .await
+}
+
+/// A tag wanted on a post, with the category to give it if it is new.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WantedTag<'a> {
+    pub name: &'a str,
+    pub category_id: Option<i16>,
+}
+
+/// Finds the tags named in `wanted`, creating missing ones. A requested
+/// category is applied to new tags and to unused ones (no posts yet), or
+/// to any tag when `recategorize` is set.
+pub async fn ensure(
+    conn: &mut PgConnection,
+    wanted: &[WantedTag<'_>],
+    recategorize: bool,
+) -> sqlx::Result<Vec<Tag>> {
+    let names: Vec<&str> = wanted.iter().map(|w| w.name).collect();
+    let categories: Vec<Option<i16>> = wanted.iter().map(|w| w.category_id).collect();
+    // Sorted, so concurrent uploads creating the same tags take the same
+    // locks in the same order.
+    sqlx::query(
+        "INSERT INTO tags (name, category_id)
+         SELECT name, coalesce(category_id, 0)
+         FROM unnest($1::text[], $2::int2[]) AS wanted (name, category_id)
+         ORDER BY name
+         ON CONFLICT (name) DO NOTHING",
+    )
+    .bind(&names)
+    .bind(&categories)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE tags SET category_id = wanted.category_id
+         FROM unnest($1::text[], $2::int2[]) AS wanted (name, category_id)
+         WHERE tags.name = wanted.name
+           AND tags.category_id <> wanted.category_id
+           AND (tags.post_count = 0 OR $3)",
+    )
+    .bind(&names)
+    .bind(&categories)
+    .bind(recategorize)
+    .execute(&mut *conn)
+    .await?;
+    by_names(&mut *conn, &names).await
+}
+
+/// Changes a tag's category and deprecation. Returns false if there is no
+/// such tag.
+pub async fn update(
+    db: impl PgExecutor<'_>,
+    id: i32,
+    category_id: i16,
+    is_deprecated: bool,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query("UPDATE tags SET category_id = $2, is_deprecated = $3 WHERE id = $1")
+        .bind(id)
+        .bind(category_id)
+        .bind(is_deprecated)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+pub async fn by_id(db: impl PgExecutor<'_>, id: i32) -> sqlx::Result<Option<Tag>> {
+    sqlx::query_as(select_tags!("WHERE id = $1"))
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// How [`list`] orders tags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListOrder {
+    #[default]
+    Count,
+    Name,
+    Newest,
+}
+
+/// A page of tags whose names match `pattern` (a prefix, or a pattern
+/// with `*` wildcards), optionally only in one category.
+pub async fn list(
+    db: impl PgExecutor<'_>,
+    pattern: &str,
+    category_id: Option<i16>,
+    order: ListOrder,
+    offset: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<Tag>> {
+    let like = like_pattern(pattern);
+    let query = match order {
+        ListOrder::Count => select_tags!(
+            "WHERE name LIKE $1 AND ($2::int2 IS NULL OR category_id = $2)
+             ORDER BY post_count DESC, id OFFSET $3 LIMIT $4"
+        ),
+        ListOrder::Name => select_tags!(
+            "WHERE name LIKE $1 AND ($2::int2 IS NULL OR category_id = $2)
+             ORDER BY name OFFSET $3 LIMIT $4"
+        ),
+        ListOrder::Newest => select_tags!(
+            "WHERE name LIKE $1 AND ($2::int2 IS NULL OR category_id = $2)
+             ORDER BY id DESC OFFSET $3 LIMIT $4"
+        ),
+    };
+    sqlx::query_as(query)
+        .bind(like)
+        .bind(category_id)
+        .bind(offset)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+}
+
+/// A `LIKE` pattern for a tag name pattern: `*` matches anything, other
+/// characters (including `_` and `%`) only themselves. Without a `*`, the
+/// pattern is a prefix.
+pub fn like_pattern(pattern: &str) -> String {
+    let mut like = String::with_capacity(pattern.len() + 2);
+    for c in pattern.chars() {
+        match c {
+            '*' => like.push('%'),
+            '%' | '_' | '\\' => {
+                like.push('\\');
+                like.push(c);
+            }
+            c => like.push(c),
+        }
+    }
+    if !pattern.contains('*') {
+        like.push('%');
+    }
+    like
 }
 
 /// Recomputes every tag's post count from the posts, returning how many
@@ -253,6 +386,85 @@ pub(crate) mod tests {
         assert_eq!(recount(&pool).await.unwrap(), 2);
         assert_eq!(counts(&pool, &ids).await, [2, 1]);
         assert_eq!(recount(&pool).await.unwrap(), 0);
+    }
+
+    #[test]
+    fn like_patterns() {
+        assert_eq!(like_pattern("long_ha"), "long\\_ha%");
+        assert_eq!(like_pattern("*_hair"), "%\\_hair");
+        assert_eq!(like_pattern("100%"), "100\\%%");
+        assert_eq!(like_pattern(""), "%");
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn ensure_creates_and_categorizes(pool: PgPool) {
+        let existing = create(&pool, &["used", "unused"]).await;
+        post(&pool, "active", &existing[..1]).await;
+        let mut conn = pool.acquire().await.unwrap();
+        let wanted = [
+            WantedTag {
+                name: "used",
+                category_id: Some(1),
+            },
+            WantedTag {
+                name: "unused",
+                category_id: Some(1),
+            },
+            WantedTag {
+                name: "new",
+                category_id: Some(4),
+            },
+            WantedTag {
+                name: "plain",
+                category_id: None,
+            },
+        ];
+        let mut tags = ensure(&mut conn, &wanted, false).await.unwrap();
+        tags.sort_by(|a, b| a.name.cmp(&b.name));
+        let summary: Vec<(&str, i16)> = tags
+            .iter()
+            .map(|t| (t.name.as_str(), t.category_id))
+            .collect();
+        // A used tag keeps its category unless recategorising is allowed.
+        assert_eq!(
+            summary,
+            [("new", 4), ("plain", 0), ("unused", 1), ("used", 0)]
+        );
+        let tags = ensure(&mut conn, &wanted[..1], true).await.unwrap();
+        assert_eq!(tags[0].category_id, 1);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn lists_by_pattern_and_order(pool: PgPool) {
+        let ids = create(&pool, &["long_hair", "longhair", "short_hair", "hat"]).await;
+        post(&pool, "active", &ids[2..]).await;
+        post(&pool, "active", &ids[2..3]).await;
+        let names = |tags: Vec<Tag>| tags.into_iter().map(|t| t.name).collect::<Vec<_>>();
+        let page = |pattern: &'static str, order| {
+            let pool = pool.clone();
+            async move { names(list(&pool, pattern, None, order, 0, 10).await.unwrap()) }
+        };
+        assert_eq!(page("long_", ListOrder::Name).await, ["long_hair"]);
+        assert_eq!(
+            page("*_hair", ListOrder::Count).await,
+            ["short_hair", "long_hair"]
+        );
+        assert_eq!(
+            page("", ListOrder::Newest).await,
+            ["hat", "short_hair", "longhair", "long_hair"]
+        );
+        assert_eq!(
+            names(
+                list(&pool, "", Some(4), ListOrder::Count, 0, 10)
+                    .await
+                    .unwrap()
+            ),
+            Vec::<String>::new()
+        );
+        assert!(update(&pool, ids[3], 4, true).await.unwrap());
+        let hat = by_id(&pool, ids[3]).await.unwrap().unwrap();
+        assert_eq!((hat.category_id, hat.is_deprecated), (4, true));
+        assert!(!update(&pool, 12345, 0, false).await.unwrap());
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

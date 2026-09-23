@@ -264,6 +264,7 @@ mod tests {
             status: PostStatus::Active,
             source: "",
             description: "",
+            tag_ids: &[],
         };
         posts::insert(pool, new).await.unwrap()
     }

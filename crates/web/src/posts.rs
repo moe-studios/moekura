@@ -354,7 +354,7 @@ impl Pager<'_> {
 /// the configured base URL, so it is marked safe (escaping would turn `/`
 /// into `&#x2f;`).
 fn file_url(state: &AppState, key: &str) -> Option<Value> {
-    Key::parse(key).map(|k| Value::from_safe_string(state.storage.url(&k)))
+    Key::parse(key).map(|k| url_value(&state.file_url(&k)))
 }
 
 /// A grid card. `post_query` (`q=…`) is added to the post link so the post

@@ -58,6 +58,7 @@ mod tests {
             crate::test_support::test_config(),
             Db::from_pools(pool, vec![]),
             SiteCache::from_snapshot(SiteSnapshot::new(SiteSettings::default(), vec![])),
+            [7; 32],
         )
         .unwrap();
         router(state)

@@ -38,6 +38,7 @@ pub async fn test_state_with(pool: &PgPool, config: Config) -> AppState {
         config,
         Db::from_pools(pool.clone(), vec![]),
         SiteCache::load(pool).await.unwrap(),
+        [7; 32],
     )
     .unwrap()
 }

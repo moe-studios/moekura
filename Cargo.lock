@@ -3266,6 +3266,7 @@ dependencies = [
  "futures-util",
  "governor",
  "hex",
+ "hmac",
  "http-body-util",
  "ipnet",
  "md-5",

@@ -267,7 +267,7 @@ pub(crate) async fn review_cards(
                 .thumb
                 .as_deref()
                 .and_then(Key::parse)
-                .map(|k| Value::from_safe_string(state.storage.url(&k)));
+                .map(|k| url_value(&state.file_url(&k)));
             context! {
                 id => card.id,
                 thumb => thumb,

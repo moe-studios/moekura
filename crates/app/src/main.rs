@@ -116,7 +116,20 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         .run_in_serve
         .then(|| run_workers(&db, &config))
         .transpose()?;
-    let state = AppState::new(config, db.clone(), site.clone())?;
+    let file_key = uwuu_db::secrets::get_or_create(
+        db.primary(),
+        "file_urls",
+        uwuu_core::tokens::NewToken::generate().hash,
+    )
+    .await
+    .context("could not load the file URL key")?;
+    let state = AppState::new(config, db.clone(), site.clone(), file_key)?;
+    if state.is_private() && !state.storage.served_by_app() {
+        tracing::warn!(
+            "the site is private, but files are served from storage.public_base_url, \
+             where anyone with a link can load them; unset it to have files signed and served here"
+        );
+    }
     let background = [
         tokio::spawn(site.listen(db.primary().clone())),
         tokio::spawn(hourly_maintenance(state.clone())),

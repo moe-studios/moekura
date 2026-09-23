@@ -86,6 +86,7 @@ pub struct AppState {
     pub(crate) fetcher: fetch::Fetcher,
     /// Scratch space for uploads in progress.
     pub(crate) work_dir: std::path::PathBuf,
+    pub(crate) file_signer: files::FileSigner,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -105,7 +106,14 @@ pub enum StartupError {
 impl AppState {
     /// Loads static files and compiles templates, honouring the override
     /// directories in `config.paths`.
-    pub fn new(config: Config, db: Db, site: SiteCache) -> Result<Self, StartupError> {
+    /// `file_key` signs file URLs on private sites; every node needs the
+    /// same one (`uwuu_db::secrets`).
+    pub fn new(
+        config: Config,
+        db: Db,
+        site: SiteCache,
+        file_key: [u8; 32],
+    ) -> Result<Self, StartupError> {
         let storage = Storage::from_config(&config.storage)?;
         let work_dir = config.media.work_dir_or_default();
         std::fs::create_dir_all(&work_dir).map_err(StartupError::WorkDir)?;
@@ -124,9 +132,33 @@ impl AppState {
             media,
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
             work_dir,
+            file_signer: files::FileSigner::new(file_key),
             templates,
             assets,
         })
+    }
+}
+
+impl AppState {
+    /// Whether visitors are kept out (the Anonymous role can't view
+    /// posts). Files then need signed URLs.
+    pub fn is_private(&self) -> bool {
+        self.site
+            .get()
+            .system_role(uwuu_core::permissions::SystemRole::Anonymous)
+            .is_none_or(|role| !role.can(uwuu_core::permissions::Permission::ViewPosts))
+    }
+
+    /// The URL browsers load a stored file from, signed on private sites
+    /// when this server serves the files.
+    pub fn file_url(&self, key: &uwuu_storage::Key) -> String {
+        let url = self.storage.url(key);
+        if self.storage.served_by_app() && self.is_private() {
+            let now = time::OffsetDateTime::now_utc().unix_timestamp();
+            format!("{url}{}", self.file_signer.query(key.as_str(), now))
+        } else {
+            url
+        }
     }
 }
 

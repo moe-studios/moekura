@@ -6,6 +6,7 @@ mod assets;
 pub mod auth;
 mod client_ip;
 pub mod error;
+mod fetch;
 mod files;
 pub mod flash;
 mod health;
@@ -72,6 +73,7 @@ pub struct AppState {
     pub rate_limits: Arc<RateLimits>,
     pub storage: Storage,
     pub media: Media,
+    pub(crate) fetcher: fetch::Fetcher,
     /// Scratch space for uploads in progress.
     pub(crate) work_dir: std::path::PathBuf,
     templates: Arc<Templates>,
@@ -110,6 +112,7 @@ impl AppState {
             rate_limits: Arc::new(RateLimits::default()),
             storage,
             media,
+            fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
             work_dir,
             templates,
             assets,

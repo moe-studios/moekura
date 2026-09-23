@@ -134,8 +134,9 @@ impl fmt::Debug for Storage {
     }
 }
 
-/// Installs ring as the TLS crypto provider for S3 and outgoing HTTP. Call
-/// once at startup; later calls do nothing.
+/// Installs ring as the TLS crypto provider for S3 and outgoing HTTP.
+/// Anything that builds a TLS client calls this first; repeat calls do
+/// nothing.
 pub fn install_crypto_provider() {
     let _ = rustls::crypto::ring::default_provider().install_default();
 }
@@ -148,6 +149,7 @@ impl Storage {
                 Arc::new(LocalFileSystem::new_with_prefix(&config.path)?)
             }
             StorageBackend::S3 => {
+                install_crypto_provider();
                 let s3 = &config.s3;
                 let mut builder = AmazonS3Builder::from_env()
                     .with_bucket_name(&s3.bucket)

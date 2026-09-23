@@ -48,6 +48,8 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
 /// The text fields of an upload.
 #[derive(Debug, Default, Clone)]
 pub struct UploadFields {
+    /// Download the file from here when no file was sent.
+    pub url: String,
     pub rating: Option<Rating>,
     pub source: String,
     pub description: String,
@@ -126,6 +128,7 @@ fn render_form(
             ratings => ratings,
             form => context! {
                 rating => fields.rating.map(Rating::code),
+                url => fields.url,
                 source => fields.source,
                 description => fields.description,
             },
@@ -142,21 +145,37 @@ async fn upload(
     multipart: Multipart,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::Upload)?;
-    let (fields, file) = match receive(&state, multipart).await {
+    let (mut fields, file) = match receive(&state, multipart).await {
         Ok(received) => received,
         Err((fields, error)) => return Ok(failed(&page, &fields, error)),
     };
-    let Some(file) = file else {
-        return Ok(failed(
-            &page,
-            &fields,
-            UploadError::Invalid("Choose a file to upload.".into()),
-        ));
+    let file = match file {
+        Some(file) => file,
+        None if !fields.url.is_empty() => match fetch_url(&state, &mut fields).await {
+            Ok(file) => file,
+            Err(error) => return Ok(failed(&page, &fields, error)),
+        },
+        None => {
+            let error = UploadError::Invalid("Choose a file to upload, or paste a link.".into());
+            return Ok(failed(&page, &fields, error));
+        }
     };
     match ingest(&state, &page.current, &file, &fields).await {
         Ok(post_id) => Ok(Redirect::to(&format!("/posts/{post_id}")).into_response()),
         Err(error) => Ok(failed(&page, &fields, error)),
     }
+}
+
+/// Downloads `fields.url`, which also becomes the source if none was given.
+async fn fetch_url(state: &AppState, fields: &mut UploadFields) -> Result<TempUpload, UploadError> {
+    let url = url::Url::parse(&fields.url)
+        .map_err(|_| UploadError::Invalid("That isn't a valid link.".into()))?;
+    let writer = TempWriter::create(&state.work_dir).await?;
+    let file = state.fetcher.fetch(&url, writer, max_bytes(state)).await?;
+    if fields.source.is_empty() {
+        fields.source = fields.url.clone();
+    }
+    Ok(file)
 }
 
 fn failed(page: &Page, fields: &UploadFields, error: UploadError) -> Response {
@@ -200,12 +219,13 @@ async fn receive(
                     Err(error) => return Err((fields, error)),
                 }
             }
-            "rating" | "source" | "description" => {
+            "url" | "rating" | "source" | "description" => {
                 let text = match field.text().await {
                     Ok(text) => text,
                     Err(error) => return Err((fields, multipart_error(state, &error))),
                 };
                 match name.as_str() {
+                    "url" => fields.url = text.trim().to_owned(),
                     "rating" => fields.rating = text.parse().ok(),
                     "source" => fields.source = text.trim().to_owned(),
                     _ => fields.description = text.trim().to_owned(),
@@ -237,48 +257,76 @@ fn too_large(state: &AppState) -> UploadError {
 
 async fn save_to_temp(state: &AppState, mut field: Field<'_>) -> Result<TempUpload, UploadError> {
     let limit = max_bytes(state);
-    let mut temp = new_temp(state)?;
-    let mut out = tokio::fs::File::create(&temp.path)
-        .await
-        .map_err(|e| UploadError::Internal(format!("creating temp file: {e}")))?;
-    let (mut sha256, mut md5) = (Sha256::new(), Md5::new());
+    let mut writer = TempWriter::create(&state.work_dir).await?;
     loop {
         let chunk = match field.chunk().await {
             Ok(Some(chunk)) => chunk,
             Ok(None) => break,
             Err(error) => return Err(multipart_error(state, &error)),
         };
-        temp.size += chunk.len() as u64;
-        if temp.size > limit {
+        if writer.written() + chunk.len() as u64 > limit {
             return Err(too_large(state));
         }
-        sha256.update(&chunk);
-        md5.update(&chunk);
-        out.write_all(&chunk)
-            .await
-            .map_err(|e| UploadError::Internal(format!("writing temp file: {e}")))?;
+        writer.write(&chunk).await?;
     }
-    out.flush()
-        .await
-        .map_err(|e| UploadError::Internal(format!("writing temp file: {e}")))?;
-    if temp.size == 0 {
-        return Err(UploadError::Invalid("The file is empty.".into()));
-    }
-    temp.sha256 = sha256.finalize().into();
-    temp.md5 = md5.finalize().into();
-    Ok(temp)
+    writer.finish().await
 }
 
-/// A new, empty temporary upload in the work directory.
-pub(crate) fn new_temp(state: &AppState) -> Result<TempUpload, UploadError> {
-    let name = hex::encode(uwuu_core::tokens::NewToken::generate().hash);
-    let path = state.work_dir.join(format!("upload-{}", &name[..24]));
-    Ok(TempUpload {
-        path,
-        sha256: [0; 32],
-        md5: [0; 16],
-        size: 0,
-    })
+/// Writes an upload to a temporary file while hashing it. Dropping it
+/// before [`TempWriter::finish`] removes the partial file.
+pub struct TempWriter {
+    upload: TempUpload,
+    file: tokio::fs::File,
+    sha256: Sha256,
+    md5: Md5,
+}
+
+impl TempWriter {
+    pub async fn create(dir: &Path) -> Result<Self, UploadError> {
+        let name = hex::encode(uwuu_core::tokens::NewToken::generate().hash);
+        let upload = TempUpload {
+            path: dir.join(format!("upload-{}", &name[..24])),
+            sha256: [0; 32],
+            md5: [0; 16],
+            size: 0,
+        };
+        let file = tokio::fs::File::create(&upload.path)
+            .await
+            .map_err(|e| UploadError::Internal(format!("creating temp file: {e}")))?;
+        Ok(Self {
+            upload,
+            file,
+            sha256: Sha256::new(),
+            md5: Md5::new(),
+        })
+    }
+
+    pub fn written(&self) -> u64 {
+        self.upload.size
+    }
+
+    pub async fn write(&mut self, chunk: &[u8]) -> Result<(), UploadError> {
+        self.sha256.update(chunk);
+        self.md5.update(chunk);
+        self.upload.size += chunk.len() as u64;
+        self.file
+            .write_all(chunk)
+            .await
+            .map_err(|e| UploadError::Internal(format!("writing temp file: {e}")))
+    }
+
+    pub async fn finish(mut self) -> Result<TempUpload, UploadError> {
+        self.file
+            .flush()
+            .await
+            .map_err(|e| UploadError::Internal(format!("writing temp file: {e}")))?;
+        if self.upload.size == 0 {
+            return Err(UploadError::Invalid("The file is empty.".into()));
+        }
+        self.upload.sha256 = self.sha256.finalize().into();
+        self.upload.md5 = self.md5.finalize().into();
+        Ok(self.upload)
+    }
 }
 
 /// Turns a received file into a post. Returns the new post's id.
@@ -408,6 +456,8 @@ mod tests {
     use uwuu_core::permissions::SystemRole;
     use uwuu_db::{jobs, settings};
 
+    use axum::routing::get;
+
     use super::*;
     use crate::test_support::{TestApp, fixture, session_for, test_state};
 
@@ -415,6 +465,64 @@ mod tests {
         let state = test_state(pool).await;
         let routes = routes(max_bytes(&state)).merge(crate::posts::routes());
         (TestApp::new(state.clone(), routes), state)
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn uploads_from_a_link_and_uses_it_as_source(pool: PgPool) {
+        // A local server stands in for the web; the fetcher that allows
+        // private addresses is only ever built by tests.
+        let png = fixture::png(24, 24);
+        let served = png.clone();
+        let origin = Router::new().route("/art.png", get(move || async move { served }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, origin).await });
+
+        let mut state = test_state(&pool).await;
+        state.fetcher = crate::fetch::Fetcher::new(std::time::Duration::from_secs(10), true);
+        let app = TestApp::new(state.clone(), routes(max_bytes(&state)));
+        let session = session_for(&pool, "alice", SystemRole::Member).await;
+        let link = format!("http://{addr}/art.png");
+
+        let fields = vec![("url", link.clone()), ("rating", "g".to_owned())];
+        let response = app
+            .post_multipart("/upload", Some(&session), &fields, None)
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let id = response
+            .location
+            .unwrap()
+            .strip_prefix("/posts/")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let post = posts::by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(post.source, link);
+        let asset = media::for_post(&pool, id).await.unwrap().unwrap();
+        assert_eq!(asset.sha256, Sha256::digest(&png).to_vec());
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn links_to_the_local_network_are_refused(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let session = session_for(&pool, "alice", SystemRole::Member).await;
+        for link in [
+            "http://127.0.0.1:5432/",
+            "http://169.254.169.254/latest/meta-data/",
+            "file:///etc/passwd",
+        ] {
+            let fields = vec![("url", link.to_owned()), ("rating", "g".to_owned())];
+            let response = app
+                .post_multipart("/upload", Some(&session), &fields, None)
+                .await;
+            assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY, "{link}");
+            // Kept in the form (templates escape "/" as "&#x2f;").
+            let escaped = link.replace('/', "&#x2f;");
+            assert!(
+                response.body.contains(&format!("value=\"{escaped}\"")),
+                "link kept in the form"
+            );
+        }
     }
 
     fn fields(rating: &str) -> Vec<(&'static str, String)> {
@@ -553,7 +661,9 @@ mod tests {
             .post_multipart("/upload", Some(&session), &fields("g"), None)
             .await;
         assert!(
-            response.body.contains("Choose a file to upload."),
+            response
+                .body
+                .contains("Choose a file to upload, or paste a link."),
             "{}",
             response.body
         );

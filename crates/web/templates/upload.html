@@ -10,8 +10,10 @@
   {% endif %}
   <form method="post" action="/upload" enctype="multipart/form-data">
     <label for="file">File</label>
-    <input id="file" name="file" type="file" required
+    <input id="file" name="file" type="file"
            accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/jxl,video/mp4,video/webm">
+    <label for="url">…or a link to it</label>
+    <input id="url" name="url" type="url" value="{{ form.url }}" placeholder="https://">
     <p class="hint">Images or videos up to {{ max_mb }} MB.</p>
 
     <fieldset class="ratings">

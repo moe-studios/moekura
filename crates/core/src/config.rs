@@ -82,7 +82,8 @@ impl Default for TelemetryConfig {
     fn default() -> Self {
         Self {
             log_format: LogFormat::Text,
-            log_filter: "info".to_owned(),
+            // Postgres notices like "relation already exists, skipping" are noise.
+            log_filter: "info,sqlx::postgres::notice=warn".to_owned(),
         }
     }
 }

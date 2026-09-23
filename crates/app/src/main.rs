@@ -9,6 +9,7 @@ use clap::{Parser, Subcommand};
 use tokio::net::TcpListener;
 use uwuu_core::config::{Config, DatabaseConfig};
 use uwuu_db::Db;
+use uwuu_db::site_cache::SiteCache;
 use uwuu_web::AppState;
 
 /// How long startup keeps retrying an unreachable database, so the app can
@@ -71,9 +72,19 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         .with_context(|| format!("could not bind {}", config.server.bind))?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
 
-    let app = uwuu_web::router(AppState { db: db.clone() }, &config.server);
+    let site = SiteCache::load(db.primary())
+        .await
+        .context("could not load site settings")?;
+    let cache_listener = tokio::spawn(site.clone().listen(db.primary().clone()));
+
+    let state = AppState {
+        db: db.clone(),
+        site,
+    };
+    let app = uwuu_web::router(state, &config.server);
     uwuu_web::serve(listener, app, shutdown_signal()).await?;
 
+    cache_listener.abort();
     db.close().await;
     tracing::info!("shut down");
     Ok(())

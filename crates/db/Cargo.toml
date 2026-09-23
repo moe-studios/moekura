@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 uwuu-core.workspace = true
+serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 time.workspace = true

@@ -2,6 +2,8 @@
 
 pub mod accounts;
 pub mod roles;
+pub mod settings;
+pub mod site_cache;
 pub mod users;
 
 use std::str::FromStr;

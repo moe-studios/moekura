@@ -21,11 +21,14 @@ use tower_http::trace::TraceLayer;
 use tracing::Span;
 use uwuu_core::config::ServerConfig;
 use uwuu_db::Db;
+use uwuu_db::site_cache::SiteCache;
 
 /// Shared state handed to every handler.
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
+    /// Site settings and roles, kept current across nodes.
+    pub site: SiteCache,
 }
 
 pub fn router(state: AppState, config: &ServerConfig) -> Router {

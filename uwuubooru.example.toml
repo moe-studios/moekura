@@ -34,4 +34,4 @@ auto_migrate = true
 log_format = "text"
 # tracing filter directive. RUST_LOG overrides it.
 # "info,tower_http=debug" also logs every request.
-log_filter = "info"
+log_filter = "info,sqlx::postgres::notice=warn"

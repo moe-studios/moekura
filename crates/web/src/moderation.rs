@@ -1,18 +1,25 @@
 //! Moderation pages.
 
-use axum::Router;
-use axum::extract::Query;
-use axum::response::Response;
-use axum::routing::get;
+use axum::extract::{Path, Query};
+use axum::response::{IntoResponse, Redirect, Response};
+use axum::routing::{get, post};
+use axum::{Form, Router};
+use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::Deserialize;
+use uwuu_core::jobs::PurgePost;
 use uwuu_core::moderation::ActionKind;
+use uwuu_core::moderation::REASON_MAX_LEN;
 use uwuu_core::permissions::Permission;
+use uwuu_core::posts::PostStatus;
+use uwuu_db::mod_actions::NewAction;
 use uwuu_db::mod_actions::{self, Entry, Filter};
 use uwuu_db::users;
+use uwuu_db::{jobs, posts};
 
 use crate::AppState;
 use crate::error::AppError;
+use crate::flash::{self, Flash};
 use crate::pages::Page;
 use crate::templates::url_value;
 
@@ -20,7 +27,125 @@ use crate::templates::url_value;
 const LOG_PAGE: i64 = 50;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/moderation/log", get(log))
+    Router::new()
+        .route("/moderation/log", get(log))
+        .route("/posts/{id}/delete", post(delete))
+        .route("/posts/{id}/restore", post(restore))
+        .route("/posts/{id}/purge", post(purge))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ReasonForm {
+    #[serde(default)]
+    reason: String,
+}
+
+fn check_reason(reason: &str) -> Result<&str, AppError> {
+    let reason = reason.trim();
+    if reason.chars().count() > REASON_MAX_LEN {
+        return Err(AppError::BadRequest(format!(
+            "The reason may be at most {REASON_MAX_LEN} characters"
+        )));
+    }
+    Ok(reason)
+}
+
+/// Moves post `id` between statuses and logs it, in one transaction.
+async fn change_status(
+    page: &Page,
+    id: i64,
+    from: &[PostStatus],
+    to: PostStatus,
+    kind: ActionKind,
+    reason: &str,
+) -> Result<(), AppError> {
+    let actor = page.current.user.as_ref().map(|u| u.id);
+    let mut tx = page.state().db.primary().begin().await?;
+    if !posts::set_status(&mut *tx, id, from, to).await? {
+        return Err(AppError::BadRequest(
+            "The post isn't in a state where that applies (someone may have got there first)"
+                .into(),
+        ));
+    }
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor, kind).post(id).reason(reason),
+    )
+    .await?;
+    tx.commit().await?;
+    tracing::info!(post_id = id, action = kind.as_str(), "post moderated");
+    Ok(())
+}
+
+fn back_to(jar: CookieJar, url: &str) -> Response {
+    (flash::set(jar, Flash::Saved), Redirect::to(url)).into_response()
+}
+
+async fn delete(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::DeletePosts)?;
+    let reason = check_reason(&form.reason)?;
+    change_status(
+        &page,
+        id,
+        &[PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
+        PostStatus::Deleted,
+        ActionKind::PostDelete,
+        reason,
+    )
+    .await?;
+    Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+async fn restore(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
+    page.current.require(Permission::DeletePosts)?;
+    change_status(
+        &page,
+        id,
+        &[PostStatus::Deleted],
+        PostStatus::Active,
+        ActionKind::PostRestore,
+        "",
+    )
+    .await?;
+    Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+/// Queues removal of a deleted post and its files.
+async fn purge(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
+    page.current.require(Permission::PurgePosts)?;
+    let actor = page.current.user.as_ref().map(|u| u.id);
+    let mut tx = page.state().db.primary().begin().await?;
+    let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
+    if post.status != PostStatus::Deleted {
+        return Err(AppError::BadRequest(
+            "Only deleted posts can be purged".into(),
+        ));
+    }
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor, ActionKind::PostPurge).post(id),
+    )
+    .await?;
+    jobs::enqueue(&mut tx, &PurgePost { post_id: id }).await?;
+    tx.commit().await?;
+    Ok(back_to(jar, "/posts?tags=status%3Adeleted"))
+}
+
+/// The latest deletion or rejection of a post, for its page.
+pub(crate) async fn deletion(db: &sqlx::PgPool, post_id: i64) -> Result<Option<Entry>, AppError> {
+    let filter = Filter {
+        post_id: Some(post_id),
+        ..Filter::default()
+    };
+    Ok(mod_actions::list(db, &filter, 50)
+        .await?
+        .into_iter()
+        .find(|e| e.action == "post.delete" || e.action == "post.reject"))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -112,6 +237,108 @@ mod tests {
     use uwuu_db::mod_actions::{self, NewAction};
 
     use crate::test_support::{TestApp, session_for, test_state};
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn delete_restore_and_purge(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::posts::routes())
+                .merge(crate::upload::routes(max)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let response = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &[("rating", "g".to_owned()), ("tags", "cat".to_owned())],
+                Some(("a.png", &crate::test_support::fixture::png(20, 20))),
+            )
+            .await;
+        let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .parse()
+            .unwrap();
+        let count = || async {
+            uwuu_db::tags::by_name(&pool, "cat")
+                .await
+                .unwrap()
+                .unwrap()
+                .post_count
+        };
+
+        assert_eq!(
+            app.post_form(
+                &format!("/posts/{id}/delete"),
+                Some(&alice),
+                &[],
+                "reason=x"
+            )
+            .await
+            .status,
+            StatusCode::FORBIDDEN
+        );
+        let response = app
+            .post_form(
+                &format!("/posts/{id}/delete"),
+                Some(&moderator),
+                &[],
+                "reason=duplicate",
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER);
+        assert_eq!(count().await, 0);
+        // Gone for members; explained to staff.
+        assert_eq!(
+            app.get(&format!("/posts/{id}"), Some(&alice)).await.status,
+            StatusCode::NOT_FOUND
+        );
+        let page = app
+            .get(&format!("/posts/{id}"), Some(&moderator))
+            .await
+            .body;
+        assert!(page.contains("by mod: “duplicate”"), "{page}");
+        assert!(page.contains("/restore"));
+        assert!(!page.contains("/purge"), "moderators can't purge");
+
+        app.post(&format!("/posts/{id}/restore"), Some(&moderator), &[])
+            .await;
+        assert_eq!(count().await, 1);
+        // Purging needs a deleted post.
+        let refused = app
+            .post(&format!("/posts/{id}/purge"), Some(&admin), &[])
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+        app.post_form(
+            &format!("/posts/{id}/delete"),
+            Some(&moderator),
+            &[],
+            "reason=again",
+        )
+        .await;
+        let response = app
+            .post(&format!("/posts/{id}/purge"), Some(&admin), &[])
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER);
+        let job: String = sqlx::query_scalar("SELECT kind FROM jobs WHERE kind = 'posts.purge'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(job, "posts.purge");
+        let logged: Vec<String> =
+            sqlx::query_scalar("SELECT action FROM mod_actions WHERE post_id = $1 ORDER BY id")
+                .bind(id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            logged,
+            ["post.delete", "post.restore", "post.delete", "post.purge"]
+        );
+    }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
     async fn the_log_is_for_moderators(pool: PgPool) {

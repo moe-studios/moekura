@@ -443,3 +443,5 @@ form.vote button[type="submit"], form.favorite button[type="submit"] { margin: 0
 .log { list-style: none; margin: 0; padding: 0; }
 .log > li { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .log .reason { margin-top: 2px; }
+button.danger { background: var(--danger); }
+.moderate form + form { margin-top: 12px; }

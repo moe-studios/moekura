@@ -3,7 +3,8 @@
 {% block content %}
 <div class="post-layout">
   <section class="post-media">
-    {% if post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
+    {% if deleted %}<p class="notice">Deleted {{ deleted.when }}{% if deleted.by %} by {{ deleted.by }}{% endif %}{% if deleted.reason %}: “{{ deleted.reason }}”{% endif %}</p>
+    {% elif post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
     {% if blacklisted %}
     <p class="notice blacklisted">This post matches your blacklist (<code>{{ blacklisted.rule }}</code>). <a href="{{ blacklisted.show_url }}">Show it anyway</a></p>
@@ -40,6 +41,27 @@
         {% endfor %}
       </ul>
     </section>
+    {% endif %}
+    {% if moderate.can_delete or moderate.can_restore %}
+    <details class="edit moderate">
+      <summary>Moderate</summary>
+      {% if moderate.can_delete %}
+      <form method="post" action="/posts/{{ post.id }}/delete">
+        <label for="delete-reason">Reason for deleting</label>
+        <input id="delete-reason" name="reason" maxlength="2000" required>
+        <button type="submit">Delete</button>
+      </form>
+      {% endif %}
+      {% if moderate.can_restore %}
+      <form method="post" action="/posts/{{ post.id }}/restore"><button type="submit">Restore</button></form>
+      {% endif %}
+      {% if moderate.can_purge %}
+      <form method="post" action="/posts/{{ post.id }}/purge">
+        <p class="hint">Purging removes the post and its files for good.</p>
+        <button type="submit" class="danger">Purge</button>
+      </form>
+      {% endif %}
+    </details>
     {% endif %}
     {% if edit %}
     <details id="edit" class="edit"{% if edit.error %} open{% endif %}>

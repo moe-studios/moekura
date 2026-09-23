@@ -514,6 +514,22 @@ pub(crate) async fn render_post(
             .and_then(|list| list.matching(post.rating, &post.tag_ids).map(str::to_owned))
     };
     let similar = similar_context(page, &asset, blacklist.as_ref()).await?;
+    let deleted = if post.status == PostStatus::Deleted {
+        crate::moderation::deletion(db, id).await?.map(|entry| {
+            context! {
+                by => entry.actor_name,
+                reason => entry.reason,
+                when => entry.created_at.date().to_string(),
+            }
+        })
+    } else {
+        None
+    };
+    let moderate = context! {
+        can_delete => page.current.can(Permission::DeletePosts) && post.status != PostStatus::Deleted,
+        can_restore => page.current.can(Permission::DeletePosts) && post.status == PostStatus::Deleted,
+        can_purge => page.current.can(Permission::PurgePosts) && post.status == PostStatus::Deleted,
+    };
     let show_url = {
         let mut query = url::form_urlencoded::Serializer::new(String::new());
         if !search.is_empty() {
@@ -629,6 +645,8 @@ pub(crate) async fn render_post(
             tag_groups => tag_groups,
             family => family,
             similar => similar,
+            deleted => deleted,
+            moderate => moderate,
             blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
             reactions => reactions,
             edit => edit,

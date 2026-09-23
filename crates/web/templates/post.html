@@ -31,6 +31,16 @@
       </ul>
     </section>
     {% endif %}
+    {% if similar %}
+    <section class="family similar" aria-label="Similar posts">
+      <p>Similar posts <a class="hint" href="{{ search_url('similar:' ~ post.id) }}">(search)</a></p>
+      <ul class="family-cards">
+        {% for card in similar %}
+        <li><a href="{{ card.href }}">{% if card.thumb %}<img src="{{ card.thumb }}" width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}" loading="lazy">{% else %}#{{ card.id }}{% endif %}</a></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
     {% if edit %}
     <details id="edit" class="edit"{% if edit.error %} open{% endif %}>
       <summary>Edit</summary>

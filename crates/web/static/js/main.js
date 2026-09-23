@@ -40,7 +40,8 @@ var METATAGS = {
   ],
   limit: [],
   fav: [],
-  ordfav: []
+  ordfav: [],
+  similar: []
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 

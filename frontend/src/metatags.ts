@@ -42,6 +42,7 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
   limit: [],
   fav: [],
   ordfav: [],
+  similar: [],
 };
 
 /// Prefixes that set a new tag's category when tagging.

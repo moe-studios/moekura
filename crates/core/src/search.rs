@@ -28,7 +28,7 @@ pub const FILETYPES: &[&str] = &["jpeg", "png", "gif", "webp", "avif", "jxl", "m
 pub const METATAGS: &[&str] = &[
     "id", "rating", "status", "user", "score", "favcount", "width", "height", "mpixels", "ratio",
     "filesize", "duration", "date", "filetype", "md5", "parent", "tagcount", "order", "limit",
-    "fav", "ordfav",
+    "fav", "ordfav", "similar",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -149,6 +149,8 @@ pub enum Filter {
     TagCount(Bound<i64>),
     /// Favorited by this user (name as typed).
     Fav(String),
+    /// Looks like this post (perceptual hash), the post included.
+    Similar(i64),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -357,6 +359,7 @@ impl Query {
                 self.order = Some(Order::Favorited);
                 return Ok(());
             }
+            "similar" => Filter::Similar(value.parse().map_err(|_| invalid("expected a post id"))?),
             "fav" => {
                 if value.is_empty() {
                     return Err(invalid("expected a user name"));
@@ -650,6 +653,7 @@ impl fmt::Display for Condition {
             Filter::Parent(ParentFilter::Of(id)) => write!(f, "parent:{id}"),
             Filter::TagCount(b) => write!(f, "tagcount:{b}"),
             Filter::Fav(name) => write!(f, "fav:{name}"),
+            Filter::Similar(id) => write!(f, "similar:{id}"),
         }
     }
 }
@@ -902,6 +906,8 @@ mod tests {
         assert_eq!(error("-~a"), "`-~a`: use either `-` or `~`, not both");
         assert_eq!(error("-"), "`-` is missing a tag");
         assert_eq!(error("pool:12"), "`pool:` searches aren't supported yet");
+        assert_eq!(filter("similar:12"), Filter::Similar(12));
+        assert!(error("similar:x").contains("expected a post id"));
         assert_eq!(
             error("a\u{7}b"),
             "`a\u{7}b`: the tag may not contain control characters"

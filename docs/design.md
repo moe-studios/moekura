@@ -104,7 +104,7 @@ Files are stored under content-addressed keys: `original/ab/cd/<sha256>.<ext>`, 
 ## 4. Tag search (the main scaling risk)
 
 **Syntax** is Danbooru-style, so it is familiar to users (full reference in [search.md](search.md)):
-`tag1 tag2 -excluded ~or_a ~or_b wild*card rating:e,q score:>=10 favcount:>5 user:name parent:123 width:>1920 ratio:16:9 date:2026-01..2026-06 md5:… filetype:png,webm status:deleted order:score|favcount|random|id_asc|… limit:40`. `fav:` and `ordfav:` search favorites; `pool:` and `similar:` come with the features they search.
+`tag1 tag2 -excluded ~or_a ~or_b wild*card rating:e,q score:>=10 favcount:>5 user:name parent:123 width:>1920 ratio:16:9 date:2026-01..2026-06 md5:… filetype:png,webm status:deleted order:score|favcount|random|id_asc|… limit:40`. `fav:` and `ordfav:` search favorites and `similar:` perceptual hashes; `pool:` comes with pools.
 
 **Pipeline:**
 1. `uwuu_core::search::Query::parse` turns the query into an AST. Errors come back as structured values that the UI shows inline.

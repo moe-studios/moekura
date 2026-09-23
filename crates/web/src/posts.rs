@@ -435,13 +435,15 @@ pub(crate) async fn render_post(
     let tag_string = tag_names.join(" ");
     let tag_groups = crate::tags::grouped(&categories, post_tags.clone());
     let family = family_context(page, &post).await?;
+    let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
     let blacklisted = if show_blacklisted {
         None
     } else {
-        crate::blacklist::for_viewer(state, db, &page.current)
-            .await?
+        blacklist
+            .as_ref()
             .and_then(|list| list.matching(post.rating, &post.tag_ids).map(str::to_owned))
     };
+    let similar = similar_context(page, &asset, blacklist.as_ref()).await?;
     let show_url = {
         let mut query = url::form_urlencoded::Serializer::new(String::new());
         if !search.is_empty() {
@@ -556,6 +558,7 @@ pub(crate) async fn render_post(
             uploader => uploader,
             tag_groups => tag_groups,
             family => family,
+            similar => similar,
             blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
             reactions => reactions,
             edit => edit,
@@ -568,6 +571,47 @@ pub(crate) async fn render_post(
         },
     ))
 }
+
+/// Posts that look like this one, as thumbnails, leaving out those the
+/// viewer can't see or has blacklisted.
+async fn similar_context(
+    page: &Page,
+    asset: &media::Asset,
+    blacklist: Option<&crate::blacklist::Active>,
+) -> Result<Vec<Value>, AppError> {
+    let Some(hash) = asset.phash else {
+        return Ok(Vec::new());
+    };
+    let state = page.state();
+    let db = state.db.primary();
+    let found = media::similar(
+        db,
+        hash as u64,
+        media::SIMILAR_MAX_DISTANCE,
+        Some(asset.post_id),
+        SIMILAR_SHOWN,
+    )
+    .await?;
+    let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
+    let sizes = &state.media.config().thumbnail_sizes;
+    let box_size = sizes.first().copied().unwrap_or(250);
+    let kind = format!("thumb-{box_size}");
+    let visible = visibility(&page.current);
+    Ok(posts::cards(db, &ids, (&kind, &kind))
+        .await?
+        .iter()
+        .filter(|card| {
+            let status: Option<PostStatus> = card.status.parse().ok();
+            let rating = card.rating.parse().unwrap_or(Rating::Explicit);
+            status.is_some_and(|s| visible.statuses.contains(&s))
+                && blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
+        })
+        .map(|card| card_context(state, card, box_size, None))
+        .collect())
+}
+
+/// Similar posts listed on a post page.
+const SIMILAR_SHOWN: i64 = 12;
 
 /// The parent/children bar: the post's parent and its other children, or
 /// the post's own children. `None` when the post has no family.
@@ -916,6 +960,41 @@ mod tests {
             .await
             .body;
         assert!(!shown.contains("matches your blacklist"));
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn post_pages_list_similar_posts(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let a = upload(&app, &alice, &fixture::png(20, 20), &[]).await;
+        let b = upload(&app, &alice, &fixture::png(24, 20), &[]).await;
+        let c = upload(&app, &alice, &fixture::png(28, 20), &[("rating", "e")]).await;
+        // As if processing found them nearly identical.
+        for (post, hash) in [(a, 0x1234_i64), (b, 0x1235), (c, 0x1237)] {
+            sqlx::query(
+                "UPDATE media_assets SET phash = $2, phash_0 = ($2 >> 48)::int2,
+                     phash_1 = (($2 >> 32) & 65535)::int2, phash_2 = (($2 >> 16) & 65535)::int2,
+                     phash_3 = ($2 & 65535)::int2, processed_at = now()
+                 WHERE post_id = $1",
+            )
+            .bind(post)
+            .bind(hash)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        uwuu_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
+            .await
+            .unwrap();
+        let (app, _) = super::tests::app(&pool).await;
+        let page = app.get(&format!("/posts/{a}"), None).await.body;
+        assert!(page.contains("Similar posts"), "{page}");
+        assert!(page.contains(&format!("href=\"/posts/{b}\"")), "{page}");
+        assert!(
+            !page.contains(&format!("href=\"/posts/{c}\"")),
+            "blacklisted"
+        );
+        assert!(page.contains(&format!("href=\"/posts?tags=similar%3A{a}\"")));
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

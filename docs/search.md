@@ -44,6 +44,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm` |
 | `date:` | `date:2026-01` | upload date (UTC): a day, month or year |
 | `md5:` | `md5:d41d8cd9…` | the file's MD5 hash |
+| `similar:` | `similar:123` | looks like post 123 (the post included); found once files are processed |
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
 | `tagcount:` | `tagcount:<5` | number of tags |
 | `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted` or `any` (see below) |

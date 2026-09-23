@@ -15,15 +15,17 @@ pub enum Flash {
     Registered,
     AwaitingApproval,
     Saved,
+    ApiKeyRevoked,
 }
 
 impl Flash {
-    const ALL: [Flash; 5] = [
+    const ALL: [Flash; 6] = [
         Flash::LoggedIn,
         Flash::LoggedOut,
         Flash::Registered,
         Flash::AwaitingApproval,
         Flash::Saved,
+        Flash::ApiKeyRevoked,
     ];
 
     fn key(self) -> &'static str {
@@ -33,6 +35,7 @@ impl Flash {
             Flash::Registered => "registered",
             Flash::AwaitingApproval => "awaiting_approval",
             Flash::Saved => "saved",
+            Flash::ApiKeyRevoked => "api_key_revoked",
         }
     }
 
@@ -45,6 +48,7 @@ impl Flash {
                 "Your account was created and is waiting for approval by the staff."
             }
             Flash::Saved => "Saved.",
+            Flash::ApiKeyRevoked => "The API key was revoked.",
         }
     }
 

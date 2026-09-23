@@ -1,18 +1,20 @@
-//! Who is making the request: session cookies, [`CurrentUser`], logging in
-//! and out.
+//! Who is making the request: session cookies or API keys,
+//! [`CurrentUser`], logging in and out.
 
 use std::net::IpAddr;
 use std::time::Duration;
 
 use axum::extract::{FromRequestParts, Request, State};
-use axum::http::header::{SET_COOKIE, USER_AGENT};
+use axum::http::header::{AUTHORIZATION, SET_COOKIE, USER_AGENT, WWW_AUTHENTICATE};
 use axum::http::request::Parts;
+use axum::http::{HeaderMap, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use time::OffsetDateTime;
 use uwu_core::permissions::{Permission, Permissions, Role, SystemRole};
+use uwu_db::api_keys;
 use uwu_db::bans::ActiveBan;
 use uwu_db::sessions::{self, Lifetime, NewSession};
 use uwu_db::site_cache::SiteSnapshot;
@@ -107,14 +109,66 @@ impl<S: Send + Sync> FromRequestParts<S> for CurrentUser {
     }
 }
 
-/// Middleware: resolves the session cookie into a [`CurrentUser`] request
-/// extension, and clears cookies that no longer name a live session.
+/// The token of an `Authorization: Bearer` header. Other schemes (Basic
+/// from a proxy guarding a private site) are left alone.
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, token) = value.split_once(' ')?;
+    scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
+}
+
+/// Resolves an API key; `None` if it's unknown, revoked or expired.
+async fn key_user(state: &AppState, token: &str) -> sqlx::Result<Option<CurrentUser>> {
+    let Some(key) = api_keys::lookup(state.db.primary(), token).await? else {
+        return Ok(None);
+    };
+    if key.needs_touch(OffsetDateTime::now_utc())
+        && let Err(error) = api_keys::touch(state.db.primary(), key.key_id).await
+    {
+        tracing::warn!(%error, "could not record API key use");
+    }
+    Ok(Some(CurrentUser::for_user(
+        key.user,
+        key.ban,
+        &state.site.get(),
+    )))
+}
+
+/// The answer to an unusable API key. It's refused outright rather than
+/// treated as a visitor's request, so a revoked key fails loudly.
+async fn refuse_key(path: &str) -> Response {
+    let response = (
+        StatusCode::UNAUTHORIZED,
+        [(WWW_AUTHENTICATE, r#"Bearer error="invalid_token""#)],
+        "This API key is invalid, revoked or expired",
+    )
+        .into_response();
+    if crate::api::is_api_path(path) {
+        crate::error::json_error(response).await
+    } else {
+        response
+    }
+}
+
+/// Middleware: resolves the API key or session cookie into a
+/// [`CurrentUser`] request extension, and clears cookies that no longer
+/// name a live session.
 pub async fn resolve_session(
     State(state): State<AppState>,
     jar: CookieJar,
     mut request: Request,
     next: Next,
 ) -> Response {
+    if let Some(token) = bearer_token(request.headers()) {
+        let current = match key_user(&state, token).await {
+            Ok(Some(current)) => current,
+            Ok(None) => return refuse_key(request.uri().path()).await,
+            Err(error) => return AppError::from(error).into_response(),
+        };
+        request.extensions_mut().insert(current);
+        return next.run(request).await;
+    }
+
     let site = state.site.get();
     let mut stale_cookie = false;
 

@@ -1,6 +1,7 @@
 //! PostgreSQL access for uwubooru.
 
 pub mod accounts;
+pub mod api_keys;
 pub mod bans;
 pub mod favorites;
 pub mod flags;

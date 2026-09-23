@@ -1,4 +1,5 @@
-//! Random secrets handed to clients (session tokens, invite codes).
+//! Random secrets handed to clients (session tokens, invite codes, API
+//! keys).
 //!
 //! Only a SHA-256 of each token is stored, so a database leak doesn't hand
 //! out working credentials. The tokens carry 256 random bits, so a fast
@@ -25,6 +26,19 @@ impl NewToken {
     }
 }
 
+/// What every API key starts with, so secret scanners can recognise one
+/// that leaked.
+pub const API_KEY_PREFIX: &str = "uwu_";
+
+impl NewToken {
+    /// A token for an API key: [`API_KEY_PREFIX`] and 64 hex digits.
+    pub fn api_key() -> Self {
+        let token = format!("{API_KEY_PREFIX}{}", Self::generate().token);
+        let hash = hash_token(&token);
+        Self { token, hash }
+    }
+}
+
 pub fn hash_token(token: &str) -> TokenHash {
     Sha256::digest(token.as_bytes()).into()
 }
@@ -41,5 +55,13 @@ mod tests {
         assert_eq!(a.token.len(), 64);
         assert_eq!(hash_token(&a.token), a.hash);
         assert_ne!(a.hash, b.hash);
+    }
+
+    #[test]
+    fn api_keys_are_recognisable() {
+        let key = NewToken::api_key();
+        assert!(key.token.starts_with("uwu_"));
+        assert_eq!(key.token.len(), 4 + 64);
+        assert_eq!(hash_token(&key.token), key.hash);
     }
 }

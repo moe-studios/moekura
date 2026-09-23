@@ -125,6 +125,15 @@ impl TestApp {
         self.send(builder, None, Body::empty()).await
     }
 
+    /// A GET with extra headers (`Authorization`, …) and no session.
+    pub async fn get_with_headers(&self, path: &str, headers: &[(&str, &str)]) -> TestResponse {
+        let mut builder = Request::get(path);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        self.send(builder, None, Body::empty()).await
+    }
+
     pub async fn get(&self, path: &str, session: Option<&str>) -> TestResponse {
         self.send(Request::get(path), session, Body::empty()).await
     }

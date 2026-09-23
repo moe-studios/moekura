@@ -314,6 +314,8 @@ select {
   white-space: nowrap;
 }
 code { font-size: 0.875em; padding: 1px 4px; border-radius: 4px; background: var(--border); }
+/* A secret shown once: selectable in one go, and wrapped on phones. */
+code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; color: var(--text); }
 
 .subnav { display: flex; gap: 16px; margin-bottom: 8px; font-size: 0.9375rem; }
 .request-form { margin: 16px 0 24px; }

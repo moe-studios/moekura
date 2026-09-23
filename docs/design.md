@@ -15,7 +15,7 @@ uwuubooru is an open-source, self-hostable booru (a tag-based image board). The 
 | Language / runtime | Rust (stable, 2024 edition), `tokio` | One static binary, low memory use, fast media handling |
 | HTTP | `axum` + `tower-http` (compression, timeouts, CORS, request IDs, tracing) | Mature and composable |
 | Database | PostgreSQL 16+ via `sqlx` (compile-time-checked queries, built-in migrations) | Needed for GIN tag arrays, SKIP LOCKED queues and replicas |
-| Dynamic SQL | `sea-query` (tag-search query builder only) | Search SQL is dynamic; everything else uses static `sqlx::query!` |
+| Queries | Static SQL strings with `sqlx::query_as` + `FromRow`; `sea-query` only for the dynamic tag-search builder | Every query is covered by a `#[sqlx::test]` against real Postgres, so builds need no database or `.sqlx` cache |
 | Templates | `minijinja` | Loaded at runtime, so admins can override templates and themes without recompiling |
 | Frontend JS | TypeScript bundled with `esbuild`, plus `htmx` | Autocomplete, keyboard nav, note overlays, upload UI. Everything works without JS |
 | CSS | Plain modern CSS with custom properties (no framework) | Easy to theme; light and dark by default |

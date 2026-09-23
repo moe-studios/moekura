@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod favorites;
+pub mod flags;
 pub mod invites;
 pub mod jobs;
 pub mod media;

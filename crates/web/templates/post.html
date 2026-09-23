@@ -42,6 +42,24 @@
       </ul>
     </section>
     {% endif %}
+    {% if moderate.flags %}
+    <section class="family flags" aria-label="Flags">
+      <p>Flags</p>
+      <ul class="plain">
+        {% for f in moderate.flags %}<li><span class="status status-{{ f.status }}">{{ f.status }}</span> {{ f.when }}{% if f.by %} by {{ f.by }}{% endif %}: {{ f.reason }}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if moderate.can_flag %}
+    <details class="edit">
+      <summary>Flag</summary>
+      <form method="post" action="/posts/{{ post.id }}/flag">
+        <label for="flag-reason">What's wrong with this post?</label>
+        <input id="flag-reason" name="reason" maxlength="2000" required>
+        <button type="submit">Flag for review</button>
+      </form>
+    </details>
+    {% endif %}
     {% if moderate.can_delete or moderate.can_restore %}
     <details class="edit moderate">
       <summary>Moderate</summary>

@@ -12,6 +12,7 @@ use uwuu_core::moderation::ActionKind;
 use uwuu_core::moderation::REASON_MAX_LEN;
 use uwuu_core::permissions::Permission;
 use uwuu_core::posts::PostStatus;
+use uwuu_db::flags::{self, FlagError};
 use uwuu_db::mod_actions::NewAction;
 use uwuu_db::mod_actions::{self, Entry, Filter};
 use uwuu_db::users;
@@ -31,6 +32,9 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/moderation/log", get(log))
         .route("/moderation/queue", get(queue))
+        .route("/moderation/flags", get(flag_queue))
+        .route("/posts/{id}/flag", post(flag))
+        .route("/posts/{id}/flags/dismiss", post(dismiss_flags))
         .route("/posts/{id}/approve", post(approve))
         .route("/posts/{id}/reject", post(reject))
         .route("/posts/{id}/delete", post(delete))
@@ -102,7 +106,87 @@ async fn delete(
         reason,
     )
     .await?;
+    // Deleting settles any open flags.
+    flags::resolve(
+        page.state().db.primary(),
+        id,
+        true,
+        page.current.user.as_ref().map(|u| u.id),
+    )
+    .await?;
     Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+async fn flag(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::Flag)?;
+    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let reason = check_reason(&form.reason)?;
+    if reason.is_empty() {
+        return Err(AppError::BadRequest("Say why the post should go".into()));
+    }
+    let mut tx = page.state().db.primary().begin().await?;
+    match flags::create(&mut tx, id, user.id, reason).await {
+        Ok(()) => {}
+        Err(FlagError::Db(e)) => return Err(e.into()),
+        Err(e) => return Err(AppError::BadRequest(e.to_string())),
+    }
+    tx.commit().await?;
+    tracing::info!(post_id = id, user = user.name, "post flagged");
+    Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+/// Posts with open flags per page of the flag queue.
+const FLAG_PAGE: i64 = 30;
+
+async fn flag_queue(page: Page) -> Result<Response, AppError> {
+    page.current.require(Permission::ApprovePosts)?;
+    let state = page.state();
+    let open = flags::open(state.db.primary(), FLAG_PAGE).await?;
+    let mut ids: Vec<i64> = open.iter().map(|f| f.post_id).collect();
+    ids.dedup();
+    let cards = review_cards(state, &ids, &[]).await?;
+    let posts: Vec<Value> = cards
+        .into_iter()
+        .zip(&ids)
+        .map(|(card, id)| {
+            let reasons: Vec<Value> = open
+                .iter()
+                .filter(|f| f.post_id == *id)
+                .map(|f| context! { by => f.creator_name, reason => f.reason })
+                .collect();
+            context! { ..card, ..context! { flags => reasons } }
+        })
+        .collect();
+    Ok(page.render("moderation_flags.html", context! { posts => posts }))
+}
+
+async fn dismiss_flags(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ApprovePosts)?;
+    let actor = page.current.user.as_ref().map(|u| u.id);
+    let mut tx = page.state().db.primary().begin().await?;
+    let dismissed = flags::resolve(&mut *tx, id, false, actor).await?;
+    if dismissed == 0 {
+        return Err(AppError::BadRequest("The post has no open flags".into()));
+    }
+    posts::set_status(&mut *tx, id, &[PostStatus::Flagged], PostStatus::Active).await?;
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor, ActionKind::FlagDismiss)
+            .post(id)
+            .details(serde_json::json!({ "flags": dismissed })),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(back_to(jar, "/moderation/flags"))
 }
 
 async fn restore(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
@@ -526,6 +610,113 @@ mod tests {
             .post(&format!("/posts/{}/approve", ids[0]), Some(&janitor), &[])
             .await;
         assert_eq!(again.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn flags_are_raised_and_settled(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::posts::routes())
+                .merge(crate::upload::routes(max)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let mut ids = Vec::new();
+        for i in 0..2u32 {
+            let response = app
+                .post_multipart(
+                    "/upload",
+                    Some(&alice),
+                    &[("rating", "g".to_owned())],
+                    Some(("a.png", &crate::test_support::fixture::png(20 + 4 * i, 20))),
+                )
+                .await;
+            ids.push(
+                response.location.unwrap()["/posts/".len()..]
+                    .parse::<i64>()
+                    .unwrap(),
+            );
+        }
+        let status = |id: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>("SELECT status FROM posts WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+
+        let page = app
+            .get(&format!("/posts/{}", ids[0]), Some(&bob))
+            .await
+            .body;
+        assert!(page.contains(&format!("/posts/{}/flag", ids[0])), "{page}");
+        for id in &ids {
+            let response = app
+                .post_form(
+                    &format!("/posts/{id}/flag"),
+                    Some(&bob),
+                    &[],
+                    "reason=off-topic",
+                )
+                .await;
+            assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        }
+        let again = app
+            .post_form(
+                &format!("/posts/{}/flag", ids[0]),
+                Some(&bob),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(again.status, StatusCode::BAD_REQUEST);
+        assert_eq!(status(ids[0]).await, "flagged");
+
+        let queue = app.get("/moderation/flags", Some(&moderator)).await.body;
+        assert!(queue.contains("off-topic"), "{queue}");
+        app.post(
+            &format!("/posts/{}/flags/dismiss", ids[0]),
+            Some(&moderator),
+            &[],
+        )
+        .await;
+        assert_eq!(status(ids[0]).await, "active");
+        app.post_form(
+            &format!("/posts/{}/delete", ids[1]),
+            Some(&moderator),
+            &[],
+            "reason=agreed",
+        )
+        .await;
+        assert_eq!(status(ids[1]).await, "deleted");
+        let flag_states: Vec<String> =
+            sqlx::query_scalar("SELECT status FROM post_flags ORDER BY post_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(flag_states, ["dismissed", "upheld"]);
+        assert!(
+            !app.get("/moderation/flags", Some(&moderator))
+                .await
+                .body
+                .contains("off-topic")
+        );
+        // Staff see a post's flag history.
+        let page = app
+            .get(&format!("/posts/{}", ids[0]), Some(&moderator))
+            .await
+            .body;
+        assert!(
+            page.contains("off-topic") && page.contains("dismissed"),
+            "{page}"
+        );
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

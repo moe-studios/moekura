@@ -453,3 +453,6 @@ button.danger { background: var(--danger); }
 .review-tags { color: var(--muted); overflow-wrap: anywhere; }
 .actions form.reject { flex-direction: row; gap: 6px; }
 .actions form.reject input { padding: 3px 8px; }
+.plain { list-style: none; margin: 0 0 8px; padding: 0; }
+.status-open { color: var(--danger); }
+.status-dismissed, .status-upheld { color: var(--muted); }

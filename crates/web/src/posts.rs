@@ -525,7 +525,27 @@ pub(crate) async fn render_post(
     } else {
         None
     };
+    let flag_history = if page.current.can(Permission::ApprovePosts) {
+        uwuu_db::flags::for_post(db, id)
+            .await?
+            .into_iter()
+            .map(|f| {
+                context! {
+                    by => f.creator_name,
+                    reason => f.reason,
+                    status => f.status,
+                    when => f.created_at.date().to_string(),
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let moderate = context! {
+        can_flag => page.current.is_logged_in()
+            && page.current.can(Permission::Flag)
+            && matches!(post.status, PostStatus::Active | PostStatus::Flagged),
+        flags => flag_history,
         can_delete => page.current.can(Permission::DeletePosts) && post.status != PostStatus::Deleted,
         can_restore => page.current.can(Permission::DeletePosts) && post.status == PostStatus::Deleted,
         can_purge => page.current.can(Permission::PurgePosts) && post.status == PostStatus::Deleted,

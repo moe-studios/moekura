@@ -1,3 +1,4 @@
+mod admin;
 mod config;
 mod telemetry;
 
@@ -36,6 +37,11 @@ enum Command {
     Migrate,
     /// Validate the configuration and print the effective settings, with secrets redacted
     CheckConfig,
+    /// Manage accounts and site settings
+    Admin {
+        #[command(subcommand)]
+        command: admin::AdminCommand,
+    },
 }
 
 #[tokio::main]
@@ -54,6 +60,18 @@ async fn main() -> anyhow::Result<()> {
             migrate(&db).await?;
             db.close().await;
             Ok(())
+        }
+        Command::Admin { command } => {
+            // Fails fast rather than retrying: someone is waiting at a shell.
+            let db = Db::connect(&config.database)
+                .await
+                .context("could not connect to the database")?;
+            if config.database.auto_migrate {
+                migrate(&db).await?;
+            }
+            let result = admin::run(db.primary(), command).await;
+            db.close().await;
+            result
         }
         Command::Serve => {
             telemetry::init(&config.telemetry)?;

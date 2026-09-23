@@ -5,6 +5,7 @@ pub mod favorites;
 pub mod invites;
 pub mod jobs;
 pub mod media;
+pub mod mod_actions;
 pub mod post_versions;
 pub mod posts;
 pub mod roles;

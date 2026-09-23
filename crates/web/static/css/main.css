@@ -437,3 +437,9 @@ form.vote button[type="submit"], form.favorite button[type="submit"] { margin: 0
 .shortcuts dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0 0 16px; }
 .shortcuts dt { font-family: ui-monospace, monospace; font-weight: 600; }
 .shortcuts dd { margin: 0; }
+
+/* Moderation */
+
+.log { list-style: none; margin: 0; padding: 0; }
+.log > li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.log .reason { margin-top: 2px; }

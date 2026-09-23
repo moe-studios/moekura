@@ -9,8 +9,10 @@ use clap::Subcommand;
 use serde_json::Value;
 use sqlx::PgPool;
 use uwuu_core::jobs::ProcessMedia;
+use uwuu_core::moderation::ActionKind;
 use uwuu_core::permissions::{Role, SystemRole};
 use uwuu_db::accounts::{self, NewAccount};
+use uwuu_db::mod_actions::{self, NewAction};
 use uwuu_db::users::{self, User, UserStatus};
 use uwuu_db::{invites, roles, settings};
 
@@ -99,6 +101,12 @@ pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
         } => {
             let value = parse_setting_value(&value);
             settings::set(db, &key, value.clone()).await?;
+            mod_actions::record(
+                db,
+                NewAction::new(None, ActionKind::SettingUpdate)
+                    .details(serde_json::json!({ "key": key, "value": value, "via": "cli" })),
+            )
+            .await?;
             println!("{key} = {value}");
         }
     }
@@ -129,6 +137,13 @@ pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Rol
         bail!("no user named {name}");
     };
     users::set_role(db, user.id, role.id).await?;
+    mod_actions::record(
+        db,
+        NewAction::new(None, ActionKind::UserRole)
+            .user(user.id)
+            .details(serde_json::json!({ "role": role.name, "via": "cli" })),
+    )
+    .await?;
     Ok(role)
 }
 

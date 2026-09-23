@@ -14,6 +14,7 @@ mod files;
 pub mod flash;
 mod health;
 mod history;
+mod moderation;
 pub mod pages;
 mod posts;
 pub mod rate_limit;
@@ -134,6 +135,7 @@ pub fn router(state: AppState) -> Router {
         .merge(edit::routes())
         .merge(favorites::routes())
         .merge(history::routes())
+        .merge(moderation::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(users::routes())

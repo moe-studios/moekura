@@ -9,8 +9,10 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
+use uwuu_core::moderation::ActionKind;
 use uwuu_core::permissions::Permission;
 use uwuu_core::tags::{InvalidTag, POST_MAX_TAGS, TagInput, TagName, parse_input};
+use uwuu_db::mod_actions::{self, NewAction};
 use uwuu_db::tags::{self, Category, ListOrder, Tag, WantedTag};
 
 use crate::AppState;
@@ -341,6 +343,19 @@ async fn edit(
         return Err(AppError::BadRequest("Unknown category".into()));
     }
     tags::update(db, id, form.category, form.deprecated.is_some()).await?;
+    mod_actions::record(
+        db,
+        NewAction::new(
+            page.current.user.as_ref().map(|u| u.id),
+            ActionKind::TagUpdate,
+        )
+        .details(serde_json::json!({
+            "tag": tag.name,
+            "category": form.category,
+            "deprecated": form.deprecated.is_some(),
+        })),
+    )
+    .await?;
     tracing::info!(tag = tag.name, category = form.category, "tag edited");
     let query = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("name", &tag.name)

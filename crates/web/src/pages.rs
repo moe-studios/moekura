@@ -102,6 +102,15 @@ pub(crate) fn render(
             .map(Theme::as_str),
         flash => flash.map(Flash::text),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
+        moderation_url => current.and_then(|c| {
+            if c.can(Permission::ApprovePosts) {
+                Some("/moderation/queue")
+            } else if c.can(Permission::ViewAuditLog) {
+                Some("/moderation/log")
+            } else {
+                None
+            }
+        }),
     };
     match state
         .templates

@@ -8,8 +8,10 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::Deserialize;
+use uwuu_core::moderation::ActionKind;
 use uwuu_core::permissions::Permission;
 use uwuu_core::tags::TagName;
+use uwuu_db::mod_actions::{self, NewAction};
 use uwuu_db::tag_relations::{self, Kind, NewRequest, Relation, RelationError, Status};
 
 use crate::AppState;
@@ -211,7 +213,13 @@ async fn create(
     let result = match tag_relations::request(db, request).await {
         // Tag managers' own requests take effect at once.
         Ok(id) if page.current.can(Permission::ManageTags) => {
-            tag_relations::approve(db, id, user.id).await
+            match tag_relations::approve(db, id, user.id).await {
+                Ok(()) => {
+                    audit(db, user.id, ActionKind::TagRelationApprove, id).await?;
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
         }
         other => other.map(|_| ()),
     };
@@ -258,6 +266,14 @@ async fn act(
     };
     match result {
         Ok(()) => {
+            if manage {
+                let kind = match action.as_str() {
+                    "approve" => ActionKind::TagRelationApprove,
+                    "reject" => ActionKind::TagRelationReject,
+                    _ => ActionKind::TagRelationRemove,
+                };
+                audit(db, user.id, kind, id).await?;
+            }
             tracing::info!(id, action, user = user.name, "tag relation updated");
             Ok((
                 flash::set(jar, Flash::Saved),
@@ -268,6 +284,23 @@ async fn act(
         Err(RelationError::Rule(rule)) => Err(AppError::BadRequest(rule.to_string())),
         Err(RelationError::Db(e)) => Err(e.into()),
     }
+}
+
+/// Records a decision on relation `id` in the audit log.
+async fn audit(db: &sqlx::PgPool, actor: i64, kind: ActionKind, id: i32) -> Result<(), AppError> {
+    if let Some(relation) = tag_relations::by_id(db, id).await? {
+        mod_actions::record(
+            db,
+            NewAction::new(Some(actor), kind).details(serde_json::json!({
+                "relation_id": id,
+                "kind": relation.kind.as_str(),
+                "antecedent": relation.antecedent,
+                "consequent": relation.consequent,
+            })),
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

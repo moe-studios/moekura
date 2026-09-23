@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn override_dir_replaces_built_in_files() {
-        let dir = std::env::temp_dir().join(format!("uwuu-assets-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("uwu-assets-{}", std::process::id()));
         fs::create_dir_all(dir.join("css")).unwrap();
         fs::write(dir.join("css/main.css"), "body{color:hotpink}").unwrap();
 

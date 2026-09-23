@@ -9,8 +9,8 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::post;
 use axum::{Form, Json, Router};
 use serde::{Deserialize, Serialize};
-use uwuu_core::permissions::Permission;
-use uwuu_db::{favorites, posts};
+use uwu_core::permissions::Permission;
+use uwu_db::{favorites, posts};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -133,11 +133,11 @@ async fn vote(
 mod tests {
     use axum::http::StatusCode;
     use sqlx::PgPool;
-    use uwuu_core::permissions::SystemRole;
+    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn favorites_and_votes(pool: PgPool) {
         let app = TestApp::new(
             test_state(&pool).await,

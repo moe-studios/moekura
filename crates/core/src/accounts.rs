@@ -31,7 +31,7 @@ const RESERVED_NAMES: &[&str] = &[
     "settings",
     "staff",
     "system",
-    "uwuubooru",
+    "uwubooru",
 ];
 
 /// A validated account name.
@@ -178,7 +178,7 @@ pub fn verify_password(password: &str, stored_hash: &str) -> Verification {
 /// unknown account takes as long as one for a known account.
 pub fn verify_dummy_password(password: &str) {
     static DUMMY_HASH: LazyLock<String> =
-        LazyLock::new(|| hash_password("uwuubooru dummy password"));
+        LazyLock::new(|| hash_password("uwubooru dummy password"));
     let _ = verify_password(password, &DUMMY_HASH);
 }
 

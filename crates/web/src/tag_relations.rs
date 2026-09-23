@@ -8,11 +8,11 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::Deserialize;
-use uwuu_core::moderation::ActionKind;
-use uwuu_core::permissions::Permission;
-use uwuu_core::tags::TagName;
-use uwuu_db::mod_actions::{self, NewAction};
-use uwuu_db::tag_relations::{self, Kind, NewRequest, Relation, RelationError, Status};
+use uwu_core::moderation::ActionKind;
+use uwu_core::permissions::Permission;
+use uwu_core::tags::TagName;
+use uwu_db::mod_actions::{self, NewAction};
+use uwu_db::tag_relations::{self, Kind, NewRequest, Relation, RelationError, Status};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -98,7 +98,7 @@ async fn index(
     let db = page.state().db.read();
     let filter: Option<Status> = query.status.parse().ok();
     let number = query.page.unwrap_or(1).clamp(1, MAX_PAGE);
-    let name = uwuu_core::tags::normalize(&query.name);
+    let name = uwu_core::tags::normalize(&query.name);
     let mut found = tag_relations::list(
         db,
         kind,
@@ -306,7 +306,7 @@ async fn audit(db: &sqlx::PgPool, actor: i64, kind: ActionKind, id: i32) -> Resu
 #[cfg(test)]
 mod tests {
     use sqlx::PgPool;
-    use uwuu_core::permissions::SystemRole;
+    use uwu_core::permissions::SystemRole;
 
     use super::*;
     use crate::test_support::{TestApp, session_for, test_state};
@@ -325,7 +325,7 @@ mod tests {
             .status
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn members_request_and_managers_decide(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, routes());
         let member = session_for(&pool, "alice", SystemRole::Member).await;
@@ -390,7 +390,7 @@ mod tests {
         assert!(response.body.contains("value=\"kitten\""));
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn managers_requests_apply_immediately(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, routes());
         let admin = session_for(&pool, "root", SystemRole::Admin).await;

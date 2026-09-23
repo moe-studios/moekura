@@ -5,8 +5,8 @@ WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p uwuubooru \
-    && cp target/release/uwuubooru /usr/local/bin/uwuubooru
+    cargo build --release --locked -p uwubooru \
+    && cp target/release/uwubooru /usr/local/bin/uwubooru
 
 FROM docker.io/library/debian:trixie-slim
 # libvips for images (AVIF via the libheif plugins, JPEG XL built in) and
@@ -19,13 +19,13 @@ RUN apt-get update \
         libheif-plugin-aomenc \
         ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /var/lib/uwuubooru --create-home uwuubooru \
-    && install -d -o uwuubooru -g uwuubooru /var/lib/uwuubooru/data
-COPY --from=build /usr/local/bin/uwuubooru /usr/local/bin/uwuubooru
-USER uwuubooru
-WORKDIR /var/lib/uwuubooru
+    && useradd --system --uid 10001 --home-dir /var/lib/uwubooru --create-home uwubooru \
+    && install -d -o uwubooru -g uwubooru /var/lib/uwubooru/data
+COPY --from=build /usr/local/bin/uwubooru /usr/local/bin/uwubooru
+USER uwubooru
+WORKDIR /var/lib/uwubooru
 # Stored files (storage.path defaults to ./data); mount a volume here.
-VOLUME /var/lib/uwuubooru/data
+VOLUME /var/lib/uwubooru/data
 EXPOSE 8080
-ENTRYPOINT ["uwuubooru"]
+ENTRYPOINT ["uwubooru"]
 CMD ["serve"]

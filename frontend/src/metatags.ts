@@ -1,4 +1,4 @@
-// Search metatags and their fixed values, mirroring uwuu_core::search.
+// Search metatags and their fixed values, mirroring uwu_core::search.
 // A Rust test (crates/web/src/tags.rs) checks every metatag and order
 // name appears here.
 

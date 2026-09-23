@@ -5,7 +5,7 @@ CREATE TABLE mod_actions (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     -- NULL for actions from the command line.
     actor_id bigint REFERENCES users (id) ON DELETE SET NULL,
-    -- uwuu_core::moderation::ActionKind.
+    -- uwu_core::moderation::ActionKind.
     action text NOT NULL,
     post_id bigint,
     user_id bigint,

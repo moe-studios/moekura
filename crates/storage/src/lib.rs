@@ -19,7 +19,7 @@ use object_store::path::Path as ObjectPath;
 use object_store::{GetOptions, ObjectStore, ObjectStoreExt, PutPayload, WriteMultipart};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use url::Url;
-use uwuu_core::config::{StorageBackend, StorageConfig};
+use uwu_core::config::{StorageBackend, StorageConfig};
 
 /// Files at most this large are uploaded in one request; larger ones in parts.
 const SINGLE_PUT_LIMIT: u64 = 16 * 1024 * 1024;
@@ -325,7 +325,7 @@ mod tests {
     const HASH: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("uwuu-storage-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("uwu-storage-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -437,13 +437,13 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Runs against a real S3-compatible store when `UWUU_TEST_S3_ENDPOINT`
-    /// is set, e.g. MinIO: `UWUU_TEST_S3_ENDPOINT=http://localhost:9000
-    /// UWUU_TEST_S3_BUCKET=test AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…`.
+    /// Runs against a real S3-compatible store when `UWU_TEST_S3_ENDPOINT`
+    /// is set, e.g. MinIO: `UWU_TEST_S3_ENDPOINT=http://localhost:9000
+    /// UWU_TEST_S3_BUCKET=test AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…`.
     #[tokio::test]
     async fn s3_round_trip_when_configured() {
-        let Ok(endpoint) = std::env::var("UWUU_TEST_S3_ENDPOINT") else {
-            eprintln!("skipping: UWUU_TEST_S3_ENDPOINT not set");
+        let Ok(endpoint) = std::env::var("UWU_TEST_S3_ENDPOINT") else {
+            eprintln!("skipping: UWU_TEST_S3_ENDPOINT not set");
             return;
         };
         install_crypto_provider();
@@ -451,7 +451,7 @@ mod tests {
             backend: StorageBackend::S3,
             ..StorageConfig::default()
         };
-        config.s3.bucket = std::env::var("UWUU_TEST_S3_BUCKET").unwrap_or_else(|_| "test".into());
+        config.s3.bucket = std::env::var("UWU_TEST_S3_BUCKET").unwrap_or_else(|_| "test".into());
         config.s3.endpoint = Some(Url::parse(&endpoint).unwrap());
         config.s3.path_style = true;
         let storage = Storage::from_config(&config).unwrap();

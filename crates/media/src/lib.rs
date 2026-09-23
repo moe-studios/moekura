@@ -10,7 +10,7 @@ pub mod tool;
 use std::path::Path;
 
 use tokio::io::AsyncReadExt;
-use uwuu_core::config::MediaConfig;
+use uwu_core::config::MediaConfig;
 
 pub use crate::kind::{MediaType, SNIFF_LEN};
 pub use crate::probe::Probe;
@@ -102,7 +102,7 @@ pub(crate) mod fixtures {
     use std::process::Command;
 
     pub fn dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("uwuu-media-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("uwu-media-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -354,8 +354,8 @@ pub(crate) mod tests {
         let dir = fixtures::dir("probe-missing");
         let path = fixtures::video(&dir, "v.mp4", "libx264");
         let config = MediaConfig {
-            tools: uwuu_core::config::MediaTools {
-                ffprobe: "uwuu-no-such-ffprobe".into(),
+            tools: uwu_core::config::MediaTools {
+                ffprobe: "uwu-no-such-ffprobe".into(),
                 ..Default::default()
             },
             ..MediaConfig::default()

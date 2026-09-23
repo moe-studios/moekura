@@ -22,7 +22,7 @@ pub struct SiteSettings {
 impl Default for SiteSettings {
     fn default() -> Self {
         Self {
-            site_name: "uwuubooru".to_owned(),
+            site_name: "uwubooru".to_owned(),
             registration_mode: RegistrationMode::Open,
             upload_approval: false,
             default_blacklist: String::new(),

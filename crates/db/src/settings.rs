@@ -2,7 +2,7 @@
 
 use serde_json::Value;
 use sqlx::{PgExecutor, PgPool};
-use uwuu_core::settings::{SettingError, SiteSettings};
+use uwu_core::settings::{SettingError, SiteSettings};
 
 use crate::site_cache::CHANNEL;
 
@@ -49,7 +49,7 @@ pub async fn set(db: &PgPool, key: &str, value: Value) -> Result<SiteSettings, S
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use uwuu_core::settings::RegistrationMode;
+    use uwu_core::settings::RegistrationMode;
 
     use super::*;
 

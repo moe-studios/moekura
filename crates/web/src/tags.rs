@@ -9,11 +9,11 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use uwuu_core::moderation::ActionKind;
-use uwuu_core::permissions::Permission;
-use uwuu_core::tags::{InvalidTag, POST_MAX_TAGS, TagInput, TagName, parse_input};
-use uwuu_db::mod_actions::{self, NewAction};
-use uwuu_db::tags::{self, Category, ListOrder, Tag, WantedTag};
+use uwu_core::moderation::ActionKind;
+use uwu_core::permissions::Permission;
+use uwu_core::tags::{InvalidTag, POST_MAX_TAGS, TagInput, TagName, parse_input};
+use uwu_db::mod_actions::{self, NewAction};
+use uwu_db::tags::{self, Category, ListOrder, Tag, WantedTag};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -214,7 +214,7 @@ async fn autocomplete(
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
     let db = state.db.read();
-    let prefix = uwuu_core::tags::normalize(&query.q);
+    let prefix = uwu_core::tags::normalize(&query.q);
     let found = tags::autocomplete(db, &prefix, SUGGESTIONS).await?;
     let categories = tags::categories(db).await?;
     let suggestions: Vec<Suggestion> = found
@@ -255,7 +255,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
         _ => ListOrder::Count,
     };
     let number = query.page.unwrap_or(1).clamp(1, MAX_PAGE);
-    let pattern = uwuu_core::tags::normalize(&query.name);
+    let pattern = uwu_core::tags::normalize(&query.name);
     let mut found = tags::list(
         db,
         &pattern,
@@ -367,7 +367,7 @@ async fn edit(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
-    use uwuu_core::permissions::SystemRole;
+    use uwu_core::permissions::SystemRole;
 
     use super::*;
     use crate::test_support::{TestApp, session_for, test_state};
@@ -384,7 +384,7 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn parses_tag_fields(pool: PgPool) {
         assert_eq!(
             parse(&pool, "Long_Hair artist:Someone copyright:x:y")
@@ -418,17 +418,17 @@ mod tests {
     #[test]
     fn script_knows_the_metatags() {
         let script = include_str!("../../../frontend/src/metatags.ts");
-        for name in uwuu_core::search::METATAGS {
+        for name in uwu_core::search::METATAGS {
             assert!(script.contains(&format!("  {name}: [")), "{name}");
         }
-        for (name, order) in uwuu_core::search::Order::NAMES {
+        for (name, order) in uwu_core::search::Order::NAMES {
             if order.name() == *name {
                 assert!(script.contains(&format!("\"{name}\"")), "order:{name}");
             }
         }
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn autocomplete_returns_json(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, routes());
         let id: i32 = sqlx::query_scalar(
@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(empty.body, "[]");
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn edits_only_check_added_tags(pool: PgPool) {
         sqlx::query("INSERT INTO tags (name, is_deprecated) VALUES ('old', true)")
             .execute(&pool)
@@ -476,7 +476,7 @@ mod tests {
         ));
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn tag_list_and_editing(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, routes());
         let id: i32 =

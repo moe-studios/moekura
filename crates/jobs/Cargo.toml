@@ -1,6 +1,6 @@
 [package]
-name = "uwuu-jobs"
-description = "Background job workers for uwuubooru"
+name = "uwu-jobs"
+description = "Background job workers for uwubooru"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,10 +9,10 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-uwuu-core.workspace = true
-uwuu-db.workspace = true
-uwuu-media.workspace = true
-uwuu-storage.workspace = true
+uwu-core.workspace = true
+uwu-db.workspace = true
+uwu-media.workspace = true
+uwu-storage.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true

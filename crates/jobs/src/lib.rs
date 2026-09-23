@@ -1,7 +1,7 @@
 //! Background job workers.
 //!
 //! [`run`] starts a pool of workers that claim jobs from the Postgres queue
-//! ([`uwuu_db::jobs`]) and hand them to the handler registered for their
+//! ([`uwu_db::jobs`]) and hand them to the handler registered for their
 //! kind in a [`Registry`]. Idle workers wake on `NOTIFY` rather than
 //! polling hard, a reaper requeues jobs whose worker vanished, and shutdown
 //! stops claiming but lets running jobs finish.
@@ -20,8 +20,8 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::Instrument;
-use uwuu_core::jobs::Job;
-use uwuu_db::jobs::{self, ClaimedJob};
+use uwu_core::jobs::Job;
+use uwu_db::jobs::{self, ClaimedJob};
 
 pub mod media;
 pub mod tags;
@@ -362,7 +362,7 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn runs_jobs_and_retries_failures(pool: PgPool) {
         let calls = Arc::new(AtomicUsize::new(0));
         let mut registry = Registry::new();
@@ -419,7 +419,7 @@ mod tests {
         pool_task.await.unwrap();
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn panics_and_unknown_kinds_fail_the_job_not_the_worker(pool: PgPool) {
         let mut registry = Registry::new();
         registry.register(|_: Panic| async { panic!("handler exploded") });
@@ -457,7 +457,7 @@ mod tests {
         pool_task.await.unwrap();
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn shutdown_lets_running_jobs_finish(pool: PgPool) {
         let finished = Arc::new(AtomicUsize::new(0));
         let mut registry = Registry::new();
@@ -490,7 +490,7 @@ mod tests {
         assert_eq!(jobs::counts(&pool).await.unwrap().running, 0);
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn wakes_on_notify_without_polling(pool: PgPool) {
         let calls = Arc::new(AtomicUsize::new(0));
         let mut registry = Registry::new();

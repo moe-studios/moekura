@@ -8,11 +8,11 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use serde::Deserialize;
-use uwuu_core::blacklist::Blacklist;
-use uwuu_core::permissions::Permission;
-use uwuu_core::user_settings::{PER_PAGE_CHOICES, Theme, UserSettings};
-use uwuu_db::users::{self, UserStatus};
-use uwuu_db::{favorites, posts};
+use uwu_core::blacklist::Blacklist;
+use uwu_core::permissions::Permission;
+use uwu_core::user_settings::{PER_PAGE_CHOICES, Theme, UserSettings};
+use uwu_db::users::{self, UserStatus};
+use uwu_db::{favorites, posts};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -39,7 +39,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let staff =
         page.current.can(Permission::BanUsers) || page.current.can(Permission::ViewAuditLog);
     let ban_history = if staff {
-        uwuu_db::bans::for_user(db, user.id).await?
+        uwu_db::bans::for_user(db, user.id).await?
     } else {
         Vec::new()
     };
@@ -157,13 +157,13 @@ async fn save_settings(
 mod tests {
     use axum::http::StatusCode;
     use sqlx::PgPool;
-    use uwuu_core::permissions::SystemRole;
+    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn profiles_and_settings(pool: PgPool) {
-        uwuu_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
+        uwu_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
             .await
             .unwrap();
         let app = TestApp::new(

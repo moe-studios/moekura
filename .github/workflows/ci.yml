@@ -29,17 +29,17 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_USER: uwuu
-          POSTGRES_PASSWORD: uwuu
-          POSTGRES_DB: uwuu
+          POSTGRES_USER: uwu
+          POSTGRES_PASSWORD: uwu
+          POSTGRES_DB: uwu
         options: >-
-          --health-cmd "pg_isready -U uwuu"
+          --health-cmd "pg_isready -U uwu"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
     env:
       # sqlx::test creates a throwaway database per test on this server.
-      DATABASE_URL: postgres://uwuu:uwuu@postgres:5432/uwuu
+      DATABASE_URL: postgres://uwu:uwu@postgres:5432/uwu
     steps:
       - uses: actions/checkout@v5
       - name: Install media tools
@@ -88,4 +88,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: docker build --tag uwuubooru:ci .
+      - run: docker build --tag uwubooru:ci .

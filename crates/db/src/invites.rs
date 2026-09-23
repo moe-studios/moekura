@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use sqlx::PgExecutor;
-use uwuu_core::tokens::{NewToken, hash_token};
+use uwu_core::tokens::{NewToken, hash_token};
 
 pub struct NewInvite {
     pub created_by: Option<i64>,

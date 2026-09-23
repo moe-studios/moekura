@@ -1,4 +1,4 @@
-//! HTTP server for uwuubooru: HTML pages, the JSON API and operational
+//! HTTP server for uwubooru: HTML pages, the JSON API and operational
 //! endpoints, all sharing one router.
 
 mod account;
@@ -51,15 +51,15 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
-use uwuu_core::config::Config;
-use uwuu_db::Db;
-use uwuu_db::site_cache::SiteCache;
+use uwu_core::config::Config;
+use uwu_db::Db;
+use uwu_db::site_cache::SiteCache;
 
 use crate::assets::Assets;
 use crate::rate_limit::RateLimits;
 use crate::templates::Templates;
-use uwuu_media::Media;
-use uwuu_storage::Storage;
+use uwu_media::Media;
+use uwu_storage::Storage;
 
 /// Scripts and styles only from our own origin, images and video also from
 /// the file storage's public origin (a CDN) if there is one; no framing, no
@@ -100,14 +100,14 @@ pub enum StartupError {
     #[error("could not create the media work directory: {0}")]
     WorkDir(io::Error),
     #[error("could not open file storage: {0}")]
-    Storage(#[from] uwuu_storage::StorageError),
+    Storage(#[from] uwu_storage::StorageError),
 }
 
 impl AppState {
     /// Loads static files and compiles templates, honouring the override
     /// directories in `config.paths`.
     /// `file_key` signs file URLs on private sites; every node needs the
-    /// same one (`uwuu_db::secrets`).
+    /// same one (`uwu_db::secrets`).
     pub fn new(
         config: Config,
         db: Db,
@@ -145,13 +145,13 @@ impl AppState {
     pub fn is_private(&self) -> bool {
         self.site
             .get()
-            .system_role(uwuu_core::permissions::SystemRole::Anonymous)
-            .is_none_or(|role| !role.can(uwuu_core::permissions::Permission::ViewPosts))
+            .system_role(uwu_core::permissions::SystemRole::Anonymous)
+            .is_none_or(|role| !role.can(uwu_core::permissions::Permission::ViewPosts))
     }
 
     /// The URL browsers load a stored file from, signed on private sites
     /// when this server serves the files.
-    pub fn file_url(&self, key: &uwuu_storage::Key) -> String {
+    pub fn file_url(&self, key: &uwu_storage::Key) -> String {
         let url = self.storage.url(key);
         if self.storage.served_by_app() && self.is_private() {
             let now = time::OffsetDateTime::now_utc().unix_timestamp();

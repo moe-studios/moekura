@@ -7,16 +7,16 @@ version = "0.1.0-dev"
 edition = "2024"
 rust-version = "1.94"
 license = "AGPL-3.0-only"
-repository = "https://github.com/uwuumoe/uwuubooru"
+repository = "https://github.com/uwuumoe/uwubooru"
 publish = false
 
 [workspace.dependencies]
-uwuu-core = { path = "crates/core" }
-uwuu-db = { path = "crates/db" }
-uwuu-jobs = { path = "crates/jobs" }
-uwuu-media = { path = "crates/media" }
-uwuu-storage = { path = "crates/storage" }
-uwuu-web = { path = "crates/web" }
+uwu-core = { path = "crates/core" }
+uwu-db = { path = "crates/db" }
+uwu-jobs = { path = "crates/jobs" }
+uwu-media = { path = "crates/media" }
+uwu-storage = { path = "crates/storage" }
+uwu-web = { path = "crates/web" }
 
 anyhow = "1.0.104"
 argon2 = "0.6.0"

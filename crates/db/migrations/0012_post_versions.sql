@@ -24,12 +24,12 @@ CREATE INDEX post_versions_updater_id_idx ON post_versions (updater_id, id DESC)
     WHERE updater_id IS NOT NULL;
 
 -- Who is changing posts in this transaction; the application sets these
--- with set_config(…, true) (uwuu_db::post_versions::attribute).
+-- with set_config(…, true) (uwu_db::post_versions::attribute).
 CREATE FUNCTION post_versions_updater() RETURNS bigint LANGUAGE sql STABLE AS $$
-    SELECT nullif(current_setting('uwuu.updater_id', true), '')::bigint
+    SELECT nullif(current_setting('uwu.updater_id', true), '')::bigint
 $$;
 CREATE FUNCTION post_versions_relation() RETURNS integer LANGUAGE sql STABLE AS $$
-    SELECT nullif(current_setting('uwuu.relation_id', true), '')::integer
+    SELECT nullif(current_setting('uwu.relation_id', true), '')::integer
 $$;
 
 CREATE FUNCTION posts_record_inserted() RETURNS trigger

@@ -17,13 +17,13 @@ use md5::Md5;
 use minijinja::context;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
-use uwuu_core::jobs::ProcessMedia;
-use uwuu_core::permissions::Permission;
-use uwuu_core::posts::{DESCRIPTION_MAX_LEN, PostStatus, Rating, SOURCE_MAX_LEN};
-use uwuu_db::media::{self, InsertAssetError, NewAsset};
-use uwuu_db::posts::{self, NewPost};
-use uwuu_media::MediaError;
-use uwuu_storage::Key;
+use uwu_core::jobs::ProcessMedia;
+use uwu_core::permissions::Permission;
+use uwu_core::posts::{DESCRIPTION_MAX_LEN, PostStatus, Rating, SOURCE_MAX_LEN};
+use uwu_db::media::{self, InsertAssetError, NewAsset};
+use uwu_db::posts::{self, NewPost};
+use uwu_media::MediaError;
+use uwu_storage::Key;
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -296,7 +296,7 @@ pub struct TempWriter {
 
 impl TempWriter {
     pub async fn create(dir: &Path) -> Result<Self, UploadError> {
-        let name = hex::encode(uwuu_core::tokens::NewToken::generate().hash);
+        let name = hex::encode(uwu_core::tokens::NewToken::generate().hash);
         let upload = TempUpload {
             path: dir.join(format!("upload-{}", &name[..24])),
             sha256: [0; 32],
@@ -406,7 +406,7 @@ pub async fn ingest(
     let as_i32 = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
 
     let mut tx = db.begin().await?;
-    let tag_ids: Vec<i32> = uwuu_db::tags::for_post(
+    let tag_ids: Vec<i32> = uwu_db::tags::for_post(
         &mut tx,
         &tags.wanted(),
         uploader.can(Permission::ManageTags),
@@ -452,7 +452,7 @@ pub async fn ingest(
         }
         Err(InsertAssetError::Db(error)) => return Err(error.into()),
     };
-    uwuu_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
+    uwu_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
     tx.commit().await?;
 
     tracing::info!(post_id, %media_type, size = file.size, ?status, "post uploaded");
@@ -477,8 +477,8 @@ mod tests {
     use axum::http::StatusCode;
     use serde_json::json;
     use sqlx::PgPool;
-    use uwuu_core::permissions::SystemRole;
-    use uwuu_db::{jobs, settings};
+    use uwu_core::permissions::SystemRole;
+    use uwu_db::{jobs, settings};
 
     use axum::routing::get;
 
@@ -491,7 +491,7 @@ mod tests {
         (TestApp::new(state.clone(), routes), state)
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn uploads_from_a_link_and_uses_it_as_source(pool: PgPool) {
         // A local server stands in for the web; the fetcher that allows
         // private addresses is only ever built by tests.
@@ -526,7 +526,7 @@ mod tests {
         assert_eq!(asset.sha256, Sha256::digest(&png).to_vec());
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn links_to_the_local_network_are_refused(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -557,7 +557,7 @@ mod tests {
         ]
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn uploads_create_a_post_asset_and_job(pool: PgPool) {
         let (app, state) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -611,7 +611,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn duplicates_point_to_the_existing_post(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -642,7 +642,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn bad_files_and_fields_are_explained_and_kept(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -700,7 +700,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn tags_are_created_and_bad_ones_explained(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -727,7 +727,7 @@ mod tests {
             .parse()
             .unwrap();
         let post = posts::by_id(&pool, id).await.unwrap().unwrap();
-        let tags = uwuu_db::tags::by_ids(&pool, &post.tag_ids).await.unwrap();
+        let tags = uwu_db::tags::by_ids(&pool, &post.tag_ids).await.unwrap();
         let mut summary: Vec<(String, i16, i32)> = tags
             .into_iter()
             .map(|t| (t.name, t.category_id, t.post_count))
@@ -739,7 +739,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn oversized_files_are_refused(pool: PgPool) {
         let mut config = crate::test_support::test_config();
         config.media.max_upload_mb = 1;
@@ -772,7 +772,7 @@ mod tests {
         assert_eq!(leftovers, 0);
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn approval_queue_applies_to_roles_without_the_bypass(pool: PgPool) {
         settings::set(&pool, "upload_approval", json!(true))
             .await
@@ -810,7 +810,7 @@ mod tests {
         assert_eq!(status_of(direct.location).await, PostStatus::Active);
     }
 
-    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
     async fn visitors_must_log_in_to_upload(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let response = app.get("/upload", None).await;

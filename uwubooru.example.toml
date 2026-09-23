@@ -1,11 +1,11 @@
-# uwuubooru configuration
+# uwubooru configuration
 #
-# Copy to uwuubooru.toml (read from the working directory) or pass
+# Copy to uwubooru.toml (read from the working directory) or pass
 # --config <path>. Every key can also be set through the environment:
-# UWUU_<SECTION>__<KEY>, e.g. UWUU_DATABASE__URL. Environment variables win
+# UWU_<SECTION>__<KEY>, e.g. UWU_DATABASE__URL. Environment variables win
 # over this file. Values shown are the defaults unless noted.
 #
-# `uwuubooru check-config` prints the effective settings.
+# `uwubooru check-config` prints the effective settings.
 
 [server]
 # Address the HTTP server listens on.
@@ -22,7 +22,7 @@ request_timeout_secs = 30
 
 [database]
 # Required. Connection URL of the primary.
-url = "postgres://uwuu:CHANGE_ME@localhost/uwuu"
+url = "postgres://uwu:CHANGE_ME@localhost/uwu"
 # Read replicas for search and listings. Leave empty to use the primary.
 replicas = []
 # Maximum connections per pool (the primary and each replica).
@@ -33,7 +33,7 @@ acquire_timeout_secs = 5
 # Server-side limit per statement in milliseconds; 0 disables it.
 statement_timeout_ms = 30000
 # Apply pending migrations when `serve` starts. For multi-node deployments,
-# set this to false and run `uwuubooru migrate` as a release step.
+# set this to false and run `uwubooru migrate` as a release step.
 auto_migrate = true
 
 [auth]
@@ -46,7 +46,7 @@ session_max_days = 365
 # Background jobs (thumbnails, hashing) processed concurrently per process.
 workers = 2
 # Also run workers inside `serve`. Set to false when you run separate
-# `uwuubooru worker` processes.
+# `uwubooru worker` processes.
 run_in_serve = true
 # Seconds before a job whose worker stopped responding is retried elsewhere.
 lock_timeout_secs = 300
@@ -79,7 +79,7 @@ region = "us-east-1"
 # For MinIO, Garage, R2, B2 etc. Leave unset for AWS.
 # endpoint = "http://localhost:9000"
 # Leave empty to use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or instance
-# credentials. Prefer UWUU_STORAGE__S3__SECRET_ACCESS_KEY over this file.
+# credentials. Prefer UWU_STORAGE__S3__SECRET_ACCESS_KEY over this file.
 access_key_id = ""
 secret_access_key = ""
 # Put the bucket in the path (http://host/bucket/key); most self-hosted
@@ -103,7 +103,7 @@ sample_size = 1600
 variant_format = "webp"
 tool_timeout_secs = 120
 # Scratch space for uploads and processing; the system temp dir by default.
-# work_dir = "/var/tmp/uwuubooru"
+# work_dir = "/var/tmp/uwubooru"
 
 [media.tools]
 # Paths to the media programs, if they are not on PATH.
@@ -116,8 +116,8 @@ ffprobe = "ffprobe"
 [paths]
 # Directories whose files replace built-in templates and static files with
 # the same relative path, e.g. <templates_override>/base.html. Unset by default.
-# templates_override = "/etc/uwuubooru/templates"
-# static_override = "/etc/uwuubooru/static"
+# templates_override = "/etc/uwubooru/templates"
+# static_override = "/etc/uwubooru/static"
 
 [telemetry]
 # "text" or "json".

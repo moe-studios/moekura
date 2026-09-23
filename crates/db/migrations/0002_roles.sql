@@ -1,4 +1,4 @@
--- Roles and their permission sets. See uwuu_core::permissions for the bit
+-- Roles and their permission sets. See uwu_core::permissions for the bit
 -- layout of `permissions`; bits are never reused.
 CREATE TABLE roles (
     id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -7,7 +7,7 @@ CREATE TABLE roles (
     permissions bigint NOT NULL DEFAULT 0,
     -- Higher ranks may act on users with lower ranks.
     rank smallint NOT NULL,
-    -- Identifies built-in roles to code (uwuu_core::permissions::SystemRole).
+    -- Identifies built-in roles to code (uwu_core::permissions::SystemRole).
     system_key text UNIQUE CHECK (
         system_key IN ('anonymous', 'member', 'contributor', 'janitor', 'moderator', 'admin')
     ),

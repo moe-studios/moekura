@@ -9,15 +9,15 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use uwuu_core::config::{Config, DatabaseConfig};
-use uwuu_db::Db;
-use uwuu_db::site_cache::SiteCache;
-use uwuu_jobs::media::MediaJobs;
-use uwuu_jobs::tags::TagJobs;
-use uwuu_jobs::{PoolConfig, Registry};
-use uwuu_media::Media;
-use uwuu_storage::Storage;
-use uwuu_web::AppState;
+use uwu_core::config::{Config, DatabaseConfig};
+use uwu_db::Db;
+use uwu_db::site_cache::SiteCache;
+use uwu_jobs::media::MediaJobs;
+use uwu_jobs::tags::TagJobs;
+use uwu_jobs::{PoolConfig, Registry};
+use uwu_media::Media;
+use uwu_storage::Storage;
+use uwu_web::AppState;
 
 /// How long startup keeps retrying an unreachable database, so the app can
 /// start alongside Postgres (e.g. in docker compose) without crashing.
@@ -27,10 +27,10 @@ const DB_STARTUP_WAIT: Duration = Duration::from_secs(60);
 const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
-#[command(name = "uwuubooru", version, about)]
+#[command(name = "uwubooru", version, about)]
 struct Cli {
-    /// Config file [default: ./uwuubooru.toml, if present]
-    #[arg(short, long, env = "UWUU_CONFIG", global = true)]
+    /// Config file [default: ./uwubooru.toml, if present]
+    #[arg(short, long, env = "UWU_CONFIG", global = true)]
     config: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -56,7 +56,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    uwuu_storage::install_crypto_provider();
+    uwu_storage::install_crypto_provider();
     let cli = Cli::parse();
     let config = config::load(cli.config.as_deref())?;
 
@@ -116,10 +116,10 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         .run_in_serve
         .then(|| run_workers(&db, &config))
         .transpose()?;
-    let file_key = uwuu_db::secrets::get_or_create(
+    let file_key = uwu_db::secrets::get_or_create(
         db.primary(),
         "file_urls",
-        uwuu_core::tokens::NewToken::generate().hash,
+        uwu_core::tokens::NewToken::generate().hash,
     )
     .await
     .context("could not load the file URL key")?;
@@ -139,8 +139,8 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     tokio::spawn(cancel_on_signal(shutdown.clone()));
     let workers = workers.map(|run| tokio::spawn(run(shutdown.clone())));
 
-    let app = uwuu_web::router(state);
-    uwuu_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
+    let app = uwu_web::router(state);
+    uwu_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
 
     if let Some(workers) = workers {
         wait_for_workers(workers).await;
@@ -211,7 +211,7 @@ fn run_workers(
         Duration::from_secs(config.jobs.lock_timeout_secs),
     );
     Ok(move |shutdown| -> BoxFuture {
-        Box::pin(uwuu_jobs::run(pool, registry, pool_config, shutdown))
+        Box::pin(uwu_jobs::run(pool, registry, pool_config, shutdown))
     })
 }
 
@@ -235,7 +235,7 @@ async fn hourly_maintenance(state: AppState) {
     loop {
         interval.tick().await;
         state.rate_limits.retain_recent();
-        match uwuu_db::sessions::prune_expired(state.db.primary()).await {
+        match uwu_db::sessions::prune_expired(state.db.primary()).await {
             Ok(0) => {}
             Ok(removed) => tracing::info!(removed, "pruned expired sessions"),
             Err(error) => tracing::warn!(%error, "could not prune expired sessions"),
@@ -266,7 +266,7 @@ async fn connect(config: &DatabaseConfig) -> anyhow::Result<Db> {
 async fn migrate(db: &Db) -> anyhow::Result<()> {
     db.migrate().await.context("database migration failed")?;
     tracing::info!(
-        migrations = uwuu_db::MIGRATOR.iter().count(),
+        migrations = uwu_db::MIGRATOR.iter().count(),
         "database schema is up to date"
     );
     Ok(())

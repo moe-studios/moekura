@@ -7,6 +7,9 @@ pub mod settings;
 pub mod site_cache;
 pub mod users;
 
+#[cfg(test)]
+mod schema_tests;
+
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};

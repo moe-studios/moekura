@@ -93,12 +93,12 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let site = SiteCache::load(db.primary())
         .await
         .context("could not load site settings")?;
+    let state = AppState::new(config, db.clone(), site.clone())?;
     let background = [
-        tokio::spawn(site.clone().listen(db.primary().clone())),
-        tokio::spawn(prune_sessions(db.clone())),
+        tokio::spawn(site.listen(db.primary().clone())),
+        tokio::spawn(hourly_maintenance(state.clone())),
     ];
 
-    let state = AppState::new(config, db.clone(), site)?;
     let app = uwuu_web::router(state);
     uwuu_web::serve(listener, app, shutdown_signal()).await?;
 
@@ -110,12 +110,14 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Deletes expired sessions hourly. Moves to the job queue in M3.
-async fn prune_sessions(db: Db) {
+/// Deletes expired sessions and forgets idle rate-limit counters. Moves to
+/// the job queue in M3.
+async fn hourly_maintenance(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {
         interval.tick().await;
-        match uwuu_db::sessions::prune_expired(db.primary()).await {
+        state.rate_limits.retain_recent();
+        match uwuu_db::sessions::prune_expired(state.db.primary()).await {
             Ok(0) => {}
             Ok(removed) => tracing::info!(removed, "pruned expired sessions"),
             Err(error) => tracing::warn!(%error, "could not prune expired sessions"),

@@ -2,8 +2,8 @@
 //! into HTML pages.
 
 use axum::extract::{Request, State};
-use axum::http::header::SET_COOKIE;
-use axum::http::{Method, StatusCode};
+use axum::http::header::{CONTENT_LENGTH, CONTENT_TYPE, RETRY_AFTER};
+use axum::http::{HeaderValue, Method, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use minijinja::context;
@@ -19,6 +19,9 @@ pub enum AppError {
     /// Logged in, but not allowed.
     Forbidden,
     BadRequest(String),
+    TooManyRequests {
+        retry_after_secs: u64,
+    },
     /// Something broke on our side. The message is logged, never shown.
     Internal(String),
 }
@@ -30,6 +33,7 @@ impl AppError {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -41,6 +45,9 @@ impl AppError {
             AppError::Unauthorized => "You need to log in first",
             AppError::Forbidden => "You don't have permission to do that",
             AppError::BadRequest(message) => message,
+            AppError::TooManyRequests { .. } => {
+                "Too many attempts. Please wait a moment and try again"
+            }
             AppError::Internal(_) => "Something went wrong on our side",
         }
     }
@@ -57,6 +64,11 @@ impl IntoResponse for AppError {
         };
         // Plain text by default; `render_errors` upgrades it to a page.
         let mut response = (page.status, page.message.clone()).into_response();
+        if let AppError::TooManyRequests { retry_after_secs } = self {
+            response
+                .headers_mut()
+                .insert(RETRY_AFTER, HeaderValue::from(retry_after_secs));
+        }
         response.extensions_mut().insert(page);
         response
     }
@@ -102,9 +114,12 @@ pub async fn render_errors(
             context,
         )
     };
-    // Keep cookies the handler set (e.g. clearing a stale session).
-    for cookie in response.headers().get_all(SET_COOKIE) {
-        rendered.headers_mut().append(SET_COOKIE, cookie.clone());
+    // Keep headers the handler set (cookies, Retry-After), but not ones
+    // describing the plain-text body we replaced.
+    for (name, value) in response.headers() {
+        if name != CONTENT_TYPE && name != CONTENT_LENGTH {
+            rendered.headers_mut().append(name, value.clone());
+        }
     }
     rendered
 }

@@ -8,6 +8,7 @@ use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 
+use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -29,6 +30,10 @@ pub struct ServerConfig {
     /// The URL users reach the site at. Cookies are marked `Secure` when it
     /// is `https`, and form posts are only accepted from this origin.
     pub public_url: Url,
+    /// Reverse proxies whose `X-Forwarded-For` header is believed. Requests
+    /// from anywhere else are identified by their connection address, so
+    /// clients can't spoof their IP by sending the header themselves.
+    pub trusted_proxies: Vec<IpNet>,
     /// Requests running longer than this are aborted with `408`.
     pub request_timeout_secs: u64,
 }
@@ -38,6 +43,7 @@ impl Default for ServerConfig {
         Self {
             bind: SocketAddr::from((Ipv4Addr::UNSPECIFIED, 8080)),
             public_url: Url::parse("http://localhost:8080").expect("valid default URL"),
+            trusted_proxies: Vec::new(),
             request_timeout_secs: 30,
         }
     }

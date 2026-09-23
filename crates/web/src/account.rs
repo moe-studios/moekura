@@ -132,6 +132,9 @@ async fn register(
     if mode == RegistrationMode::Closed {
         return Err(AppError::Forbidden);
     }
+    state.rate_limits.check_register(info.ip).inspect_err(|_| {
+        tracing::warn!(ip = ?info.ip, "registration rate limited");
+    })?;
     let invalid = |errors: RegisterErrors| {
         Ok(render_register(
             &page,
@@ -248,6 +251,12 @@ async fn login(
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
     let name = form.name.trim();
+    state
+        .rate_limits
+        .check_login(info.ip, name)
+        .inspect_err(|_| {
+            tracing::warn!(ip = ?info.ip, name, "login rate limited");
+        })?;
     let user = match accounts::authenticate(state.db.primary(), name, &form.password).await {
         Ok(user) => user,
         Err(AuthError::Db(error)) => return Err(error.into()),
@@ -512,6 +521,59 @@ mod tests {
                 .body
                 .contains("href=\"/login\"")
         );
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn repeated_login_failures_are_rate_limited(pool: PgPool) {
+        let app = app(&pool).await;
+        let wrong = form(&[("name", "alice"), ("password", "wrong horse")]);
+        for _ in 0..5 {
+            let response = app.post_form("/login", None, &[], &wrong).await;
+            assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        let limited = app.post_form("/login", None, &[], &wrong).await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            limited.body.contains("Too many attempts"),
+            "{}",
+            limited.body
+        );
+        assert!(limited.retry_after.is_some_and(|s| s >= 1));
+    }
+
+    #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]
+    async fn registration_is_limited_per_client_ip_behind_a_proxy(pool: PgPool) {
+        let mut state = test_state(&pool).await;
+        let mut config = (*state.config).clone();
+        config.server.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        state.config = std::sync::Arc::new(config);
+        let proxy = "10.0.0.2:40000".parse().unwrap();
+        let app = TestApp::with_peer(state, routes(), proxy);
+
+        let from = |client: &'static str| [("x-forwarded-for", client)];
+        for i in 0..5 {
+            let body = signup(&format!("user{i}"));
+            let response = app
+                .post_form("/register", None, &from("198.51.100.1"), &body)
+                .await;
+            assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        }
+        let limited = app
+            .post_form("/register", None, &from("198.51.100.1"), &signup("user5"))
+            .await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+        // A different client behind the same proxy is not affected.
+        let other = app
+            .post_form("/register", None, &from("198.51.100.2"), &signup("user6"))
+            .await;
+        assert_eq!(other.status, StatusCode::SEE_OTHER);
+
+        // Sessions record the real client address.
+        let ip: String = sqlx::query_scalar("SELECT host(ip) FROM sessions ORDER BY id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ip, "198.51.100.1");
     }
 
     #[sqlx::test(migrator = "uwuu_db::MIGRATOR")]

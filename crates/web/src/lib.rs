@@ -4,10 +4,12 @@
 mod account;
 mod assets;
 pub mod auth;
+mod client_ip;
 pub mod error;
 pub mod flash;
 mod health;
 pub mod pages;
+pub mod rate_limit;
 mod templates;
 #[cfg(test)]
 mod test_support;
@@ -40,6 +42,7 @@ use uwuu_db::Db;
 use uwuu_db::site_cache::SiteCache;
 
 use crate::assets::Assets;
+use crate::rate_limit::RateLimits;
 use crate::templates::Templates;
 
 /// Scripts, styles and media only from our own origin; no framing, no
@@ -55,6 +58,7 @@ pub struct AppState {
     pub db: Db,
     /// Site settings and roles, kept current across nodes.
     pub site: SiteCache,
+    pub rate_limits: Arc<RateLimits>,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -80,6 +84,7 @@ impl AppState {
             config: Arc::new(config),
             db,
             site,
+            rate_limits: Arc::new(RateLimits::default()),
             templates,
             assets,
         })

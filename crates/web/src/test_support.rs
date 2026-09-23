@@ -1,7 +1,10 @@
 //! Helpers for driving the router in tests.
 
+use std::net::SocketAddr;
+
 use axum::Router;
 use axum::body::Body;
+use axum::extract::connect_info::MockConnectInfo;
 use axum::http::header::{COOKIE, SET_COOKIE};
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
@@ -32,6 +35,7 @@ pub struct TestResponse {
     pub body: String,
     pub set_cookie: Vec<String>,
     pub location: Option<String>,
+    pub retry_after: Option<u64>,
 }
 
 impl TestResponse {
@@ -50,6 +54,13 @@ impl TestApp {
     pub fn new(state: AppState, routes: Router<AppState>) -> Self {
         Self {
             router: with_middleware(routes, state),
+        }
+    }
+
+    /// Requests appear to arrive over a connection from `peer`.
+    pub fn with_peer(state: AppState, routes: Router<AppState>, peer: SocketAddr) -> Self {
+        Self {
+            router: with_middleware(routes, state).layer(MockConnectInfo(peer)),
         }
     }
 
@@ -121,12 +132,17 @@ impl TestApp {
             .headers()
             .get("location")
             .map(|v| v.to_str().unwrap().to_owned());
+        let retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok()?.parse().ok());
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         TestResponse {
             status,
             body: String::from_utf8_lossy(&bytes).into_owned(),
             set_cookie,
             location,
+            retry_after,
         }
     }
 }

@@ -1,10 +1,10 @@
 //! Who is making the request: session cookies, [`CurrentUser`], logging in
 //! and out.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::time::Duration;
 
-use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
+use axum::extract::{FromRequestParts, Request, State};
 use axum::http::header::{SET_COOKIE, USER_AGENT};
 use axum::http::request::Parts;
 use axum::middleware::Next;
@@ -18,6 +18,7 @@ use uwuu_db::site_cache::SiteSnapshot;
 use uwuu_db::users::User;
 
 use crate::AppState;
+use crate::client_ip::client_ip;
 use crate::error::AppError;
 
 pub const SESSION_COOKIE: &str = "uwuu_session";
@@ -183,19 +184,19 @@ pub struct RequestInfo {
     pub ip: Option<IpAddr>,
 }
 
-impl<S: Send + Sync> FromRequestParts<S> for RequestInfo {
+impl FromRequestParts<AppState> for RequestInfo {
     type Rejection = std::convert::Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         let user_agent = parts
             .headers
             .get(USER_AGENT)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
-        let ip = parts
-            .extensions
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(addr)| addr.ip());
+        let ip = client_ip(parts, &state.config.server.trusted_proxies);
         Ok(Self { user_agent, ip })
     }
 }

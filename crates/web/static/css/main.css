@@ -375,3 +375,16 @@ button.secondary { background: var(--border); color: var(--text); }
 .family-cards .current img { outline: 2px solid var(--accent); outline-offset: 2px; }
 .edit { margin-top: 16px; max-width: 640px; }
 .edit summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+
+/* History */
+
+.history { list-style: none; margin: 0; padding: 0; }
+.history > li { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.history-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.history-head form { margin: 0 0 0 auto; }
+.history-head button { padding: 3px 10px; font-size: 0.875rem; }
+.changes { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.changes .added { color: var(--tag-character); }
+.changes .removed { color: var(--danger); }
+.changes .removed a { text-decoration: line-through; }
+.changes .source { overflow-wrap: anywhere; }

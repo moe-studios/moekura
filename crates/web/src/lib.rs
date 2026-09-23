@@ -11,6 +11,7 @@ mod fetch;
 mod files;
 pub mod flash;
 mod health;
+mod history;
 pub mod pages;
 mod posts;
 pub mod rate_limit;
@@ -128,6 +129,7 @@ pub fn router(state: AppState) -> Router {
     let routes = posts::routes()
         .merge(account::routes())
         .merge(edit::routes())
+        .merge(history::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(upload::routes(max_upload_bytes));

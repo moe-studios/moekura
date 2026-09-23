@@ -67,7 +67,7 @@
       <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
-    <p><a href="{{ file.original }}" download>Download original</a></p>
+    <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a></p>
     {% for group in tag_groups %}
     <section class="tag-group">
       <h2>{{ group.label }}</h2>

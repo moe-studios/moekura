@@ -174,6 +174,8 @@ async fn apply(page: &Page, id: i64, form: &EditForm) -> Result<(), Refused> {
             .map(|t| t.id)
             .collect();
 
+    uwuu_db::post_versions::attribute(&mut tx, page.current.user.as_ref().map(|u| u.id), None)
+        .await?;
     posts::update(
         &mut *tx,
         id,

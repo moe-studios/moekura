@@ -1,5 +1,6 @@
 mod admin;
 mod config;
+mod import;
 mod telemetry;
 
 use std::path::PathBuf;
@@ -88,7 +89,13 @@ async fn main() -> anyhow::Result<()> {
             if config.database.auto_migrate {
                 migrate(&db).await?;
             }
-            let result = admin::run(db.primary(), command).await;
+            let result = match command {
+                admin::AdminCommand::Import(args) => match check_media_tools(&config).await {
+                    Ok(()) => import::run(config, &db, args).await,
+                    Err(error) => Err(error),
+                },
+                command => admin::run(db.primary(), command).await,
+            };
             db.close().await;
             result
         }

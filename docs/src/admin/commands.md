@@ -14,6 +14,7 @@
 | `uwubooru admin settings set KEY VALUE` | changes one; `VALUE` is JSON, or else a plain string |
 | `uwubooru admin regenerate-media (--all \| IDS…)` | remakes thumbnails and samples |
 | `uwubooru admin recount-tags` | recomputes every tag's post count |
+| `uwubooru admin import DIR --uploader NAME …` | imports a folder of files; see [Bulk import](import.md) |
 
 Every command takes `--config PATH`. Role and setting changes made here
 appear in the moderation log.

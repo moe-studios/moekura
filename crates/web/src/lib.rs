@@ -18,6 +18,7 @@ mod files;
 pub mod flash;
 mod health;
 mod history;
+pub mod import;
 mod moderation;
 pub mod pages;
 mod posts;

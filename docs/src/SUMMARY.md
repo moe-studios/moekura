@@ -18,6 +18,7 @@
 - [File storage](admin/storage.md)
 - [Background jobs](admin/jobs.md)
 - [Backups](admin/backups.md)
+- [Bulk import](admin/import.md)
 - [Commands](admin/commands.md)
 - [Scaling](scaling.md)
 

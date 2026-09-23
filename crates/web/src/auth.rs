@@ -47,7 +47,7 @@ impl CurrentUser {
         }
     }
 
-    fn for_user(user: User, ban: Option<ActiveBan>, site: &SiteSnapshot) -> Self {
+    pub(crate) fn for_user(user: User, ban: Option<ActiveBan>, site: &SiteSnapshot) -> Self {
         // Banned users, and users whose role was deleted, keep only what
         // visitors can do.
         let role = match ban {

@@ -101,6 +101,10 @@ pub(crate) fn render(
             .filter(|theme| *theme != Theme::System)
             .map(Theme::as_str),
         flash => flash.map(Flash::text),
+        banned => current.and_then(|c| c.ban.as_ref()).map(|ban| context! {
+            reason => ban.reason,
+            until => ban.expires_at.map(|t| t.date().to_string()),
+        }),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
         moderation_url => current.and_then(|c| {
             if c.can(Permission::ApprovePosts) {

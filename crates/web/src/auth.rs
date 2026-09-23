@@ -13,6 +13,7 @@ use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use time::OffsetDateTime;
 use uwuu_core::permissions::{Permission, Permissions, Role, SystemRole};
+use uwuu_db::bans::ActiveBan;
 use uwuu_db::sessions::{self, Lifetime, NewSession};
 use uwuu_db::site_cache::SiteSnapshot;
 use uwuu_db::users::User;
@@ -29,7 +30,10 @@ const DAY: Duration = Duration::from_secs(86_400);
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
     pub user: Option<User>,
+    /// What the requester may do: their role's, or a visitor's while
+    /// banned.
     pub role: Role,
+    pub ban: Option<ActiveBan>,
 }
 
 impl CurrentUser {
@@ -37,18 +41,24 @@ impl CurrentUser {
         Self {
             user: None,
             role: anonymous_role(site),
+            ban: None,
         }
     }
 
-    fn for_user(user: User, site: &SiteSnapshot) -> Self {
-        // A user whose role was deleted keeps only what visitors can do.
-        let role = site
-            .role(user.role_id)
-            .cloned()
-            .unwrap_or_else(|| anonymous_role(site));
+    fn for_user(user: User, ban: Option<ActiveBan>, site: &SiteSnapshot) -> Self {
+        // Banned users, and users whose role was deleted, keep only what
+        // visitors can do.
+        let role = match ban {
+            Some(_) => anonymous_role(site),
+            None => site
+                .role(user.role_id)
+                .cloned()
+                .unwrap_or_else(|| anonymous_role(site)),
+        };
         Self {
             user: Some(user),
             role,
+            ban,
         }
     }
 
@@ -121,7 +131,7 @@ pub async fn resolve_session(
                         tracing::warn!(%error, "could not touch session");
                     }
                 }
-                CurrentUser::for_user(session.user, &site)
+                CurrentUser::for_user(session.user, session.ban, &site)
             }
             Ok(None) => {
                 stale_cookie = true;
@@ -151,6 +161,32 @@ fn sets_session_cookie(response: &Response) -> bool {
         .get_all(SET_COOKIE)
         .iter()
         .any(|v| v.to_str().is_ok_and(|v| v.starts_with(&prefix)))
+}
+
+/// Middleware: refuses changes (anything but GET and HEAD, and logging
+/// out) from banned networks.
+pub async fn block_banned_networks(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if request.method().is_safe() || request.uri().path() == "/logout" {
+        return next.run(request).await;
+    }
+    let (parts, body) = request.into_parts();
+    if let Some(ip) = client_ip(&parts, &state.config.server.trusted_proxies) {
+        match uwuu_db::bans::network_ban(state.db.primary(), ip).await {
+            Ok(Some(reason)) => {
+                return AppError::Blocked(format!(
+                    "Your network is banned from making changes: {reason}"
+                ))
+                .into_response();
+            }
+            Ok(None) => {}
+            Err(error) => return AppError::from(error).into_response(),
+        }
+    }
+    next.run(Request::from_parts(parts, body)).await
 }
 
 /// Starts a session for `user` and adds its cookie to `jar`.

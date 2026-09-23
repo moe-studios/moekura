@@ -18,6 +18,8 @@ pub enum AppError {
     Unauthorized,
     /// Logged in, but not allowed.
     Forbidden,
+    /// Not allowed, with the reason shown (a ban).
+    Blocked(String),
     BadRequest(String),
     TooManyRequests {
         retry_after_secs: u64,
@@ -31,7 +33,7 @@ impl AppError {
         match self {
             AppError::NotFound => StatusCode::NOT_FOUND,
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
-            AppError::Forbidden => StatusCode::FORBIDDEN,
+            AppError::Forbidden | AppError::Blocked(_) => StatusCode::FORBIDDEN,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
@@ -44,6 +46,7 @@ impl AppError {
             AppError::NotFound => "Not found",
             AppError::Unauthorized => "You need to log in first",
             AppError::Forbidden => "You don't have permission to do that",
+            AppError::Blocked(message) => message,
             AppError::BadRequest(message) => message,
             AppError::TooManyRequests { .. } => {
                 "Too many attempts. Please wait a moment and try again"

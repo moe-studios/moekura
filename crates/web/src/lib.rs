@@ -4,6 +4,7 @@
 mod account;
 mod assets;
 pub mod auth;
+mod bans;
 mod blacklist;
 mod client_ip;
 mod edit;
@@ -132,6 +133,7 @@ pub fn router(state: AppState) -> Router {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
     let routes = posts::routes()
         .merge(account::routes())
+        .merge(bans::routes())
         .merge(edit::routes())
         .merge(favorites::routes())
         .merge(history::routes())
@@ -182,6 +184,10 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
 
     routes
         .fallback(error::not_found)
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::block_banned_networks,
+        ))
         // Inner layer: runs after the session is known, so error pages can
         // show who is logged in.
         .layer(middleware::from_fn_with_state(

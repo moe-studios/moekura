@@ -10,5 +10,31 @@
     <dt>Uploads</dt><dd><a href="{{ uploads_url }}">{{ uploads }}</a></dd>
     <dt>Favorites</dt><dd><a href="{{ favorites_url }}">{{ favorites }}</a></dd>
   </dl>
+  {% if bans %}
+  <h2>Bans</h2>
+  <ul class="plain">
+    {% for b in bans %}
+    <li><span class="status status-{{ 'open' if b.active else 'dismissed' }}">{{ "active" if b.active else ("lifted" if b.lifted else "expired") }}</span>
+      {{ b.since }}{% if b.until %}–{{ b.until }}{% endif %}{% if b.by %} by {{ b.by }}{% endif %}: {{ b.reason }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if can_ban %}
+  <details class="edit">
+    <summary>Ban</summary>
+    <form method="post" action="/users/{{ user.name }}/ban">
+      <label for="ban-reason">Reason</label>
+      <input id="ban-reason" name="reason" maxlength="2000" required>
+      <label for="ban-days">For</label>
+      <select id="ban-days" name="days">
+        {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ d.label }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="danger">Ban {{ user.name }}</button>
+    </form>
+  </details>
+  {% endif %}
+  {% if can_unban %}
+  <form method="post" action="/users/{{ user.name }}/unban"><button type="submit">Lift the ban</button></form>
+  {% endif %}
 </section>
 {% endblock %}

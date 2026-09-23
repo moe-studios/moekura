@@ -456,3 +456,4 @@ button.danger { background: var(--danger); }
 .plain { list-style: none; margin: 0 0 8px; padding: 0; }
 .status-open { color: var(--danger); }
 .status-dismissed, .status-upheld { color: var(--muted); }
+.flash.banned { border-left-color: var(--danger); }

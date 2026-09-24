@@ -14,6 +14,7 @@ pub mod posts;
 pub mod roles;
 pub mod search;
 pub mod secrets;
+pub mod seed;
 pub mod sessions;
 pub mod settings;
 pub mod site_cache;

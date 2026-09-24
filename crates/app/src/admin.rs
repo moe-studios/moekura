@@ -55,6 +55,25 @@ pub enum AdminCommand {
     /// sidecar files next to them (pic.png.txt, pic.json, …). Files already
     /// here are skipped, so an interrupted import can be run again.
     Import(crate::import::ImportArgs),
+    /// Fill a test database with synthetic posts for load testing. Refuses
+    /// to touch a database with real posts unless forced.
+    Seed {
+        /// How many posts to add
+        #[arg(long)]
+        posts: u64,
+        /// How many distinct tags [default: one per 20 posts, at least 1000]
+        #[arg(long)]
+        tags: Option<u32>,
+        /// Random seed: the same seed and sizes give the same posts
+        #[arg(long, default_value_t = 1)]
+        seed: u32,
+        /// Posts per transaction
+        #[arg(long, default_value_t = 50_000)]
+        batch: u64,
+        /// Seed even though the database has real posts
+        #[arg(long)]
+        force: bool,
+    },
     /// Show site settings, or change one
     Settings {
         #[command(subcommand)]
@@ -66,6 +85,38 @@ pub enum AdminCommand {
 pub enum SettingsAction {
     /// Set KEY to VALUE. VALUE is parsed as JSON, falling back to a plain string.
     Set { key: String, value: String },
+}
+
+async fn seed_posts(
+    db: &PgPool,
+    options: &uwu_db::seed::Options,
+    force: bool,
+) -> anyhow::Result<()> {
+    use uwu_db::seed;
+    let started = std::time::Instant::now();
+    let plan = seed::prepare(db, options, force).await?;
+    println!(
+        "seeding {} posts with {} tags and {} users",
+        options.posts,
+        plan.tag_ids.len(),
+        plan.user_ids.len()
+    );
+    let mut done = 0;
+    while done < options.posts {
+        let to = (done + options.batch_size).min(options.posts);
+        seed::batch(db, &plan, options, done, to).await?;
+        done = to;
+        let secs = started.elapsed().as_secs_f64();
+        println!(
+            "{done}/{} posts ({:.0} per second)",
+            options.posts,
+            done as f64 / secs.max(0.001)
+        );
+    }
+    println!("adding aliases and implications, and analyzing");
+    seed::finish(db, &plan).await?;
+    println!("done in {:.0?}", started.elapsed());
+    Ok(())
 }
 
 pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
@@ -92,6 +143,21 @@ pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
             println!("queued {queued} file(s) for processing");
         }
         AdminCommand::Import(_) => unreachable!("imports need the whole app; main runs them"),
+        AdminCommand::Seed {
+            posts,
+            tags,
+            seed,
+            batch,
+            force,
+        } => {
+            let options = uwu_db::seed::Options {
+                posts,
+                tags,
+                seed,
+                batch_size: batch.max(1),
+            };
+            seed_posts(db, &options, force).await?;
+        }
         AdminCommand::RecountTags => {
             let fixed = uwu_db::tags::recount(db).await?;
             println!("corrected {fixed} tag count(s)");

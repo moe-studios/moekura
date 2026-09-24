@@ -37,6 +37,11 @@ docker compose -f deploy/compose.tiny.yml exec app moekura admin create-user you
 
 Then open <http://localhost:8080> and log in.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Please report security problems
+privately, as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 [AGPL-3.0-only](LICENSE). If you run a modified version as a public

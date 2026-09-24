@@ -6,7 +6,7 @@ language = "en"
 src = "src"
 
 [output.html]
-git-repository-url = "https://github.com/uwuumoe/moekura"
-edit-url-template = "https://github.com/uwuumoe/moekura/edit/main/docs/{path}"
+git-repository-url = "https://github.com/moe-studios/moekura"
+edit-url-template = "https://github.com/moe-studios/moekura/edit/main/docs/{path}"
 default-theme = "light"
 preferred-dark-theme = "navy"

@@ -5,7 +5,7 @@ repository's `deploy/compose.tiny.yml` runs both with Docker or Podman
 Compose:
 
 ```sh
-git clone https://github.com/uwuumoe/moekura
+git clone https://github.com/moe-studios/moekura
 cd moekura
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > deploy/.env
 docker compose -f deploy/compose.tiny.yml up -d

@@ -1,9 +1,9 @@
 # Upgrading
 
 Releases are tagged `vX.Y.Z` and listed, with what changed, in
-[CHANGELOG.md](https://github.com/uwuumoe/moekura/blob/main/CHANGELOG.md).
+[CHANGELOG.md](https://github.com/moe-studios/moekura/blob/main/CHANGELOG.md).
 Each comes as a container image for amd64 and arm64
-(`ghcr.io/uwuumoe/moekura:X.Y.Z`, also tagged `X.Y` and `latest`) and as
+(`ghcr.io/moe-studios/moekura:X.Y.Z`, also tagged `X.Y` and `latest`) and as
 Linux binaries on the release page.
 
 Before 1.0, a minor release (0.1 → 0.2) may change configuration or
@@ -30,7 +30,7 @@ Point the `app` service at a release instead of building it:
 ```yaml
 services:
   app:
-    image: ghcr.io/uwuumoe/moekura:0.1
+    image: ghcr.io/moe-studios/moekura:0.1
 ```
 
 ```sh

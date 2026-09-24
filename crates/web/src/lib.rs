@@ -22,6 +22,7 @@ mod health;
 mod history;
 pub mod import;
 mod moderation;
+pub mod oidc;
 pub mod pages;
 mod posts;
 pub mod rate_limit;
@@ -96,6 +97,8 @@ pub struct AppState {
     /// Scratch space for uploads in progress.
     pub(crate) work_dir: std::path::PathBuf,
     pub(crate) file_signer: files::FileSigner,
+    /// The single sign-on provider, if there is one.
+    pub(crate) oidc: Option<Arc<oidc::Oidc>>,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -144,6 +147,11 @@ impl AppState {
             Duration::from_secs(config.cache.count_ttl_secs),
             valkey.clone(),
         );
+        let oidc = config
+            .auth
+            .oidc
+            .clone()
+            .map(|oidc| Arc::new(oidc::Oidc::new(oidc, &config.server.public_url)));
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -155,6 +163,7 @@ impl AppState {
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
             work_dir,
             file_signer: files::FileSigner::new(file_key),
+            oidc,
             templates,
             assets,
         })
@@ -207,6 +216,7 @@ pub fn router(state: AppState) -> Router {
         .merge(favorites::routes())
         .merge(history::routes())
         .merge(moderation::routes())
+        .merge(oidc::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(two_factor::routes())

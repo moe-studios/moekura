@@ -272,6 +272,7 @@ fn render_login(
             error => message,
             unverified => matches!(error, Some(AuthError::Unverified)),
             mail_enabled => crate::email::mail_enabled(page.state()),
+            sso_label => page.state().oidc.as_ref().map(|o| o.button_label().to_owned()),
         },
     )
 }

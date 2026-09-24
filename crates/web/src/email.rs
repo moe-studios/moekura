@@ -359,9 +359,31 @@ struct AccountErrors {
     password: Option<String>,
 }
 
+/// The single sign-on part of the account page, if the site has it.
+async fn sso_context(page: &Page, user: &User) -> Result<Option<minijinja::Value>, AppError> {
+    let Some(oidc) = &page.state().oidc else {
+        return Ok(None);
+    };
+    let db = page.state().db.primary();
+    let linked = moekura_db::identities::for_user(db, user.id).await?;
+    let has_password = users::has_password(db, user.id).await?;
+    Ok(Some(context! {
+        label => oidc.button_label(),
+        has_password => has_password,
+        linked => linked.iter().map(|i| context! {
+            id => i.id,
+            provider => url::Url::parse(&i.issuer).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_else(|| i.issuer.clone()),
+            date => i.created_at.date().to_string(),
+            // The last way in of an account without a password stays.
+            removable => has_password || linked.len() > 1,
+        }).collect::<Vec<_>>(),
+    }))
+}
+
 fn render_account(
     page: &Page,
     user: &User,
+    sso: Option<minijinja::Value>,
     errors: &AccountErrors,
     status: StatusCode,
 ) -> Response {
@@ -372,6 +394,7 @@ fn render_account(
             email => user.email,
             verified => user.email_verified_at.is_some(),
             mail_enabled => mail_enabled(page.state()),
+            sso => sso,
             errors => errors,
         },
     )
@@ -383,9 +406,11 @@ fn logged_in(page: &Page) -> Result<User, AppError> {
 
 async fn account(page: Page) -> Result<Response, AppError> {
     let user = logged_in(&page)?;
+    let sso = sso_context(&page, &user).await?;
     Ok(render_account(
         &page,
         &user,
+        sso,
         &AccountErrors::default(),
         StatusCode::OK,
     ))
@@ -410,6 +435,7 @@ async fn change_email(
     let user = logged_in(&page)?;
     let state = page.state();
     let db = state.db.primary();
+    let sso = sso_context(&page, &user).await?;
     let failed = |message: String| {
         let errors = AccountErrors {
             email: Some(message),
@@ -418,6 +444,7 @@ async fn change_email(
         Ok(render_account(
             &page,
             &user,
+            sso.clone(),
             &errors,
             StatusCode::UNPROCESSABLE_ENTITY,
         ))
@@ -484,6 +511,7 @@ async fn change_password(
     let user = logged_in(&page)?;
     let state = page.state();
     let db = state.db.primary();
+    let sso = sso_context(&page, &user).await?;
     let failed = |message: String| {
         let errors = AccountErrors {
             password: Some(message),
@@ -492,6 +520,7 @@ async fn change_password(
         Ok(render_account(
             &page,
             &user,
+            sso.clone(),
             &errors,
             StatusCode::UNPROCESSABLE_ENTITY,
         ))

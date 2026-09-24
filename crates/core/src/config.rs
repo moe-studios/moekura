@@ -101,6 +101,8 @@ pub struct AuthConfig {
     pub session_idle_days: u32,
     /// A session ends this many days after login, however active.
     pub session_max_days: u32,
+    /// Logging in through an OpenID Connect provider (single sign-on).
+    pub oidc: Option<OidcConfig>,
 }
 
 impl Default for AuthConfig {
@@ -108,7 +110,36 @@ impl Default for AuthConfig {
         Self {
             session_idle_days: 30,
             session_max_days: 365,
+            oidc: None,
         }
+    }
+}
+
+/// An OpenID Connect provider people can log in with: Authentik,
+/// Keycloak, Kanidm, Google, …
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OidcConfig {
+    /// The provider's issuer URL; it describes itself at
+    /// `/.well-known/openid-configuration` under it.
+    pub issuer: Url,
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: String,
+    /// The login button's text.
+    #[serde(default = "OidcConfig::default_button_label")]
+    pub button_label: String,
+    #[serde(default = "OidcConfig::default_scopes")]
+    pub scopes: Vec<String>,
+}
+
+impl OidcConfig {
+    fn default_button_label() -> String {
+        "Log in with single sign-on".to_owned()
+    }
+
+    fn default_scopes() -> Vec<String> {
+        ["openid", "email", "profile"].map(String::from).to_vec()
     }
 }
 
@@ -621,6 +652,31 @@ impl Config {
                 message: "must be at least 10".into(),
             });
         }
+        if let Some(oidc) = &self.auth.oidc {
+            let loopback = oidc.issuer.host_str().is_some_and(|h| {
+                h == "localhost"
+                    || h.parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())
+            });
+            if !(oidc.issuer.scheme() == "https" || (oidc.issuer.scheme() == "http" && loopback)) {
+                problems.push(ConfigProblem {
+                    key: "auth.oidc.issuer",
+                    message: "must be an https:// URL".into(),
+                });
+            }
+            if oidc.client_id.is_empty() {
+                problems.push(ConfigProblem {
+                    key: "auth.oidc.client_id",
+                    message: "is required".into(),
+                });
+            }
+            if !oidc.scopes.iter().any(|s| s == "openid") {
+                problems.push(ConfigProblem {
+                    key: "auth.oidc.scopes",
+                    message: "must include `openid`".into(),
+                });
+            }
+        }
         let mail = &self.mail;
         if mail.is_enabled() {
             if !mail.from.contains('@') {
@@ -676,6 +732,11 @@ impl Config {
         }
         if !config.storage.s3.secret_access_key.is_empty() {
             config.storage.s3.secret_access_key = REDACTED.to_owned();
+        }
+        if let Some(oidc) = &mut config.auth.oidc
+            && !oidc.client_secret.is_empty()
+        {
+            oidc.client_secret = REDACTED.to_owned();
         }
         if !config.mail.password.is_empty() {
             config.mail.password = REDACTED.to_owned();
@@ -881,6 +942,49 @@ mod tests {
         assert_eq!(config.mail.port_or_default(), 587);
         config.mail.tls = MailTls::Tls;
         assert_eq!(config.mail.port_or_default(), 465);
+    }
+
+    #[test]
+    fn checks_oidc_and_redacts_its_secret() {
+        let parsed: Config = toml::from_str(
+            "[auth.oidc]\nissuer = \"https://sso.example.com/realms/booru\"\nclient_id = \"moekura\"\nclient_secret = \"hush\"\n",
+        )
+        .unwrap();
+        let oidc = parsed.auth.oidc.clone().unwrap();
+        assert_eq!(oidc.scopes, ["openid", "email", "profile"]);
+        assert_eq!(oidc.button_label, "Log in with single sign-on");
+        let mut config = valid();
+        config.auth.oidc = Some(oidc);
+        config.validate().unwrap();
+        assert_eq!(
+            config.redacted().auth.oidc.unwrap().client_secret,
+            "REDACTED"
+        );
+
+        let oidc = config.auth.oidc.as_mut().unwrap();
+        oidc.issuer = Url::parse("http://sso.example.com").unwrap();
+        oidc.client_id = String::new();
+        oidc.scopes = vec!["email".into()];
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "auth.oidc.issuer",
+                "auth.oidc.client_id",
+                "auth.oidc.scopes"
+            ]
+        );
+        // Plain HTTP is fine for a provider on the same machine.
+        let oidc = config.auth.oidc.as_mut().unwrap();
+        oidc.issuer = Url::parse("http://127.0.0.1:9000").unwrap();
+        oidc.client_id = "moekura".into();
+        oidc.scopes = vec!["openid".into()];
+        config.validate().unwrap();
     }
 
     #[test]

@@ -12,6 +12,18 @@ you follow the link sent to it, and **Forgot your password?** on the
 login page emails you a link to choose a new one. The link works for an
 hour, and using it logs you out everywhere.
 
+## Single sign-on
+
+On sites set up for it, **Log in with …** on the login page logs you in
+through another service's account. The first time, that makes you an
+account here (if the site is taking new ones).
+
+To use it with an account you already have, log in with your password
+and choose **Link** under **Single sign-on**. You can unlink it later, as
+long as you have a password to log in with instead. Accounts made through
+single sign-on have no password; to set one, use **Forgot your
+password?** if the site sends mail.
+
 ## Two-factor login
 
 With two-factor login on, logging in needs a code from an authenticator
@@ -26,7 +38,7 @@ your password, so a leaked password isn't enough to get in.
    replaces the old ones.
 
 When logging in, enter a code from the app, or a recovery code, after
-your password. If your device's clock is off by more than about half a
+your password (or after single sign-on). If your device's clock is off by more than about half a
 minute, codes won't work; most phones set the time automatically.
 
 If you've lost both your device and your recovery codes, ask the staff:

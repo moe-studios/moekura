@@ -13,6 +13,7 @@
     <button type="submit">Log in</button>
   </form>
   {% if mail_enabled %}<p class="aside"><a href="/forgot-password">Forgot your password?</a></p>{% endif %}
+  {% if sso_label %}<p><a class="button secondary sso" href="/login/oidc{% if next %}?next={{ next|urlencode }}{% endif %}">{{ sso_label }}</a></p>{% endif %}
   {% if site.registration_open %}
   <p class="aside">No account yet? <a href="/register{% if next %}?next={{ next|urlencode }}{% endif %}">Register</a></p>
   {% endif %}

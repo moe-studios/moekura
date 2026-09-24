@@ -359,7 +359,7 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .pair { display: flex; flex-wrap: wrap; align-items: end; gap: 0 12px; }
 .pair > div { display: flex; flex-direction: column; flex: 1 1 200px; }
 .pair .arrow { padding-bottom: 8px; color: var(--muted); }
-button.secondary { background: var(--border); color: var(--text); }
+button.secondary, .button.secondary { background: var(--border); color: var(--text); }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .actions form { margin: 0; }
 .actions button { padding: 3px 10px; font-size: 0.875rem; }
@@ -540,3 +540,9 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 .secret { overflow-wrap: anywhere; }
 .recovery-codes { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9em, 1fr)); gap: 4px 16px; }
 .recovery-codes code { font-size: 1rem; }
+
+/* Single sign-on */
+
+.sso { display: block; text-align: center; }
+.plain-list { list-style: none; padding: 0; margin: 0 0 12px; }
+.plain-list li { padding: 4px 0; }

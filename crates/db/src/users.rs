@@ -210,6 +210,15 @@ pub async fn set_status(db: impl PgExecutor<'_>, id: i64, status: UserStatus) ->
     Ok(())
 }
 
+/// Whether the user can log in with a password (accounts made through
+/// single sign-on have none).
+pub async fn has_password(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT password_hash IS NOT NULL FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(db)
+        .await
+}
+
 /// Case-insensitive.
 pub async fn by_email(db: impl PgExecutor<'_>, email: &str) -> sqlx::Result<Option<User>> {
     sqlx::query_as(select_users!("WHERE email = $1::citext"))

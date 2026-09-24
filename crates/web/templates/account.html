@@ -33,6 +33,28 @@
     <button type="submit">Change password</button>
   </form>
 </section>
+{% if sso %}
+<section class="card medium">
+  <h1>Single sign-on</h1>
+  {% if sso.linked %}
+  <ul class="plain-list">
+    {% for i in sso.linked %}
+    <li>Linked to your account at <strong>{{ i.provider }}</strong> on {{ i.date }}
+      {% if i.removable %}<form class="inline" method="post" action="/settings/oidc/unlink/{{ i.id }}"><button type="submit" class="secondary">Unlink</button></form>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if not sso.has_password %}<p class="hint">Your account has no password: you log in through the provider.</p>{% endif %}
+  {% else %}
+  <p>Link your account to log in with <em>{{ sso.label }}</em> instead of your password.</p>
+  <form method="post" action="/settings/oidc/link">
+    <label for="link-password">Your password</label>
+    <input id="link-password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Link</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
 <section class="card medium">
   <h1>Two-factor login</h1>
   <p>Ask for a code from an authenticator app too when logging in. <a href="/settings/two-factor">Two-factor login settings</a></p>

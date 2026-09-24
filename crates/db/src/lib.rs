@@ -7,6 +7,7 @@ pub mod bans;
 pub mod bench;
 pub mod favorites;
 pub mod flags;
+pub mod identities;
 pub mod invites;
 pub mod jobs;
 pub mod media;

@@ -46,6 +46,15 @@ session_idle_days = 30
 # ...or this many days after logging in, however active.
 session_max_days = 365
 
+# Logging in through an OpenID Connect provider (single sign-on). Register
+# <public_url>/login/oidc/callback as the redirect URI with the provider.
+# [auth.oidc]
+# issuer = "https://sso.example.com/application/o/moekura/"
+# client_id = "moekura"
+# client_secret = ""
+# button_label = "Log in with single sign-on"
+# scopes = ["openid", "email", "profile"]
+
 [cache]
 # Where rate limit counters and cached search counts live: "memory" (each
 # process on its own) or "valkey" (shared by every web server; Redis works

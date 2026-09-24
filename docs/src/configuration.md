@@ -57,6 +57,32 @@ with passwords redacted.
 | `session_idle_days` | `30` | a login ends after this many days unused… |
 | `session_max_days` | `365` | …or this long after logging in, however active |
 
+### `[auth.oidc]`
+
+Lets people log in through an OpenID Connect provider (single sign-on):
+Authentik, Keycloak, Kanidm, Zitadel, Google and others. Leave the section
+out to turn it off.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `issuer` | *(required)* | the provider's issuer URL, which describes itself at `/.well-known/openid-configuration` under it; `https://`, or `http://` on the same machine |
+| `client_id` | *(required)* | from registering Moekura with the provider |
+| `client_secret` | *(empty)* | likewise; empty for a public client |
+| `button_label` | `"Log in with single sign-on"` | the button on the login page |
+| `scopes` | `["openid", "email", "profile"]` | must include `openid` |
+
+Register the redirect URI `https://your.site/login/oidc/callback` (from
+`server.public_url`) with the provider. Logins use the authorization code
+flow with PKCE.
+
+Someone logging in through the provider for the first time gets a new
+account (with no password) when registration is `open`, or one waiting for
+approval when it's `approval`; with `invite` or `closed`, only people who
+[linked](using/account.md#single-sign-on) an existing account can. A new
+account takes its name from the provider (the next free one if it's
+taken), and the provider's email address if it says it's verified and
+nobody here uses it yet.
+
 ## `[cache]`
 
 | Key | Default | Meaning |

@@ -15,6 +15,7 @@ moekura-media.workspace = true
 moekura-storage.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
+base64.workspace = true
 futures-util.workspace = true
 governor.workspace = true
 hex.workspace = true

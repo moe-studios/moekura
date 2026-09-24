@@ -1,0 +1,16 @@
+{
+  "name": "moekura-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests: a browser driving a running Moekura site.",
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "test": "playwright test",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.13.6",
+    "typescript": "7.0.2"
+  }
+}

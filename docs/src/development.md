@@ -31,6 +31,14 @@ npm test          # unit tests
 npm run build     # or npm run watch
 ```
 
+## End-to-end tests
+
+`e2e/` has [Playwright](https://playwright.dev/) tests that drive a real
+browser through a running site: registering, uploading, tagging,
+searching, the wiki, favorites, moderation and private mode. CI runs them
+against `deploy/compose.tiny.yml`; to run them yourself, see
+[`e2e/README.md`](https://github.com/moe-studios/moekura/blob/main/e2e/README.md).
+
 ## This book
 
 The documentation is an [mdBook](https://rust-lang.github.io/mdBook/) in

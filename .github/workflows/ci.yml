@@ -109,6 +109,9 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    env:
+      E2E_ADMIN_NAME: boss
+      E2E_ADMIN_PASSWORD: e2e admin password
     steps:
       - uses: actions/checkout@v5
       - run: docker build --tag moekura:ci .
@@ -122,3 +125,41 @@ jobs:
           docker run --rm --entrypoint sh -v "$PWD/deploy/smoke:/smoke:ro" \
             -v samples:/samples:ro moekura:ci /smoke/check.sh
       - run: docker image ls moekura:ci
+      # End-to-end tests against the tiny compose stack, reusing the image
+      # built above (compose calls it moekura-app).
+      - name: Start the tiny stack
+        env:
+          POSTGRES_PASSWORD: e2e
+        run: |
+          echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" > deploy/.env
+          docker tag moekura:ci moekura-app
+          docker compose -f deploy/compose.tiny.yml up -d --no-build --wait
+          for i in $(seq 60); do curl -fsS http://localhost:8080/readyz && break; sleep 2; done
+          curl -fsS http://localhost:8080/readyz
+          printf '%s\n' "$E2E_ADMIN_PASSWORD" | docker compose -f deploy/compose.tiny.yml exec -T app \
+            moekura admin create-user "$E2E_ADMIN_NAME" --role admin
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: End-to-end tests
+        working-directory: e2e
+        run: |
+          npm ci
+          npm run check
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - name: Server logs
+        if: failure()
+        run: docker compose -f deploy/compose.tiny.yml logs app
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+      - name: Stop the stack
+        if: always()
+        run: docker compose -f deploy/compose.tiny.yml down -v

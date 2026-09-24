@@ -118,3 +118,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: docker build --tag uwubooru:ci .
+      - name: Media tools work in the image
+        # The image builds its own ffmpeg and libvips; run them on one file
+        # of every accepted type, the way the app does.
+        run: |
+          docker volume create samples
+          docker run --rm -v "$PWD/deploy/smoke:/smoke:ro" -v samples:/samples \
+            debian:trixie sh /smoke/make-samples.sh
+          docker run --rm --entrypoint sh -v "$PWD/deploy/smoke:/smoke:ro" \
+            -v samples:/samples:ro uwubooru:ci /smoke/check.sh
+      - run: docker image ls uwubooru:ci

@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Email and password · {{ site.name }}{% endblock %}
+{% macro field_error(message) %}{% if message %}<p class="form-error" role="alert">{{ message }}</p>{% endif %}{% endmacro %}
+{% block content %}
+<p class="back"><a href="/settings">« Settings</a></p>
+<section class="card medium">
+  <h1>Email address</h1>
+  <p>
+    {% if email %}Your address is <strong>{{ email }}</strong>{% if mail_enabled %}{% if verified %} (confirmed){% else %} (not confirmed yet){% endif %}{% endif %}.
+    {% else %}You haven't given an email address{% if mail_enabled %}, so you can't reset your password if you forget it{% endif %}.{% endif %}
+  </p>
+  {{ field_error(errors.email) }}
+  <form method="post" action="/settings/account/email">
+    <label for="email">New address</label>
+    <input id="email" name="email" type="email" value="{{ email or '' }}" autocomplete="email">
+    {% if mail_enabled %}<p class="hint">We'll send a link to the new address; it replaces the old one once you follow it. Leave it empty to remove your address.</p>{% endif %}
+    <label for="email-password">Your password</label>
+    <input id="email-password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">{% if mail_enabled %}Send the link{% else %}Change address{% endif %}</button>
+  </form>
+</section>
+<section class="card medium">
+  <h1>Password</h1>
+  {{ field_error(errors.password) }}
+  <form method="post" action="/settings/account/password">
+    <label for="current">Current password</label>
+    <input id="current" name="current" type="password" autocomplete="current-password" required>
+    <label for="password">New password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="256">
+    <label for="password_confirm">Repeat the new password</label>
+    <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required>
+    <p class="hint">Changing it logs you out everywhere else.</p>
+    <button type="submit">Change password</button>
+  </form>
+</section>
+{% endblock %}

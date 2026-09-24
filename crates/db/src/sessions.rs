@@ -80,7 +80,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT s.id AS session_id, s.last_used_at,
-                u.id, u.name::text, u.email::text, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings,
+                u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings,
                 b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
          FROM sessions s JOIN users u ON u.id = s.user_id
          LEFT JOIN LATERAL (
@@ -142,6 +142,21 @@ pub async fn delete(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<()> {
 pub async fn delete_all_for_user(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<u64> {
     let result = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
         .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected())
+}
+
+/// Logs a user out everywhere except the session with `token`. Returns
+/// how many sessions ended.
+pub async fn delete_others(
+    db: impl PgExecutor<'_>,
+    user_id: i64,
+    token: &str,
+) -> sqlx::Result<u64> {
+    let result = sqlx::query("DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2")
+        .bind(user_id)
+        .bind(&hash_token(token)[..])
         .execute(db)
         .await?;
     Ok(result.rows_affected())

@@ -16,16 +16,23 @@ pub enum Flash {
     AwaitingApproval,
     Saved,
     ApiKeyRevoked,
+    /// A link was emailed to confirm an address.
+    CheckEmail,
+    EmailConfirmed,
+    PasswordChanged,
 }
 
 impl Flash {
-    const ALL: [Flash; 6] = [
+    const ALL: [Flash; 9] = [
         Flash::LoggedIn,
         Flash::LoggedOut,
         Flash::Registered,
         Flash::AwaitingApproval,
         Flash::Saved,
         Flash::ApiKeyRevoked,
+        Flash::CheckEmail,
+        Flash::EmailConfirmed,
+        Flash::PasswordChanged,
     ];
 
     fn key(self) -> &'static str {
@@ -36,6 +43,9 @@ impl Flash {
             Flash::AwaitingApproval => "awaiting_approval",
             Flash::Saved => "saved",
             Flash::ApiKeyRevoked => "api_key_revoked",
+            Flash::CheckEmail => "check_email",
+            Flash::EmailConfirmed => "email_confirmed",
+            Flash::PasswordChanged => "password_changed",
         }
     }
 
@@ -49,6 +59,11 @@ impl Flash {
             }
             Flash::Saved => "Saved.",
             Flash::ApiKeyRevoked => "The API key was revoked.",
+            Flash::CheckEmail => {
+                "We've sent you an email. Follow the link in it to confirm your address."
+            }
+            Flash::EmailConfirmed => "Your email address is confirmed.",
+            Flash::PasswordChanged => "Your password was changed.",
         }
     }
 

@@ -1,5 +1,6 @@
 //! PostgreSQL access for Moekura.
 
+pub mod account_tokens;
 pub mod accounts;
 pub mod api_keys;
 pub mod bans;

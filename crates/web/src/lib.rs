@@ -12,6 +12,7 @@ mod blacklist;
 mod client_ip;
 mod counts;
 mod edit;
+mod email;
 pub mod error;
 mod favorites;
 mod fetch;
@@ -201,6 +202,7 @@ pub fn router(state: AppState) -> Router {
         .merge(admin::routes())
         .merge(bans::routes())
         .merge(edit::routes())
+        .merge(email::routes())
         .merge(favorites::routes())
         .merge(history::routes())
         .merge(moderation::routes())

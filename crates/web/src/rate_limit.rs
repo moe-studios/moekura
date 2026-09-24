@@ -1,5 +1,5 @@
-//! Rate limits for login and registration, against password guessing and
-//! signup floods.
+//! Rate limits for login, registration and forms that send email, against
+//! password guessing, signup floods and mail bombing.
 //!
 //! Counters live in this process's memory, or in Valkey when
 //! `cache.backend = "valkey"`, so that several web servers share them.
@@ -43,6 +43,19 @@ const REGISTER_BY_IP: Limit = Limit {
     period: Duration::from_secs(12 * 60),
 };
 
+// Forms that send a message (password resets, confirmation links).
+const MAIL_BY_IP: Limit = Limit {
+    name: "mail_ip",
+    burst: 5,
+    period: Duration::from_secs(2 * 60),
+};
+// However many IPs ask, one address gets a few messages an hour.
+const MAIL_BY_ADDRESS: Limit = Limit {
+    name: "mail_address",
+    burst: 3,
+    period: Duration::from_secs(20 * 60),
+};
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -53,6 +66,8 @@ pub struct RateLimits {
     login_by_ip: DefaultKeyedRateLimiter<IpAddr>,
     login_by_name: DefaultKeyedRateLimiter<String>,
     register_by_ip: DefaultKeyedRateLimiter<IpAddr>,
+    mail_by_ip: DefaultKeyedRateLimiter<IpAddr>,
+    mail_by_address: DefaultKeyedRateLimiter<String>,
     valkey: Option<Valkey>,
 }
 
@@ -69,6 +84,8 @@ impl RateLimits {
             login_by_ip: RateLimiter::keyed(quota(LOGIN_BY_IP)),
             login_by_name: RateLimiter::keyed(quota(LOGIN_BY_NAME)),
             register_by_ip: RateLimiter::keyed(quota(REGISTER_BY_IP)),
+            mail_by_ip: RateLimiter::keyed(quota(MAIL_BY_IP)),
+            mail_by_address: RateLimiter::keyed(quota(MAIL_BY_ADDRESS)),
             valkey,
         }
     }
@@ -95,12 +112,26 @@ impl RateLimits {
         }
     }
 
+    /// Counts a request that would email `address` (a name or an email
+    /// address, whatever the form asked for).
+    pub async fn check_mail(&self, ip: Option<IpAddr>, address: &str) -> Result<(), AppError> {
+        if let Some(ip) = ip {
+            self.check(MAIL_BY_IP, &self.mail_by_ip, &ip, &ip.to_string())
+                .await?;
+        }
+        let address = address.trim().to_lowercase();
+        self.check(MAIL_BY_ADDRESS, &self.mail_by_address, &address, &address)
+            .await
+    }
+
     /// Forgets keys that are back at full allowance, bounding memory use.
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
         self.login_by_ip.retain_recent();
         self.login_by_name.retain_recent();
         self.register_by_ip.retain_recent();
+        self.mail_by_ip.retain_recent();
+        self.mail_by_address.retain_recent();
     }
 
     async fn check<K: std::hash::Hash + Eq + Clone>(

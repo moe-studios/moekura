@@ -26,14 +26,6 @@ pub struct ApiUser {
     pub favorites: i64,
 }
 
-fn status_name(status: UserStatus) -> &'static str {
-    match status {
-        UserStatus::Active => "active",
-        UserStatus::Pending => "pending",
-        UserStatus::Deactivated => "deactivated",
-    }
-}
-
 /// Get a user.
 ///
 /// Needs `view_posts`. Only users who can manage users see inactive
@@ -63,7 +55,7 @@ pub(crate) async fn show(
         favorites: favorites::count_by_user(db, user.id).await?,
         name: user.name,
         role,
-        status: status_name(user.status).to_owned(),
+        status: user.status.as_str().to_owned(),
         created_at: user.created_at,
     }))
 }

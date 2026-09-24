@@ -66,6 +66,8 @@ pub enum AuthError {
     InvalidCredentials,
     #[error("account is awaiting approval")]
     Pending,
+    #[error("account's email address is not confirmed yet")]
+    Unverified,
     #[error("account is deactivated")]
     Deactivated,
     #[error(transparent)]
@@ -92,6 +94,7 @@ pub async fn authenticate(db: &PgPool, name: &str, password: &str) -> Result<Use
     match user.status {
         UserStatus::Active => {}
         UserStatus::Pending => return Err(AuthError::Pending),
+        UserStatus::Unverified => return Err(AuthError::Unverified),
         UserStatus::Deactivated => return Err(AuthError::Deactivated),
     }
 
@@ -103,6 +106,45 @@ pub async fn authenticate(db: &PgPool, name: &str, password: &str) -> Result<Use
         }
     }
     Ok(user)
+}
+
+/// Whether `password` is user `id`'s, for confirming a change to their
+/// account. False for accounts without a password.
+pub async fn check_password_of(db: &PgPool, id: i64, password: &str) -> sqlx::Result<bool> {
+    let hash: Option<Option<String>> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+            .bind(id)
+            .fetch_optional(db)
+            .await?;
+    let password = password.to_owned();
+    let Some(Some(hash)) = hash else {
+        blocking(move || accounts::verify_dummy_password(&password)).await;
+        return Ok(false);
+    };
+    let verification = blocking(move || accounts::verify_password(&password, &hash)).await;
+    Ok(matches!(verification, Verification::Valid { .. }))
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum PasswordChangeError {
+    #[error("password {0}")]
+    Invalid(PasswordError),
+    #[error(transparent)]
+    Db(#[from] sqlx::Error),
+}
+
+/// Checks and sets a new password for user `id`. Ending their sessions is
+/// up to the caller.
+pub async fn set_password(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    password: &str,
+) -> Result<(), PasswordChangeError> {
+    accounts::check_password(password).map_err(PasswordChangeError::Invalid)?;
+    let password = password.to_owned();
+    let hash = blocking(move || accounts::hash_password(&password)).await;
+    users::set_password_hash(db, id, &hash).await?;
+    Ok(())
 }
 
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {

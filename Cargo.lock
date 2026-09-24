@@ -1593,7 +1593,7 @@ dependencies = [
 
 [[package]]
 name = "moekura"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1616,7 +1616,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "getrandom 0.4.3",
@@ -1633,7 +1633,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-db"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argon2",
  "hex",
@@ -1650,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-jobs"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hex",
  "moekura-core",
@@ -1668,7 +1668,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-media"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "moekura-core",
  "serde",
@@ -1680,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -1696,7 +1696,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-web"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "axum-extra",

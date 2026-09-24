@@ -5,6 +5,62 @@ versioning](https://semver.org/); before 1.0, a minor release (0.2) may
 change configuration or behaviour, and says so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
+## [0.2.0] - 2026-09-24
+
+The project is now called Moekura, from *moe* (萌え) and *kura* (蔵, a
+storehouse). It lives at <https://github.com/moe-studios/moekura>.
+
+### Changed
+
+- **Breaking:** the program is now `moekura`, its config file
+  `moekura.toml` and its environment variables `MOEKURA_*` (was
+  `UWU_*`). `UWU_*` variables are ignored, so rename them before
+  upgrading.
+- **Breaking:** the container image is now `ghcr.io/moe-studios/moekura`,
+  running as user `moekura` from `/var/lib/moekura`, with files in
+  `/var/lib/moekura/data`.
+- **Breaking:** the Docker Compose project is now `moekura`, with the
+  Postgres role and database `moekura`. See below to keep your data.
+- New API keys start with `mka_`. Existing `uwu_` keys keep working.
+- Cookies are renamed, so everyone is logged out once.
+- The Valkey `cache.prefix` default is now `moekura`. If you use Valkey
+  and never set a prefix, the cache starts empty once.
+
+### Upgrading
+
+With a binary, rename the program, the config file and any `UWU_*`
+variables (in systemd units too). The database and file paths are
+whatever your config says, so they can stay.
+
+With `deploy/compose.tiny.yml`, the new project name means new, empty
+volumes. Move your data into them before starting 0.2.0:
+
+```sh
+# With 0.1.0 still checked out: stop it.
+docker compose -f deploy/compose.tiny.yml down
+git pull
+
+# Copy the volumes to their new names.
+for v in db files; do
+  docker volume create moekura_$v
+  docker run --rm -v uwubooru_$v:/from -v moekura_$v:/to alpine cp -a /from/. /to/
+done
+
+# Rename the Postgres role and database from uwu to moekura.
+docker compose -f deploy/compose.tiny.yml up -d db
+docker compose -f deploy/compose.tiny.yml exec db psql -U uwu -d postgres \
+  -c 'CREATE ROLE rename_tmp SUPERUSER LOGIN'
+docker compose -f deploy/compose.tiny.yml exec db psql -U rename_tmp -d postgres \
+  -c 'ALTER ROLE uwu RENAME TO moekura' -c 'ALTER DATABASE uwu RENAME TO moekura'
+docker compose -f deploy/compose.tiny.yml exec db psql -U moekura -d postgres \
+  -c 'DROP ROLE rename_tmp'
+
+docker compose -f deploy/compose.tiny.yml up -d
+```
+
+Once the site works, remove the old volumes with
+`docker volume rm uwubooru_db uwubooru_files`.
+
 ## [0.1.0] - 2026-09-24
 
 The first release.

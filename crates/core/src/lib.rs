@@ -16,4 +16,5 @@ pub mod search;
 pub mod settings;
 pub mod tags;
 pub mod tokens;
+pub mod totp;
 pub mod user_settings;

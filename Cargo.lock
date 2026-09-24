@@ -1676,9 +1676,11 @@ dependencies = [
  "argon2",
  "getrandom 0.4.3",
  "hex",
+ "hmac",
  "ipnet",
  "serde",
  "serde_json",
+ "sha1",
  "sha2 0.11.0",
  "thiserror",
  "time",
@@ -1769,6 +1771,7 @@ dependencies = [
  "moekura-db",
  "moekura-media",
  "moekura-storage",
+ "qrcode",
  "redis",
  "reqwest",
  "rust-embed",
@@ -2090,6 +2093,12 @@ dependencies = [
  "version_check",
  "yansi",
 ]
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quanta"

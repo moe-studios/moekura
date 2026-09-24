@@ -23,6 +23,7 @@ pub mod site_cache;
 pub mod stats;
 pub mod tag_relations;
 pub mod tags;
+pub mod two_factor;
 pub mod users;
 pub mod wiki;
 

@@ -532,3 +532,11 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 .stats dt { color: var(--muted); font-size: 0.875rem; }
 .stats dd { margin: 4px 0 0; font-size: 1.375rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .log .actions { margin-top: 6px; }
+
+/* Two-factor login */
+
+.qr { width: 200px; margin: 8px 0; }
+.qr svg { display: block; width: 100%; height: auto; border-radius: calc(var(--radius) / 2); }
+.secret { overflow-wrap: anywhere; }
+.recovery-codes { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9em, 1fr)); gap: 4px 16px; }
+.recovery-codes code { font-size: 1rem; }

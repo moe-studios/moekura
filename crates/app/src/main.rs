@@ -254,8 +254,8 @@ async fn wait_for_workers(workers: tokio::task::JoinHandle<()>) {
     }
 }
 
-/// Deletes expired sessions and forgets idle rate-limit counters. Moves to
-/// the job queue in M3.
+/// Deletes expired sessions and two-factor logins, and forgets idle
+/// rate-limit counters.
 async fn hourly_maintenance(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {
@@ -265,6 +265,9 @@ async fn hourly_maintenance(state: AppState) {
             Ok(0) => {}
             Ok(removed) => tracing::info!(removed, "pruned expired sessions"),
             Err(error) => tracing::warn!(%error, "could not prune expired sessions"),
+        }
+        if let Err(error) = moekura_db::two_factor::prune_challenges(state.db.primary()).await {
+            tracing::warn!(%error, "could not prune expired two-factor logins");
         }
     }
 }

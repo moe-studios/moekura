@@ -422,8 +422,7 @@ async fn change_email(
             StatusCode::UNPROCESSABLE_ENTITY,
         ))
     };
-    // Guessing the password through this form is guessing a login.
-    state.rate_limits.check_login(info.ip, &user.name).await?;
+    state.rate_limits.check_confirm(user.id).await?;
     if !moekura_db::accounts::check_password_of(db, user.id, &form.password).await? {
         return failed("Wrong password.".into());
     }
@@ -480,7 +479,6 @@ struct PasswordChange {
 async fn change_password(
     page: Page,
     jar: CookieJar,
-    info: RequestInfo,
     Form(form): Form<PasswordChange>,
 ) -> Result<Response, AppError> {
     let user = logged_in(&page)?;
@@ -498,7 +496,7 @@ async fn change_password(
             StatusCode::UNPROCESSABLE_ENTITY,
         ))
     };
-    state.rate_limits.check_login(info.ip, &user.name).await?;
+    state.rate_limits.check_confirm(user.id).await?;
     if !moekura_db::accounts::check_password_of(db, user.id, &form.current).await? {
         return failed("Your current password is wrong.".into());
     }
@@ -531,14 +529,13 @@ async fn change_password(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
-    use moekura_core::permissions::SystemRole;
-    use moekura_db::accounts::{self, NewAccount};
-    use moekura_db::{roles, settings};
+    use moekura_db::accounts;
+    use moekura_db::settings;
     use serde_json::json;
     use sqlx::PgPool;
 
     use super::*;
-    use crate::test_support::{TestApp, test_config, test_state, test_state_with};
+    use crate::test_support::{TestApp, member, test_config, test_state, test_state_with};
 
     async fn app(pool: &PgPool, mail: bool) -> TestApp {
         let mut config = test_config();
@@ -590,38 +587,6 @@ mod tests {
         url::form_urlencoded::Serializer::new(String::new())
             .extend_pairs(fields)
             .finish()
-    }
-
-    /// A member with a password and email, and a session for them.
-    async fn member(pool: &PgPool, name: &str, email: &str) -> (User, String) {
-        let role = roles::by_system(pool, SystemRole::Member).await.unwrap();
-        let user = accounts::create(
-            pool,
-            NewAccount {
-                name,
-                password: "correct horse",
-                email: Some(email),
-                role_id: role.id,
-                status: UserStatus::Active,
-            },
-        )
-        .await
-        .unwrap();
-        let session = moekura_db::sessions::create(
-            pool,
-            moekura_db::sessions::NewSession {
-                user_id: user.id,
-                user_agent: None,
-                ip: None,
-            },
-            moekura_db::sessions::Lifetime {
-                idle: Duration::from_secs(3600),
-                max: Duration::from_secs(3600),
-            },
-        )
-        .await
-        .unwrap();
-        (user, session)
     }
 
     async fn sessions_of(pool: &PgPool, user_id: i64) -> i64 {

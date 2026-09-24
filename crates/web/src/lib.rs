@@ -31,6 +31,7 @@ mod tags;
 mod templates;
 #[cfg(test)]
 mod test_support;
+mod two_factor;
 mod upload;
 mod users;
 mod wiki;
@@ -208,6 +209,7 @@ pub fn router(state: AppState) -> Router {
         .merge(moderation::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
+        .merge(two_factor::routes())
         .merge(users::routes())
         .merge(wiki::routes())
         .merge(upload::routes(max_upload_bytes));

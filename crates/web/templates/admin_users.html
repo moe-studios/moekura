@@ -32,6 +32,11 @@
           </select>
           <button type="submit" class="secondary">Save</button>
         </form>
+        {% if u.two_factor %}
+        <form class="inline" method="post" action="/admin/users/{{ u.name }}/reset-two-factor">
+          <button type="submit" class="secondary" title="For someone who lost their authenticator app and recovery codes">Turn off 2FA</button>
+        </form>
+        {% endif %}
         {% else %}{{ u.role or "—" }} · {{ u.status }}{% endif %}
       </td>
     </tr>

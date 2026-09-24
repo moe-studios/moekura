@@ -253,6 +253,8 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
         })
         .map(|r| context! { id => r.id, name => r.name })
         .collect();
+    let ids: Vec<i64> = found.iter().map(|u| u.id).collect();
+    let two_factor = moekura_db::two_factor::enabled_among(state.db.primary(), &ids).await?;
     let rows: Vec<Value> = found
         .iter()
         .take(USERS_PAGE as usize)
@@ -266,6 +268,7 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
                 status => user.status.as_str(),
                 joined => user.created_at.date().to_string(),
                 editable => editable,
+                two_factor => two_factor.contains(&user.id),
             }
         })
         .collect();

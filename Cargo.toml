@@ -34,6 +34,8 @@ http-body-util = "0.1.5"
 # SMTP over rustls/ring, like the other TLS clients.
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
 md-5 = "0.11.0"
+# Two-factor enrolment QR codes, as inline SVG.
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 mime_guess = "2.0.5"
 # S3 support without aws-lc-rs: signing via ring, TLS via reqwest + rustls/ring.
 object_store = { version = "0.14.2", default-features = false, features = ["fs", "aws-base", "reqwest", "ring"] }
@@ -46,6 +48,8 @@ rust-embed = { version = "8.12.0", features = ["mime-guess"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 hmac = "0.13.0"
+# TOTP (RFC 6238) is HMAC-SHA1.
+sha1 = "0.11.0"
 sha2 = "0.11.0"
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",

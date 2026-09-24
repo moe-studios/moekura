@@ -22,6 +22,7 @@ hmac.workspace = true
 md-5.workspace = true
 ipnet.workspace = true
 mime_guess.workspace = true
+qrcode.workspace = true
 redis.workspace = true
 reqwest.workspace = true
 minijinja.workspace = true

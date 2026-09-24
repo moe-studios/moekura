@@ -34,7 +34,7 @@ struct NextQuery {
 
 /// Where to send the user after logging in: a local path only, so the
 /// parameter can't bounce people to another site.
-fn safe_next(next: Option<&str>) -> &str {
+pub(crate) fn safe_next(next: Option<&str>) -> &str {
     match next {
         Some(path)
             if path.starts_with('/')
@@ -306,9 +306,14 @@ async fn login(
             ));
         }
     };
+    let next = safe_next(form.next.as_deref());
+    let jar = match crate::two_factor::challenge_if_enabled(&state, jar, &user, Some(next)).await? {
+        Ok(jar) => jar,
+        Err(code_form) => return Ok(code_form),
+    };
     let jar = auth::log_in(&state, jar, &info, &user).await?;
     let jar = flash::set(jar, Flash::LoggedIn);
-    Ok((jar, Redirect::to(safe_next(form.next.as_deref()))).into_response())
+    Ok((jar, Redirect::to(next)).into_response())
 }
 
 async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<Response, AppError> {

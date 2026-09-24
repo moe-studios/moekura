@@ -16,6 +16,7 @@ export DATABASE_URL=postgres://moekura:moekura@localhost:55432/moekura
 cargo test --workspace          # each database test gets its own database
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
+cargo deny check                # licenses, advisories, sources
 ```
 
 The page scripts are TypeScript in `frontend/`, bundled with esbuild into

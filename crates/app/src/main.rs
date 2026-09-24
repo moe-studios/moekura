@@ -145,9 +145,11 @@ async fn serve(config: Config) -> anyhow::Result<()> {
              where anyone with a link can load them; unset it to have files signed and served here"
         );
     }
+    let max_lag = Duration::from_secs(state.config.database.replica_max_lag_secs);
     let background = [
         tokio::spawn(site.listen(db.primary().clone())),
         tokio::spawn(hourly_maintenance(state.clone())),
+        tokio::spawn(db.clone().monitor_replicas(max_lag)),
     ];
 
     let shutdown = CancellationToken::new();

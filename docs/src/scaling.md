@@ -13,6 +13,27 @@ program scales out:
 - with several web servers, set `database.auto_migrate = false` and run
   `uwubooru migrate` when deploying.
 
+## Read replicas
+
+List PostgreSQL streaming replicas in `database.replicas`:
+
+```toml
+[database]
+url = "postgres://uwu:…@primary/uwu"
+replicas = ["postgres://uwu:…@replica-1/uwu", "postgres://uwu:…@replica-2/uwu"]
+```
+
+Searches, listings, tag pages, profiles and history then read from the
+replicas in turn; everything else, and every change, uses the primary.
+Every few seconds each server checks its replicas: one that doesn't answer,
+or is more than `database.replica_max_lag_secs` behind, is skipped until
+it's back (the log says when). With no usable replica, reads go to the
+primary.
+
+After someone changes something (an upload, an edit, a favorite), their
+own reads go to the primary for `replica_max_lag_secs`, so they always see
+what they just did. Other people may see it a moment later.
+
 ## How fast is search?
 
 Measured with 5,000,000 synthetic posts (240,000 tags, 6.9 GB database) on

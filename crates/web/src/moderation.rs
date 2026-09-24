@@ -452,7 +452,7 @@ fn entry_context(entry: &Entry) -> Value {
 
 async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewAuditLog)?;
-    let db = page.state().db.read();
+    let db = page.state().reader(&page.current);
     let actor_id = match query.by.trim() {
         "" => None,
         name => Some(users::by_name(db, name).await?.map_or(-1, |user| user.id)),

@@ -152,6 +152,16 @@ impl AppState {
             .is_none_or(|role| !role.can(uwu_core::permissions::Permission::ViewPosts))
     }
 
+    /// The pool for a replica-safe read by `current`: a replica, unless they
+    /// changed something moments ago and must see it.
+    pub fn reader(&self, current: &auth::CurrentUser) -> &sqlx::PgPool {
+        if current.recent_write {
+            self.db.primary()
+        } else {
+            self.db.read()
+        }
+    }
+
     /// The URL browsers load a stored file from, signed on private sites
     /// when this server serves the files.
     pub fn file_url(&self, key: &uwu_storage::Key) -> String {

@@ -48,6 +48,7 @@ with passwords redacted.
 | `acquire_timeout_secs` | `5` | how long to wait for a free connection |
 | `statement_timeout_ms` | `30000` | server-side limit per statement; `0` for none |
 | `auto_migrate` | `true` | migrate on start; with several servers, set `false` and run `uwubooru migrate` when deploying |
+| `replica_max_lag_secs` | `10` | replicas further behind are skipped until they catch up; also how long someone's reads stay on the primary after they change something |
 
 ## `[auth]`
 

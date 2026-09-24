@@ -25,6 +25,10 @@ request_timeout_secs = 30
 url = "postgres://uwu:CHANGE_ME@localhost/uwu"
 # Read replicas for search and listings. Leave empty to use the primary.
 replicas = []
+# Replicas further behind the primary than this are skipped until they
+# catch up. After someone changes something, their reads stay on the
+# primary this long, so they see their change.
+replica_max_lag_secs = 10
 # Maximum connections per pool (the primary and each replica).
 max_connections = 16
 min_connections = 0

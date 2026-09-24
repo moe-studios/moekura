@@ -52,7 +52,7 @@ pub(crate) async fn show(
     Path(name): Path<String>,
 ) -> Result<Json<ApiUser>, AppError> {
     current.require(Permission::ViewPosts)?;
-    let db = state.db.read();
+    let db = state.reader(&current);
     let user = users::by_name(db, &name)
         .await?
         .filter(|u| u.status == UserStatus::Active || current.can(Permission::ManageUsers))

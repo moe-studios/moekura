@@ -618,7 +618,7 @@ pub(crate) async fn log(
     Query(params): Query<LogParams>,
 ) -> Result<Json<LogPage>, AppError> {
     current.require(Permission::ViewAuditLog)?;
-    let db = state.db.read();
+    let db = state.reader(&current);
     let user_id = async |name: Option<&str>| -> Result<Option<i64>, AppError> {
         match name {
             None => Ok(None),

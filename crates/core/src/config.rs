@@ -71,6 +71,10 @@ pub struct DatabaseConfig {
     /// Apply pending migrations when `serve` starts. Large deployments should
     /// turn this off and run `uwubooru migrate` as a separate release step.
     pub auto_migrate: bool,
+    /// Replicas further behind the primary than this are skipped until they
+    /// catch up. It is also how long someone's reads stay on the primary
+    /// after they change something, so they see their own changes.
+    pub replica_max_lag_secs: u64,
 }
 
 impl Default for DatabaseConfig {
@@ -83,6 +87,7 @@ impl Default for DatabaseConfig {
             acquire_timeout_secs: 5,
             statement_timeout_ms: 30_000,
             auto_migrate: true,
+            replica_max_lag_secs: 10,
         }
     }
 }

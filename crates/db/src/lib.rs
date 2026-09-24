@@ -29,7 +29,7 @@ mod schema_tests;
 
 use std::str::FromStr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use sqlx::migrate::{MigrateError, Migrator};
@@ -43,13 +43,30 @@ pub static MIGRATOR: Migrator = sqlx::migrate!();
 ///
 /// Writes, and reads that must see them, go through [`Db::primary`].
 /// Reads that can tolerate replication lag (listings, search, tag pages) go
-/// through [`Db::read`].
+/// through [`Db::read`], which skips replicas [`Db::check_replicas`] found
+/// unreachable or too far behind.
 #[derive(Clone)]
 pub struct Db {
     primary: PgPool,
     replicas: Arc<[PgPool]>,
+    /// Per replica: whether reads may use it. Replicas start usable, so a
+    /// fresh process spreads reads before the first check.
+    usable: Arc<[AtomicBool]>,
     next_replica: Arc<AtomicUsize>,
 }
+
+/// How a replica was found by [`Db::check_replicas`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum ReplicaState {
+    /// Seconds behind the primary; 0 when it has replayed everything it
+    /// received.
+    Lagging(f64),
+    Unreachable(String),
+}
+
+/// Checks run with this timeout, so a hung replica doesn't hold up the
+/// others.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl Db {
     /// Connects to the primary, failing if it is unreachable. Replica pools
@@ -68,24 +85,95 @@ impl Db {
 
     pub fn from_pools(primary: PgPool, replicas: Vec<PgPool>) -> Self {
         Self {
+            usable: replicas.iter().map(|_| AtomicBool::new(true)).collect(),
             primary,
             replicas: replicas.into(),
             next_replica: Arc::new(AtomicUsize::new(0)),
         }
     }
 
+    pub fn has_replicas(&self) -> bool {
+        !self.replicas.is_empty()
+    }
+
     pub fn primary(&self) -> &PgPool {
         &self.primary
     }
 
-    /// A pool for replica-safe reads, round-robin across replicas, or the
-    /// primary when none are configured.
+    /// A pool for replica-safe reads: round-robin across the usable
+    /// replicas, or the primary when there are none.
     pub fn read(&self) -> &PgPool {
-        if self.replicas.is_empty() {
+        let count = self.replicas.len();
+        if count == 0 {
             return &self.primary;
         }
-        let i = self.next_replica.fetch_add(1, Ordering::Relaxed) % self.replicas.len();
-        &self.replicas[i]
+        let start = self.next_replica.fetch_add(1, Ordering::Relaxed);
+        (0..count)
+            .map(|offset| (start + offset) % count)
+            .find(|&i| self.usable[i].load(Ordering::Relaxed))
+            .map_or(&self.primary, |i| &self.replicas[i])
+    }
+
+    /// Checks every replica, marking it usable when it answers and is at
+    /// most `max_lag` behind. Returns what was found, in configuration
+    /// order.
+    pub async fn check_replicas(&self, max_lag: Duration) -> Vec<ReplicaState> {
+        let mut states = Vec::with_capacity(self.replicas.len());
+        for (replica, usable) in self.replicas.iter().zip(self.usable.iter()) {
+            // A replica that has replayed all it received is caught up, even
+            // if nothing has been written for a while (the last replayed
+            // transaction then looks old).
+            let lag = sqlx::query_scalar::<_, f64>(
+                "SELECT CASE
+                     WHEN NOT pg_is_in_recovery() THEN 0
+                     WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
+                     ELSE coalesce(extract(epoch FROM now() - pg_last_xact_replay_timestamp()), 0)
+                 END::float8",
+            )
+            .fetch_one(replica);
+            let state = match tokio::time::timeout(CHECK_TIMEOUT, lag).await {
+                Ok(Ok(seconds)) => ReplicaState::Lagging(seconds),
+                Ok(Err(error)) => ReplicaState::Unreachable(error.to_string()),
+                Err(_) => ReplicaState::Unreachable("timed out".into()),
+            };
+            let ok = matches!(state, ReplicaState::Lagging(s) if s <= max_lag.as_secs_f64());
+            usable.store(ok, Ordering::Relaxed);
+            states.push(state);
+        }
+        states
+    }
+
+    /// Checks the replicas every few seconds, forever, logging when one
+    /// stops or starts being used. Run it in a background task.
+    pub async fn monitor_replicas(self, max_lag: Duration) {
+        if self.replicas.is_empty() {
+            return;
+        }
+        let mut was_usable: Vec<bool> = vec![true; self.replicas.len()];
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let states = self.check_replicas(max_lag).await;
+            for (i, state) in states.iter().enumerate() {
+                let usable = self.usable[i].load(Ordering::Relaxed);
+                if usable != was_usable[i] {
+                    match (usable, state) {
+                        (true, _) => tracing::info!(replica = i, "replica back in use"),
+                        (false, ReplicaState::Lagging(seconds)) => {
+                            tracing::warn!(
+                                replica = i,
+                                lag_secs = seconds,
+                                "replica is behind; reading from others"
+                            )
+                        }
+                        (false, ReplicaState::Unreachable(error)) => {
+                            tracing::warn!(replica = i, %error, "replica unreachable; reading from others")
+                        }
+                    }
+                    was_usable[i] = usable;
+                }
+            }
+        }
     }
 
     /// Applies pending migrations to the primary. Safe to run from several
@@ -156,6 +244,33 @@ mod tests {
         assert!(!std::ptr::eq(first, db.primary()));
         assert!(!std::ptr::eq(first, second));
         assert!(std::ptr::eq(first, third));
+    }
+
+    /// A pool to a port nothing listens on.
+    fn dead_pool() -> PgPool {
+        PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(500))
+            .connect_lazy("postgres://uwu@127.0.0.1:1/uwu")
+            .unwrap()
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn unusable_replicas_are_skipped(pool: PgPool) {
+        // The primary stands in for a caught-up replica.
+        let db = Db::from_pools(pool.clone(), vec![dead_pool(), pool.clone()]);
+        let states = db.check_replicas(Duration::from_secs(10)).await;
+        assert!(
+            matches!(states[0], ReplicaState::Unreachable(_)),
+            "{states:?}"
+        );
+        assert_eq!(states[1], ReplicaState::Lagging(0.0));
+        for _ in 0..4 {
+            assert!(std::ptr::eq(db.read(), &db.replicas[1]));
+        }
+
+        let db = Db::from_pools(pool, vec![dead_pool()]);
+        db.check_replicas(Duration::from_secs(10)).await;
+        assert!(std::ptr::eq(db.read(), db.primary()));
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

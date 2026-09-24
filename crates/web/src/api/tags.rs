@@ -100,7 +100,7 @@ pub(crate) async fn list(
     Query(params): Query<ListParams>,
 ) -> Result<Json<TagPage>, AppError> {
     current.require(Permission::ViewPosts)?;
-    let db = state.db.read();
+    let db = state.reader(&current);
     let number = page_number(params.page)?;
     let categories = tags::categories(db).await?;
     let category = match params.category.as_str() {
@@ -156,7 +156,7 @@ pub(crate) async fn show(
     Path(name): Path<String>,
 ) -> Result<Json<ApiTag>, AppError> {
     current.require(Permission::ViewPosts)?;
-    let db = state.db.read();
+    let db = state.reader(&current);
     let tag = tags::by_name(db, &uwu_core::tags::normalize(&name))
         .await?
         .ok_or(AppError::NotFound)?;
@@ -195,7 +195,7 @@ pub(crate) async fn autocomplete(
 ) -> Result<Json<Vec<Suggestion>>, AppError> {
     current.require(Permission::ViewPosts)?;
     Ok(Json(
-        crate::tags::suggestions(state.db.read(), &params.q).await?,
+        crate::tags::suggestions(state.reader(&current), &params.q).await?,
     ))
 }
 
@@ -313,7 +313,7 @@ pub(crate) async fn relations(
     Query(params): Query<RelationParams>,
 ) -> Result<Json<RelationPage>, AppError> {
     current.require(Permission::ViewPosts)?;
-    let db = state.db.read();
+    let db = state.reader(&current);
     let number = page_number(params.page)?;
     let mut found = tag_relations::list(
         db,

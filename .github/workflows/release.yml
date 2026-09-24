@@ -1,0 +1,158 @@
+name: Release
+
+# Pushing a tag like v0.1.0 publishes the container image (amd64 and arm64)
+# to GHCR and a GitHub release with Linux binaries, its notes taken from
+# CHANGELOG.md.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: The tag matches the version, and the changelog has it
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          test "$crate" = "$version" || { echo "Cargo.toml says $crate, the tag $version"; exit 1; }
+          heading=$(grep -m1 "^## \[$version\]" CHANGELOG.md) \
+            || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+          if echo "$heading" | grep -q Unreleased; then
+            echo "Give the $version section in CHANGELOG.md its release date"; exit 1
+          fi
+
+  image:
+    needs: check
+    # Each architecture builds natively; emulated arm64 builds take hours.
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.runner }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.runner }}
+      - name: Keep the digest for the manifest
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.runner }}
+          path: ${{ runner.temp }}/digests/*
+          retention-days: 1
+
+  manifest:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # 0.1.0, 0.1 and latest (not for pre-releases like 0.2.0-rc.1).
+      - uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - name: Publish one tag for both architectures
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:${GITHUB_REF_NAME#v}"
+
+  binaries:
+    needs: check
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p uwubooru
+      - name: Package
+        run: |
+          name="uwubooru-$GITHUB_REF_NAME-${{ matrix.target }}"
+          mkdir "$name"
+          cp target/release/uwubooru LICENSE README.md CHANGELOG.md uwubooru.example.toml "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.target }}
+          path: uwubooru-*.tar.gz*
+
+  release:
+    needs: [manifest, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: binary-*
+          merge-multiple: true
+      - name: Release notes from the changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## [$version]" '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          printf '\nImage: `ghcr.io/%s:%s`\n' "$GITHUB_REPOSITORY" "$version" >> notes.md
+          test -s notes.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: notes.md
+          files: dist/*
+          prerelease: ${{ contains(github.ref_name, '-') }}

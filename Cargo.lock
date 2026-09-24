@@ -3323,7 +3323,7 @@ dependencies = [
 
 [[package]]
 name = "uwu-core"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "argon2",
  "getrandom 0.4.3",
@@ -3340,7 +3340,7 @@ dependencies = [
 
 [[package]]
 name = "uwu-db"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "argon2",
  "hex",
@@ -3357,7 +3357,7 @@ dependencies = [
 
 [[package]]
 name = "uwu-jobs"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "hex",
  "serde",
@@ -3375,7 +3375,7 @@ dependencies = [
 
 [[package]]
 name = "uwu-media"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3387,7 +3387,7 @@ dependencies = [
 
 [[package]]
 name = "uwu-storage"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3403,7 +3403,7 @@ dependencies = [
 
 [[package]]
 name = "uwu-web"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
@@ -3440,7 +3440,7 @@ dependencies = [
 
 [[package]]
 name = "uwubooru"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",

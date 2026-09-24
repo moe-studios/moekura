@@ -25,7 +25,7 @@ jobs:
           args: >-
             --offline --no-progress --include-fragments
             --exclude-path docs/book/404.html
-            docs/book README.md
+            docs/book README.md CHANGELOG.md
       - uses: actions/upload-pages-artifact@v5
         # GitHub Pages for private repositories needs a paid plan.
         if: github.event_name == 'push' && !github.event.repository.private

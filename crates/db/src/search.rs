@@ -15,6 +15,7 @@
 
 use std::str::FromStr;
 
+use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use uwu_core::config::SearchConfig;
 use uwu_core::posts::PostStatus;
@@ -129,6 +130,7 @@ pub struct Plan {
     total: f64,
     max_page: u32,
     count_limit: u32,
+    count_cost_limit: u32,
 }
 
 impl Plan {
@@ -171,6 +173,7 @@ impl Plan {
             total: 0.0,
             max_page: config.max_page,
             count_limit: config.count_limit,
+            count_cost_limit: config.count_cost_limit,
         };
 
         for term in &query.all {
@@ -282,6 +285,22 @@ impl Plan {
         self.order
     }
 
+    /// Whether id order is served by the upload-date index instead: with a
+    /// date filter, walking ids from the newest would skip every post newer
+    /// than the range first. Posts get their upload time on insert, so the
+    /// two orders are the same (up to posts uploaded in the same instant,
+    /// which `id` still breaks).
+    fn orders_by_date(&self) -> bool {
+        matches!(self.order, Order::IdDesc | Order::IdAsc)
+            && self.conditions.iter().any(|c| {
+                !c.negated
+                    && matches!(
+                        c.filter,
+                        Filter::Date { from: Some(_), .. } | Filter::Date { until: Some(_), .. }
+                    )
+            })
+    }
+
     /// Whether `page=b…` / `page=a…` work for this search.
     pub fn supports_keyset(&self) -> bool {
         matches!(self.order, Order::IdDesc | Order::IdAsc)
@@ -326,9 +345,65 @@ impl Plan {
         }
     }
 
+    /// How [`Plan::ids`] gets `page`: `natural`, `walk` or `collect` (see
+    /// the module docs).
+    pub fn strategy_name(&self, page: PageRef) -> &'static str {
+        let offset = match page {
+            PageRef::Number(n) => n.saturating_sub(1).saturating_mul(self.per_page),
+            _ => 0,
+        };
+        match self.strategy(offset) {
+            Strategy::Natural => "natural",
+            Strategy::Walk => "walk",
+            Strategy::Collect => "collect",
+        }
+    }
+
+    /// Runs the queries behind [`Plan::ids`] and [`Plan::count`] under
+    /// `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` and returns their plans,
+    /// `None` where no query would run.
+    pub async fn explain(
+        &self,
+        db: &PgPool,
+        page: PageRef,
+    ) -> Result<(Option<Json>, Option<Json>), SearchError> {
+        if self.nothing {
+            return Ok((None, None));
+        }
+        const EXPLAIN: &str = "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ";
+        let mut ids = self.ids_query(page, EXPLAIN)?;
+        let ids: Json = ids.build_query_scalar().fetch_one(db).await?;
+        let count = match self.counted_query(db, EXPLAIN).await? {
+            Some(mut query) => Some(query.build_query_scalar().fetch_one(db).await?),
+            None => None,
+        };
+        Ok((Some(ids), count))
+    }
+
+    /// The same as [`Plan::explain`], as `EXPLAIN`'s text, for people.
+    pub async fn explain_text(&self, db: &PgPool, page: PageRef) -> Result<String, SearchError> {
+        if self.nothing {
+            return Ok("(nothing to run: the search can't match)".into());
+        }
+        const EXPLAIN: &str = "EXPLAIN (ANALYZE, BUFFERS) ";
+        let mut out = String::from("-- ids\n");
+        let mut ids = self.ids_query(page, EXPLAIN)?;
+        let lines: Vec<String> = ids.build_query_scalar().fetch_all(db).await?;
+        out.push_str(&lines.join("\n"));
+        match self.counted_query(db, EXPLAIN).await? {
+            Some(mut count) => {
+                let lines: Vec<String> = count.build_query_scalar().fetch_all(db).await?;
+                out.push_str("\n-- count\n");
+                out.push_str(&lines.join("\n"));
+            }
+            None => out.push_str("\n-- count: known or estimated, not counted"),
+        }
+        Ok(out)
+    }
+
     /// The ids of the posts on `page`, in order.
     pub async fn ids(&self, db: &PgPool, page: PageRef) -> Result<Vec<i64>, SearchError> {
-        let mut query = self.ids_query(page)?;
+        let mut query = self.ids_query(page, "")?;
         if self.nothing {
             return Ok(Vec::new());
         }
@@ -344,7 +419,12 @@ impl Plan {
         Ok(ids)
     }
 
-    fn ids_query(&self, page: PageRef) -> Result<QueryBuilder<Postgres>, SearchError> {
+    /// The query for `page`'s ids, after `prefix` (for `EXPLAIN`).
+    fn ids_query(
+        &self,
+        page: PageRef,
+        prefix: &str,
+    ) -> Result<QueryBuilder<Postgres>, SearchError> {
         let offset = match page {
             PageRef::Number(n) if n > self.max_page => {
                 return Err(SearchError::Invalid(format!(
@@ -361,19 +441,35 @@ impl Plan {
             _ => 0,
         };
         let strategy = self.strategy(offset);
-        let mut sql = QueryBuilder::new("SELECT p.id FROM posts p");
+        let mut sql = QueryBuilder::new(format!("{prefix}SELECT p.id FROM posts p"));
         self.push_from_where(&mut sql, strategy);
 
         // Keyset pages walk away from the given id, so `a…` pages in
         // descending order (and `b…` pages in ascending order) are fetched
         // in reverse and flipped afterwards.
+        let by_date = self.orders_by_date();
+        // In date order, a cursor is the (upload time, id) of its post, or
+        // of the nearest older one if it's gone.
+        let cursor = |sql: &mut QueryBuilder<Postgres>, op: &str, id: i64| {
+            if by_date {
+                sql.push(format!(
+                    " AND (p.created_at, p.id) {op} ((SELECT c.created_at FROM posts c WHERE c.id <= "
+                ))
+                .push_bind(id)
+                .push(" ORDER BY c.id DESC LIMIT 1), ")
+                .push_bind(id)
+                .push(")");
+            } else {
+                sql.push(format!(" AND p.id {op} ")).push_bind(id);
+            }
+        };
         let descending = match (page, self.order) {
             (PageRef::Before(id), _) => {
-                sql.push(" AND p.id < ").push_bind(id);
+                cursor(&mut sql, "<", id);
                 true
             }
             (PageRef::After(id), _) => {
-                sql.push(" AND p.id > ").push_bind(id);
+                cursor(&mut sql, ">", id);
                 false
             }
             (_, order) => order != Order::IdAsc,
@@ -384,6 +480,11 @@ impl Plan {
         // order's index (and a walk) behind our back.
         let hide = if collect { " + 0" } else { "" };
         match self.order {
+            Order::IdDesc | Order::IdAsc if by_date => {
+                let direction = if descending { "DESC" } else { "ASC" };
+                let hide = if collect { " + interval '0 s'" } else { "" };
+                sql.push(format!("p.created_at{hide} {direction}, p.id {direction}"));
+            }
             Order::IdDesc | Order::IdAsc => {
                 let direction = if descending { "DESC" } else { "ASC" };
                 sql.push(format!("p.id{hide} {direction}"));
@@ -569,6 +670,27 @@ impl Plan {
         if self.nothing {
             return Ok(Count::Exact(0));
         }
+        if let Some(estimate) = self.count_shortcut() {
+            return Ok(Count::About(estimate));
+        }
+        if let Some(estimate) = self.estimate_if_costly(db).await? {
+            return Ok(Count::About(estimate));
+        }
+        let Some(mut sql) = self.count_query("") else {
+            return Ok(Count::Exact(0));
+        };
+        let limit = i64::from(self.count_limit);
+        let n: i64 = sql.build_query_scalar().fetch_one(db).await?;
+        Ok(if n > limit {
+            Count::AtLeast(limit)
+        } else {
+            Count::Exact(n)
+        })
+    }
+
+    /// A count known without counting, when it's over the count limit
+    /// anyway: the table size, or a lone tag's post count.
+    fn count_shortcut(&self) -> Option<i64> {
         let limit = i64::from(self.count_limit);
         let unfiltered = self.conditions.is_empty()
             && self.uploaders.is_empty()
@@ -582,18 +704,53 @@ impl Plan {
             [set] if unfiltered && set.ids.len() == 1 => Some(set.posts),
             _ => None,
         };
-        if let Some(estimate) = shortcut.filter(|&n| n > limit) {
-            return Ok(Count::About(estimate));
+        shortcut.filter(|&n| n > limit)
+    }
+
+    /// The planner's estimate of the matches, when counting them would cost
+    /// more than the count cost limit. Counting stops at the count limit,
+    /// so only that share of the full cost counts.
+    async fn estimate_if_costly(&self, db: &PgPool) -> Result<Option<i64>, SearchError> {
+        let mut sql = QueryBuilder::new("EXPLAIN (FORMAT JSON) SELECT 1 FROM posts p");
+        self.push_from_where(&mut sql, Strategy::Natural);
+        let plan: Json = sql.build_query_scalar().fetch_one(db).await?;
+        let root = &plan[0]["Plan"];
+        let (Some(rows), Some(cost)) = (root["Plan Rows"].as_f64(), root["Total Cost"].as_f64())
+        else {
+            return Ok(None);
+        };
+        let counted = (f64::from(self.count_limit) + 1.0) / rows.max(1.0);
+        let cost = cost * counted.min(1.0);
+        Ok((cost > f64::from(self.count_cost_limit)).then(|| rows.round() as i64))
+    }
+
+    /// The counting query [`Plan::count`] would run, after `prefix`.
+    async fn counted_query(
+        &self,
+        db: &PgPool,
+        prefix: &str,
+    ) -> Result<Option<QueryBuilder<Postgres>>, SearchError> {
+        if self.nothing || self.count_shortcut().is_some() {
+            return Ok(None);
         }
-        let mut sql = QueryBuilder::new("SELECT count(*) FROM (SELECT 1 FROM posts p");
+        if self.estimate_if_costly(db).await?.is_some() {
+            return Ok(None);
+        }
+        Ok(self.count_query(prefix))
+    }
+
+    /// The counting query after `prefix`, unless the count needs none.
+    fn count_query(&self, prefix: &str) -> Option<QueryBuilder<Postgres>> {
+        if self.nothing || self.count_shortcut().is_some() {
+            return None;
+        }
+        let limit = i64::from(self.count_limit);
+        let mut sql = QueryBuilder::new(format!(
+            "{prefix}SELECT count(*) FROM (SELECT 1 FROM posts p"
+        ));
         self.push_from_where(&mut sql, Strategy::Natural);
         sql.push(" LIMIT ").push_bind(limit + 1).push(") AS hits");
-        let n: i64 = sql.build_query_scalar().fetch_one(db).await?;
-        Ok(if n > limit {
-            Count::AtLeast(limit)
-        } else {
-            Count::Exact(n)
-        })
+        Some(sql)
     }
 }
 
@@ -1043,7 +1200,9 @@ mod tests {
             ("parent:none", &[clip, wide]),
             ("parent:any", &[tall]),
             (&format!("parent:{wide}"), &[tall, wide]),
-            ("date:>=2000", &[clip, tall, wide]),
+            // Date searches follow upload time, which is id order for
+            // posts uploaded normally; `tall` is backdated here.
+            ("date:>=2000", &[clip, wide, tall]),
             ("date:<2000", &[]),
         ];
         for (input, expected) in cases {
@@ -1300,6 +1459,76 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn date_filters_page_in_id_order(pool: PgPool) {
+        let mut ids = Vec::new();
+        for days_ago in [400, 300, 20, 10, 5, 1] {
+            ids.push(
+                seed(
+                    &pool,
+                    Seed {
+                        days_ago,
+                        ..Seed::default()
+                    },
+                )
+                .await,
+            );
+        }
+        // Two posts uploaded in the same instant: id breaks the tie.
+        sqlx::query("UPDATE posts SET created_at = (SELECT created_at FROM posts WHERE id = $1) WHERE id = $2")
+            .bind(ids[4])
+            .bind(ids[3])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let since = (time::OffsetDateTime::now_utc() - time::Duration::days(30)).date();
+        let config = SearchConfig::default();
+        let pages = |input: String, page: PageRef| {
+            let pool = pool.clone();
+            let config = config.clone();
+            async move {
+                let query = Query::parse(&input).unwrap();
+                let plan = Plan::resolve(&pool, &query, &public(), &config)
+                    .await
+                    .unwrap();
+                plan.ids(&pool, page).await.unwrap()
+            }
+        };
+        let by = |order: &[usize]| order.iter().map(|&i| ids[i]).collect::<Vec<_>>();
+        let recent = format!("date:>={since}");
+        assert_eq!(
+            pages(recent.clone(), PageRef::default()).await,
+            by(&[5, 4, 3, 2])
+        );
+        let two = format!("{recent} limit:2");
+        assert_eq!(
+            pages(two.clone(), PageRef::Before(ids[4])).await,
+            by(&[3, 2])
+        );
+        assert_eq!(
+            pages(two.clone(), PageRef::After(ids[2])).await,
+            by(&[4, 3])
+        );
+        let ascending = format!("{recent} limit:2 order:id_asc");
+        assert_eq!(
+            pages(ascending.clone(), PageRef::default()).await,
+            by(&[2, 3])
+        );
+        assert_eq!(pages(ascending, PageRef::After(ids[3])).await, by(&[4, 5]));
+        // A cursor whose post is gone still pages from where it was.
+        sqlx::query("DELETE FROM posts WHERE id = $1")
+            .bind(ids[4])
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pages(two, PageRef::Before(ids[4])).await, by(&[3, 2]));
+        // Excluding a range doesn't change the order.
+        assert_eq!(
+            pages(format!("-{recent}"), PageRef::default()).await,
+            by(&[1, 0])
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn limits_and_counts(pool: PgPool) {
         for _ in 0..5 {
             seed(
@@ -1377,6 +1606,7 @@ mod tests {
             total,
             max_page: 1000,
             count_limit: 10_000,
+            count_cost_limit: 25_000,
         }
     }
 
@@ -1420,7 +1650,7 @@ mod tests {
     #[test]
     fn strategies_shape_the_sql() {
         let sql = |plan: Plan| {
-            plan.ids_query(PageRef::default())
+            plan.ids_query(PageRef::default(), "")
                 .unwrap()
                 .sql()
                 .as_str()
@@ -1436,7 +1666,7 @@ mod tests {
 
     /// Index names in the plan Postgres picks for `sql`.
     async fn plan_indexes(pool: &PgPool, plan: &Plan) -> Vec<String> {
-        let mut query = plan.ids_query(PageRef::default()).unwrap();
+        let mut query = plan.ids_query(PageRef::default(), "").unwrap();
         let sql = format!("EXPLAIN (FORMAT JSON) {}", query.sql().as_str());
         let arguments = query.build().take_arguments().unwrap().unwrap();
         let explained: Value = sqlx::query_scalar_with(sqlx::AssertSqlSafe(sql), arguments)

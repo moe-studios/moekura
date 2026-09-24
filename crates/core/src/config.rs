@@ -145,6 +145,10 @@ pub struct SearchConfig {
     pub wildcard_limit: u32,
     /// Result counts are exact up to this many posts, estimated above.
     pub count_limit: u32,
+    /// Counts the database expects to cost more than this (in PostgreSQL's
+    /// cost units, roughly pages read) are estimated instead of counted:
+    /// searches on filters no index covers would otherwise read every post.
+    pub count_cost_limit: u32,
 }
 
 impl Default for SearchConfig {
@@ -156,6 +160,7 @@ impl Default for SearchConfig {
             max_terms: 40,
             wildcard_limit: 100,
             count_limit: 10_000,
+            count_cost_limit: 25_000,
         }
     }
 }

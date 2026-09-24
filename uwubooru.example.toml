@@ -63,6 +63,9 @@ max_terms = 40
 wildcard_limit = 100
 # Result counts are exact up to this many posts and estimated above.
 count_limit = 10000
+# Counts PostgreSQL expects to cost more than this (roughly pages read) are
+# estimated instead, so filters no index covers don't read every post.
+count_cost_limit = 25000
 
 [storage]
 # "local" (a directory) or "s3" (any S3-compatible store).

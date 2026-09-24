@@ -74,6 +74,7 @@ with passwords redacted.
 | `max_terms` | `40` | most tags and filters in one search |
 | `wildcard_limit` | `100` | most tags a wildcard expands to (the most used) |
 | `count_limit` | `10000` | result counts are exact up to this, estimated above |
+| `count_cost_limit` | `25000` | counts PostgreSQL expects to cost more than this (roughly pages read) are estimated instead, so filters no index covers don't read every post |
 
 ## `[storage]`
 

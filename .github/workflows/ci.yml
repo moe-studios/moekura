@@ -49,6 +49,10 @@ jobs:
             libvips-tools libheif-plugin-dav1d libheif-plugin-aomenc ffmpeg
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
+      - name: Search plans at scale
+        # Seeds 200,000 posts and fails if a search that should be
+        # selective reads most of the table.
+        run: cargo test -p uwu-db --locked -- --ignored
 
   frontend:
     runs-on: ubuntu-latest

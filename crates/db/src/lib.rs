@@ -3,6 +3,7 @@
 pub mod accounts;
 pub mod api_keys;
 pub mod bans;
+pub mod bench;
 pub mod favorites;
 pub mod flags;
 pub mod invites;
@@ -117,11 +118,17 @@ fn pool_options(config: &DatabaseConfig) -> PgPoolOptions {
 }
 
 fn connect_options(url: &str, config: &DatabaseConfig) -> Result<PgConnectOptions, sqlx::Error> {
-    let mut options = PgConnectOptions::from_str(url)?.application_name("uwubooru");
+    // Queries are prepared, and after a few runs PostgreSQL may switch to
+    // a generic plan that ignores the parameters. For searches that's
+    // ruinous: a plan that suits a rare tag scans millions of posts for a
+    // common one. Planning each time costs a fraction of a millisecond.
+    let mut settings = vec![("plan_cache_mode", "force_custom_plan".to_owned())];
     if config.statement_timeout_ms > 0 {
-        options = options.options([("statement_timeout", config.statement_timeout_ms.to_string())]);
+        settings.push(("statement_timeout", config.statement_timeout_ms.to_string()));
     }
-    Ok(options)
+    Ok(PgConnectOptions::from_str(url)?
+        .application_name("uwubooru")
+        .options(settings))
 }
 
 #[cfg(test)]

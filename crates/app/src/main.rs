@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
                     Ok(()) => import::run(config, &db, args).await,
                     Err(error) => Err(error),
                 },
-                command => admin::run(db.primary(), command).await,
+                command => admin::run(db.primary(), &config, command).await,
             };
             db.close().await;
             result

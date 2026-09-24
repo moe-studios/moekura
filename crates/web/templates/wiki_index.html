@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Wiki · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "tag_nav.html" %}
+<h1>Wiki</h1>
+<form class="filters" method="get" action="/wiki">
+  <label for="wiki-title">Title</label>
+  <input id="wiki-title" name="title" value="{{ query.title }}" placeholder="long_ha or *_hair"
+         autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  <button type="submit">Search</button>
+</form>
+{% if create_url %}<p><a class="button" href="{{ create_url }}">Start a page for {{ create_title }}</a></p>{% endif %}
+{% if pages %}
+<table class="tag-table">
+  <thead><tr><th scope="col">Title</th><th scope="col">Last changed</th><th scope="col" class="num">Version</th></tr></thead>
+  <tbody>
+    {% for p in pages %}
+    <tr>
+      <td><a href="{{ p.url }}">{{ p.title }}</a></td>
+      <td>{{ p.date }}{% if p.updater %} <span class="hint">by {{ p.updater }}</span>{% endif %}</td>
+      <td class="num">{{ p.version }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No wiki pages found.</p>
+{% endif %}
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

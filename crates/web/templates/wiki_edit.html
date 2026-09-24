@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{% if is_new %}Start{% else %}Edit{% endif %} {{ title }} · Wiki · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="{{ url }}">« {{ title }}</a></p>
+<h1>{% if is_new %}Start the page for{% else %}Edit{% endif %} {{ title }}</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}{% if not is_new %} <a href="{{ url }}/history">History</a>{% endif %}</p>{% endif %}
+<form class="wiki-form" method="post" action="{{ url }}/edit">
+  <input type="hidden" name="base" value="{{ base }}">
+  <label for="wiki-body">Text</label>
+  <textarea id="wiki-body" name="body" rows="20" maxlength="{{ max_len }}" required>{{ body }}</textarea>
+  <p class="hint">
+    Blank lines separate paragraphs. <code>h2. Heading</code>, <code>* list item</code>,
+    <code>[b]bold[/b]</code>, <code>[i]italic[/i]</code>, <code>[[tag]]</code> or
+    <code>[[tag|text]]</code> for another wiki page, <code>{{ '{{' }}search{{ '}}' }}</code> for search
+    results, <code>post #123</code>, and plain links.
+  </p>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

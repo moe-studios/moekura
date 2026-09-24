@@ -8,6 +8,7 @@ pub mod blacklist;
 pub mod config;
 pub mod import;
 pub mod jobs;
+pub mod markup;
 pub mod moderation;
 pub mod permissions;
 pub mod posts;

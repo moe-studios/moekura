@@ -150,7 +150,7 @@
       <h2>{{ group.label }}</h2>
       <ul class="tag-list">
         {% for tag in group.tags %}
-        <li><a class="tag tag-{{ group.name }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span></li>
+        <li><a class="refine" href="{{ tag.wiki_url }}" title="Wiki" aria-label="Wiki page for {{ tag.name }}">?</a> <a class="tag tag-{{ group.name }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span></li>
         {% endfor %}
       </ul>
     </section>

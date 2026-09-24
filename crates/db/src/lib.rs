@@ -23,6 +23,7 @@ pub mod stats;
 pub mod tag_relations;
 pub mod tags;
 pub mod users;
+pub mod wiki;
 
 #[cfg(test)]
 mod schema_tests;

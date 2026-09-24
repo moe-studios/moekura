@@ -161,6 +161,7 @@ fn tag_context(tag: &Tag) -> Value {
         count => tag.post_count,
         deprecated => tag.is_deprecated,
         url => Value::from_safe_string(search_url(&tag.name)),
+        wiki_url => Value::from_safe_string(moekura_core::markup::wiki_url(&tag.name)),
     }
 }
 

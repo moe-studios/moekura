@@ -25,6 +25,8 @@ pub enum AppError {
     Unprocessable(String),
     /// The uploaded file is already post `.0`.
     Duplicate(i64),
+    /// Someone else changed the thing first.
+    Conflict(String),
     TooManyRequests {
         retry_after_secs: u64,
     },
@@ -40,7 +42,7 @@ impl AppError {
             AppError::Forbidden | AppError::Blocked(_) => StatusCode::FORBIDDEN,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unprocessable(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            AppError::Duplicate(_) => StatusCode::CONFLICT,
+            AppError::Duplicate(_) | AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -53,7 +55,9 @@ impl AppError {
             AppError::Unauthorized => "You need to log in first",
             AppError::Forbidden => "You don't have permission to do that",
             AppError::Blocked(message) => message,
-            AppError::BadRequest(message) | AppError::Unprocessable(message) => message,
+            AppError::BadRequest(message)
+            | AppError::Unprocessable(message)
+            | AppError::Conflict(message) => message,
             AppError::Duplicate(_) => "This file was already uploaded",
             AppError::TooManyRequests { .. } => {
                 "Too many attempts. Please wait a moment and try again"

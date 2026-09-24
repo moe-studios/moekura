@@ -16,6 +16,8 @@ When you tag a post, write a new tag with a prefix to put it in a category:
 can manage tags; then the prefix moves it, as does editing it in the tag
 list.
 
+Each tag can have a [wiki page](wiki.md) describing it.
+
 ## Aliases and implications
 
 An **alias** makes one tag stand for another: with `kitty` aliased to

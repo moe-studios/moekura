@@ -442,6 +442,28 @@ button.secondary { background: var(--border); color: var(--text); }
 .changes .removed a { text-decoration: line-through; }
 .changes .source { overflow-wrap: anywhere; }
 
+/* Wiki */
+
+.wiki { max-width: 800px; }
+.wiki-head h1 { margin: 0; overflow-wrap: anywhere; }
+.wiki-head .hint { margin-bottom: 16px; }
+.wiki .notice { margin: 0 0 16px; }
+.markup { overflow-wrap: anywhere; }
+.markup > :first-child { margin-top: 0; }
+.markup > :last-child { margin-bottom: 0; }
+.markup h2, .markup h3, .markup h4, .markup h5, .markup h6 { margin: 20px 0 8px; }
+.markup ul { padding-left: 24px; }
+.wiki-excerpt {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.wiki-excerpt .hint { margin-top: 6px; }
+.wiki-form { max-width: 800px; }
+.wiki-form textarea { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 0.875rem; }
+
 /* Votes and favorites */
 
 .vote, .favorite { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }

@@ -12,7 +12,10 @@ use serde::{Deserialize, Serialize};
 use uwu_core::permissions::Permission;
 use uwu_db::{favorites, posts};
 
+use sqlx::PgPool;
+
 use crate::AppState;
+use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::pages::Page;
 use crate::posts::visibility;
@@ -43,26 +46,53 @@ struct VoteForm {
     score: i16,
 }
 
-/// The post's counts and the viewer's part in them, for the script.
-#[derive(Debug, Serialize)]
-struct Reactions {
-    fav_count: i32,
-    favorited: bool,
-    score: i32,
-    vote: i16,
+/// A post's counts and the viewer's part in them.
+#[derive(Debug, Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub(crate) struct Reactions {
+    pub fav_count: i32,
+    /// Whether you have favorited the post.
+    pub favorited: bool,
+    pub score: i32,
+    /// Your vote: 1, -1, or 0 for none.
+    pub vote: i16,
 }
 
-/// Checks the user may act on post `id` and returns their id.
-async fn user_for(page: &Page, id: i64, permission: Permission) -> Result<i64, AppError> {
-    page.current.require(permission)?;
-    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
-    let post = posts::by_id(page.state().db.primary(), id)
+/// Checks `current` may act on post `id` and returns their id.
+pub(crate) async fn user_for(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    permission: Permission,
+) -> Result<i64, AppError> {
+    current.require(permission)?;
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let post = posts::by_id(state.db.primary(), id)
         .await?
         .ok_or(AppError::NotFound)?;
-    if !visibility(&page.current).allows(&post) {
+    if !visibility(current).allows(&post) {
         return Err(AppError::NotFound);
     }
     Ok(user.id)
+}
+
+/// Post `id`'s reactions as `user` sees them.
+pub(crate) async fn reactions(db: &PgPool, id: i64, user: i64) -> Result<Reactions, AppError> {
+    let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    Ok(Reactions {
+        fav_count: post.fav_count,
+        favorited: favorites::exists(db, user, id).await?,
+        score: post.score,
+        vote: favorites::vote_of(db, user, id).await?,
+    })
+}
+
+/// Records `user`'s vote on post `id`.
+pub(crate) async fn vote_on(db: &PgPool, id: i64, user: i64, score: i16) -> Result<(), AppError> {
+    if !(-1..=1).contains(&score) {
+        return Err(AppError::BadRequest("A vote is 1, -1 or 0".into()));
+    }
+    favorites::vote(db, user, id, score).await?;
+    Ok(())
 }
 
 async fn respond(
@@ -86,15 +116,7 @@ async fn respond(
         }
         return Ok(Redirect::to(&url).into_response());
     }
-    let db = page.state().db.primary();
-    let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
-    Ok(Json(Reactions {
-        fav_count: post.fav_count,
-        favorited: favorites::exists(db, user, id).await?,
-        score: post.score,
-        vote: favorites::vote_of(db, user, id).await?,
-    })
-    .into_response())
+    Ok(Json(reactions(page.state().db.primary(), id, user).await?).into_response())
 }
 
 async fn favorite(
@@ -104,7 +126,7 @@ async fn favorite(
     Query(back): Query<BackQuery>,
     Form(form): Form<FavoriteForm>,
 ) -> Result<Response, AppError> {
-    let user = user_for(&page, id, Permission::Favorite).await?;
+    let user = user_for(page.state(), &page.current, id, Permission::Favorite).await?;
     let db = page.state().db.primary();
     match form.favorite.as_str() {
         "add" => favorites::add(db, user, id).await?,
@@ -121,11 +143,8 @@ async fn vote(
     Query(back): Query<BackQuery>,
     Form(form): Form<VoteForm>,
 ) -> Result<Response, AppError> {
-    let user = user_for(&page, id, Permission::Vote).await?;
-    if !(-1..=1).contains(&form.score) {
-        return Err(AppError::BadRequest("A vote is 1, -1 or 0".into()));
-    }
-    favorites::vote(page.state().db.primary(), user, id, form.score).await?;
+    let user = user_for(page.state(), &page.current, id, Permission::Vote).await?;
+    vote_on(page.state().db.primary(), id, user, form.score).await?;
     respond(&page, &headers, id, user, &back).await
 }
 

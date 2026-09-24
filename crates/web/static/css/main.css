@@ -305,6 +305,42 @@ select {
 .tag-table { width: 100%; border-collapse: collapse; }
 .tag-table th, .tag-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
 .tag-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.table-scroll { overflow-x: auto; }
+
+/* API reference */
+.api-docs { max-width: 960px; margin: 0 auto; }
+.api-docs pre { overflow-x: auto; padding: 8px 12px; border-radius: var(--radius); background: var(--surface); }
+.api-docs pre code { padding: 0; background: none; }
+.api-toc ul { list-style: none; padding: 0; margin: 0 0 12px; }
+.api-toc li { padding: 2px 0; }
+.api-toc .toc-group { font-size: 1rem; margin: 16px 0 4px; }
+.api-op, .api-schema { margin: 16px 0; }
+.api-op h3, .api-schema h3 { margin-top: 0; overflow-wrap: anywhere; }
+.api-op h4 { margin: 16px 0 4px; font-size: 0.875rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.api-docs td p { margin: 0; }
+.method {
+  display: inline-block;
+  min-width: 4.5em;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+  color: #fff;
+  background: var(--muted);
+}
+.method-get { background: #2f7d32; }
+.method-post { background: #1f5fbf; }
+.method-put, .method-patch { background: #9a5b00; }
+.method-delete { background: #b3261e; }
+.required { font-size: 0.75rem; color: var(--danger); }
+/* On phones each row becomes a block: name and type, then the text. */
+@media (max-width: 600px) {
+  .api-docs table, .api-docs tbody, .api-docs tr, .api-docs td { display: block; }
+  .api-docs thead { display: none; }
+  .api-docs tr { padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .api-docs .tag-table td { padding: 2px 0; border: 0; }
+}
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -314,6 +350,8 @@ select {
   white-space: nowrap;
 }
 code { font-size: 0.875em; padding: 1px 4px; border-radius: 4px; background: var(--border); }
+/* A secret shown once: selectable in one go, and wrapped on phones. */
+code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; color: var(--text); }
 
 .subnav { display: flex; gap: 16px; margin-bottom: 8px; font-size: 0.9375rem; }
 .request-form { margin: 16px 0 24px; }

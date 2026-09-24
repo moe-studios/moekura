@@ -20,6 +20,7 @@ use uwu_db::{jobs, posts, tags};
 use uwu_storage::Key;
 
 use crate::AppState;
+use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
@@ -60,15 +61,16 @@ fn check_reason(reason: &str) -> Result<&str, AppError> {
 
 /// Moves post `id` between statuses and logs it, in one transaction.
 async fn change_status(
-    page: &Page,
+    state: &AppState,
+    current: &CurrentUser,
     id: i64,
     from: &[PostStatus],
     to: PostStatus,
     kind: ActionKind,
     reason: &str,
 ) -> Result<(), AppError> {
-    let actor = page.current.user.as_ref().map(|u| u.id);
-    let mut tx = page.state().db.primary().begin().await?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = state.db.primary().begin().await?;
     if !posts::set_status(&mut *tx, id, from, to).await? {
         return Err(AppError::BadRequest(
             "The post isn't in a state where that applies (someone may have got there first)"
@@ -89,29 +91,100 @@ fn back_to(jar: CookieJar, url: &str) -> Response {
     (flash::set(jar, Flash::Saved), Redirect::to(url)).into_response()
 }
 
+/// What a moderator can do to a post.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PostAction {
+    /// Let a pending post in.
+    Approve,
+    /// Turn a pending post away (it's deleted).
+    Reject,
+    Delete,
+    Restore,
+    /// Remove a deleted post and its files for good, in the background.
+    Purge,
+}
+
+/// Applies `action` to post `id` with `current`'s permissions, and logs
+/// it. `reason` is kept for rejections and deletions.
+pub(crate) async fn moderate(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    action: PostAction,
+    reason: &str,
+) -> Result<(), AppError> {
+    let db = state.db.primary();
+    let actor = current.user.as_ref().map(|u| u.id);
+    let (permission, from, to, kind, reason): (_, &[PostStatus], _, _, _) = match action {
+        PostAction::Approve => (
+            Permission::ApprovePosts,
+            &[PostStatus::Pending],
+            PostStatus::Active,
+            ActionKind::PostApprove,
+            "",
+        ),
+        PostAction::Reject => (
+            Permission::ApprovePosts,
+            &[PostStatus::Pending],
+            PostStatus::Deleted,
+            ActionKind::PostReject,
+            reason,
+        ),
+        PostAction::Delete => (
+            Permission::DeletePosts,
+            &[PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
+            PostStatus::Deleted,
+            ActionKind::PostDelete,
+            reason,
+        ),
+        PostAction::Restore => (
+            Permission::DeletePosts,
+            &[PostStatus::Deleted],
+            PostStatus::Active,
+            ActionKind::PostRestore,
+            "",
+        ),
+        PostAction::Purge => {
+            current.require(Permission::PurgePosts)?;
+            let mut tx = db.begin().await?;
+            let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
+            if post.status != PostStatus::Deleted {
+                return Err(AppError::BadRequest(
+                    "Only deleted posts can be purged".into(),
+                ));
+            }
+            mod_actions::record(
+                &mut *tx,
+                NewAction::new(actor, ActionKind::PostPurge).post(id),
+            )
+            .await?;
+            jobs::enqueue(&mut tx, &PurgePost { post_id: id }).await?;
+            tx.commit().await?;
+            return Ok(());
+        }
+    };
+    current.require(permission)?;
+    let reason = check_reason(reason)?;
+    change_status(state, current, id, from, to, kind, reason).await?;
+    if action == PostAction::Delete {
+        // Deleting settles any open flags.
+        flags::resolve(db, id, true, actor).await?;
+    }
+    Ok(())
+}
+
 async fn delete(
     page: Page,
     jar: CookieJar,
     Path(id): Path<i64>,
     Form(form): Form<ReasonForm>,
 ) -> Result<Response, AppError> {
-    page.current.require(Permission::DeletePosts)?;
-    let reason = check_reason(&form.reason)?;
-    change_status(
-        &page,
+    moderate(
+        page.state(),
+        &page.current,
         id,
-        &[PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
-        PostStatus::Deleted,
-        ActionKind::PostDelete,
-        reason,
-    )
-    .await?;
-    // Deleting settles any open flags.
-    flags::resolve(
-        page.state().db.primary(),
-        id,
-        true,
-        page.current.user.as_ref().map(|u| u.id),
+        PostAction::Delete,
+        &form.reason,
     )
     .await?;
     Ok(back_to(jar, &format!("/posts/{id}")))
@@ -123,13 +196,24 @@ async fn flag(
     Path(id): Path<i64>,
     Form(form): Form<ReasonForm>,
 ) -> Result<Response, AppError> {
-    page.current.require(Permission::Flag)?;
-    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
-    let reason = check_reason(&form.reason)?;
+    flag_post(page.state(), &page.current, id, &form.reason).await?;
+    Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+/// Flags post `id` for deletion.
+pub(crate) async fn flag_post(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    reason: &str,
+) -> Result<(), AppError> {
+    current.require(Permission::Flag)?;
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let reason = check_reason(reason)?;
     if reason.is_empty() {
         return Err(AppError::BadRequest("Say why the post should go".into()));
     }
-    let mut tx = page.state().db.primary().begin().await?;
+    let mut tx = state.db.primary().begin().await?;
     match flags::create(&mut tx, id, user.id, reason).await {
         Ok(()) => {}
         Err(FlagError::Db(e)) => return Err(e.into()),
@@ -137,7 +221,7 @@ async fn flag(
     }
     tx.commit().await?;
     tracing::info!(post_id = id, user = user.name, "post flagged");
-    Ok(back_to(jar, &format!("/posts/{id}")))
+    Ok(())
 }
 
 /// Posts with open flags per page of the flag queue.
@@ -170,9 +254,20 @@ async fn dismiss_flags(
     jar: CookieJar,
     Path(id): Path<i64>,
 ) -> Result<Response, AppError> {
-    page.current.require(Permission::ApprovePosts)?;
-    let actor = page.current.user.as_ref().map(|u| u.id);
-    let mut tx = page.state().db.primary().begin().await?;
+    dismiss(page.state(), &page.current, id).await?;
+    Ok(back_to(jar, "/moderation/flags"))
+}
+
+/// Dismisses post `id`'s open flags, keeping the post. Returns how many
+/// there were.
+pub(crate) async fn dismiss(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+) -> Result<u64, AppError> {
+    current.require(Permission::ApprovePosts)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = state.db.primary().begin().await?;
     let dismissed = flags::resolve(&mut *tx, id, false, actor).await?;
     if dismissed == 0 {
         return Err(AppError::BadRequest("The post has no open flags".into()));
@@ -186,41 +281,17 @@ async fn dismiss_flags(
     )
     .await?;
     tx.commit().await?;
-    Ok(back_to(jar, "/moderation/flags"))
+    Ok(dismissed)
 }
 
 async fn restore(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    page.current.require(Permission::DeletePosts)?;
-    change_status(
-        &page,
-        id,
-        &[PostStatus::Deleted],
-        PostStatus::Active,
-        ActionKind::PostRestore,
-        "",
-    )
-    .await?;
+    moderate(page.state(), &page.current, id, PostAction::Restore, "").await?;
     Ok(back_to(jar, &format!("/posts/{id}")))
 }
 
 /// Queues removal of a deleted post and its files.
 async fn purge(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    page.current.require(Permission::PurgePosts)?;
-    let actor = page.current.user.as_ref().map(|u| u.id);
-    let mut tx = page.state().db.primary().begin().await?;
-    let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
-    if post.status != PostStatus::Deleted {
-        return Err(AppError::BadRequest(
-            "Only deleted posts can be purged".into(),
-        ));
-    }
-    mod_actions::record(
-        &mut *tx,
-        NewAction::new(actor, ActionKind::PostPurge).post(id),
-    )
-    .await?;
-    jobs::enqueue(&mut tx, &PurgePost { post_id: id }).await?;
-    tx.commit().await?;
+    moderate(page.state(), &page.current, id, PostAction::Purge, "").await?;
     Ok(back_to(jar, "/posts?tags=status%3Adeleted"))
 }
 
@@ -304,16 +375,7 @@ async fn queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, 
 }
 
 async fn approve(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    page.current.require(Permission::ApprovePosts)?;
-    change_status(
-        &page,
-        id,
-        &[PostStatus::Pending],
-        PostStatus::Active,
-        ActionKind::PostApprove,
-        "",
-    )
-    .await?;
+    moderate(page.state(), &page.current, id, PostAction::Approve, "").await?;
     Ok(back_to(jar, "/moderation/queue"))
 }
 
@@ -323,15 +385,12 @@ async fn reject(
     Path(id): Path<i64>,
     Form(form): Form<ReasonForm>,
 ) -> Result<Response, AppError> {
-    page.current.require(Permission::ApprovePosts)?;
-    let reason = check_reason(&form.reason)?;
-    change_status(
-        &page,
+    moderate(
+        page.state(),
+        &page.current,
         id,
-        &[PostStatus::Pending],
-        PostStatus::Deleted,
-        ActionKind::PostReject,
-        reason,
+        PostAction::Reject,
+        &form.reason,
     )
     .await?;
     Ok(back_to(jar, "/moderation/queue"))

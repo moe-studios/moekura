@@ -1,0 +1,47 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.5.4
+      - run: mdbook build docs
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          # Links within the book and the README; the 404 page's links are
+          # relative to wherever it's served.
+          args: >-
+            --offline --no-progress --include-fragments
+            --exclude-path docs/book/404.html
+            docs/book README.md
+      - uses: actions/upload-pages-artifact@v5
+        # GitHub Pages for private repositories needs a paid plan.
+        if: github.event_name == 'push' && !github.event.repository.private
+        with:
+          path: docs/book
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' && !github.event.repository.private
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

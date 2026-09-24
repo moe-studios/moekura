@@ -55,7 +55,11 @@ impl SiteSettings {
     /// Names of every setting, alphabetically.
     pub fn keys() -> Vec<String> {
         match serde_json::to_value(Self::default()) {
-            Ok(Value::Object(map)) => map.keys().cloned().collect(),
+            Ok(Value::Object(map)) => {
+                let mut keys: Vec<String> = map.keys().cloned().collect();
+                keys.sort();
+                keys
+            }
             _ => unreachable!("SiteSettings serializes to an object"),
         }
     }

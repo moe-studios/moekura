@@ -3,6 +3,8 @@
 
 mod account;
 mod admin;
+pub mod api;
+mod api_keys;
 mod assets;
 pub mod auth;
 mod bans;
@@ -16,6 +18,7 @@ mod files;
 pub mod flash;
 mod health;
 mod history;
+pub mod import;
 mod moderation;
 pub mod pages;
 mod posts;
@@ -165,6 +168,8 @@ impl AppState {
 pub fn router(state: AppState) -> Router {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
     let routes = posts::routes()
+        .merge(api::routes(max_upload_bytes))
+        .merge(api_keys::routes())
         .merge(account::routes())
         .merge(admin::routes())
         .merge(bans::routes())

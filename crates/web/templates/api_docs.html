@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}API · {{ site.name }}{% endblock %}
+{% block content %}
+<article class="api-docs">
+  <h1>{{ api.title }} <small class="hint">version {{ api.version }}</small></h1>
+  {{ api.intro }}
+
+  <h2 id="authentication">Authentication</h2>
+  <p>Create an API key on your <a href="/settings/api-keys">API keys</a> page and send it with every request:</p>
+  <pre><code>curl -H "Authorization: Bearer uwu_…" {{ base }}/me</code></pre>
+  <p>A key acts as you, with your role's permissions; while you're banned it can only read. The machine-readable description of everything below is at <a href="{{ spec_url }}">{{ spec_url }}</a> (OpenAPI 3.1), for generating clients.</p>
+
+  <nav class="api-toc" aria-label="Endpoints">
+    {% for group in api.groups %}
+    <h2 class="toc-group"><a href="#group-{{ group.name }}">{{ group.name|capitalize }}</a></h2>
+    <ul>
+      {% for op in group.operations %}
+      <li><a href="#{{ op.id }}"><span class="method method-{{ op.method|lower }}">{{ op.method }}</span> <code>{{ op.path }}</code></a> {{ op.summary }}</li>
+      {% endfor %}
+    </ul>
+    {% endfor %}
+    <p><a href="#schemas">Schemas</a></p>
+  </nav>
+
+  {% for group in api.groups %}
+  <section id="group-{{ group.name }}">
+    <h2>{{ group.name|capitalize }}</h2>
+    {{ group.description }}
+    {% for op in group.operations %}
+    <section class="card api-op" id="{{ op.id }}">
+      <h3><span class="method method-{{ op.method|lower }}">{{ op.method }}</span> <code>{{ op.path }}</code></h3>
+      <p><strong>{{ op.summary }}</strong></p>
+      {{ op.description }}
+      {% if op.params %}
+      <h4>Parameters</h4>
+      <div class="table-scroll"><table class="tag-table">
+        <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          {% for p in op.params %}
+          <tr><td><code>{{ p.name }}</code>{% if p.required %} <span class="required">required</span>{% endif %}</td><td>{{ p.location }}</td><td>{{ p.type_html }}</td><td>{{ p.description }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      {% endif %}
+      {% if op.body %}
+      <h4>Request body</h4>
+      <p>{{ op.body.type_html }} as <code>{{ op.body.content_type }}</code></p>
+      {% endif %}
+      <h4>Responses</h4>
+      <div class="table-scroll"><table class="tag-table">
+        <tbody>
+          {% for r in op.responses %}
+          <tr><td><code>{{ r.status }}</code></td><td>{{ r.type_html or "" }}</td><td>{{ r.description }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+    </section>
+    {% endfor %}
+  </section>
+  {% endfor %}
+
+  <section id="schemas">
+    <h2>Schemas</h2>
+    {% for schema in api.schemas %}
+    <section class="card api-schema" id="schema-{{ schema.name }}">
+      <h3>{{ schema.name }}</h3>
+      {{ schema.description }}
+      {% if schema.fields %}
+      <div class="table-scroll"><table class="tag-table">
+        <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+        <tbody>
+          {% for f in schema.fields %}
+          <tr><td><code>{{ f.name }}</code>{% if f.required %} <span class="required">required</span>{% endif %}</td><td>{{ f.type_html }}</td><td>{{ f.description }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table></div>
+      {% elif schema.type_html %}
+      <p>{{ schema.type_html }}</p>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </section>
+</article>
+{% endblock %}

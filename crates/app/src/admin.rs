@@ -51,6 +51,10 @@ pub enum AdminCommand {
     },
     /// Recompute every tag's post count. Post edits wait while it runs.
     RecountTags,
+    /// Import a folder of images and videos as posts, with tags from the
+    /// sidecar files next to them (pic.png.txt, pic.json, …). Files already
+    /// here are skipped, so an interrupted import can be run again.
+    Import(crate::import::ImportArgs),
     /// Show site settings, or change one
     Settings {
         #[command(subcommand)]
@@ -87,6 +91,7 @@ pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
             let queued = regenerate_media(db, (!all).then_some(posts.as_slice())).await?;
             println!("queued {queued} file(s) for processing");
         }
+        AdminCommand::Import(_) => unreachable!("imports need the whole app; main runs them"),
         AdminCommand::RecountTags => {
             let fixed = uwu_db::tags::recount(db).await?;
             println!("corrected {fixed} tag count(s)");

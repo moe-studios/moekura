@@ -1,0 +1,12 @@
+[book]
+title = "uwubooru"
+description = "Running, administering and using uwubooru, a self-hostable booru."
+authors = ["uwubooru contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/uwuumoe/uwubooru"
+edit-url-template = "https://github.com/uwuumoe/uwubooru/edit/main/docs/{path}"
+default-theme = "light"
+preferred-dark-theme = "navy"

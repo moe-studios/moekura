@@ -16,7 +16,10 @@ pub use object_store::GetRange;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectPath;
-use object_store::{GetOptions, ObjectStore, ObjectStoreExt, PutPayload, WriteMultipart};
+use object_store::{
+    Attribute, Attributes, GetOptions, ObjectStore, ObjectStoreExt, PutMultipartOptions,
+    PutOptions, PutPayload, WriteMultipart,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use url::Url;
 use uwu_core::config::{StorageBackend, StorageConfig};
@@ -27,6 +30,9 @@ const PART_SIZE: usize = 8 * 1024 * 1024;
 
 /// Where the app itself serves files when no public base URL is set.
 pub const LOCAL_URL_PREFIX: &str = "/data/";
+
+/// Keys never change content, so anything may cache them forever.
+pub const CACHE_FOREVER: &str = "public, max-age=31536000, immutable";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -65,6 +71,21 @@ impl Key {
             &hash[..2],
             &hash[2..4]
         ))
+    }
+
+    /// The media type of the file, from its extension.
+    pub fn content_type(&self) -> &'static str {
+        match self.0.rsplit('.').next().unwrap_or_default() {
+            "jpg" | "jpeg" => "image/jpeg",
+            "png" => "image/png",
+            "gif" => "image/gif",
+            "webp" => "image/webp",
+            "avif" => "image/avif",
+            "jxl" => "image/jxl",
+            "mp4" => "video/mp4",
+            "webm" => "video/webm",
+            _ => "application/octet-stream",
+        }
     }
 
     /// Accepts only keys this module could have built, so request paths
@@ -124,6 +145,10 @@ pub struct FileRange {
 pub struct Storage {
     store: Arc<dyn ObjectStore>,
     public_base_url: Option<Url>,
+    /// Whether objects carry their content type and caching headers, for
+    /// buckets browsers or a CDN read directly. (The local disk store
+    /// can't keep them; the app sets them when serving instead.)
+    attributes: bool,
 }
 
 impl fmt::Debug for Storage {
@@ -171,6 +196,7 @@ impl Storage {
         Ok(Self {
             store,
             public_base_url: config.public_base_url.clone(),
+            attributes: config.backend == StorageBackend::S3,
         })
     }
 
@@ -179,6 +205,7 @@ impl Storage {
         Self {
             store,
             public_base_url,
+            attributes: true,
         }
     }
 
@@ -212,9 +239,23 @@ impl Storage {
         }
     }
 
+    /// The headers stored with `key`, where the store keeps them.
+    fn attributes(&self, key: &Key) -> Attributes {
+        let mut attributes = Attributes::new();
+        if self.attributes {
+            attributes.insert(Attribute::ContentType, key.content_type().into());
+            attributes.insert(Attribute::CacheControl, CACHE_FOREVER.into());
+        }
+        attributes
+    }
+
     pub async fn put_bytes(&self, key: &Key, bytes: Bytes) -> Result<()> {
+        let options = PutOptions {
+            attributes: self.attributes(key),
+            ..PutOptions::default()
+        };
         self.store
-            .put(&key.object_path(), PutPayload::from(bytes))
+            .put_opts(&key.object_path(), PutPayload::from(bytes), options)
             .await?;
         Ok(())
     }
@@ -228,7 +269,14 @@ impl Storage {
             file.read_to_end(&mut bytes).await?;
             return self.put_bytes(key, bytes.into()).await;
         }
-        let upload = self.store.put_multipart(&key.object_path()).await?;
+        let options = PutMultipartOptions {
+            attributes: self.attributes(key),
+            ..PutMultipartOptions::default()
+        };
+        let upload = self
+            .store
+            .put_multipart_opts(&key.object_path(), options)
+            .await?;
         let mut writer = WriteMultipart::new_with_chunk_size(upload, PART_SIZE);
         let mut buffer = vec![0u8; PART_SIZE];
         loop {
@@ -437,13 +485,13 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    /// Runs against a real S3-compatible store when `UWU_TEST_S3_ENDPOINT`
-    /// is set, e.g. MinIO: `UWU_TEST_S3_ENDPOINT=http://localhost:9000
-    /// UWU_TEST_S3_BUCKET=test AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…`.
+    /// Runs against a real S3-compatible store when `TEST_S3_ENDPOINT`
+    /// is set, e.g. MinIO: `TEST_S3_ENDPOINT=http://localhost:9000
+    /// TEST_S3_BUCKET=test AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…`.
     #[tokio::test]
     async fn s3_round_trip_when_configured() {
-        let Ok(endpoint) = std::env::var("UWU_TEST_S3_ENDPOINT") else {
-            eprintln!("skipping: UWU_TEST_S3_ENDPOINT not set");
+        let Ok(endpoint) = std::env::var("TEST_S3_ENDPOINT") else {
+            eprintln!("skipping: TEST_S3_ENDPOINT not set");
             return;
         };
         install_crypto_provider();
@@ -451,7 +499,7 @@ mod tests {
             backend: StorageBackend::S3,
             ..StorageConfig::default()
         };
-        config.s3.bucket = std::env::var("UWU_TEST_S3_BUCKET").unwrap_or_else(|_| "test".into());
+        config.s3.bucket = std::env::var("TEST_S3_BUCKET").unwrap_or_else(|_| "test".into());
         config.s3.endpoint = Some(Url::parse(&endpoint).unwrap());
         config.s3.path_style = true;
         let storage = Storage::from_config(&config).unwrap();
@@ -461,6 +509,26 @@ mod tests {
             .put_bytes(&key, Bytes::from_static(b"0123456789"))
             .await
             .unwrap();
+        // Stored with the headers a CDN or browser needs.
+        let image = Key::original(HASH, "webp");
+        storage
+            .put_bytes(&image, Bytes::from_static(b"RIFF"))
+            .await
+            .unwrap();
+        let got = storage.store.get(&image.object_path()).await.unwrap();
+        assert_eq!(
+            got.attributes
+                .get(&Attribute::ContentType)
+                .map(|v| v.as_ref()),
+            Some("image/webp")
+        );
+        assert_eq!(
+            got.attributes
+                .get(&Attribute::CacheControl)
+                .map(|v| v.as_ref()),
+            Some(CACHE_FOREVER)
+        );
+        storage.delete(&image).await.unwrap();
         let part = storage
             .read(&key, Some(GetRange::Bounded(2..5)))
             .await
@@ -474,6 +542,31 @@ mod tests {
         );
         storage.delete(&key).await.unwrap();
         assert!(!storage.exists(&key).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn objects_carry_their_headers() {
+        let storage = Storage::with_store(Arc::new(object_store::memory::InMemory::new()), None);
+        let key = Key::original(HASH, "mp4");
+        storage
+            .put_bytes(&key, Bytes::from_static(b"x"))
+            .await
+            .unwrap();
+        let got = storage.store.get(&key.object_path()).await.unwrap();
+        assert_eq!(
+            got.attributes
+                .get(&Attribute::ContentType)
+                .map(|v| v.as_ref()),
+            Some("video/mp4")
+        );
+        assert_eq!(
+            Key::original(HASH, "JPG").content_type(),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            Key::variant("thumb-250", HASH, "avif").content_type(),
+            "image/avif"
+        );
     }
 
     #[tokio::test]

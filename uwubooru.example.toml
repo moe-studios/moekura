@@ -46,6 +46,20 @@ session_idle_days = 30
 # ...or this many days after logging in, however active.
 session_max_days = 365
 
+[cache]
+# Where rate limit counters and cached search counts live: "memory" (each
+# process on its own) or "valkey" (shared by every web server; Redis works
+# too). With several web servers, use valkey, or each counts rate limits
+# separately.
+backend = "memory"
+# url = "redis://localhost:6379"      # rediss:// for TLS
+# How long a search count that hit search.count_limit is reused; 0 turns
+# the cache off.
+count_ttl_secs = 30
+# Starts every key stored in Valkey; give sites that share a server
+# different prefixes.
+prefix = "uwu"
+
 [jobs]
 # Background jobs (thumbnails, hashing) processed concurrently per process.
 workers = 2

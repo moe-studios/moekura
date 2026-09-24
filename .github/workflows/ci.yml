@@ -37,9 +37,13 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
+      valkey:
+        image: valkey/valkey:8-alpine
     env:
       # sqlx::test creates a throwaway database per test on this server.
       DATABASE_URL: postgres://uwu:uwu@postgres:5432/uwu
+      # Rate limit and cache tests also run against a real Valkey.
+      TEST_VALKEY_URL: redis://valkey:6379
     steps:
       - uses: actions/checkout@v5
       - name: Install media tools

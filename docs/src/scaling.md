@@ -10,6 +10,9 @@ program scales out:
   and listings;
 - store files in [S3-compatible storage](admin/storage.md) with a CDN in
   front;
+- with several web servers, point them at a shared Valkey
+  (`cache.backend = "valkey"`), so login and registration limits count
+  across all of them;
 - with several web servers, set `database.auto_migrate = false` and run
   `uwubooru migrate` when deploying.
 

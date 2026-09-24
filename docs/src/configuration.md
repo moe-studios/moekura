@@ -57,6 +57,18 @@ with passwords redacted.
 | `session_idle_days` | `30` | a login ends after this many days unused… |
 | `session_max_days` | `365` | …or this long after logging in, however active |
 
+## `[cache]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `backend` | `"memory"` | where rate limit counters and cached search counts live: `"memory"` (each process on its own) or `"valkey"` (shared by every web server) |
+| `url` | *(unset)* | for `valkey`: `redis://host:6379`, or `rediss://` for TLS; Redis and other compatible servers work too |
+| `count_ttl_secs` | `30` | how long a search count that reached `search.count_limit` ("10,000+") is reused; `0` turns this off |
+| `prefix` | `"uwu"` | starts every key stored in Valkey; give sites that share a server different prefixes |
+
+If Valkey stops answering, each server counts rate limits on its own and
+stops caching until it's back, and logs a warning; nothing fails.
+
 ## `[jobs]`
 
 | Key | Default | Meaning |

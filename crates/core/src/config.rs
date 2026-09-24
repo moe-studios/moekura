@@ -18,6 +18,7 @@ pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
     pub auth: AuthConfig,
+    pub cache: CacheConfig,
     pub jobs: JobsConfig,
     pub media: MediaConfig,
     pub paths: PathsConfig,
@@ -191,6 +192,43 @@ impl Default for StorageConfig {
             s3: S3Config::default(),
         }
     }
+}
+
+/// Where state shared between web servers lives: rate limit counters and
+/// cached search counts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CacheConfig {
+    pub backend: CacheBackend,
+    /// For `valkey`: `redis://host:6379`, or `rediss://` for TLS. Valkey,
+    /// Redis and compatible servers work.
+    pub url: Option<String>,
+    /// How long a search's result count is reused. `0` turns the count
+    /// cache off.
+    pub count_ttl_secs: u64,
+    /// Starts every key this site stores in Valkey, so several sites can
+    /// share one server.
+    pub prefix: String,
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            backend: CacheBackend::Memory,
+            url: None,
+            count_ttl_secs: 30,
+            prefix: "uwu".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheBackend {
+    /// In each process: fine for one web server; with several, each
+    /// counts rate limits separately.
+    Memory,
+    Valkey,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -381,6 +419,23 @@ impl Config {
                 });
             }
         }
+        if self.cache.backend == CacheBackend::Valkey {
+            match &self.cache.url {
+                None => problems.push(ConfigProblem {
+                    key: "cache.url",
+                    message: "is required for the valkey backend".into(),
+                }),
+                Some(url) => {
+                    let scheme = Url::parse(url).map(|u| u.scheme().to_owned());
+                    if !matches!(scheme.as_deref(), Ok("redis" | "rediss")) {
+                        problems.push(ConfigProblem {
+                            key: "cache.url",
+                            message: "must be a redis:// or rediss:// URL".into(),
+                        });
+                    }
+                }
+            }
+        }
         if db.max_connections == 0 {
             problems.push(ConfigProblem {
                 key: "database.max_connections",
@@ -528,6 +583,9 @@ impl Config {
         for replica in &mut config.database.replicas {
             *replica = redact_url(replica);
         }
+        if let Some(url) = &mut config.cache.url {
+            *url = redact_url(url);
+        }
         if !config.storage.s3.secret_access_key.is_empty() {
             config.storage.s3.secret_access_key = REDACTED.to_owned();
         }
@@ -556,8 +614,8 @@ pub fn redact_url(raw: &str) -> String {
         return String::new();
     }
     let mut url = match Url::parse(raw) {
-        Ok(url) if matches!(url.scheme(), "postgres" | "postgresql") => url,
-        _ => return format!("<not a postgres URL, {REDACTED}>"),
+        Ok(url) if matches!(url.scheme(), "postgres" | "postgresql" | "redis" | "rediss") => url,
+        _ => return format!("<not a database URL, {REDACTED}>"),
     };
     if url.password().is_some() {
         // Only fails for URLs that cannot have credentials, which we just
@@ -690,6 +748,19 @@ mod tests {
         config.storage.s3.secret_access_key = "very secret".into();
         config.validate().unwrap();
         assert_eq!(config.redacted().storage.s3.secret_access_key, "REDACTED");
+    }
+
+    #[test]
+    fn checks_the_cache_backend() {
+        let mut config = valid();
+        config.cache.backend = CacheBackend::Valkey;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "cache.url");
+        config.cache.url = Some("http://valkey:6379".into());
+        assert_eq!(config.validate().unwrap_err()[0].key, "cache.url");
+        config.cache.url = Some("redis://:secret@valkey:6379".into());
+        assert!(config.validate().is_ok());
+        assert!(!config.redacted().cache.url.unwrap().contains("secret"));
     }
 
     #[test]

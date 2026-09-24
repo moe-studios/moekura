@@ -92,6 +92,12 @@ impl CurrentUser {
     }
 }
 
+/// A logged-out visitor, for tests outside this module.
+#[cfg(test)]
+pub(crate) fn tests_support_visitor(state: &AppState) -> CurrentUser {
+    CurrentUser::anonymous(&state.site.get())
+}
+
 fn anonymous_role(site: &SiteSnapshot) -> Role {
     site.system_role(SystemRole::Anonymous)
         .cloned()

@@ -317,7 +317,11 @@ pub(crate) async fn search(
         .await
         .map_err(search_error)?;
     let ids = plan.ids(db, page).await.map_err(search_error)?;
-    let count = plan.count(db).await.map_err(search_error)?;
+    let count = state
+        .counts
+        .count(&plan, db, &current)
+        .await
+        .map_err(search_error)?;
 
     let mut found = posts::by_ids(db, &ids).await?;
     found.sort_by_key(|p| ids.iter().position(|id| *id == p.id));

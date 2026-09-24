@@ -104,7 +104,8 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         Err(SearchError::Invalid(message)) => return Ok(failed(message)),
         Err(SearchError::Db(error)) => return Err(error.into()),
     };
-    let (ids, count) = match (plan.ids(db, page_ref).await, plan.count(db).await) {
+    let count = state.counts.count(&plan, db, &page.current).await;
+    let (ids, count) = match (plan.ids(db, page_ref).await, count) {
         (Ok(ids), Ok(count)) => (ids, count),
         (Err(SearchError::Invalid(message)), _) => return Ok(failed(message)),
         (Err(SearchError::Db(error)), _) | (_, Err(SearchError::Db(error))) => {

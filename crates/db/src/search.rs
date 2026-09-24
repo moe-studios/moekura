@@ -301,6 +301,27 @@ impl Plan {
             })
     }
 
+    /// What decides this search's results, as text: equal for searches that
+    /// match the same posts for the same viewers, e.g. for caching counts.
+    pub fn fingerprint(&self) -> String {
+        format!(
+            "{:?}",
+            (
+                self.nothing,
+                &self.statuses,
+                self.own_pending,
+                self.required.iter().map(|s| &s.ids).collect::<Vec<_>>(),
+                self.any.as_ref().map(|s| &s.ids),
+                &self.excluded,
+                &self.conditions,
+                &self.uploaders,
+                &self.favorited_by,
+                self.ordfav,
+                &self.similar_to,
+            )
+        )
+    }
+
     /// Whether `page=b…` / `page=a…` work for this search.
     pub fn supports_keyset(&self) -> bool {
         matches!(self.order, Order::IdDesc | Order::IdAsc)

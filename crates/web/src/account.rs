@@ -132,9 +132,13 @@ async fn register(
     if mode == RegistrationMode::Closed {
         return Err(AppError::Forbidden);
     }
-    state.rate_limits.check_register(info.ip).inspect_err(|_| {
-        tracing::warn!(ip = ?info.ip, "registration rate limited");
-    })?;
+    state
+        .rate_limits
+        .check_register(info.ip)
+        .await
+        .inspect_err(|_| {
+            tracing::warn!(ip = ?info.ip, "registration rate limited");
+        })?;
     let invalid = |errors: RegisterErrors| {
         Ok(render_register(
             &page,
@@ -254,6 +258,7 @@ async fn login(
     state
         .rate_limits
         .check_login(info.ip, name)
+        .await
         .inspect_err(|_| {
             tracing::warn!(ip = ?info.ip, name, "login rate limited");
         })?;

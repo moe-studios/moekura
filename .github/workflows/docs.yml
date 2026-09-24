@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Republishes main, e.g. after changing the Pages settings.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -28,13 +30,13 @@ jobs:
             docs/book README.md CHANGELOG.md
       - uses: actions/upload-pages-artifact@v5
         # GitHub Pages for private repositories needs a paid plan.
-        if: github.event_name == 'push' && !github.event.repository.private
+        if: github.event_name != 'pull_request' && !github.event.repository.private
         with:
           path: docs/book
 
   deploy:
     needs: build
-    if: github.event_name == 'push' && !github.event.repository.private
+    if: github.event_name != 'pull_request' && !github.event.repository.private
     runs-on: ubuntu-latest
     permissions:
       pages: write

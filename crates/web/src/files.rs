@@ -19,7 +19,7 @@ use crate::AppState;
 use crate::error::AppError;
 
 /// Files are content-addressed, so a URL's bytes never change.
-const IMMUTABLE: &str = "public, max-age=31536000, immutable";
+const IMMUTABLE: &str = uwu_storage::CACHE_FOREVER;
 /// On private sites: browsers may keep files, shared caches may not.
 const PRIVATE: &str = "private, max-age=3600";
 

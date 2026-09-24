@@ -29,7 +29,7 @@ pub fn routes() -> Router<AppState> {
 
 async fn history(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
-    let db = page.state().db.read();
+    let db = page.state().reader(&page.current);
     let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
     if !visibility(&page.current).allows(&post) {
         return Err(AppError::NotFound);

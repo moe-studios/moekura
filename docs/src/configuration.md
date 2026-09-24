@@ -48,6 +48,7 @@ with passwords redacted.
 | `acquire_timeout_secs` | `5` | how long to wait for a free connection |
 | `statement_timeout_ms` | `30000` | server-side limit per statement; `0` for none |
 | `auto_migrate` | `true` | migrate on start; with several servers, set `false` and run `uwubooru migrate` when deploying |
+| `replica_max_lag_secs` | `10` | replicas further behind are skipped until they catch up; also how long someone's reads stay on the primary after they change something |
 
 ## `[auth]`
 
@@ -55,6 +56,18 @@ with passwords redacted.
 |---|---|---|
 | `session_idle_days` | `30` | a login ends after this many days unused… |
 | `session_max_days` | `365` | …or this long after logging in, however active |
+
+## `[cache]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `backend` | `"memory"` | where rate limit counters and cached search counts live: `"memory"` (each process on its own) or `"valkey"` (shared by every web server) |
+| `url` | *(unset)* | for `valkey`: `redis://host:6379`, or `rediss://` for TLS; Redis and other compatible servers work too |
+| `count_ttl_secs` | `30` | how long a search count that reached `search.count_limit` ("10,000+") is reused; `0` turns this off |
+| `prefix` | `"uwu"` | starts every key stored in Valkey; give sites that share a server different prefixes |
+
+If Valkey stops answering, each server counts rate limits on its own and
+stops caching until it's back, and logs a warning; nothing fails.
 
 ## `[jobs]`
 
@@ -74,6 +87,7 @@ with passwords redacted.
 | `max_terms` | `40` | most tags and filters in one search |
 | `wildcard_limit` | `100` | most tags a wildcard expands to (the most used) |
 | `count_limit` | `10000` | result counts are exact up to this, estimated above |
+| `count_cost_limit` | `25000` | counts PostgreSQL expects to cost more than this (roughly pages read) are estimated instead, so filters no index covers don't read every post |
 
 ## `[storage]`
 

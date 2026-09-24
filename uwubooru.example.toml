@@ -25,6 +25,10 @@ request_timeout_secs = 30
 url = "postgres://uwu:CHANGE_ME@localhost/uwu"
 # Read replicas for search and listings. Leave empty to use the primary.
 replicas = []
+# Replicas further behind the primary than this are skipped until they
+# catch up. After someone changes something, their reads stay on the
+# primary this long, so they see their change.
+replica_max_lag_secs = 10
 # Maximum connections per pool (the primary and each replica).
 max_connections = 16
 min_connections = 0
@@ -41,6 +45,20 @@ auto_migrate = true
 session_idle_days = 30
 # ...or this many days after logging in, however active.
 session_max_days = 365
+
+[cache]
+# Where rate limit counters and cached search counts live: "memory" (each
+# process on its own) or "valkey" (shared by every web server; Redis works
+# too). With several web servers, use valkey, or each counts rate limits
+# separately.
+backend = "memory"
+# url = "redis://localhost:6379"      # rediss:// for TLS
+# How long a search count that hit search.count_limit is reused; 0 turns
+# the cache off.
+count_ttl_secs = 30
+# Starts every key stored in Valkey; give sites that share a server
+# different prefixes.
+prefix = "uwu"
 
 [jobs]
 # Background jobs (thumbnails, hashing) processed concurrently per process.
@@ -63,6 +81,9 @@ max_terms = 40
 wildcard_limit = 100
 # Result counts are exact up to this many posts and estimated above.
 count_limit = 10000
+# Counts PostgreSQL expects to cost more than this (roughly pages read) are
+# estimated instead, so filters no index covers don't read every post.
+count_cost_limit = 25000
 
 [storage]
 # "local" (a directory) or "s3" (any S3-compatible store).

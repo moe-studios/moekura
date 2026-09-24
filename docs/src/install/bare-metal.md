@@ -10,7 +10,8 @@ You need:
 | libvips 8.15+ (`vips`, `vipsheader`, `vipsthumbnail`) | reading images, thumbnails, perceptual hashes | `vips-tools` (AVIF: `vips-heif`, JPEG XL: `vips-jxl`) | `libvips-tools libheif-plugin-dav1d libheif-plugin-aomenc` |
 | ffmpeg (`ffmpeg`, `ffprobe`) | reading videos, poster frames | `ffmpeg` (RPM Fusion) or `ffmpeg-free` | `ffmpeg` |
 
-Build the binary with Rust 1.94 or newer:
+Download a release binary (see [Upgrading](../upgrading.md)), or build one
+with Rust 1.94 or newer:
 
 ```sh
 cargo build --release

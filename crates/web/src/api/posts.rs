@@ -296,7 +296,7 @@ pub(crate) async fn search(
     Query(params): Query<SearchParams>,
 ) -> Result<Json<PostPage>, AppError> {
     current.require(Permission::ViewPosts)?;
-    let db = state.db.read();
+    let db = state.reader(&current);
     let page: PageRef = if params.page.is_empty() {
         PageRef::default()
     } else {
@@ -317,7 +317,11 @@ pub(crate) async fn search(
         .await
         .map_err(search_error)?;
     let ids = plan.ids(db, page).await.map_err(search_error)?;
-    let count = plan.count(db).await.map_err(search_error)?;
+    let count = state
+        .counts
+        .count(&plan, db, &current)
+        .await
+        .map_err(search_error)?;
 
     let mut found = posts::by_ids(db, &ids).await?;
     found.sort_by_key(|p| ids.iter().position(|id| *id == p.id));
@@ -425,7 +429,7 @@ pub(crate) async fn versions(
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<ApiVersion>>, AppError> {
     current.require(Permission::ViewPosts)?;
-    let db = state.db.read();
+    let db = state.reader(&current);
     let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
     if !visibility(&current).allows(&post) {
         return Err(AppError::NotFound);

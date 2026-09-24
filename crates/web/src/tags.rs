@@ -214,7 +214,7 @@ async fn autocomplete(
     Query(query): Query<AutocompleteQuery>,
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
-    let suggestions = suggestions(state.db.read(), &query.q).await?;
+    let suggestions = suggestions(state.reader(&current), &query.q).await?;
     // Private: what a viewer may see depends on their session.
     Ok(([(CACHE_CONTROL, "private, max-age=60")], Json(suggestions)).into_response())
 }
@@ -256,7 +256,7 @@ struct IndexQuery {
 
 async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
-    let db = page.state().db.read();
+    let db = page.state().reader(&page.current);
     let categories = tags::categories(db).await?;
     let category = categories.iter().find(|c| c.name == query.category);
     let order = match query.order.as_str() {

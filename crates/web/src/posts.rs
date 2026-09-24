@@ -66,7 +66,7 @@ const SIDEBAR_TAGS: usize = 25;
 async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
-    let db = state.db.read();
+    let db = state.reader(&page.current);
     // The user's page size, within the site's limit.
     let mut config = state.config.search.clone();
     if let Some(per_page) = page
@@ -104,7 +104,8 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         Err(SearchError::Invalid(message)) => return Ok(failed(message)),
         Err(SearchError::Db(error)) => return Err(error.into()),
     };
-    let (ids, count) = match (plan.ids(db, page_ref).await, plan.count(db).await) {
+    let count = state.counts.count(&plan, db, &page.current).await;
+    let (ids, count) = match (plan.ids(db, page_ref).await, count) {
         (Ok(ids), Ok(count)) => (ids, count),
         (Err(SearchError::Invalid(message)), _) => return Ok(failed(message)),
         (Err(SearchError::Db(error)), _) | (_, Err(SearchError::Db(error))) => {
@@ -415,7 +416,7 @@ async fn previous(
 async fn step(page: Page, id: i64, q: &str, forward: bool) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
-    let db = state.db.read();
+    let db = state.reader(&page.current);
     let mut query = SearchQuery::parse(q).map_err(|e| AppError::BadRequest(e.to_string()))?;
     query.limit = Some(1);
     let plan =

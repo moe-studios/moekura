@@ -15,6 +15,7 @@
 | `uwubooru admin regenerate-media (--all \| IDS…)` | remakes thumbnails and samples |
 | `uwubooru admin recount-tags` | recomputes every tag's post count |
 | `uwubooru admin import DIR --uploader NAME …` | imports a folder of files; see [Bulk import](import.md) |
+| `uwubooru admin seed --posts N [--tags T] [--seed S]` | fills a test database with synthetic posts for load testing; see [Scaling](../scaling.md) |
 
 Every command takes `--config PATH`. Role and setting changes made here
 appear in the moderation log.

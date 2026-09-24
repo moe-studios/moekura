@@ -18,7 +18,8 @@ start.
 Two volumes hold everything worth keeping: `db` (PostgreSQL) and `files`
 (uploads and thumbnails). Back them up together; see [Backups](../admin/backups.md).
 
-The image includes libvips and ffmpeg, which make up most of its size.
+The image (about 170 MB) includes its own builds of libvips and ffmpeg with
+only the formats uwubooru accepts.
 
 ## Settings
 

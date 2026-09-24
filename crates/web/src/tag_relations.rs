@@ -96,7 +96,7 @@ async fn index(
     status: StatusCode,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
-    let db = page.state().db.read();
+    let db = page.state().reader(&page.current);
     let filter: Option<Status> = query.status.parse().ok();
     let number = query.page.unwrap_or(1).clamp(1, MAX_PAGE);
     let name = uwu_core::tags::normalize(&query.name);

@@ -28,7 +28,7 @@ pub fn routes() -> Router<AppState> {
 
 async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
-    let db = page.state().db.read();
+    let db = page.state().reader(&page.current);
     let user = users::by_name(db, &name)
         .await?
         .filter(|u| u.status == UserStatus::Active || page.current.can(Permission::ManageUsers))

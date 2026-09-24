@@ -55,6 +55,39 @@ pub enum AdminCommand {
     /// sidecar files next to them (pic.png.txt, pic.json, …). Files already
     /// here are skipped, so an interrupted import can be run again.
     Import(crate::import::ImportArgs),
+    /// Time a fixed suite of searches against this database (seed one
+    /// first), and report the pages each touched
+    Bench {
+        /// Timed runs per search
+        #[arg(long, default_value_t = 20)]
+        runs: usize,
+        /// Fail if a search that should be selective reads over half as
+        /// many pages as the posts table has
+        #[arg(long)]
+        check: bool,
+        /// Print the query plans of the searches whose names contain this
+        #[arg(long)]
+        explain: Option<String>,
+    },
+    /// Fill a test database with synthetic posts for load testing. Refuses
+    /// to touch a database with real posts unless forced.
+    Seed {
+        /// How many posts to add
+        #[arg(long)]
+        posts: u64,
+        /// How many distinct tags [default: one per 20 posts, at least 1000]
+        #[arg(long)]
+        tags: Option<u32>,
+        /// Random seed: the same seed and sizes give the same posts
+        #[arg(long, default_value_t = 1)]
+        seed: u32,
+        /// Posts per transaction
+        #[arg(long, default_value_t = 50_000)]
+        batch: u64,
+        /// Seed even though the database has real posts
+        #[arg(long)]
+        force: bool,
+    },
     /// Show site settings, or change one
     Settings {
         #[command(subcommand)]
@@ -68,7 +101,110 @@ pub enum SettingsAction {
     Set { key: String, value: String },
 }
 
-pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
+async fn seed_posts(
+    db: &PgPool,
+    options: &uwu_db::seed::Options,
+    force: bool,
+) -> anyhow::Result<()> {
+    use uwu_db::seed;
+    let started = std::time::Instant::now();
+    let plan = seed::prepare(db, options, force).await?;
+    println!(
+        "seeding {} posts with {} tags and {} users",
+        options.posts,
+        plan.tag_ids.len(),
+        plan.user_ids.len()
+    );
+    let mut done = 0;
+    while done < options.posts {
+        let to = (done + options.batch_size).min(options.posts);
+        seed::batch(db, &plan, options, done, to).await?;
+        done = to;
+        let secs = started.elapsed().as_secs_f64();
+        println!(
+            "{done}/{} posts ({:.0} per second)",
+            options.posts,
+            done as f64 / secs.max(0.001)
+        );
+    }
+    println!("adding aliases and implications, and analyzing");
+    seed::finish(db, &plan).await?;
+    println!("done in {:.0?}", started.elapsed());
+    Ok(())
+}
+
+async fn bench(
+    db: &PgPool,
+    config: &uwu_core::config::SearchConfig,
+    runs: usize,
+    check: bool,
+    explain: Option<&str>,
+) -> anyhow::Result<()> {
+    use uwu_db::bench;
+    use uwu_db::search::Count;
+    let posts: i64 = sqlx::query_scalar("SELECT count(*) FROM posts")
+        .fetch_one(db)
+        .await?;
+    let table = bench::posts_pages(db).await?;
+    println!("{posts} posts ({table} pages); {runs} runs per search\n");
+    println!(
+        "{:<22} {:>8} {:>8} {:>8} {:>9} {:<8} {:>9}  query",
+        "search", "p50 ms", "p95 ms", "max ms", "pages", "plan", "count"
+    );
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+    let mut problems = Vec::new();
+    for case in bench::suite(db, config).await? {
+        let m = bench::measure(db, config, &case, runs).await?;
+        let count = match m.count {
+            Count::Exact(n) => n.to_string(),
+            Count::About(n) => format!("~{n}"),
+            Count::AtLeast(n) => format!("{n}+"),
+        };
+        let page = match case.page {
+            uwu_db::search::PageRef::Number(1) => String::new(),
+            uwu_db::search::PageRef::Number(n) => format!(" (page {n})"),
+            uwu_db::search::PageRef::Before(id) => format!(" (page b{id})"),
+            uwu_db::search::PageRef::After(id) => format!(" (page a{id})"),
+        };
+        println!(
+            "{:<22} {:>8.1} {:>8.1} {:>8.1} {:>9} {:<8} {:>9}  {}{page}",
+            case.name,
+            ms(m.p50),
+            ms(m.p95),
+            ms(m.max),
+            m.pages,
+            m.strategy,
+            count,
+            case.query
+        );
+        problems.extend(bench::problem(&m, table));
+        if explain.is_some_and(|name| case.name.contains(name)) {
+            let query = uwu_core::search::Query::parse(&case.query)?;
+            let visitor = uwu_db::posts::Visibility {
+                statuses: vec![
+                    uwu_core::posts::PostStatus::Active,
+                    uwu_core::posts::PostStatus::Flagged,
+                ],
+                viewer: None,
+            };
+            let plan = uwu_db::search::Plan::resolve(db, &query, &visitor, config).await?;
+            println!("{}\n", plan.explain_text(db, case.page).await?);
+        }
+    }
+    if check && !problems.is_empty() {
+        for problem in &problems {
+            eprintln!("{problem}");
+        }
+        bail!("{} searches read far more than they should", problems.len());
+    }
+    Ok(())
+}
+
+pub async fn run(
+    db: &PgPool,
+    config: &uwu_core::config::Config,
+    command: AdminCommand,
+) -> anyhow::Result<()> {
     match command {
         AdminCommand::CreateUser { name, role, email } => {
             let password = read_password()?;
@@ -92,6 +228,26 @@ pub async fn run(db: &PgPool, command: AdminCommand) -> anyhow::Result<()> {
             println!("queued {queued} file(s) for processing");
         }
         AdminCommand::Import(_) => unreachable!("imports need the whole app; main runs them"),
+        AdminCommand::Bench {
+            runs,
+            check,
+            explain,
+        } => bench(db, &config.search, runs, check, explain.as_deref()).await?,
+        AdminCommand::Seed {
+            posts,
+            tags,
+            seed,
+            batch,
+            force,
+        } => {
+            let options = uwu_db::seed::Options {
+                posts,
+                tags,
+                seed,
+                batch_size: batch.max(1),
+            };
+            seed_posts(db, &options, force).await?;
+        }
         AdminCommand::RecountTags => {
             let fixed = uwu_db::tags::recount(db).await?;
             println!("corrected {fixed} tag count(s)");

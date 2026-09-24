@@ -33,6 +33,18 @@ pub async fn test_state(pool: &PgPool) -> AppState {
     test_state_with(pool, test_config()).await
 }
 
+/// State whose database has one "replica": the same database, which is
+/// enough to exercise replica routing.
+pub async fn test_state_with_replica(pool: &PgPool) -> AppState {
+    AppState::new(
+        test_config(),
+        Db::from_pools(pool.clone(), vec![pool.clone()]),
+        SiteCache::load(pool).await.unwrap(),
+        [7; 32],
+    )
+    .unwrap()
+}
+
 pub async fn test_state_with(pool: &PgPool, config: Config) -> AppState {
     AppState::new(
         config,

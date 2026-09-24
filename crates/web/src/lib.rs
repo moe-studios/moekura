@@ -10,6 +10,7 @@ pub mod auth;
 mod bans;
 mod blacklist;
 mod client_ip;
+mod counts;
 mod edit;
 pub mod error;
 mod favorites;
@@ -23,6 +24,7 @@ mod moderation;
 pub mod pages;
 mod posts;
 pub mod rate_limit;
+pub mod shared;
 mod tag_relations;
 mod tags;
 mod templates;
@@ -84,6 +86,7 @@ pub struct AppState {
     /// Site settings and roles, kept current across nodes.
     pub site: SiteCache,
     pub rate_limits: Arc<RateLimits>,
+    pub(crate) counts: Arc<counts::CountCache>,
     pub storage: Storage,
     pub media: Media,
     pub(crate) fetcher: fetch::Fetcher,
@@ -104,6 +107,8 @@ pub enum StartupError {
     WorkDir(io::Error),
     #[error("could not open file storage: {0}")]
     Storage(#[from] uwu_storage::StorageError),
+    #[error("cache.url: {0}")]
+    Cache(#[from] redis::RedisError),
 }
 
 impl AppState {
@@ -126,11 +131,22 @@ impl AppState {
             assets.clone(),
         )?);
         let media = Media::new(config.media.clone());
+        let valkey = match (&config.cache.backend, &config.cache.url) {
+            (uwu_core::config::CacheBackend::Valkey, Some(url)) => {
+                Some(shared::Valkey::new(url, &config.cache.prefix)?)
+            }
+            _ => None,
+        };
+        let counts = counts::CountCache::new(
+            Duration::from_secs(config.cache.count_ttl_secs),
+            valkey.clone(),
+        );
         Ok(Self {
             config: Arc::new(config),
             db,
             site,
-            rate_limits: Arc::new(RateLimits::default()),
+            rate_limits: Arc::new(RateLimits::new(valkey)),
+            counts: Arc::new(counts),
             storage,
             media,
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
@@ -150,6 +166,16 @@ impl AppState {
             .get()
             .system_role(uwu_core::permissions::SystemRole::Anonymous)
             .is_none_or(|role| !role.can(uwu_core::permissions::Permission::ViewPosts))
+    }
+
+    /// The pool for a replica-safe read by `current`: a replica, unless they
+    /// changed something moments ago and must see it.
+    pub fn reader(&self, current: &auth::CurrentUser) -> &sqlx::PgPool {
+        if current.recent_write {
+            self.db.primary()
+        } else {
+            self.db.read()
+        }
     }
 
     /// The URL browsers load a stored file from, signed on private sites

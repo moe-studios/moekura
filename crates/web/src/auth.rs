@@ -26,6 +26,10 @@ use crate::error::AppError;
 
 pub const SESSION_COOKIE: &str = "uwu_session";
 
+/// Set after a change, for as long as replicas may lag: see
+/// [`CurrentUser::recent_write`].
+pub const RECENT_WRITE_COOKIE: &str = "uwu_recent";
+
 const DAY: Duration = Duration::from_secs(86_400);
 
 /// The requester. Logged-out visitors get the Anonymous role.
@@ -36,6 +40,9 @@ pub struct CurrentUser {
     /// banned.
     pub role: Role,
     pub ban: Option<ActiveBan>,
+    /// They changed something moments ago, so their reads go to the
+    /// primary rather than a replica that may not have it yet.
+    pub recent_write: bool,
 }
 
 impl CurrentUser {
@@ -44,6 +51,7 @@ impl CurrentUser {
             user: None,
             role: anonymous_role(site),
             ban: None,
+            recent_write: false,
         }
     }
 
@@ -61,6 +69,7 @@ impl CurrentUser {
             user: Some(user),
             role,
             ban,
+            recent_write: false,
         }
     }
 
@@ -81,6 +90,12 @@ impl CurrentUser {
             (false, true) => Err(AppError::Forbidden),
         }
     }
+}
+
+/// A logged-out visitor, for tests outside this module.
+#[cfg(test)]
+pub(crate) fn tests_support_visitor(state: &AppState) -> CurrentUser {
+    CurrentUser::anonymous(&state.site.get())
 }
 
 fn anonymous_role(site: &SiteSnapshot) -> Role {
@@ -195,8 +210,28 @@ pub async fn resolve_session(
         },
     };
 
+    let mut current = current;
+    current.recent_write = jar.get(RECENT_WRITE_COOKIE).is_some();
+    let changes = !request.method().is_safe();
     request.extensions_mut().insert(current);
     let mut response = next.run(request).await;
+
+    // With replicas, whoever just changed something reads from the primary
+    // for a while, so they see their change.
+    let status = response.status();
+    if changes && state.db.has_replicas() && (status.is_success() || status.is_redirection()) {
+        let cookie = Cookie::build((RECENT_WRITE_COOKIE, "1"))
+            .path("/")
+            .http_only(true)
+            .same_site(SameSite::Lax)
+            .secure(secure_cookies(&state))
+            .max_age(time::Duration::seconds(
+                i64::try_from(state.config.database.replica_max_lag_secs).unwrap_or(i64::MAX),
+            ));
+        if let Ok(value) = cookie.to_string().parse() {
+            response.headers_mut().append(SET_COOKIE, value);
+        }
+    }
 
     // Unless the handler just set a fresh session (e.g. logged in).
     if stale_cookie && !sets_session_cookie(&response) {
@@ -507,5 +542,40 @@ mod tests {
             visitor.require(Permission::Upload),
             Err(AppError::Unauthorized)
         ));
+    }
+
+    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    async fn changes_pin_reads_to_the_primary_for_a_while(pool: sqlx::PgPool) {
+        use crate::test_support::{TestApp, session_for, test_state, test_state_with_replica};
+        let alice = session_for(&pool, "alice", uwu_core::permissions::SystemRole::Member).await;
+        let form = "per_page=&theme=dark";
+
+        let app = TestApp::new(test_state_with_replica(&pool).await, crate::users::routes());
+        let saved = app.post_form("/settings", Some(&alice), &[], form).await;
+        let cookie = saved
+            .set_cookie
+            .iter()
+            .find(|c| c.starts_with("uwu_recent="))
+            .expect("a change sets the cookie");
+        assert!(cookie.contains("Max-Age=10"), "{cookie}");
+        let read = app.get("/settings", Some(&alice)).await;
+        assert!(!read.set_cookie.iter().any(|c| c.starts_with("uwu_recent=")));
+
+        // Without replicas there's nothing to pin.
+        let app = TestApp::new(test_state(&pool).await, crate::users::routes());
+        let saved = app.post_form("/settings", Some(&alice), &[], form).await;
+        assert!(
+            !saved
+                .set_cookie
+                .iter()
+                .any(|c| c.starts_with("uwu_recent="))
+        );
+
+        // The cookie sends reads to the primary.
+        let state = test_state_with_replica(&pool).await;
+        let mut current = CurrentUser::anonymous(&state.site.get());
+        assert!(!std::ptr::eq(state.reader(&current), state.db.primary()));
+        current.recent_write = true;
+        assert!(std::ptr::eq(state.reader(&current), state.db.primary()));
     }
 }

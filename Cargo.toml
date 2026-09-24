@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0-dev"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
 license = "AGPL-3.0-only"
@@ -35,6 +35,7 @@ md-5 = "0.11.0"
 mime_guess = "2.0.5"
 # S3 support without aws-lc-rs: signing via ring, TLS via reqwest + rustls/ring.
 object_store = { version = "0.14.2", default-features = false, features = ["fs", "aws-base", "reqwest", "ring"] }
+redis = { version = "1.7.0", default-features = false, features = ["tokio-comp", "connection-manager", "script", "aio", "tokio-rustls-comp", "tls-rustls-webpki-roots"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "http2", "charset", "stream"] }
 minijinja = { version = "2.24.0", features = ["loader", "urlencode"] }
 rpassword = "7.5.4"

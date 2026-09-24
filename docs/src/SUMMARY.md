@@ -8,6 +8,7 @@
 - [Without containers](install/bare-metal.md)
 - [Behind a reverse proxy](install/reverse-proxy.md)
 - [First steps](install/first-steps.md)
+- [Upgrading](upgrading.md)
 
 # Running a site
 

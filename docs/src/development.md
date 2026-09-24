@@ -43,6 +43,17 @@ CI builds it and checks its links on every pull request. Pushes to `main`
 publish it to GitHub Pages once the repository is public (set **Settings →
 Pages → Source** to *GitHub Actions*).
 
+## Releasing
+
+1. Draft the changelog entry from the commits since the last release, then
+   edit it into notes people can read:
+   `git cliff --unreleased --tag vX.Y.Z --prepend CHANGELOG.md`.
+2. Set the workspace version in `Cargo.toml`, and the date in the
+   changelog heading.
+3. Merge that, then tag the merge commit `vX.Y.Z` and push the tag. The
+   Release workflow checks the version and changelog, publishes the image
+   and creates the GitHub release with the binaries.
+
 ## Layout
 
 ```text

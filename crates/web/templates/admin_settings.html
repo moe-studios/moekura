@@ -12,6 +12,8 @@
     <select id="registration_mode" name="registration_mode">
       {% for m in modes %}<option value="{{ m }}"{% if settings.registration_mode == m %} selected{% endif %}>{{ {"open": "Open to anyone", "invite": "Invite code needed", "approval": "Staff approve new accounts", "closed": "Closed"}[m] }}</option>{% endfor %}
     </select>
+    <label class="choice"><input type="checkbox" name="email_verification"{% if settings.email_verification %} checked{% endif %}> New accounts must confirm their email address</label>
+    {% if not mail_enabled %}<p class="hint">Mail isn't set up (<code>[mail]</code> in the server configuration), so addresses aren't checked.</p>{% endif %}
     <label class="choice"><input type="checkbox" name="upload_approval"{% if settings.upload_approval %} checked{% endif %}> New uploads wait for approval (unless the uploader's role skips it)</label>
     <label for="default_blacklist">Default blacklist</label>
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>

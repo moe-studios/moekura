@@ -25,8 +25,10 @@
 
 # Using a site
 
+- [Your account](using/account.md)
 - [Search syntax](using/search.md)
 - [Tags](using/tags.md)
+- [The wiki](using/wiki.md)
 - [The API](api.md)
 
 # Contributing

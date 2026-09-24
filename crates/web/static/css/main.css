@@ -359,7 +359,7 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .pair { display: flex; flex-wrap: wrap; align-items: end; gap: 0 12px; }
 .pair > div { display: flex; flex-direction: column; flex: 1 1 200px; }
 .pair .arrow { padding-bottom: 8px; color: var(--muted); }
-button.secondary { background: var(--border); color: var(--text); }
+button.secondary, .button.secondary { background: var(--border); color: var(--text); }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .actions form { margin: 0; }
 .actions button { padding: 3px 10px; font-size: 0.875rem; }
@@ -442,6 +442,28 @@ button.secondary { background: var(--border); color: var(--text); }
 .changes .removed a { text-decoration: line-through; }
 .changes .source { overflow-wrap: anywhere; }
 
+/* Wiki */
+
+.wiki { max-width: 800px; }
+.wiki-head h1 { margin: 0; overflow-wrap: anywhere; }
+.wiki-head .hint { margin-bottom: 16px; }
+.wiki .notice { margin: 0 0 16px; }
+.markup { overflow-wrap: anywhere; }
+.markup > :first-child { margin-top: 0; }
+.markup > :last-child { margin-bottom: 0; }
+.markup h2, .markup h3, .markup h4, .markup h5, .markup h6 { margin: 20px 0 8px; }
+.markup ul { padding-left: 24px; }
+.wiki-excerpt {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--surface);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.wiki-excerpt .hint { margin-top: 6px; }
+.wiki-form { max-width: 800px; }
+.wiki-form textarea { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 0.875rem; }
+
 /* Votes and favorites */
 
 .vote, .favorite { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }
@@ -510,3 +532,17 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 .stats dt { color: var(--muted); font-size: 0.875rem; }
 .stats dd { margin: 4px 0 0; font-size: 1.375rem; font-weight: 700; font-variant-numeric: tabular-nums; }
 .log .actions { margin-top: 6px; }
+
+/* Two-factor login */
+
+.qr { width: 200px; margin: 8px 0; }
+.qr svg { display: block; width: 100%; height: auto; border-radius: calc(var(--radius) / 2); }
+.secret { overflow-wrap: anywhere; }
+.recovery-codes { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(9em, 1fr)); gap: 4px 16px; }
+.recovery-codes code { font-size: 1rem; }
+
+/* Single sign-on */
+
+.sso { display: block; text-align: center; }
+.plain-list { list-style: none; padding: 0; margin: 0 0 12px; }
+.plain-list li { padding: 4px 0; }

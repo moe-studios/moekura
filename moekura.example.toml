@@ -46,6 +46,15 @@ session_idle_days = 30
 # ...or this many days after logging in, however active.
 session_max_days = 365
 
+# Logging in through an OpenID Connect provider (single sign-on). Register
+# <public_url>/login/oidc/callback as the redirect URI with the provider.
+# [auth.oidc]
+# issuer = "https://sso.example.com/application/o/moekura/"
+# client_id = "moekura"
+# client_secret = ""
+# button_label = "Log in with single sign-on"
+# scopes = ["openid", "email", "profile"]
+
 [cache]
 # Where rate limit counters and cached search counts live: "memory" (each
 # process on its own) or "valkey" (shared by every web server; Redis works
@@ -68,6 +77,24 @@ workers = 2
 run_in_serve = true
 # Seconds before a job whose worker stopped responding is retried elsewhere.
 lock_timeout_secs = 300
+
+[mail]
+# Outgoing mail, for email verification and password resets. Leave host
+# empty to turn mail off, along with the features that need it. Test it
+# with `moekura admin send-test-mail you@example.com`.
+host = ""               # e.g. "smtp.example.com"
+# "starttls" (upgrade a plain connection; required), "tls" (TLS from the
+# start) or "none" (only for a relay on the same machine or network).
+tls = "starttls"
+# Defaults to 587 for starttls, 465 for tls and 25 for none.
+# port = 587
+# Leave both empty if the server doesn't need a login.
+username = ""
+password = ""
+# The sender, as "address@example.com" or "Site name <address@example.com>".
+from = ""
+# Seconds before connecting or sending one message gives up.
+timeout_secs = 30
 
 [search]
 # Posts per page, and the most a search may ask for with limit:.

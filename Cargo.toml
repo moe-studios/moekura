@@ -20,6 +20,7 @@ moekura-web = { path = "crates/web" }
 
 anyhow = "1.0.104"
 argon2 = "0.6.0"
+base64 = "0.22.1"
 axum = { version = "0.8.9", features = ["multipart"] }
 bytes = "1.12.1"
 axum-extra = { version = "0.12.6", features = ["cookie", "form"] }
@@ -31,7 +32,11 @@ hex = "0.4.3"
 ipnet = { version = "2.12.2", features = ["serde"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 http-body-util = "0.1.5"
+# SMTP over rustls/ring, like the other TLS clients.
+lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
 md-5 = "0.11.0"
+# Two-factor enrolment QR codes, as inline SVG.
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 mime_guess = "2.0.5"
 # S3 support without aws-lc-rs: signing via ring, TLS via reqwest + rustls/ring.
 object_store = { version = "0.14.2", default-features = false, features = ["fs", "aws-base", "reqwest", "ring"] }
@@ -44,6 +49,8 @@ rust-embed = { version = "8.12.0", features = ["mime-guess"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 hmac = "0.13.0"
+# TOTP (RFC 6238) is HMAC-SHA1.
+sha1 = "0.11.0"
 sha2 = "0.11.0"
 sqlx = { version = "0.9.0", default-features = false, features = [
     "runtime-tokio",

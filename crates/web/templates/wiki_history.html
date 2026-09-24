@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}History of {{ title }} · Wiki · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="{{ url }}">« {{ title }}</a></p>
+<h1>History of {{ title }}</h1>
+<ol class="history">
+  {% for v in versions %}
+  <li>
+    <div class="history-head">
+      <strong><a href="{{ v.url }}">Version {{ v.version }}</a></strong>{% if v.current %} <span class="hint">(current)</span>{% endif %}
+      <span class="hint">
+        {{ v.date }}{% if v.updater %} · by {{ v.updater }}{% endif %}
+        {% if v.change is not none %} · {% if v.change >= 0 %}+{% endif %}{{ v.change }} characters{% endif %}
+      </span>
+      {% if v.can_revert %}
+      <form method="post" action="{{ url }}/revert/{{ v.version }}"><button type="submit" class="secondary">Revert to this</button></form>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% endblock %}

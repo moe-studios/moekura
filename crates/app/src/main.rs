@@ -4,6 +4,7 @@ mod import;
 mod telemetry;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -11,6 +12,7 @@ use clap::{Parser, Subcommand};
 use moekura_core::config::{Config, DatabaseConfig};
 use moekura_db::Db;
 use moekura_db::site_cache::SiteCache;
+use moekura_jobs::mail::{MailJobs, Mailer};
 use moekura_jobs::media::MediaJobs;
 use moekura_jobs::tags::TagJobs;
 use moekura_jobs::{PoolConfig, Registry};
@@ -213,6 +215,13 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
         db: db.primary().clone(),
     }
     .register(&mut registry);
+    let mailer = if config.mail.is_enabled() {
+        let mailer = Mailer::new(&config.mail).context("mail")?;
+        Some(Arc::new(mailer))
+    } else {
+        None
+    };
+    MailJobs { mailer }.register(&mut registry);
     Ok(registry)
 }
 
@@ -245,8 +254,8 @@ async fn wait_for_workers(workers: tokio::task::JoinHandle<()>) {
     }
 }
 
-/// Deletes expired sessions and forgets idle rate-limit counters. Moves to
-/// the job queue in M3.
+/// Deletes expired sessions and unfinished logins, and forgets idle
+/// rate-limit counters.
 async fn hourly_maintenance(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {
@@ -256,6 +265,12 @@ async fn hourly_maintenance(state: AppState) {
             Ok(0) => {}
             Ok(removed) => tracing::info!(removed, "pruned expired sessions"),
             Err(error) => tracing::warn!(%error, "could not prune expired sessions"),
+        }
+        if let Err(error) = moekura_db::two_factor::prune_challenges(state.db.primary()).await {
+            tracing::warn!(%error, "could not prune expired two-factor logins");
+        }
+        if let Err(error) = moekura_db::identities::prune_logins(state.db.primary()).await {
+            tracing::warn!(%error, "could not prune abandoned single sign-on logins");
         }
     }
 }

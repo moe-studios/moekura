@@ -34,7 +34,7 @@ struct NextQuery {
 
 /// Where to send the user after logging in: a local path only, so the
 /// parameter can't bounce people to another site.
-fn safe_next(next: Option<&str>) -> &str {
+pub(crate) fn safe_next(next: Option<&str>) -> &str {
     match next {
         Some(path)
             if path.starts_with('/')
@@ -114,6 +114,7 @@ fn render_register(
             errors => errors,
             needs_invite => mode == RegistrationMode::Invite,
             needs_approval => mode == RegistrationMode::Approval,
+            email_required => crate::email::verification_required(page.state()),
         },
     )
 }
@@ -155,6 +156,13 @@ async fn register(
             ..Default::default()
         });
     }
+    let verify = crate::email::verification_required(&state);
+    if verify && form.email.trim().is_empty() {
+        return invalid(RegisterErrors {
+            email: Some("An email address is required, to confirm your account.".into()),
+            ..Default::default()
+        });
+    }
     if mode == RegistrationMode::Invite && form.invite.trim().is_empty() {
         return invalid(RegisterErrors {
             invite: Some("An invite code is required.".into()),
@@ -166,7 +174,9 @@ async fn register(
     let member = site
         .system_role(SystemRole::Member)
         .ok_or_else(|| AppError::Internal("the Member role is missing".into()))?;
+    // Approval, if needed, comes after the address is confirmed.
     let status = match mode {
+        _ if verify => UserStatus::Unverified,
         RegistrationMode::Approval => UserStatus::Pending,
         _ => UserStatus::Active,
     };
@@ -205,9 +215,16 @@ async fn register(
             return invalid(errors);
         }
     };
+    if let (UserStatus::Unverified, Some(email)) = (status, user.email.clone()) {
+        crate::email::send_verification(&mut tx, &state, &user, &email).await?;
+    }
     tx.commit().await?;
     tracing::info!(user_id = user.id, name = %user.name, ?status, "account registered");
 
+    if status == UserStatus::Unverified {
+        let jar = flash::set(jar, Flash::CheckEmail);
+        return Ok((jar, Redirect::to("/")).into_response());
+    }
     if status == UserStatus::Pending {
         let jar = flash::set(jar, Flash::AwaitingApproval);
         return Ok((jar, Redirect::to("/")).into_response());
@@ -237,13 +254,26 @@ fn render_login(
     page: &Page,
     name: &str,
     next: Option<&str>,
-    error: Option<&str>,
+    error: Option<&AuthError>,
     status: StatusCode,
 ) -> Response {
+    let message = error.map(|error| match error {
+        AuthError::Pending => "Your account is still waiting for approval.",
+        AuthError::Unverified => "Confirm your email address first, with the link we sent you.",
+        AuthError::Deactivated => "This account has been deactivated.",
+        _ => "Wrong name or password.",
+    });
     page.render_with_status(
         status,
         "login.html",
-        context! { name => name, next => next, error => error },
+        context! {
+            name => name,
+            next => next,
+            error => message,
+            unverified => matches!(error, Some(AuthError::Unverified)),
+            mail_enabled => crate::email::mail_enabled(page.state()),
+            sso_label => page.state().oidc.as_ref().map(|o| o.button_label().to_owned()),
+        },
     )
 }
 
@@ -266,25 +296,25 @@ async fn login(
         Ok(user) => user,
         Err(AuthError::Db(error)) => return Err(error.into()),
         Err(error) => {
-            let message = match error {
-                AuthError::Pending => "Your account is still waiting for approval.",
-                AuthError::Deactivated => "This account has been deactivated.",
-                _ => "Wrong name or password.",
-            };
             tracing::info!(name, reason = %error, "login failed");
             let status = StatusCode::UNPROCESSABLE_ENTITY;
             return Ok(render_login(
                 &page,
                 name,
                 form.next.as_deref(),
-                Some(message),
+                Some(&error),
                 status,
             ));
         }
     };
+    let next = safe_next(form.next.as_deref());
+    let jar = match crate::two_factor::challenge_if_enabled(&state, jar, &user, Some(next)).await? {
+        Ok(jar) => jar,
+        Err(code_form) => return Ok(code_form),
+    };
     let jar = auth::log_in(&state, jar, &info, &user).await?;
     let jar = flash::set(jar, Flash::LoggedIn);
-    Ok((jar, Redirect::to(safe_next(form.next.as_deref()))).into_response())
+    Ok((jar, Redirect::to(next)).into_response())
 }
 
 async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<Response, AppError> {

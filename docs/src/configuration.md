@@ -57,6 +57,32 @@ with passwords redacted.
 | `session_idle_days` | `30` | a login ends after this many days unused… |
 | `session_max_days` | `365` | …or this long after logging in, however active |
 
+### `[auth.oidc]`
+
+Lets people log in through an OpenID Connect provider (single sign-on):
+Authentik, Keycloak, Kanidm, Zitadel, Google and others. Leave the section
+out to turn it off.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `issuer` | *(required)* | the provider's issuer URL, which describes itself at `/.well-known/openid-configuration` under it; `https://`, or `http://` on the same machine |
+| `client_id` | *(required)* | from registering Moekura with the provider |
+| `client_secret` | *(empty)* | likewise; empty for a public client |
+| `button_label` | `"Log in with single sign-on"` | the button on the login page |
+| `scopes` | `["openid", "email", "profile"]` | must include `openid` |
+
+Register the redirect URI `https://your.site/login/oidc/callback` (from
+`server.public_url`) with the provider. Logins use the authorization code
+flow with PKCE.
+
+Someone logging in through the provider for the first time gets a new
+account (with no password) when registration is `open`, or one waiting for
+approval when it's `approval`; with `invite` or `closed`, only people who
+[linked](using/account.md#single-sign-on) an existing account can. A new
+account takes its name from the provider (the next free one if it's
+taken), and the provider's email address if it says it's verified and
+nobody here uses it yet.
+
 ## `[cache]`
 
 | Key | Default | Meaning |
@@ -76,6 +102,24 @@ stops caching until it's back, and logs a warning; nothing fails.
 | `workers` | `2` | background jobs processed at once, per process |
 | `run_in_serve` | `true` | also run workers inside `serve`; set `false` when you run `moekura worker` separately |
 | `lock_timeout_secs` | `300` | a job whose worker stopped responding is retried after this |
+
+## `[mail]`
+
+Outgoing mail over SMTP, for email verification and password resets.
+Messages are sent by the job workers, so a slow mail server doesn't hold
+up the site, and failed sends are retried.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `host` | *(empty)* | the SMTP server; empty turns mail off, along with the features that need it |
+| `tls` | `"starttls"` | `"starttls"` (upgrade a plain connection; required), `"tls"` (TLS from the start) or `"none"` (only for a relay on the same machine or network) |
+| `port` | *(by `tls`)* | 587 for `starttls`, 465 for `tls`, 25 for `none` |
+| `username`, `password` | *(empty)* | the login, if the server needs one |
+| `from` | *(empty)* | the sender, as `address@example.com` or `Site name <address@example.com>`; required with `host` |
+| `timeout_secs` | `30` | connecting or sending one message gives up after this |
+
+Check the settings with `moekura admin send-test-mail you@example.com`,
+which sends straight away and prints any error.
 
 ## `[search]`
 

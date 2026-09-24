@@ -55,3 +55,11 @@ curl -X PATCH -H "Authorization: Bearer $KEY" -H "Content-Type: application/json
   -d '{"add_tags": ["sleeping"], "remove_tags": ["standing"]}' \
   https://booru.example.com/api/v1/posts/123
 ```
+
+Change a wiki page, refusing if someone else changed it since version 3:
+
+```sh
+curl -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"body": "A small [[animal]].", "base_version": 3}' \
+  https://booru.example.com/api/v1/wiki-pages/cat
+```

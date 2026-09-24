@@ -1,11 +1,13 @@
 //! PostgreSQL access for Moekura.
 
+pub mod account_tokens;
 pub mod accounts;
 pub mod api_keys;
 pub mod bans;
 pub mod bench;
 pub mod favorites;
 pub mod flags;
+pub mod identities;
 pub mod invites;
 pub mod jobs;
 pub mod media;
@@ -22,7 +24,9 @@ pub mod site_cache;
 pub mod stats;
 pub mod tag_relations;
 pub mod tags;
+pub mod two_factor;
 pub mod users;
+pub mod wiki;
 
 #[cfg(test)]
 mod schema_tests;

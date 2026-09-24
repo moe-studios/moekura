@@ -41,7 +41,7 @@ impl ApiTag {
 }
 
 /// A 1-based page of a list, within the lists' depth limit.
-fn page_number(page: Option<i64>) -> Result<i64, AppError> {
+pub(super) fn page_number(page: Option<i64>) -> Result<i64, AppError> {
     match page.unwrap_or(1) {
         n @ 1..=MAX_PAGE => Ok(n),
         _ => Err(AppError::BadRequest(format!(

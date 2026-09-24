@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · Wiki · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "tag_nav.html" %}
+<article class="wiki">
+  <header class="wiki-head">
+    <h1 class="tag-{{ tag.category if tag else 'general' }}">{{ title }}</h1>
+    <p class="hint">
+      {% if tag %}<a href="{{ search_url }}">{{ tag.count }} post{% if tag.count != 1 %}s{% endif %}</a>{% if tag.deprecated %} · deprecated tag{% endif %}{% endif %}
+      {% if wiki %}{% if tag %} · {% endif %}version {{ wiki.version }}, {{ wiki.date }}{% if wiki.updater %} by {{ wiki.updater }}{% endif %}
+      · <a href="{{ url }}/history">History</a>{% endif %}
+      {% if can_edit %} · <a href="{{ url }}/edit">{% if wiki %}Edit{% else %}Start this page{% endif %}</a>{% endif %}
+    </p>
+  </header>
+  {% if alias_of %}<p class="notice">This tag is an alias of <a href="{{ alias_of.url }}">{{ alias_of.title }}</a>.</p>{% endif %}
+  {% if old_version %}<p class="notice">This is an old version ({{ old_version }}) of the page. <a href="{{ url }}">See the current one</a>.</p>{% endif %}
+  {% if html %}
+  <div class="markup">{{ html }}</div>
+  {% else %}
+  <p class="empty">There's no wiki page for {{ title }} yet.</p>
+  {% endif %}
+</article>
+{% endblock %}

@@ -11,6 +11,9 @@ pub const SITE_NAME_MAX_LEN: usize = 64;
 pub struct SiteSettings {
     pub site_name: String,
     pub registration_mode: RegistrationMode,
+    /// New accounts must follow a link sent to their email address before
+    /// they can log in. Only applies when mail is configured.
+    pub email_verification: bool,
     /// New uploads wait in the approval queue unless the uploader's role
     /// has `UploadWithoutApproval`.
     pub upload_approval: bool,
@@ -24,6 +27,7 @@ impl Default for SiteSettings {
         Self {
             site_name: "Moekura".to_owned(),
             registration_mode: RegistrationMode::Open,
+            email_verification: false,
             upload_approval: false,
             default_blacklist: String::new(),
         }
@@ -129,6 +133,7 @@ mod tests {
             SiteSettings::keys(),
             [
                 "default_blacklist",
+                "email_verification",
                 "registration_mode",
                 "site_name",
                 "upload_approval"

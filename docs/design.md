@@ -201,6 +201,13 @@ There are two layers, kept deliberately separate:
 7. **API and docs:** `/api/v1` parity, OpenAPI, mdBook docs, bulk import CLI.
 8. **Scale hardening:** a seeding tool that generates 5M+ synthetic posts with a realistic (Zipf) tag distribution, query plan checks, read-replica routing, Valkey backend, S3 + CDN path.
 
+## 10. Roadmap after v0.1
+
+9. **Accounts, wiki and hygiene:** the v0.1 pieces still missing (tag wiki pages; mail with email verification and password reset; TOTP 2FA; OIDC login), `cargo deny` and Playwright e2e in CI, and community files.
+10. **Danbooru-compatible API:** the compatibility layer from §5, tested against Grabber, Boorusama and gallery-dl.
+
+After that, the rest of §5 v0.2+, roughly in this order: community features (comments, pools, saved searches, favorite groups, notes), contribution tooling (upload limits, tag change requests, bulk tag edits), integrations (feeds, webhooks, importing from other boorus), and the ML auto-tagger.
+
 ---
 
 ## Verification

@@ -128,9 +128,11 @@ fn render_settings(
             settings => context! {
                 site_name => current.site_name,
                 registration_mode => mode_name(current.registration_mode),
+                email_verification => current.email_verification,
                 upload_approval => current.upload_approval,
                 default_blacklist => current.default_blacklist,
             },
+            mail_enabled => page.state().config.mail.is_enabled(),
             modes => ["open", "invite", "approval", "closed"],
             error => error,
         },
@@ -150,6 +152,8 @@ struct SettingsForm {
     #[serde(default)]
     registration_mode: String,
     /// Present when ticked.
+    email_verification: Option<String>,
+    /// Present when ticked.
     upload_approval: Option<String>,
     #[serde(default)]
     default_blacklist: String,
@@ -167,6 +171,10 @@ async fn save_settings(
     let wanted = [
         ("site_name", json!(form.site_name.trim())),
         ("registration_mode", json!(form.registration_mode)),
+        (
+            "email_verification",
+            json!(form.email_verification.is_some()),
+        ),
         ("upload_approval", json!(form.upload_approval.is_some())),
         (
             "default_blacklist",
@@ -221,23 +229,6 @@ struct UserQuery {
     page: Option<i64>,
 }
 
-fn parse_status(s: &str) -> Option<UserStatus> {
-    match s {
-        "active" => Some(UserStatus::Active),
-        "pending" => Some(UserStatus::Pending),
-        "deactivated" => Some(UserStatus::Deactivated),
-        _ => None,
-    }
-}
-
-fn status_name(status: UserStatus) -> &'static str {
-    match status {
-        UserStatus::Active => "active",
-        UserStatus::Pending => "pending",
-        UserStatus::Deactivated => "deactivated",
-    }
-}
-
 async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ManageUsers)?;
     let state = page.state();
@@ -246,7 +237,7 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
     let found = users::list(
         state.db.primary(),
         query.name.trim(),
-        parse_status(&query.status),
+        UserStatus::parse(&query.status),
         (number - 1) * USERS_PAGE,
         USERS_PAGE + 1,
     )
@@ -262,6 +253,8 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
         })
         .map(|r| context! { id => r.id, name => r.name })
         .collect();
+    let ids: Vec<i64> = found.iter().map(|u| u.id).collect();
+    let two_factor = moekura_db::two_factor::enabled_among(state.db.primary(), &ids).await?;
     let rows: Vec<Value> = found
         .iter()
         .take(USERS_PAGE as usize)
@@ -272,9 +265,10 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
                 name => user.name,
                 role_id => user.role_id,
                 role => role.map(|r| r.name.clone()),
-                status => status_name(user.status),
+                status => user.status.as_str(),
                 joined => user.created_at.date().to_string(),
                 editable => editable,
+                two_factor => two_factor.contains(&user.id),
             }
         })
         .collect();
@@ -326,8 +320,8 @@ async fn update_user(
             r.rank < my_rank && r.system != Some(moekura_core::permissions::SystemRole::Anonymous)
         })
         .ok_or_else(|| AppError::BadRequest("You can't give that role".into()))?;
-    let status =
-        parse_status(&form.status).ok_or_else(|| AppError::BadRequest("Unknown status".into()))?;
+    let status = UserStatus::parse(&form.status)
+        .ok_or_else(|| AppError::BadRequest("Unknown status".into()))?;
 
     let mut tx = db.begin().await?;
     if role.id != user.role_id {
@@ -346,7 +340,7 @@ async fn update_user(
             &mut *tx,
             NewAction::new(actor(&page), ActionKind::UserStatus)
                 .user(user.id)
-                .details(json!({ "status": status_name(status) })),
+                .details(json!({ "status": status.as_str() })),
         )
         .await?;
     }

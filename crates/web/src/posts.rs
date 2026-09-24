@@ -164,6 +164,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
 
     let shown: Vec<Card> = shown.into_iter().cloned().collect();
     let sidebar = sidebar_tags(db, &shown, &normalized).await?;
+    let wiki = crate::wiki::search_excerpt(db, &query).await?;
     let pager = Pager {
         query: &normalized,
         page: page_ref,
@@ -184,6 +185,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             blacklisted => blacklisted,
             count => count_text(count),
             sidebar => sidebar,
+            wiki => wiki,
             pager => pager.context(),
         },
     ))
@@ -217,6 +219,7 @@ async fn sidebar_tags(
                 count => tag.post_count,
                 category => category.map(|c| c.name.clone()),
                 url => Value::from_safe_string(search_url(&tag.name)),
+                wiki_url => Value::from_safe_string(moekura_core::markup::wiki_url(&tag.name)),
                 include_url => with(tag.name.clone()),
                 exclude_url => with(format!("-{}", tag.name)),
             }

@@ -1,5 +1,5 @@
-//! Rate limits for login and registration, against password guessing and
-//! signup floods.
+//! Rate limits for login, registration and forms that send email, against
+//! password guessing, signup floods and mail bombing.
 //!
 //! Counters live in this process's memory, or in Valkey when
 //! `cache.backend = "valkey"`, so that several web servers share them.
@@ -43,6 +43,34 @@ const REGISTER_BY_IP: Limit = Limit {
     period: Duration::from_secs(12 * 60),
 };
 
+// Forms that send a message (password resets, confirmation links).
+const MAIL_BY_IP: Limit = Limit {
+    name: "mail_ip",
+    burst: 5,
+    period: Duration::from_secs(2 * 60),
+};
+// However many IPs ask, one address gets a few messages an hour.
+const MAIL_BY_ADDRESS: Limit = Limit {
+    name: "mail_address",
+    burst: 3,
+    period: Duration::from_secs(20 * 60),
+};
+
+// Two-factor codes at login. Each login allows only a few before it
+// starts over with the password, which counts as a login attempt.
+const CODE_BY_USER: Limit = Limit {
+    name: "code_user",
+    burst: 5,
+    period: Duration::from_secs(30),
+};
+// Retyping the password (or a code) to change account settings, against
+// someone guessing it from a session they took over.
+const CONFIRM_BY_USER: Limit = Limit {
+    name: "confirm_user",
+    burst: 10,
+    period: Duration::from_secs(30),
+};
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -53,6 +81,10 @@ pub struct RateLimits {
     login_by_ip: DefaultKeyedRateLimiter<IpAddr>,
     login_by_name: DefaultKeyedRateLimiter<String>,
     register_by_ip: DefaultKeyedRateLimiter<IpAddr>,
+    mail_by_ip: DefaultKeyedRateLimiter<IpAddr>,
+    mail_by_address: DefaultKeyedRateLimiter<String>,
+    code_by_user: DefaultKeyedRateLimiter<i64>,
+    confirm_by_user: DefaultKeyedRateLimiter<i64>,
     valkey: Option<Valkey>,
 }
 
@@ -69,6 +101,10 @@ impl RateLimits {
             login_by_ip: RateLimiter::keyed(quota(LOGIN_BY_IP)),
             login_by_name: RateLimiter::keyed(quota(LOGIN_BY_NAME)),
             register_by_ip: RateLimiter::keyed(quota(REGISTER_BY_IP)),
+            mail_by_ip: RateLimiter::keyed(quota(MAIL_BY_IP)),
+            mail_by_address: RateLimiter::keyed(quota(MAIL_BY_ADDRESS)),
+            code_by_user: RateLimiter::keyed(quota(CODE_BY_USER)),
+            confirm_by_user: RateLimiter::keyed(quota(CONFIRM_BY_USER)),
             valkey,
         }
     }
@@ -95,12 +131,51 @@ impl RateLimits {
         }
     }
 
+    /// Counts a request that would email `address` (a name or an email
+    /// address, whatever the form asked for).
+    pub async fn check_mail(&self, ip: Option<IpAddr>, address: &str) -> Result<(), AppError> {
+        if let Some(ip) = ip {
+            self.check(MAIL_BY_IP, &self.mail_by_ip, &ip, &ip.to_string())
+                .await?;
+        }
+        let address = address.trim().to_lowercase();
+        self.check(MAIL_BY_ADDRESS, &self.mail_by_address, &address, &address)
+            .await
+    }
+
+    /// Counts a two-factor code typed at login by user `user_id`.
+    pub async fn check_code(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            CODE_BY_USER,
+            &self.code_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
+    /// Counts a password (or code) typed to change user `user_id`'s
+    /// account settings.
+    pub async fn check_confirm(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            CONFIRM_BY_USER,
+            &self.confirm_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
     /// Forgets keys that are back at full allowance, bounding memory use.
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
         self.login_by_ip.retain_recent();
         self.login_by_name.retain_recent();
         self.register_by_ip.retain_recent();
+        self.mail_by_ip.retain_recent();
+        self.mail_by_address.retain_recent();
+        self.code_by_user.retain_recent();
+        self.confirm_by_user.retain_recent();
     }
 
     async fn check<K: std::hash::Hash + Eq + Clone>(

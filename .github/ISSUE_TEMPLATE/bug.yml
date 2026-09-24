@@ -1,0 +1,40 @@
+name: Bug report
+description: Something doesn't work as it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce it
+      placeholder: |
+        1. Go to …
+        2. Click …
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The release or commit, for example `0.2.0`.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is it installed?
+      options:
+        - Docker Compose
+        - Container image, another way
+        - Binary
+        - Built from source
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything relevant from the server logs. Remove secrets first.
+      render: text

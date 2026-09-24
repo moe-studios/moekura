@@ -19,6 +19,7 @@ pub enum ActionKind {
     IpUnban,
     UserRole,
     UserStatus,
+    UserTwoFactorReset,
     RoleUpdate,
     SettingUpdate,
     TagUpdate,
@@ -30,7 +31,7 @@ pub enum ActionKind {
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 20] = [
+    pub const ALL: [ActionKind; 21] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -43,6 +44,7 @@ impl ActionKind {
         ActionKind::IpUnban,
         ActionKind::UserRole,
         ActionKind::UserStatus,
+        ActionKind::UserTwoFactorReset,
         ActionKind::RoleUpdate,
         ActionKind::SettingUpdate,
         ActionKind::TagUpdate,
@@ -67,6 +69,7 @@ impl ActionKind {
             ActionKind::IpUnban => "ip.unban",
             ActionKind::UserRole => "user.role",
             ActionKind::UserStatus => "user.status",
+            ActionKind::UserTwoFactorReset => "user.two_factor_reset",
             ActionKind::RoleUpdate => "role.update",
             ActionKind::SettingUpdate => "setting.update",
             ActionKind::TagUpdate => "tag.update",
@@ -93,6 +96,7 @@ impl ActionKind {
             ActionKind::IpUnban => "unbanned addresses",
             ActionKind::UserRole => "changed the role of",
             ActionKind::UserStatus => "changed the status of",
+            ActionKind::UserTwoFactorReset => "turned off two-factor login for",
             ActionKind::RoleUpdate => "updated a role",
             ActionKind::SettingUpdate => "changed a site setting",
             ActionKind::TagUpdate => "edited a tag",

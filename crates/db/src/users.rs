@@ -9,7 +9,32 @@ pub enum UserStatus {
     Active,
     /// Registered while registration required approval; cannot log in yet.
     Pending,
+    /// Registered while the site checked email addresses, and hasn't
+    /// followed the link sent to theirs; cannot log in yet.
+    Unverified,
     Deactivated,
+}
+
+impl UserStatus {
+    pub const ALL: [UserStatus; 4] = [
+        UserStatus::Active,
+        UserStatus::Pending,
+        UserStatus::Unverified,
+        UserStatus::Deactivated,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UserStatus::Active => "active",
+            UserStatus::Pending => "pending",
+            UserStatus::Unverified => "unverified",
+            UserStatus::Deactivated => "deactivated",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|status| status.as_str() == s)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -17,6 +42,8 @@ pub struct User {
     pub id: i64,
     pub name: String,
     pub email: Option<String>,
+    /// When `email` was confirmed through a link sent to it.
+    pub email_verified_at: Option<OffsetDateTime>,
     pub role_id: i32,
     pub status: UserStatus,
     pub created_at: OffsetDateTime,
@@ -47,7 +74,7 @@ pub enum InsertError {
 macro_rules! select_users {
     ($rest:literal) => {
         concat!(
-            "SELECT id, name::text, email::text, role_id, status, created_at, last_seen_at, settings FROM users ",
+            "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings FROM users ",
             $rest
         )
     };
@@ -57,7 +84,7 @@ pub async fn insert(db: impl PgExecutor<'_>, user: NewUser<'_>) -> Result<User, 
     sqlx::query_as(
         "INSERT INTO users (name, email, password_hash, role_id, status)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, name::text, email::text, role_id, status, created_at, last_seen_at, settings",
+         RETURNING id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings",
     )
     .bind(user.name)
     .bind(user.email)
@@ -108,7 +135,7 @@ pub async fn credentials_by_name(
         password_hash: Option<String>,
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT id, name::text, email::text, role_id, status, created_at, last_seen_at, settings, password_hash
+        "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, password_hash
          FROM users WHERE name = $1::citext",
     )
     .bind(name)
@@ -180,6 +207,47 @@ pub async fn set_status(db: impl PgExecutor<'_>, id: i64, status: UserStatus) ->
         .bind(status)
         .execute(db)
         .await?;
+    Ok(())
+}
+
+/// Whether the user can log in with a password (accounts made through
+/// single sign-on have none).
+pub async fn has_password(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT password_hash IS NOT NULL FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(db)
+        .await
+}
+
+/// Case-insensitive.
+pub async fn by_email(db: impl PgExecutor<'_>, email: &str) -> sqlx::Result<Option<User>> {
+    sqlx::query_as(select_users!("WHERE email = $1::citext"))
+        .bind(email)
+        .fetch_optional(db)
+        .await
+}
+
+/// Changes a user's address (`None` removes it). `verified` records that
+/// it was confirmed through a link sent to it.
+pub async fn set_email(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    email: Option<&str>,
+    verified: bool,
+) -> Result<(), InsertError> {
+    sqlx::query(
+        "UPDATE users SET email = $2, email_verified_at = CASE WHEN $3 THEN now() END
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(email)
+    .bind(verified)
+    .execute(db)
+    .await
+    .map_err(|error| match unique_violation(&error) {
+        Some("users_email_key") => InsertError::EmailTaken,
+        _ => InsertError::Db(error),
+    })?;
     Ok(())
 }
 

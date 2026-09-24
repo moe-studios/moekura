@@ -88,6 +88,11 @@ pub enum AdminCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Send a test message through the [mail] settings, to check them
+    SendTestMail {
+        /// Address to send it to
+        to: String,
+    },
     /// Show site settings, or change one
     Settings {
         #[command(subcommand)]
@@ -251,6 +256,18 @@ pub async fn run(
         AdminCommand::RecountTags => {
             let fixed = moekura_db::tags::recount(db).await?;
             println!("corrected {fixed} tag count(s)");
+        }
+        AdminCommand::SendTestMail { to } => {
+            if !config.mail.is_enabled() {
+                bail!("mail is off: set mail.host and mail.from first");
+            }
+            let mailer = moekura_jobs::mail::Mailer::new(&config.mail)?;
+            let body = format!(
+                "This is a test message from Moekura at {}.\n\nIf you can read it, mail works.\n",
+                config.server.public_url
+            );
+            mailer.send(&to, "Moekura test message", &body).await?;
+            println!("sent a test message to {to}");
         }
         AdminCommand::Settings { action: None } => {
             for (key, value) in settings::load(db).await?.to_map() {

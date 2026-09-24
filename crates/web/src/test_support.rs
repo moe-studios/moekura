@@ -263,6 +263,40 @@ pub async fn session_for(
         .unwrap()
 }
 
+/// A member with a password and email, and a session for them.
+pub async fn member(pool: &PgPool, name: &str, email: &str) -> (moekura_db::users::User, String) {
+    let role = moekura_db::roles::by_system(pool, moekura_core::permissions::SystemRole::Member)
+        .await
+        .unwrap();
+    let user = moekura_db::accounts::create(
+        pool,
+        moekura_db::accounts::NewAccount {
+            name,
+            password: "correct horse",
+            email: Some(email),
+            role_id: role.id,
+            status: moekura_db::users::UserStatus::Active,
+        },
+    )
+    .await
+    .unwrap();
+    let session = moekura_db::sessions::create(
+        pool,
+        moekura_db::sessions::NewSession {
+            user_id: user.id,
+            user_agent: None,
+            ip: None,
+        },
+        moekura_db::sessions::Lifetime {
+            idle: std::time::Duration::from_secs(3600),
+            max: std::time::Duration::from_secs(3600),
+        },
+    )
+    .await
+    .unwrap();
+    (user, session)
+}
+
 /// Media files made with ffmpeg on demand, so the repository carries no
 /// binary fixtures.
 pub mod fixture {

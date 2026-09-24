@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Two-factor login · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/settings/account">« Email and password</a></p>
+<section class="card medium">
+  <h1>Two-factor login</h1>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  {% if recovery_codes %}
+  <p><strong>Save these recovery codes somewhere safe.</strong> Each one logs you in once if you lose your device. They won't be shown again.</p>
+  <ul class="recovery-codes">
+    {% for code in recovery_codes %}<li><code>{{ code }}</code></li>{% endfor %}
+  </ul>
+  <p><a class="button" href="/settings/two-factor">I've saved them</a></p>
+  {% elif setup %}
+  <p>Scan this with an authenticator app, then enter the code it shows.</p>
+  <div class="qr" role="img" aria-label="QR code for your authenticator app">{{ setup.qr }}</div>
+  <p class="hint">Can't scan it? Enter this key in the app instead: <code class="secret">{{ setup.secret }}</code></p>
+  <form method="post" action="/settings/two-factor/enable">
+    <label for="code">Code</label>
+    <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus>
+    <button type="submit">Turn on</button>
+  </form>
+  {% elif enabled %}
+  <p>Two-factor login is <strong>on</strong>: after your password, you enter a code from your authenticator app. You have {{ unused_codes }} unused recovery code{% if unused_codes != 1 %}s{% endif %}.</p>
+  <form method="post" action="/settings/two-factor/recovery-codes">
+    <label for="codes-password">Your password</label>
+    <input id="codes-password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit" class="secondary">Make new recovery codes</button>
+  </form>
+  <form method="post" action="/settings/two-factor/disable">
+    <label for="off-password">Your password</label>
+    <input id="off-password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit" class="danger">Turn off</button>
+  </form>
+  {% else %}
+  <p>Two-factor login is <strong>off</strong>. Turn it on to need a code from an authenticator app, as well as your password, to log in.</p>
+  <form method="post" action="/settings/two-factor/setup">
+    <label for="setup-password">Your password</label>
+    <input id="setup-password" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Set it up</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

@@ -29,6 +29,26 @@ moekura admin settings set registration_mode closed
 | `approval` | anyone, but staff approve new accounts before they can log in (**Admin → Users**, filter *pending*) |
 | `closed` | nobody; admins create accounts from the shell |
 
+## Email
+
+With [`[mail]`](../configuration.md#mail) set up, people can reset a
+forgotten password from the login page, and confirm their address under
+**Settings → Your email address and password**. Without it, those pages
+don't appear, and people who forget their password need an admin.
+
+To make new accounts confirm their address before they can log in, tick
+**New accounts must confirm their email address** under **Admin →
+Settings**, or:
+
+```sh
+moekura admin settings set email_verification true
+```
+
+Registering then needs an address. Accounts waiting for the link are
+*unverified* under **Admin → Users**, where you can also activate one by
+hand. With `approval` registration, confirming the address puts the
+account in the approval queue.
+
 ## What visitors see
 
 Visitors see every active post by default. To hide some unless people opt

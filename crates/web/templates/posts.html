@@ -14,6 +14,7 @@
       <li>
         <a class="refine" href="{{ tag.include_url }}" title="Add to search" aria-label="Add {{ tag.name }} to search">+</a>
         <a class="refine" href="{{ tag.exclude_url }}" title="Exclude from search" aria-label="Exclude {{ tag.name }} from search">–</a>
+        <a class="refine" href="{{ tag.wiki_url }}" title="Wiki" aria-label="Wiki page for {{ tag.name }}">?</a>
         <a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span>
       </li>
       {% endfor %}
@@ -21,6 +22,12 @@
     {% endif %}
   </aside>
   <section class="results">
+    {% if wiki %}
+    <aside class="wiki-excerpt">
+      <div class="markup">{{ wiki.html }}</div>
+      <p class="hint"><a href="{{ wiki.url }}">Read the wiki page for {{ wiki.title }}</a></p>
+    </aside>
+    {% endif %}
     {% if count %}<p class="result-count">{{ count }}
       {% if blacklisted.show_url %}· {{ blacklisted.hidden }} hidden by your blacklist (<a href="{{ blacklisted.show_url }}">show</a>){% endif %}
       {% if blacklisted.hide_url %}· showing blacklisted posts (<a href="{{ blacklisted.hide_url }}">hide</a>){% endif %}

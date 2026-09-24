@@ -20,6 +20,7 @@ pub struct Config {
     pub auth: AuthConfig,
     pub cache: CacheConfig,
     pub jobs: JobsConfig,
+    pub mail: MailConfig,
     pub media: MediaConfig,
     pub paths: PathsConfig,
     pub search: SearchConfig,
@@ -100,6 +101,8 @@ pub struct AuthConfig {
     pub session_idle_days: u32,
     /// A session ends this many days after login, however active.
     pub session_max_days: u32,
+    /// Logging in through an OpenID Connect provider (single sign-on).
+    pub oidc: Option<OidcConfig>,
 }
 
 impl Default for AuthConfig {
@@ -107,8 +110,95 @@ impl Default for AuthConfig {
         Self {
             session_idle_days: 30,
             session_max_days: 365,
+            oidc: None,
         }
     }
+}
+
+/// An OpenID Connect provider people can log in with: Authentik,
+/// Keycloak, Kanidm, Google, …
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OidcConfig {
+    /// The provider's issuer URL; it describes itself at
+    /// `/.well-known/openid-configuration` under it.
+    pub issuer: Url,
+    pub client_id: String,
+    #[serde(default)]
+    pub client_secret: String,
+    /// The login button's text.
+    #[serde(default = "OidcConfig::default_button_label")]
+    pub button_label: String,
+    #[serde(default = "OidcConfig::default_scopes")]
+    pub scopes: Vec<String>,
+}
+
+impl OidcConfig {
+    fn default_button_label() -> String {
+        "Log in with single sign-on".to_owned()
+    }
+
+    fn default_scopes() -> Vec<String> {
+        ["openid", "email", "profile"].map(String::from).to_vec()
+    }
+}
+
+/// Outgoing mail over SMTP, for email verification and password resets.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MailConfig {
+    /// The SMTP server. Empty turns mail off, along with the features that
+    /// need it.
+    pub host: String,
+    /// Defaults to 587 with STARTTLS, 465 with TLS and 25 without.
+    pub port: Option<u16>,
+    pub tls: MailTls,
+    /// Leave both empty if the server doesn't need a login.
+    pub username: String,
+    pub password: String,
+    /// The sender, as `address@example.com` or `Site name <address@example.com>`.
+    pub from: String,
+    /// Connecting and sending one message give up after this long.
+    pub timeout_secs: u64,
+}
+
+impl Default for MailConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: None,
+            tls: MailTls::Starttls,
+            username: String::new(),
+            password: String::new(),
+            from: String::new(),
+            timeout_secs: 30,
+        }
+    }
+}
+
+impl MailConfig {
+    pub fn is_enabled(&self) -> bool {
+        !self.host.is_empty()
+    }
+
+    pub fn port_or_default(&self) -> u16 {
+        self.port.unwrap_or(match self.tls {
+            MailTls::Starttls => 587,
+            MailTls::Tls => 465,
+            MailTls::None => 25,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MailTls {
+    /// Connect in plain text, then upgrade with STARTTLS (required).
+    Starttls,
+    /// TLS from the start ("SMTPS").
+    Tls,
+    /// No encryption: only for a relay on the same machine or network.
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -562,6 +652,60 @@ impl Config {
                 message: "must be at least 10".into(),
             });
         }
+        if let Some(oidc) = &self.auth.oidc {
+            let loopback = oidc.issuer.host_str().is_some_and(|h| {
+                h == "localhost"
+                    || h.parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())
+            });
+            if !(oidc.issuer.scheme() == "https" || (oidc.issuer.scheme() == "http" && loopback)) {
+                problems.push(ConfigProblem {
+                    key: "auth.oidc.issuer",
+                    message: "must be an https:// URL".into(),
+                });
+            }
+            if oidc.client_id.is_empty() {
+                problems.push(ConfigProblem {
+                    key: "auth.oidc.client_id",
+                    message: "is required".into(),
+                });
+            }
+            if !oidc.scopes.iter().any(|s| s == "openid") {
+                problems.push(ConfigProblem {
+                    key: "auth.oidc.scopes",
+                    message: "must include `openid`".into(),
+                });
+            }
+        }
+        let mail = &self.mail;
+        if mail.is_enabled() {
+            if !mail.from.contains('@') {
+                problems.push(ConfigProblem {
+                    key: "mail.from",
+                    message: "is required when mail.host is set, as `address@example.com` or \
+                              `Site name <address@example.com>`"
+                        .into(),
+                });
+            }
+            if mail.username.is_empty() != mail.password.is_empty() {
+                problems.push(ConfigProblem {
+                    key: "mail.username",
+                    message: "set both mail.username and mail.password, or neither".into(),
+                });
+            }
+            if mail.port == Some(0) {
+                problems.push(ConfigProblem {
+                    key: "mail.port",
+                    message: "must be a port number".into(),
+                });
+            }
+            if mail.timeout_secs == 0 {
+                problems.push(ConfigProblem {
+                    key: "mail.timeout_secs",
+                    message: "must be at least 1".into(),
+                });
+            }
+        }
         if self.server.request_timeout_secs == 0 {
             problems.push(ConfigProblem {
                 key: "server.request_timeout_secs",
@@ -588,6 +732,14 @@ impl Config {
         }
         if !config.storage.s3.secret_access_key.is_empty() {
             config.storage.s3.secret_access_key = REDACTED.to_owned();
+        }
+        if let Some(oidc) = &mut config.auth.oidc
+            && !oidc.client_secret.is_empty()
+        {
+            oidc.client_secret = REDACTED.to_owned();
+        }
+        if !config.mail.password.is_empty() {
+            config.mail.password = REDACTED.to_owned();
         }
         config
     }
@@ -764,6 +916,75 @@ mod tests {
         config.cache.url = Some("redis://:secret@valkey:6379".into());
         assert!(config.validate().is_ok());
         assert!(!config.redacted().cache.url.unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn checks_mail_and_redacts_its_password() {
+        let mut config = valid();
+        config.mail.password = "ignored".into();
+        config.validate().unwrap();
+
+        config.mail.host = "smtp.example.com".into();
+        config.mail.timeout_secs = 0;
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(keys, ["mail.from", "mail.username", "mail.timeout_secs"]);
+
+        config.mail.from = "Moekura <noreply@example.com>".into();
+        config.mail.username = "moekura".into();
+        config.mail.timeout_secs = 30;
+        config.validate().unwrap();
+        assert_eq!(config.redacted().mail.password, "REDACTED");
+        assert_eq!(config.mail.port_or_default(), 587);
+        config.mail.tls = MailTls::Tls;
+        assert_eq!(config.mail.port_or_default(), 465);
+    }
+
+    #[test]
+    fn checks_oidc_and_redacts_its_secret() {
+        let parsed: Config = toml::from_str(
+            "[auth.oidc]\nissuer = \"https://sso.example.com/realms/booru\"\nclient_id = \"moekura\"\nclient_secret = \"hush\"\n",
+        )
+        .unwrap();
+        let oidc = parsed.auth.oidc.clone().unwrap();
+        assert_eq!(oidc.scopes, ["openid", "email", "profile"]);
+        assert_eq!(oidc.button_label, "Log in with single sign-on");
+        let mut config = valid();
+        config.auth.oidc = Some(oidc);
+        config.validate().unwrap();
+        assert_eq!(
+            config.redacted().auth.oidc.unwrap().client_secret,
+            "REDACTED"
+        );
+
+        let oidc = config.auth.oidc.as_mut().unwrap();
+        oidc.issuer = Url::parse("http://sso.example.com").unwrap();
+        oidc.client_id = String::new();
+        oidc.scopes = vec!["email".into()];
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "auth.oidc.issuer",
+                "auth.oidc.client_id",
+                "auth.oidc.scopes"
+            ]
+        );
+        // Plain HTTP is fine for a provider on the same machine.
+        let oidc = config.auth.oidc.as_mut().unwrap();
+        oidc.issuer = Url::parse("http://127.0.0.1:9000").unwrap();
+        oidc.client_id = "moekura".into();
+        oidc.scopes = vec!["openid".into()];
+        config.validate().unwrap();
     }
 
     #[test]

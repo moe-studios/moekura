@@ -10,6 +10,7 @@ mod moderation;
 mod posts;
 mod tags;
 mod users;
+mod wiki;
 
 use std::sync::Arc;
 
@@ -58,6 +59,7 @@ pub fn is_api_path(path: &str) -> bool {
         (name = "posts", description = "Searching, viewing and changing posts."),
         (name = "tags", description = "Tags, their categories, aliases and implications."),
         (name = "users", description = "Users and the account making the request."),
+        (name = "wiki", description = "Wiki pages about tags, and their history."),
         (name = "moderation", description = "Reviewing posts and flags, deciding tag relations, bans \
                                              and the moderation log."),
     ),
@@ -112,6 +114,9 @@ fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
         .routes(routes!(tags::show, tags::update))
         .routes(routes!(tags::autocomplete))
         .routes(routes!(tags::relations, tags::request))
+        .routes(routes!(wiki::list))
+        .routes(routes!(wiki::show, wiki::save))
+        .routes(routes!(wiki::versions))
         .routes(routes!(users::show))
         .routes(routes!(users::me))
         .routes(routes!(moderation::approve))

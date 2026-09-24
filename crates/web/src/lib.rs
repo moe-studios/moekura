@@ -12,6 +12,7 @@ mod blacklist;
 mod client_ip;
 mod counts;
 mod edit;
+mod email;
 pub mod error;
 mod favorites;
 mod fetch;
@@ -21,6 +22,7 @@ mod health;
 mod history;
 pub mod import;
 mod moderation;
+pub mod oidc;
 pub mod pages;
 mod posts;
 pub mod rate_limit;
@@ -30,8 +32,10 @@ mod tags;
 mod templates;
 #[cfg(test)]
 mod test_support;
+mod two_factor;
 mod upload;
 mod users;
+mod wiki;
 
 use std::future::Future;
 use std::io;
@@ -93,6 +97,8 @@ pub struct AppState {
     /// Scratch space for uploads in progress.
     pub(crate) work_dir: std::path::PathBuf,
     pub(crate) file_signer: files::FileSigner,
+    /// The single sign-on provider, if there is one.
+    pub(crate) oidc: Option<Arc<oidc::Oidc>>,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -141,6 +147,11 @@ impl AppState {
             Duration::from_secs(config.cache.count_ttl_secs),
             valkey.clone(),
         );
+        let oidc = config
+            .auth
+            .oidc
+            .clone()
+            .map(|oidc| Arc::new(oidc::Oidc::new(oidc, &config.server.public_url)));
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -152,6 +163,7 @@ impl AppState {
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
             work_dir,
             file_signer: files::FileSigner::new(file_key),
+            oidc,
             templates,
             assets,
         })
@@ -200,12 +212,16 @@ pub fn router(state: AppState) -> Router {
         .merge(admin::routes())
         .merge(bans::routes())
         .merge(edit::routes())
+        .merge(email::routes())
         .merge(favorites::routes())
         .merge(history::routes())
         .merge(moderation::routes())
+        .merge(oidc::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
+        .merge(two_factor::routes())
         .merge(users::routes())
+        .merge(wiki::routes())
         .merge(upload::routes(max_upload_bytes));
     with_middleware(routes, state)
 }

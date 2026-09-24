@@ -77,6 +77,24 @@ stops caching until it's back, and logs a warning; nothing fails.
 | `run_in_serve` | `true` | also run workers inside `serve`; set `false` when you run `moekura worker` separately |
 | `lock_timeout_secs` | `300` | a job whose worker stopped responding is retried after this |
 
+## `[mail]`
+
+Outgoing mail over SMTP, for email verification and password resets.
+Messages are sent by the job workers, so a slow mail server doesn't hold
+up the site, and failed sends are retried.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `host` | *(empty)* | the SMTP server; empty turns mail off, along with the features that need it |
+| `tls` | `"starttls"` | `"starttls"` (upgrade a plain connection; required), `"tls"` (TLS from the start) or `"none"` (only for a relay on the same machine or network) |
+| `port` | *(by `tls`)* | 587 for `starttls`, 465 for `tls`, 25 for `none` |
+| `username`, `password` | *(empty)* | the login, if the server needs one |
+| `from` | *(empty)* | the sender, as `address@example.com` or `Site name <address@example.com>`; required with `host` |
+| `timeout_secs` | `30` | connecting or sending one message gives up after this |
+
+Check the settings with `moekura admin send-test-mail you@example.com`,
+which sends straight away and prints any error.
+
 ## `[search]`
 
 | Key | Default | Meaning |

@@ -23,6 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tracing::Instrument;
 
+pub mod mail;
 pub mod media;
 pub mod tags;
 

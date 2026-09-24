@@ -20,6 +20,7 @@ pub struct Config {
     pub auth: AuthConfig,
     pub cache: CacheConfig,
     pub jobs: JobsConfig,
+    pub mail: MailConfig,
     pub media: MediaConfig,
     pub paths: PathsConfig,
     pub search: SearchConfig,
@@ -109,6 +110,64 @@ impl Default for AuthConfig {
             session_max_days: 365,
         }
     }
+}
+
+/// Outgoing mail over SMTP, for email verification and password resets.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct MailConfig {
+    /// The SMTP server. Empty turns mail off, along with the features that
+    /// need it.
+    pub host: String,
+    /// Defaults to 587 with STARTTLS, 465 with TLS and 25 without.
+    pub port: Option<u16>,
+    pub tls: MailTls,
+    /// Leave both empty if the server doesn't need a login.
+    pub username: String,
+    pub password: String,
+    /// The sender, as `address@example.com` or `Site name <address@example.com>`.
+    pub from: String,
+    /// Connecting and sending one message give up after this long.
+    pub timeout_secs: u64,
+}
+
+impl Default for MailConfig {
+    fn default() -> Self {
+        Self {
+            host: String::new(),
+            port: None,
+            tls: MailTls::Starttls,
+            username: String::new(),
+            password: String::new(),
+            from: String::new(),
+            timeout_secs: 30,
+        }
+    }
+}
+
+impl MailConfig {
+    pub fn is_enabled(&self) -> bool {
+        !self.host.is_empty()
+    }
+
+    pub fn port_or_default(&self) -> u16 {
+        self.port.unwrap_or(match self.tls {
+            MailTls::Starttls => 587,
+            MailTls::Tls => 465,
+            MailTls::None => 25,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MailTls {
+    /// Connect in plain text, then upgrade with STARTTLS (required).
+    Starttls,
+    /// TLS from the start ("SMTPS").
+    Tls,
+    /// No encryption: only for a relay on the same machine or network.
+    None,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -562,6 +621,35 @@ impl Config {
                 message: "must be at least 10".into(),
             });
         }
+        let mail = &self.mail;
+        if mail.is_enabled() {
+            if !mail.from.contains('@') {
+                problems.push(ConfigProblem {
+                    key: "mail.from",
+                    message: "is required when mail.host is set, as `address@example.com` or \
+                              `Site name <address@example.com>`"
+                        .into(),
+                });
+            }
+            if mail.username.is_empty() != mail.password.is_empty() {
+                problems.push(ConfigProblem {
+                    key: "mail.username",
+                    message: "set both mail.username and mail.password, or neither".into(),
+                });
+            }
+            if mail.port == Some(0) {
+                problems.push(ConfigProblem {
+                    key: "mail.port",
+                    message: "must be a port number".into(),
+                });
+            }
+            if mail.timeout_secs == 0 {
+                problems.push(ConfigProblem {
+                    key: "mail.timeout_secs",
+                    message: "must be at least 1".into(),
+                });
+            }
+        }
         if self.server.request_timeout_secs == 0 {
             problems.push(ConfigProblem {
                 key: "server.request_timeout_secs",
@@ -588,6 +676,9 @@ impl Config {
         }
         if !config.storage.s3.secret_access_key.is_empty() {
             config.storage.s3.secret_access_key = REDACTED.to_owned();
+        }
+        if !config.mail.password.is_empty() {
+            config.mail.password = REDACTED.to_owned();
         }
         config
     }
@@ -764,6 +855,32 @@ mod tests {
         config.cache.url = Some("redis://:secret@valkey:6379".into());
         assert!(config.validate().is_ok());
         assert!(!config.redacted().cache.url.unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn checks_mail_and_redacts_its_password() {
+        let mut config = valid();
+        config.mail.password = "ignored".into();
+        config.validate().unwrap();
+
+        config.mail.host = "smtp.example.com".into();
+        config.mail.timeout_secs = 0;
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(keys, ["mail.from", "mail.username", "mail.timeout_secs"]);
+
+        config.mail.from = "Moekura <noreply@example.com>".into();
+        config.mail.username = "moekura".into();
+        config.mail.timeout_secs = 30;
+        config.validate().unwrap();
+        assert_eq!(config.redacted().mail.password, "REDACTED");
+        assert_eq!(config.mail.port_or_default(), 587);
+        config.mail.tls = MailTls::Tls;
+        assert_eq!(config.mail.port_or_default(), 465);
     }
 
     #[test]

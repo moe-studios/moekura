@@ -8,6 +8,7 @@ yanked = "deny"
 version = 2
 # Permissive licenses compatible with distributing the whole as AGPL-3.0.
 allow = [
+    "0BSD",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",

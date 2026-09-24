@@ -4,6 +4,7 @@ mod import;
 mod telemetry;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -11,6 +12,7 @@ use clap::{Parser, Subcommand};
 use moekura_core::config::{Config, DatabaseConfig};
 use moekura_db::Db;
 use moekura_db::site_cache::SiteCache;
+use moekura_jobs::mail::{MailJobs, Mailer};
 use moekura_jobs::media::MediaJobs;
 use moekura_jobs::tags::TagJobs;
 use moekura_jobs::{PoolConfig, Registry};
@@ -213,6 +215,13 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
         db: db.primary().clone(),
     }
     .register(&mut registry);
+    let mailer = if config.mail.is_enabled() {
+        let mailer = Mailer::new(&config.mail).context("mail")?;
+        Some(Arc::new(mailer))
+    } else {
+        None
+    };
+    MailJobs { mailer }.register(&mut registry);
     Ok(registry)
 }
 

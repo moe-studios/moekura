@@ -69,6 +69,24 @@ run_in_serve = true
 # Seconds before a job whose worker stopped responding is retried elsewhere.
 lock_timeout_secs = 300
 
+[mail]
+# Outgoing mail, for email verification and password resets. Leave host
+# empty to turn mail off, along with the features that need it. Test it
+# with `moekura admin send-test-mail you@example.com`.
+host = ""               # e.g. "smtp.example.com"
+# "starttls" (upgrade a plain connection; required), "tls" (TLS from the
+# start) or "none" (only for a relay on the same machine or network).
+tls = "starttls"
+# Defaults to 587 for starttls, 465 for tls and 25 for none.
+# port = 587
+# Leave both empty if the server doesn't need a login.
+username = ""
+password = ""
+# The sender, as "address@example.com" or "Site name <address@example.com>".
+from = ""
+# Seconds before connecting or sending one message gives up.
+timeout_secs = 30
+
 [search]
 # Posts per page, and the most a search may ask for with limit:.
 per_page = 40

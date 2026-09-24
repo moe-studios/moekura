@@ -14,6 +14,7 @@
 | `moekura admin settings set KEY VALUE` | changes one; `VALUE` is JSON, or else a plain string |
 | `moekura admin regenerate-media (--all \| IDS…)` | remakes thumbnails and samples |
 | `moekura admin recount-tags` | recomputes every tag's post count |
+| `moekura admin send-test-mail ADDRESS` | sends a test message through the [`[mail]`](../configuration.md#mail) settings |
 | `moekura admin import DIR --uploader NAME …` | imports a folder of files; see [Bulk import](import.md) |
 | `moekura admin seed --posts N [--tags T] [--seed S]` | fills a test database with synthetic posts for load testing; see [Scaling](../scaling.md) |
 

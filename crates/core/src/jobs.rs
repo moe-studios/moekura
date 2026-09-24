@@ -41,3 +41,16 @@ pub struct PurgePost {
 impl Job for PurgePost {
     const KIND: &'static str = "posts.purge";
 }
+
+/// Send an email (only queued when `mail` is configured).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SendMail {
+    pub to: String,
+    pub subject: String,
+    /// Plain text.
+    pub body: String,
+}
+
+impl Job for SendMail {
+    const KIND: &'static str = "mail.send";
+}

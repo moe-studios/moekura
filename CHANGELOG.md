@@ -5,7 +5,7 @@ versioning](https://semver.org/); before 1.0, a minor release (0.2) may
 change configuration or behaviour, and says so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-09-24
 
 The first release.
 

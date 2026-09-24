@@ -15,61 +15,61 @@ with Rust 1.94 or newer:
 
 ```sh
 cargo build --release
-sudo install target/release/uwubooru /usr/local/bin/
+sudo install target/release/moekura /usr/local/bin/
 ```
 
 Create the database:
 
 ```sh
-sudo -u postgres createuser --pwprompt uwu
-sudo -u postgres createdb --owner uwu uwu
+sudo -u postgres createuser --pwprompt moekura
+sudo -u postgres createdb --owner moekura moekura
 ```
 
-Then write `/etc/uwubooru/uwubooru.toml` (start from
-`uwubooru.example.toml` in the repository) with at least:
+Then write `/etc/moekura/moekura.toml` (start from
+`moekura.example.toml` in the repository) with at least:
 
 ```toml
 [server]
 public_url = "https://booru.example.com"
 
 [database]
-url = "postgres://uwu:PASSWORD@localhost/uwu"
+url = "postgres://moekura:PASSWORD@localhost/moekura"
 
 [storage]
-path = "/var/lib/uwubooru/data"
+path = "/var/lib/moekura/data"
 ```
 
 and start it:
 
 ```sh
-uwubooru --config /etc/uwubooru/uwubooru.toml serve
+moekura --config /etc/moekura/moekura.toml serve
 ```
 
 ## As a systemd service
 
 ```ini
-# /etc/systemd/system/uwubooru.service
+# /etc/systemd/system/moekura.service
 [Unit]
-Description=uwubooru
+Description=Moekura
 After=network-online.target postgresql.service
 Wants=network-online.target
 
 [Service]
-User=uwubooru
-Environment=UWU_CONFIG=/etc/uwubooru/uwubooru.toml
-ExecStart=/usr/local/bin/uwubooru serve
+User=moekura
+Environment=MOEKURA_CONFIG=/etc/moekura/moekura.toml
+ExecStart=/usr/local/bin/moekura serve
 Restart=on-failure
 # Keep the database password out of the config file:
-# EnvironmentFile=/etc/uwubooru/secrets.env
+# EnvironmentFile=/etc/moekura/secrets.env
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```sh
-sudo useradd --system --home-dir /var/lib/uwubooru --create-home uwubooru
-sudo systemctl enable --now uwubooru
+sudo useradd --system --home-dir /var/lib/moekura --create-home moekura
+sudo systemctl enable --now moekura
 ```
 
-`uwubooru check-config` prints the settings it would use, with secrets
+`moekura check-config` prints the settings it would use, with secrets
 redacted.

@@ -8,17 +8,17 @@ use std::time::Duration;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
+use moekura_core::config::{Config, DatabaseConfig};
+use moekura_db::Db;
+use moekura_db::site_cache::SiteCache;
+use moekura_jobs::media::MediaJobs;
+use moekura_jobs::tags::TagJobs;
+use moekura_jobs::{PoolConfig, Registry};
+use moekura_media::Media;
+use moekura_storage::Storage;
+use moekura_web::AppState;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use uwu_core::config::{Config, DatabaseConfig};
-use uwu_db::Db;
-use uwu_db::site_cache::SiteCache;
-use uwu_jobs::media::MediaJobs;
-use uwu_jobs::tags::TagJobs;
-use uwu_jobs::{PoolConfig, Registry};
-use uwu_media::Media;
-use uwu_storage::Storage;
-use uwu_web::AppState;
 
 /// How long startup keeps retrying an unreachable database, so the app can
 /// start alongside Postgres (e.g. in docker compose) without crashing.
@@ -28,10 +28,10 @@ const DB_STARTUP_WAIT: Duration = Duration::from_secs(60);
 const WORKER_SHUTDOWN_GRACE: Duration = Duration::from_secs(60);
 
 #[derive(Parser)]
-#[command(name = "uwubooru", version, about)]
+#[command(name = "moekura", version, about)]
 struct Cli {
-    /// Config file [default: ./uwubooru.toml, if present]
-    #[arg(short, long, env = "UWU_CONFIG", global = true)]
+    /// Config file [default: ./moekura.toml, if present]
+    #[arg(short, long, env = "MOEKURA_CONFIG", global = true)]
     config: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -59,11 +59,11 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    uwu_storage::install_crypto_provider();
+    moekura_storage::install_crypto_provider();
     let cli = Cli::parse();
     // Needs no configuration.
     if let Command::Openapi = cli.command {
-        println!("{}", uwu_web::api::openapi().to_pretty_json()?);
+        println!("{}", moekura_web::api::openapi().to_pretty_json()?);
         return Ok(());
     }
     let config = config::load(cli.config.as_deref())?;
@@ -131,10 +131,10 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         .run_in_serve
         .then(|| run_workers(&db, &config))
         .transpose()?;
-    let file_key = uwu_db::secrets::get_or_create(
+    let file_key = moekura_db::secrets::get_or_create(
         db.primary(),
         "file_urls",
-        uwu_core::tokens::NewToken::generate().hash,
+        moekura_core::tokens::NewToken::generate().hash,
     )
     .await
     .context("could not load the file URL key")?;
@@ -156,8 +156,8 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     tokio::spawn(cancel_on_signal(shutdown.clone()));
     let workers = workers.map(|run| tokio::spawn(run(shutdown.clone())));
 
-    let app = uwu_web::router(state);
-    uwu_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
+    let app = moekura_web::router(state);
+    moekura_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
 
     if let Some(workers) = workers {
         wait_for_workers(workers).await;
@@ -228,7 +228,7 @@ fn run_workers(
         Duration::from_secs(config.jobs.lock_timeout_secs),
     );
     Ok(move |shutdown| -> BoxFuture {
-        Box::pin(uwu_jobs::run(pool, registry, pool_config, shutdown))
+        Box::pin(moekura_jobs::run(pool, registry, pool_config, shutdown))
     })
 }
 
@@ -252,7 +252,7 @@ async fn hourly_maintenance(state: AppState) {
     loop {
         interval.tick().await;
         state.rate_limits.retain_recent();
-        match uwu_db::sessions::prune_expired(state.db.primary()).await {
+        match moekura_db::sessions::prune_expired(state.db.primary()).await {
             Ok(0) => {}
             Ok(removed) => tracing::info!(removed, "pruned expired sessions"),
             Err(error) => tracing::warn!(%error, "could not prune expired sessions"),
@@ -283,7 +283,7 @@ async fn connect(config: &DatabaseConfig) -> anyhow::Result<Db> {
 async fn migrate(db: &Db) -> anyhow::Result<()> {
     db.migrate().await.context("database migration failed")?;
     tracing::info!(
-        migrations = uwu_db::MIGRATOR.iter().count(),
+        migrations = moekura_db::MIGRATOR.iter().count(),
         "database schema is up to date"
     );
     Ok(())

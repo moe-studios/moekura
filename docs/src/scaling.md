@@ -1,11 +1,11 @@
 # Scaling
 
-A single `uwubooru serve` with PostgreSQL on the same machine is enough for
+A single `moekura serve` with PostgreSQL on the same machine is enough for
 a private collection or a small community. As a site grows, the same
 program scales out:
 
 - run web servers behind a load balancer; they keep no state of their own;
-- move background jobs to [separate `uwubooru worker` processes](admin/jobs.md);
+- move background jobs to [separate `moekura worker` processes](admin/jobs.md);
 - add PostgreSQL read replicas (`database.replicas`), which take searches
   and listings;
 - store files in [S3-compatible storage](admin/storage.md) with a CDN in
@@ -14,7 +14,7 @@ program scales out:
   (`cache.backend = "valkey"`), so login and registration limits count
   across all of them;
 - with several web servers, set `database.auto_migrate = false` and run
-  `uwubooru migrate` when deploying.
+  `moekura migrate` when deploying.
 
 ## Read replicas
 
@@ -22,8 +22,8 @@ List PostgreSQL streaming replicas in `database.replicas`:
 
 ```toml
 [database]
-url = "postgres://uwu:…@primary/uwu"
-replicas = ["postgres://uwu:…@replica-1/uwu", "postgres://uwu:…@replica-2/uwu"]
+url = "postgres://moekura:…@primary/moekura"
+replicas = ["postgres://moekura:…@replica-1/moekura", "postgres://moekura:…@replica-2/moekura"]
 ```
 
 Searches, listings, tag pages, profiles and history then read from the
@@ -78,8 +78,8 @@ What keeps it fast:
 Seed a *separate* database, then benchmark it:
 
 ```sh
-UWU_DATABASE__URL=postgres://…/uwu_bench uwubooru admin seed --posts 5000000
-UWU_DATABASE__URL=postgres://…/uwu_bench uwubooru admin bench
+MOEKURA_DATABASE__URL=postgres://…/moekura_bench moekura admin seed --posts 5000000
+MOEKURA_DATABASE__URL=postgres://…/moekura_bench moekura admin bench
 ```
 
 Seeding generates everything in PostgreSQL, about 7,000–10,000 posts a

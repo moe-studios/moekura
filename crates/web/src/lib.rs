@@ -1,4 +1,4 @@
-//! HTTP server for uwubooru: HTML pages, the JSON API and operational
+//! HTTP server for Moekura: HTML pages, the JSON API and operational
 //! endpoints, all sharing one router.
 
 mod account;
@@ -44,6 +44,9 @@ use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_CONTENT_TYP
 use axum::http::{HeaderValue, Request, StatusCode};
 use axum::middleware;
 use axum::routing::get;
+use moekura_core::config::Config;
+use moekura_db::Db;
+use moekura_db::site_cache::SiteCache;
 use tokio::net::TcpListener;
 use tower::ServiceBuilder;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -56,15 +59,12 @@ use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
-use uwu_core::config::Config;
-use uwu_db::Db;
-use uwu_db::site_cache::SiteCache;
 
 use crate::assets::Assets;
 use crate::rate_limit::RateLimits;
 use crate::templates::Templates;
-use uwu_media::Media;
-use uwu_storage::Storage;
+use moekura_media::Media;
+use moekura_storage::Storage;
 
 /// Scripts and styles only from our own origin, images and video also from
 /// the file storage's public origin (a CDN) if there is one; no framing, no
@@ -106,7 +106,7 @@ pub enum StartupError {
     #[error("could not create the media work directory: {0}")]
     WorkDir(io::Error),
     #[error("could not open file storage: {0}")]
-    Storage(#[from] uwu_storage::StorageError),
+    Storage(#[from] moekura_storage::StorageError),
     #[error("cache.url: {0}")]
     Cache(#[from] redis::RedisError),
 }
@@ -115,7 +115,7 @@ impl AppState {
     /// Loads static files and compiles templates, honouring the override
     /// directories in `config.paths`.
     /// `file_key` signs file URLs on private sites; every node needs the
-    /// same one (`uwu_db::secrets`).
+    /// same one (`moekura_db::secrets`).
     pub fn new(
         config: Config,
         db: Db,
@@ -132,7 +132,7 @@ impl AppState {
         )?);
         let media = Media::new(config.media.clone());
         let valkey = match (&config.cache.backend, &config.cache.url) {
-            (uwu_core::config::CacheBackend::Valkey, Some(url)) => {
+            (moekura_core::config::CacheBackend::Valkey, Some(url)) => {
                 Some(shared::Valkey::new(url, &config.cache.prefix)?)
             }
             _ => None,
@@ -164,8 +164,8 @@ impl AppState {
     pub fn is_private(&self) -> bool {
         self.site
             .get()
-            .system_role(uwu_core::permissions::SystemRole::Anonymous)
-            .is_none_or(|role| !role.can(uwu_core::permissions::Permission::ViewPosts))
+            .system_role(moekura_core::permissions::SystemRole::Anonymous)
+            .is_none_or(|role| !role.can(moekura_core::permissions::Permission::ViewPosts))
     }
 
     /// The pool for a replica-safe read by `current`: a replica, unless they
@@ -180,7 +180,7 @@ impl AppState {
 
     /// The URL browsers load a stored file from, signed on private sites
     /// when this server serves the files.
-    pub fn file_url(&self, key: &uwu_storage::Key) -> String {
+    pub fn file_url(&self, key: &moekura_storage::Key) -> String {
         let url = self.storage.url(key);
         if self.storage.served_by_app() && self.is_private() {
             let now = time::OffsetDateTime::now_utc().unix_timestamp();

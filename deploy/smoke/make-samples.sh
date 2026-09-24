@@ -1,5 +1,5 @@
 #!/bin/sh
-# Makes one file of every type uwubooru accepts, in /samples, with Debian's
+# Makes one file of every type Moekura accepts, in /samples, with Debian's
 # full ffmpeg and libvips. Run in a throwaway debian:trixie container; see
 # check.sh.
 set -eu

@@ -1,9 +1,9 @@
 //! The moderation audit log.
 
+use moekura_core::moderation::ActionKind;
 use serde_json::Value;
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
-use uwu_core::moderation::ActionKind;
 
 /// An action to record.
 #[derive(Debug, Clone)]

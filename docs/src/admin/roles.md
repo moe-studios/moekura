@@ -41,5 +41,5 @@ roles: you can give or take away only roles ranked below your own, and
 never change your own role or status. That keeps a mistake, or a
 compromised account, from locking out the people above it.
 
-From the shell, `uwubooru admin set-role NAME ROLE` changes anyone's role,
+From the shell, `moekura admin set-role NAME ROLE` changes anyone's role,
 which is how you recover if the last admin loses access.

@@ -8,9 +8,9 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
+use moekura_db::api_keys::{self, CreateError, NAME_MAX_LEN};
 use serde::Deserialize;
 use time::OffsetDateTime;
-use uwu_db::api_keys::{self, CreateError, NAME_MAX_LEN};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -143,8 +143,8 @@ async fn revoke(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Respo
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, session_for, test_state};
 
@@ -155,11 +155,11 @@ mod tests {
 
     /// The key shown on the page after creating one.
     fn shown_key(body: &str) -> String {
-        let start = body.find("uwu_").expect("a key is shown");
+        let start = body.find("mka_").expect("a key is shown");
         body[start..start + 68].to_owned()
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn keys_are_created_used_and_revoked(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -208,9 +208,9 @@ mod tests {
         assert!(refused.body.contains("invalid, revoked or expired"));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn keys_carry_bans_and_private_access(pool: PgPool) {
-        use uwu_core::permissions::Permissions;
+        use moekura_core::permissions::Permissions;
         // A private site.
         sqlx::query("UPDATE roles SET permissions = $1 WHERE system_key = 'anonymous'")
             .bind(Permissions::NONE.to_db())
@@ -219,11 +219,11 @@ mod tests {
             .unwrap();
         let app = app(&pool).await;
         session_for(&pool, "alice", SystemRole::Member).await;
-        let alice = uwu_db::users::by_name(&pool, "alice")
+        let alice = moekura_db::users::by_name(&pool, "alice")
             .await
             .unwrap()
             .unwrap();
-        let key = uwu_db::api_keys::create(&pool, alice.id, "bot", None)
+        let key = moekura_db::api_keys::create(&pool, alice.id, "bot", None)
             .await
             .unwrap();
         let bearer = format!("Bearer {key}");
@@ -260,7 +260,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn bad_names_are_explained(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;

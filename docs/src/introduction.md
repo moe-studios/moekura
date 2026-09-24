@@ -1,6 +1,6 @@
 # Introduction
 
-uwubooru is a self-hostable booru: an image board where posts are found by
+Moekura is a self-hostable booru: an image board where posts are found by
 their tags. The same program and database layout serve a private,
 single-user collection on a small VPS or Raspberry Pi and a public site with
 millions of posts, many web servers and a CDN. Growing a site means changing

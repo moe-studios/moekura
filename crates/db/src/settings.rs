@@ -1,8 +1,8 @@
 //! Queries on `site_settings`.
 
+use moekura_core::settings::{SettingError, SiteSettings};
 use serde_json::Value;
 use sqlx::{PgExecutor, PgPool};
-use uwu_core::settings::{SettingError, SiteSettings};
 
 use crate::site_cache::CHANNEL;
 
@@ -48,8 +48,8 @@ pub async fn set(db: &PgPool, key: &str, value: Value) -> Result<SiteSettings, S
 
 #[cfg(test)]
 mod tests {
+    use moekura_core::settings::RegistrationMode;
     use serde_json::json;
-    use uwu_core::settings::RegistrationMode;
 
     use super::*;
 

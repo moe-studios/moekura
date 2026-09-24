@@ -11,15 +11,15 @@ use axum::http::header::{
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use hmac::{Hmac, KeyInit, Mac};
+use moekura_storage::{GetRange, Key, StorageError};
 use serde::Deserialize;
 use sha2::Sha256;
-use uwu_storage::{GetRange, Key, StorageError};
 
 use crate::AppState;
 use crate::error::AppError;
 
 /// Files are content-addressed, so a URL's bytes never change.
-const IMMUTABLE: &str = uwu_storage::CACHE_FOREVER;
+const IMMUTABLE: &str = moekura_storage::CACHE_FOREVER;
 /// On private sites: browsers may keep files, shared caches may not.
 const PRIVATE: &str = "private, max-age=3600";
 
@@ -176,9 +176,9 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use http_body_util::BodyExt;
+    use moekura_storage::Key;
     use sqlx::PgPool;
     use tower::ServiceExt;
-    use uwu_storage::Key;
 
     use super::*;
     use crate::test_support::test_state;
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(signer.query("k", now), signer.query("k", now + 60));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn private_sites_need_signed_urls(pool: PgPool) {
         sqlx::query("UPDATE roles SET permissions = 0 WHERE system_key = 'anonymous'")
             .execute(&pool)
@@ -281,7 +281,7 @@ mod tests {
         (parts.status, parts.headers, bytes)
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn serves_whole_files_and_ranges(pool: PgPool) {
         let state = test_state(&pool).await;
         let key = Key::original(HASH, "png");
@@ -330,7 +330,7 @@ mod tests {
         assert_eq!((status, body.len()), (StatusCode::OK, 10));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn refuses_unknown_and_malformed_keys(pool: PgPool) {
         let app = crate::with_middleware(Router::new(), test_state(&pool).await);
         let missing = format!("/data/original/01/23/{HASH}.png");

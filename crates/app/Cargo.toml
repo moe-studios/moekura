@@ -1,5 +1,5 @@
 [package]
-name = "uwubooru"
+name = "moekura"
 description = "A self-hostable booru, from private instances to millions of posts"
 version.workspace = true
 edition.workspace = true
@@ -9,12 +9,12 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-uwu-core.workspace = true
-uwu-db.workspace = true
-uwu-jobs.workspace = true
-uwu-media.workspace = true
-uwu-storage.workspace = true
-uwu-web.workspace = true
+moekura-core.workspace = true
+moekura-db.workspace = true
+moekura-jobs.workspace = true
+moekura-media.workspace = true
+moekura-storage.workspace = true
+moekura-web.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 figment.workspace = true

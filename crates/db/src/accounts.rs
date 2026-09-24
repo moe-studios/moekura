@@ -3,8 +3,8 @@
 //! Password hashing is CPU-heavy, so it runs on tokio's blocking pool
 //! rather than stalling the async workers.
 
+use moekura_core::accounts::{self, EmailError, NameError, PasswordError, UserName, Verification};
 use sqlx::{PgExecutor, PgPool};
-use uwu_core::accounts::{self, EmailError, NameError, PasswordError, UserName, Verification};
 
 use crate::users::{self, InsertError, NewUser, User, UserStatus};
 
@@ -113,7 +113,7 @@ async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 
 #[cfg(test)]
 mod tests {
-    use uwu_core::permissions::SystemRole;
+    use moekura_core::permissions::SystemRole;
 
     use super::*;
     use crate::roles;

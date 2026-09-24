@@ -15,13 +15,13 @@
 
 use std::str::FromStr;
 
-use serde_json::Value as Json;
-use sqlx::{PgPool, Postgres, QueryBuilder};
-use uwu_core::config::SearchConfig;
-use uwu_core::posts::PostStatus;
-use uwu_core::search::{
+use moekura_core::config::SearchConfig;
+use moekura_core::posts::PostStatus;
+use moekura_core::search::{
     Bound, Condition, Filter, Order, ParentFilter, Query, StatusFilter, TagTerm,
 };
+use serde_json::Value as Json;
+use sqlx::{PgPool, Postgres, QueryBuilder};
 
 use crate::posts::Visibility;
 use crate::tag_relations;
@@ -967,9 +967,9 @@ fn push_float_bound(
 
 #[cfg(test)]
 mod tests {
+    use moekura_core::posts::PostStatus;
     use serde_json::Value;
     use sqlx::{Execute, PgPool};
-    use uwu_core::posts::PostStatus;
 
     use super::*;
     use crate::tags::WantedTag;

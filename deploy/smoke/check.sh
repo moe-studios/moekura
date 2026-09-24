@@ -1,11 +1,11 @@
 #!/bin/sh
-# Runs the media tools in the uwubooru image the way the app does, on the
+# Runs the media tools in the Moekura image the way the app does, on the
 # samples make-samples.sh made:
 #
 #   docker run --rm -v "$PWD/deploy/smoke:/smoke:ro" -v samples:/samples \
 #       debian:trixie sh /smoke/make-samples.sh
 #   docker run --rm --entrypoint sh -v "$PWD/deploy/smoke:/smoke:ro" \
-#       -v samples:/samples:ro uwubooru /smoke/check.sh
+#       -v samples:/samples:ro moekura /smoke/check.sh
 set -eu
 cd /samples
 out=$(mktemp -d)

@@ -6,9 +6,9 @@ Create the first account from the shell. It asks for a password (or reads
 one line from standard input when piped):
 
 ```sh
-uwubooru admin create-user yourname --role admin
+moekura admin create-user yourname --role admin
 # with compose:
-docker compose -f deploy/compose.tiny.yml exec app uwubooru admin create-user yourname --role admin
+docker compose -f deploy/compose.tiny.yml exec app moekura admin create-user yourname --role admin
 ```
 
 Log in, then open **Admin** in the menu.
@@ -19,13 +19,13 @@ Registration is open by default. Change it under **Admin → Settings**, or
 from the shell:
 
 ```sh
-uwubooru admin settings set registration_mode closed
+moekura admin settings set registration_mode closed
 ```
 
 | Mode | Who can create an account |
 |---|---|
 | `open` | anyone |
-| `invite` | people with an invite code (`uwubooru admin create-invite`) |
+| `invite` | people with an invite code (`moekura admin create-invite`) |
 | `approval` | anyone, but staff approve new accounts before they can log in (**Admin → Users**, filter *pending*) |
 | `closed` | nobody; admins create accounts from the shell |
 
@@ -36,7 +36,7 @@ in, set a default blacklist, which applies to visitors and to users who
 haven't set their own:
 
 ```sh
-uwubooru admin settings set default_blacklist "rating:e"
+moekura admin settings set default_blacklist "rating:e"
 ```
 
 To show nothing at all without logging in, make the site

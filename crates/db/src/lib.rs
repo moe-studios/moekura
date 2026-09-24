@@ -1,4 +1,4 @@
-//! PostgreSQL access for uwubooru.
+//! PostgreSQL access for Moekura.
 
 pub mod accounts;
 pub mod api_keys;
@@ -32,9 +32,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
+use moekura_core::config::DatabaseConfig;
 use sqlx::migrate::{MigrateError, Migrator};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
-use uwu_core::config::DatabaseConfig;
 
 /// Migrations embedded from `crates/db/migrations`.
 pub static MIGRATOR: Migrator = sqlx::migrate!();
@@ -215,7 +215,7 @@ fn connect_options(url: &str, config: &DatabaseConfig) -> Result<PgConnectOption
         settings.push(("statement_timeout", config.statement_timeout_ms.to_string()));
     }
     Ok(PgConnectOptions::from_str(url)?
-        .application_name("uwubooru")
+        .application_name("moekura")
         .options(settings))
 }
 
@@ -250,7 +250,7 @@ mod tests {
     fn dead_pool() -> PgPool {
         PgPoolOptions::new()
             .acquire_timeout(Duration::from_millis(500))
-            .connect_lazy("postgres://uwu@127.0.0.1:1/uwu")
+            .connect_lazy("postgres://moekura@127.0.0.1:1/moekura")
             .unwrap()
     }
 

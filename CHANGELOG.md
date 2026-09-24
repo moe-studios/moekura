@@ -1,6 +1,6 @@
 # Changelog
 
-Notable changes in each release. uwubooru follows [semantic
+Notable changes in each release. Moekura follows [semantic
 versioning](https://semver.org/); before 1.0, a minor release (0.2) may
 change configuration or behaviour, and says so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.

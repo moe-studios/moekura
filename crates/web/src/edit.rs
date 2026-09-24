@@ -5,12 +5,12 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::post;
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
+use moekura_core::permissions::Permission;
+use moekura_core::posts::{DESCRIPTION_MAX_LEN, Rating, SOURCE_MAX_LEN};
+use moekura_core::tags::POST_MAX_TAGS;
+use moekura_db::posts::{self, PostEdit};
+use moekura_db::tags::{self, WantedTag};
 use serde::Deserialize;
-use uwu_core::permissions::Permission;
-use uwu_core::posts::{DESCRIPTION_MAX_LEN, Rating, SOURCE_MAX_LEN};
-use uwu_core::tags::POST_MAX_TAGS;
-use uwu_db::posts::{self, PostEdit};
-use uwu_db::tags::{self, WantedTag};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -186,7 +186,8 @@ pub(crate) async fn apply(
         .map(|t| t.id)
         .collect();
 
-    uwu_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None).await?;
+    moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
+        .await?;
     posts::update(
         &mut *tx,
         id,
@@ -211,8 +212,8 @@ pub(crate) async fn apply(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, fixture, session_for, test_state};
 
@@ -252,7 +253,7 @@ mod tests {
         .unwrap()
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn edits_merge_with_concurrent_ones(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -279,7 +280,7 @@ mod tests {
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
 
         assert_eq!(tag_names(&pool, id).await, ["cat", "dog", "someone"]);
-        let post = uwu_db::posts::by_id(&pool, id).await.unwrap().unwrap();
+        let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
         assert_eq!(post.rating.code(), "e");
         assert_eq!(post.source, "https://example.com/a");
         assert_eq!(post.description, "edited");
@@ -291,7 +292,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn parents_and_refusals(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;

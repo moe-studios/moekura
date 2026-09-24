@@ -3,7 +3,7 @@ node_modules/
 # Default local storage directory
 /data
 # Local configuration and secrets
-/uwubooru.toml
+/moekura.toml
 .env
 # Built documentation
 /docs/book

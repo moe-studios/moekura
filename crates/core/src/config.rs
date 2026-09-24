@@ -1,6 +1,6 @@
 //! Infrastructure configuration.
 //!
-//! These settings come from `uwubooru.toml` and `UWU_*` environment
+//! These settings come from `moekura.toml` and `MOEKURA_*` environment
 //! variables and require a restart to change. Site settings that admins edit
 //! at runtime live in the database instead.
 
@@ -70,7 +70,7 @@ pub struct DatabaseConfig {
     /// Server-side limit for a single statement; `0` disables it.
     pub statement_timeout_ms: u64,
     /// Apply pending migrations when `serve` starts. Large deployments should
-    /// turn this off and run `uwubooru migrate` as a separate release step.
+    /// turn this off and run `moekura migrate` as a separate release step.
     pub auto_migrate: bool,
     /// Replicas further behind the primary than this are skipped until they
     /// catch up. It is also how long someone's reads stay on the primary
@@ -118,7 +118,7 @@ pub struct JobsConfig {
     /// CPU-bound, so around the number of cores is a sensible ceiling.
     pub workers: usize,
     /// Run workers inside `serve` too, so one process is enough for small
-    /// sites. Turn off when running separate `uwubooru worker` processes.
+    /// sites. Turn off when running separate `moekura worker` processes.
     pub run_in_serve: bool,
     /// A job whose worker stops responding for this long is retried
     /// elsewhere. Running jobs renew it continuously.
@@ -217,7 +217,7 @@ impl Default for CacheConfig {
             backend: CacheBackend::Memory,
             url: None,
             count_ttl_secs: 30,
-            prefix: "uwu".into(),
+            prefix: "moekura".into(),
         }
     }
 }
@@ -300,7 +300,7 @@ impl MediaConfig {
     pub fn work_dir_or_default(&self) -> PathBuf {
         self.work_dir
             .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join("uwubooru"))
+            .unwrap_or_else(|| std::env::temp_dir().join("moekura"))
     }
 }
 
@@ -403,7 +403,7 @@ impl Config {
         if db.url.is_empty() {
             problems.push(ConfigProblem {
                 key: "database.url",
-                message: "is required (set it in the config file or UWU_DATABASE__URL)".into(),
+                message: "is required (set it in the config file or MOEKURA_DATABASE__URL)".into(),
             });
         } else if let Err(message) = check_postgres_url(&db.url) {
             problems.push(ConfigProblem {
@@ -645,7 +645,7 @@ mod tests {
 
     fn valid() -> Config {
         let mut config = Config::default();
-        config.database.url = "postgres://uwu:hunter2@localhost/uwu".into();
+        config.database.url = "postgres://moekura:hunter2@localhost/moekura".into();
         config
     }
 
@@ -664,7 +664,7 @@ mod tests {
     #[test]
     fn collects_every_problem() {
         let mut config = valid();
-        config.database.url = "mysql://localhost/uwu".into();
+        config.database.url = "mysql://localhost/moekura".into();
         config.database.replicas = vec!["not a url".into()];
         config.database.max_connections = 0;
         let keys: Vec<_> = config
@@ -710,29 +710,32 @@ mod tests {
     #[test]
     fn redacts_userinfo_password() {
         assert_eq!(
-            redact_url("postgres://uwu:hunter2@db:5432/uwu"),
-            "postgres://uwu:REDACTED@db:5432/uwu"
+            redact_url("postgres://moekura:hunter2@db:5432/moekura"),
+            "postgres://moekura:REDACTED@db:5432/moekura"
         );
     }
 
     #[test]
     fn redacts_query_password() {
         assert_eq!(
-            redact_url("postgres://db/uwu?user=uwu&password=hunter2&sslmode=require"),
-            "postgres://db/uwu?user=uwu&password=REDACTED&sslmode=require"
+            redact_url("postgres://db/moekura?user=moekura&password=hunter2&sslmode=require"),
+            "postgres://db/moekura?user=moekura&password=REDACTED&sslmode=require"
         );
     }
 
     #[test]
     fn leaves_passwordless_urls_alone() {
-        assert_eq!(redact_url("postgres://uwu@db/uwu"), "postgres://uwu@db/uwu");
+        assert_eq!(
+            redact_url("postgres://moekura@db/moekura"),
+            "postgres://moekura@db/moekura"
+        );
         assert_eq!(redact_url(""), "");
     }
 
     #[test]
     fn replaces_non_postgres_urls() {
-        // Parses as a URL with scheme `uwu`, so only the scheme check stops the leak.
-        assert!(!redact_url("uwu:hunter2 garbage").contains("hunter2"));
+        // Parses as a URL with scheme `moekura`, so only the scheme check stops the leak.
+        assert!(!redact_url("moekura:hunter2 garbage").contains("hunter2"));
         assert!(!redact_url("not even a url hunter2").contains("hunter2"));
         assert!(!redact_url("mysql://u:hunter2@db/x").contains("hunter2"));
     }
@@ -766,7 +769,7 @@ mod tests {
     #[test]
     fn redacted_masks_replicas() {
         let mut config = valid();
-        config.database.replicas = vec!["postgres://r:secret@replica/uwu".into()];
+        config.database.replicas = vec!["postgres://r:secret@replica/moekura".into()];
         let redacted = config.redacted();
         assert!(!redacted.database.url.contains("hunter2"));
         assert!(!redacted.database.replicas[0].contains("secret"));

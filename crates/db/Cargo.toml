@@ -1,6 +1,6 @@
 [package]
-name = "uwu-db"
-description = "PostgreSQL access and migrations for uwubooru"
+name = "moekura-db"
+description = "PostgreSQL access and migrations for Moekura"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-uwu-core.workspace = true
+moekura-core.workspace = true
 hex.workspace = true
 ipnet.workspace = true
 serde.workspace = true

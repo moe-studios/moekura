@@ -9,14 +9,14 @@
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use moekura_core::permissions::{Role, SystemRole};
+use moekura_core::settings::SiteSettings;
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
-use uwu_core::permissions::{Role, SystemRole};
-use uwu_core::settings::SiteSettings;
 
 use crate::{roles, settings};
 
-pub const CHANNEL: &str = "uwu_site_cache";
+pub const CHANNEL: &str = "moekura_site_cache";
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
@@ -137,8 +137,8 @@ async fn fetch(db: &PgPool) -> sqlx::Result<SiteSnapshot> {
 
 #[cfg(test)]
 mod tests {
+    use moekura_core::settings::RegistrationMode;
     use serde_json::json;
-    use uwu_core::settings::RegistrationMode;
 
     use super::*;
 

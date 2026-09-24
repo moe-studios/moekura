@@ -2,8 +2,8 @@
 
 use std::time::Duration;
 
+use moekura_core::tokens::{NewToken, hash_token};
 use sqlx::PgExecutor;
-use uwu_core::tokens::{NewToken, hash_token};
 
 pub struct NewInvite {
     pub created_by: Option<i64>,

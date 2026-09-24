@@ -7,9 +7,9 @@ use axum::http::request::Parts;
 use axum::response::{Html, IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
-use uwu_core::permissions::Permission;
-use uwu_core::settings::RegistrationMode;
-use uwu_core::user_settings::{Theme, UserSettings};
+use moekura_core::permissions::Permission;
+use moekura_core::settings::RegistrationMode;
+use moekura_core::user_settings::{Theme, UserSettings};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -138,8 +138,8 @@ pub(crate) fn render(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::Permissions;
     use sqlx::PgPool;
-    use uwu_core::permissions::Permissions;
 
     use crate::test_support::{TestApp, test_state};
 
@@ -147,12 +147,12 @@ mod tests {
         TestApp::new(test_state(pool).await, crate::posts::routes())
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn home_renders_the_layout(pool: PgPool) {
         let response = app(&pool).await.get("/", None).await;
         assert_eq!(response.status, StatusCode::OK);
         assert!(
-            response.body.contains("<title>uwubooru</title>"),
+            response.body.contains("<title>Moekura</title>"),
             "{}",
             response.body
         );
@@ -165,7 +165,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn private_sites_send_visitors_to_login(pool: PgPool) {
         // Take viewing away from logged-out visitors.
         sqlx::query("UPDATE roles SET permissions = $1 WHERE system_key = 'anonymous'")
@@ -181,7 +181,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn unknown_pages_get_a_styled_404(pool: PgPool) {
         let response = app(&pool).await.get("/nope", None).await;
         assert_eq!(response.status, StatusCode::NOT_FOUND);
@@ -189,7 +189,7 @@ mod tests {
         assert!(response.body.contains("Not found"));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn security_headers_are_set(pool: PgPool) {
         let response = app(&pool).await.get_full("/").await;
         let csp = response
@@ -205,7 +205,7 @@ mod tests {
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn static_files_are_cached_forever(pool: PgPool) {
         let app = app(&pool).await;
         let home = app.get("/", None).await;

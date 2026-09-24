@@ -2,13 +2,13 @@
 
 use axum::Json;
 use axum::extract::{Path, State};
+use moekura_core::permissions::Permission;
+use moekura_core::user_settings::UserSettings;
+use moekura_db::users::{self, UserStatus};
+use moekura_db::{favorites, posts};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::ToSchema;
-use uwu_core::permissions::Permission;
-use uwu_core::user_settings::UserSettings;
-use uwu_db::users::{self, UserStatus};
-use uwu_db::{favorites, posts};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -139,14 +139,14 @@ pub(crate) async fn me(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use serde_json::json;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use crate::api::test_support::{app, json, upload};
     use crate::test_support::{fixture, session_for};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn shows_users_and_the_requester(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;

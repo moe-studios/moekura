@@ -1,6 +1,6 @@
-# uwubooru — Design
+# Moekura — Design
 
-uwubooru is an open-source, self-hostable booru (a tag-based image board). The same codebase has to work for a single-user private instance on a small VPS or Raspberry Pi and for a public site with millions of posts, many web nodes and a CDN. This document records the stack, architecture, features, configuration and roadmap to the first release. Update it when a decision changes.
+Moekura is an open-source, self-hostable booru (a tag-based image board). The same codebase has to work for a single-user private instance on a small VPS or Raspberry Pi and for a public site with millions of posts, many web nodes and a CDN. This document records the stack, architecture, features, configuration and roadmap to the first release. Update it when a decision changes.
 
 **Decisions made:** Rust backend · server-rendered HTML with light JS · PostgreSQL only · AGPL-3.0.
 
@@ -27,7 +27,7 @@ uwubooru is an open-source, self-hostable booru (a tag-based image board). The s
 | Cache | `moka` in-process by default, optional Valkey/Redis via `fred` | Small instances need no Redis |
 | Auth | `argon2` (argon2id), cookie sessions stored in PG, API keys, optional OIDC (`openidconnect`) | SSO for private instances |
 | Rate limiting | `governor` in memory, Valkey-backed when running several nodes | |
-| Config | `figment` (TOML file, then `UWU_*` env vars, then CLI flags) | 12-factor and docker-friendly |
+| Config | `figment` (TOML file, then `MOEKURA_*` env vars, then CLI flags) | 12-factor and docker-friendly |
 | CLI | `clap` | Subcommands for each process role |
 | Markup (wiki, comments) | `pulldown-cmark` + booru extensions (`post #123`, `[[wiki link]]`, spoilers), sanitized with `ammonia` | Safe user markup |
 | i18n | `fluent-templates` | Community translations |
@@ -40,7 +40,7 @@ uwubooru is an open-source, self-hostable booru (a tag-based image board). The s
 
 ## 2. Architecture
 
-### Process roles (one binary, `uwubooru <cmd>`)
+### Process roles (one binary, `moekura <cmd>`)
 - `serve`: HTTP (HTML + JSON API). Stateless, so it scales horizontally. Also runs job workers when `jobs.run_in_serve` is on (the default), so one process is enough for small instances.
 - `worker`: background job runner. Can run as many worker processes as needed; set `jobs.run_in_serve = false` on web nodes when you do.
 - `migrate`, `admin` (create user, reindex, recount tags, regenerate thumbnails, import, export), `check-config`.
@@ -48,7 +48,7 @@ uwubooru is an open-source, self-hostable booru (a tag-based image board). The s
 ### Deployment tiers (configuration only)
 | Tier | Topology |
 |---|---|
-| Tiny/private | `uwubooru serve` (with built-in workers) + Postgres container, files on local disk, in-process cache and queue workers |
+| Tiny/private | `moekura serve` (with built-in workers) + Postgres container, files on local disk, in-process cache and queue workers |
 | Medium | Reverse proxy (Caddy/nginx) serves `/data/*` directly (the app can emit `X-Accel-Redirect`), plus a separate `worker` process |
 | Large/public | N `serve` nodes behind a load balancer, a dedicated worker pool, a PG primary with read replicas (`database.replicas`) and PgBouncer, Valkey, S3 storage with a CDN in front, and an optional search accelerator (see §4) |
 
@@ -107,8 +107,8 @@ Files are stored under content-addressed keys: `original/ab/cd/<sha256>.<ext>`, 
 `tag1 tag2 -excluded ~or_a ~or_b wild*card rating:e,q score:>=10 favcount:>5 user:name parent:123 width:>1920 ratio:16:9 date:2026-01..2026-06 md5:… filetype:png,webm status:deleted order:score|favcount|random|id_asc|… limit:40`. `fav:` and `ordfav:` search favorites and `similar:` perceptual hashes; `pool:` comes with pools.
 
 **Pipeline:**
-1. `uwu_core::search::Query::parse` turns the query into an AST. Errors come back as structured values that the UI shows inline.
-2. `uwu_db::search::Plan` resolves aliases and expands wildcards (capped, highest-count tags first).
+1. `moekura_core::search::Query::parse` turns the query into an AST. Errors come back as structured values that the UI shows inline.
+2. `moekura_db::search::Plan` resolves aliases and expands wildcards (capped, highest-count tags first).
 3. The planner estimates matches from exact tag counts (assuming independence) and picks a strategy:
    - AND/NOT/OR tags compile to `tag_ids @> '{…}'`, `NOT tag_ids && '{…}'` and `tag_ids && '{…}'`, all backed by GIN.
    - When many posts are expected to match, it walks the order's btree (`id`, `score`, `fav_count`) with the tag condition written as `(…) IS TRUE` so Postgres can't use GIN. When few are, it collects matches through GIN and sorts, with the order column written as `col + 0` so Postgres can't walk. Walking reads about (offset + limit) × total ÷ matches rows; collecting reads every match.
@@ -152,7 +152,7 @@ Federation (ActivityPub), a native mobile app, a plugin runtime (WASM).
 
 There are two layers, kept deliberately separate:
 
-**Infrastructure config** (`uwubooru.toml`, which env vars `UWU_SECTION__KEY` override). Changing it requires a restart:
+**Infrastructure config** (`moekura.toml`, which env vars `MOEKURA_SECTION__KEY` override). Changing it requires a restart:
 ```toml
 [server]      bind = "0.0.0.0:8080", public_url, trusted_proxies, serve_files = true|false|"x-accel"
 [database]    url, replicas = [], max_connections, statement_timeout
@@ -168,7 +168,7 @@ There are two layers, kept deliberately separate:
 
 **Site settings** (stored in the DB and edited from the admin panel, no restart): site name, description, logo, registration mode, default rating filter for anonymous users, whether uploads need approval, upload limits per role, tag categories, blacklist defaults, pagination limits, content rules page and footer links.
 
-`uwubooru check-config` validates the config and prints the effective settings with secrets redacted.
+`moekura check-config` validates the config and prints the effective settings with secrets redacted.
 
 ---
 
@@ -208,5 +208,5 @@ There are two layers, kept deliberately separate:
 - **Unit:** search parser and planner (table-driven plus `insta` snapshots of the generated SQL), permission checks, markup sanitization.
 - **Integration:** `#[sqlx::test]` against real Postgres, covering upload → job → variants → searchable, alias and implication rewrites, tag counts staying consistent after edits and deletes.
 - **E2E:** Playwright against `docker compose -f deploy/compose.tiny.yml up` for register, upload, tag, search, favorite, moderate, and private-mode access denial.
-- **Scale:** `uwubooru admin seed --posts 5000000` followed by a benchmark suite (`oha`/`k6`) over common, rare, negated, OR and deep-page searches. Target p95 below 100 ms for first-page searches on commodity hardware, and a regression check in CI on a smaller seed.
+- **Scale:** `moekura admin seed --posts 5000000` followed by a benchmark suite (`oha`/`k6`) over common, rare, negated, OR and deep-page searches. Target p95 below 100 ms for first-page searches on commodity hardware, and a regression check in CI on a smaller seed.
 - **Tiny-tier check:** the `all` process stays under about 150 MB RSS when idle, and the full compose stack runs on a 1 GB VPS or a Raspberry Pi 4.

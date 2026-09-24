@@ -1,12 +1,12 @@
 [book]
-title = "uwubooru"
-description = "Running, administering and using uwubooru, a self-hostable booru."
-authors = ["uwubooru contributors"]
+title = "Moekura"
+description = "Running, administering and using Moekura, a self-hostable booru."
+authors = ["Moekura contributors"]
 language = "en"
 src = "src"
 
 [output.html]
-git-repository-url = "https://github.com/uwuumoe/uwubooru"
-edit-url-template = "https://github.com/uwuumoe/uwubooru/edit/main/docs/{path}"
+git-repository-url = "https://github.com/uwuumoe/moekura"
+edit-url-template = "https://github.com/uwuumoe/moekura/edit/main/docs/{path}"
 default-theme = "light"
 preferred-dark-theme = "navy"

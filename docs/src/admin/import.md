@@ -1,11 +1,11 @@
 # Bulk import
 
-`uwubooru admin import` adds a folder of images and videos as posts,
+`moekura admin import` adds a folder of images and videos as posts,
 taking their tags from the files downloaders and tag managers write next to
 them:
 
 ```sh
-uwubooru admin import ~/downloads/art --uploader yourname --rating s
+moekura admin import ~/downloads/art --uploader yourname --rating s
 # with compose, mount the folder into the container first:
 docker compose -f deploy/compose.tiny.yml run --rm -v ~/downloads/art:/import:ro \
   app admin import /import --uploader yourname --rating s

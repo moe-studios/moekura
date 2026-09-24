@@ -7,16 +7,16 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
 license = "AGPL-3.0-only"
-repository = "https://github.com/uwuumoe/uwubooru"
+repository = "https://github.com/uwuumoe/moekura"
 publish = false
 
 [workspace.dependencies]
-uwu-core = { path = "crates/core" }
-uwu-db = { path = "crates/db" }
-uwu-jobs = { path = "crates/jobs" }
-uwu-media = { path = "crates/media" }
-uwu-storage = { path = "crates/storage" }
-uwu-web = { path = "crates/web" }
+moekura-core = { path = "crates/core" }
+moekura-db = { path = "crates/db" }
+moekura-jobs = { path = "crates/jobs" }
+moekura-media = { path = "crates/media" }
+moekura-storage = { path = "crates/storage" }
+moekura-web = { path = "crates/web" }
 
 anyhow = "1.0.104"
 argon2 = "0.6.0"

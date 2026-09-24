@@ -165,12 +165,12 @@ pub(crate) mod tests {
     pub async fn valkey() -> Option<Valkey> {
         let url = std::env::var("TEST_VALKEY_URL").ok()?;
         // Valkey keeps state between runs: each client gets its own keys.
-        Some(Valkey::new(&url, &unique("uwu-test")).expect("TEST_VALKEY_URL is a redis:// URL"))
+        Some(Valkey::new(&url, &unique("moekura-test")).expect("TEST_VALKEY_URL is a redis:// URL"))
     }
 
     /// A client for a port nothing listens on.
     pub async fn unreachable() -> Option<Valkey> {
-        Some(Valkey::new("redis://127.0.0.1:1", "uwu").unwrap())
+        Some(Valkey::new("redis://127.0.0.1:1", "moekura").unwrap())
     }
 
     /// A number no other call, in this run or another, gets: Valkey keeps
@@ -212,7 +212,7 @@ pub(crate) mod tests {
             eprintln!("skipping: TEST_VALKEY_URL not set");
             return;
         };
-        let key = unique("uwu:test");
+        let key = unique("moekura:test");
         valkey
             .set(&key, "42", Duration::from_secs(5))
             .await

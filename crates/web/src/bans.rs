@@ -7,13 +7,13 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use ipnet::IpNet;
 use minijinja::{Value, context};
+use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
+use moekura_core::permissions::Permission;
+use moekura_db::bans::{self, Ban};
+use moekura_db::mod_actions::{self, NewAction};
+use moekura_db::users::{self, User};
 use serde::Deserialize;
 use time::{Duration, OffsetDateTime};
-use uwu_core::moderation::{ActionKind, REASON_MAX_LEN};
-use uwu_core::permissions::Permission;
-use uwu_db::bans::{self, Ban};
-use uwu_db::mod_actions::{self, NewAction};
-use uwu_db::users::{self, User};
 
 use crate::AppState;
 use crate::auth::{CurrentUser, RequestInfo};
@@ -314,12 +314,12 @@ pub fn durations() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, fixture, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn banned_users_can_look_but_not_act(pool: PgPool) {
         let state = test_state(&pool).await;
         let max = state.config.media.max_upload_mb * 1024 * 1024;
@@ -386,7 +386,7 @@ mod tests {
         assert!(history.contains("lifted"), "{history}");
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn network_bans_block_changes(pool: PgPool) {
         let state = test_state(&pool).await;
         let routes = || super::routes().merge(crate::account::routes());

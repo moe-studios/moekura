@@ -8,9 +8,9 @@
 use std::fmt;
 use std::str::FromStr;
 
+use moekura_core::jobs::ApplyTagRelation;
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
-use uwu_core::jobs::ApplyTagRelation;
 
 /// Serialises approvals, so two concurrent ones can't form a cycle or a
 /// chain that each alone would not.

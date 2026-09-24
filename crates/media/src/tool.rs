@@ -127,7 +127,7 @@ mod tests {
     #[tokio::test]
     async fn reports_missing_programs() {
         let err = run(
-            Path::new("uwu-definitely-not-installed"),
+            Path::new("moekura-definitely-not-installed"),
             ["x"],
             Duration::from_secs(1),
         )

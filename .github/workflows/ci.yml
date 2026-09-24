@@ -29,11 +29,11 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_USER: uwu
-          POSTGRES_PASSWORD: uwu
-          POSTGRES_DB: uwu
+          POSTGRES_USER: moekura
+          POSTGRES_PASSWORD: moekura
+          POSTGRES_DB: moekura
         options: >-
-          --health-cmd "pg_isready -U uwu"
+          --health-cmd "pg_isready -U moekura"
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
@@ -41,7 +41,7 @@ jobs:
         image: valkey/valkey:8-alpine
     env:
       # sqlx::test creates a throwaway database per test on this server.
-      DATABASE_URL: postgres://uwu:uwu@postgres:5432/uwu
+      DATABASE_URL: postgres://moekura:moekura@postgres:5432/moekura
       # Rate limit and cache tests also run against a real Valkey.
       TEST_VALKEY_URL: redis://valkey:6379
     steps:
@@ -56,7 +56,7 @@ jobs:
       - name: Search plans at scale
         # Seeds 200,000 posts and fails if a search that should be
         # selective reads most of the table.
-        run: cargo test -p uwu-db --locked -- --ignored
+        run: cargo test -p moekura-db --locked -- --ignored
 
   s3:
     # The S3 backend against a real S3-compatible server. (Service
@@ -69,13 +69,13 @@ jobs:
           docker run -d --name s3 -p 8333:8333 chrislusf/seaweedfs:4.47 \
             server -s3 -dir=/data -ip.bind=0.0.0.0
           for i in $(seq 1 60); do curl -s -o /dev/null http://localhost:8333/ && break; sleep 1; done
-          curl -sf -X PUT http://localhost:8333/uwu-test
+          curl -sf -X PUT http://localhost:8333/moekura-test
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test -p uwu-storage --locked
+      - run: cargo test -p moekura-storage --locked
         env:
           TEST_S3_ENDPOINT: http://localhost:8333
-          TEST_S3_BUCKET: uwu-test
+          TEST_S3_BUCKET: moekura-test
           AWS_ACCESS_KEY_ID: test
           AWS_SECRET_ACCESS_KEY: test
 
@@ -117,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - run: docker build --tag uwubooru:ci .
+      - run: docker build --tag moekura:ci .
       - name: Media tools work in the image
         # The image builds its own ffmpeg and libvips; run them on one file
         # of every accepted type, the way the app does.
@@ -126,5 +126,5 @@ jobs:
           docker run --rm -v "$PWD/deploy/smoke:/smoke:ro" -v samples:/samples \
             debian:trixie sh /smoke/make-samples.sh
           docker run --rm --entrypoint sh -v "$PWD/deploy/smoke:/smoke:ro" \
-            -v samples:/samples:ro uwubooru:ci /smoke/check.sh
-      - run: docker image ls uwubooru:ci
+            -v samples:/samples:ro moekura:ci /smoke/check.sh
+      - run: docker image ls moekura:ci

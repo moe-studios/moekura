@@ -1,8 +1,8 @@
 use std::io::IsTerminal;
 
 use anyhow::anyhow;
+use moekura_core::config::{LogFormat, TelemetryConfig};
 use tracing_subscriber::EnvFilter;
-use uwu_core::config::{LogFormat, TelemetryConfig};
 
 /// Installs the global `tracing` subscriber. `RUST_LOG` overrides the
 /// configured filter.

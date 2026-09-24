@@ -3,19 +3,19 @@
 Everything the site does is available as JSON under `/api/v1`. Each site
 documents its own version of the API at `/api/docs`, generated from the
 code, and serves the OpenAPI description at `/api/v1/openapi.json` for
-generating clients (`uwubooru openapi` prints it too).
+generating clients (`moekura openapi` prints it too).
 
 ## Authenticating
 
 Create a key under **Settings → API keys** and send it with each request:
 
 ```sh
-curl -H "Authorization: Bearer uwu_…" https://booru.example.com/api/v1/me
+curl -H "Authorization: Bearer mka_…" https://booru.example.com/api/v1/me
 ```
 
 A key acts as you: it can do what your role allows, and while you're
 banned only what visitors can. It's shown once, when created; revoke it
-from the same page if it leaks. Keys start with `uwu_` so that secret
+from the same page if it leaks. Keys start with `mka_` so that secret
 scanners can spot them. Without a key, requests are made as a visitor.
 
 ## Errors

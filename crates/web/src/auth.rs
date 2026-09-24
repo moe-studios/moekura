@@ -12,23 +12,23 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
+use moekura_core::permissions::{Permission, Permissions, Role, SystemRole};
+use moekura_db::api_keys;
+use moekura_db::bans::ActiveBan;
+use moekura_db::sessions::{self, Lifetime, NewSession};
+use moekura_db::site_cache::SiteSnapshot;
+use moekura_db::users::User;
 use time::OffsetDateTime;
-use uwu_core::permissions::{Permission, Permissions, Role, SystemRole};
-use uwu_db::api_keys;
-use uwu_db::bans::ActiveBan;
-use uwu_db::sessions::{self, Lifetime, NewSession};
-use uwu_db::site_cache::SiteSnapshot;
-use uwu_db::users::User;
 
 use crate::AppState;
 use crate::client_ip::client_ip;
 use crate::error::AppError;
 
-pub const SESSION_COOKIE: &str = "uwu_session";
+pub const SESSION_COOKIE: &str = "moekura_session";
 
 /// Set after a change, for as long as replicas may lag: see
 /// [`CurrentUser::recent_write`].
-pub const RECENT_WRITE_COOKIE: &str = "uwu_recent";
+pub const RECENT_WRITE_COOKIE: &str = "moekura_recent";
 
 const DAY: Duration = Duration::from_secs(86_400);
 
@@ -264,7 +264,7 @@ pub async fn block_banned_networks(
     }
     let (parts, body) = request.into_parts();
     if let Some(ip) = client_ip(&parts, &state.config.server.trusted_proxies) {
-        match uwu_db::bans::network_ban(state.db.primary(), ip).await {
+        match moekura_db::bans::network_ban(state.db.primary(), ip).await {
             Ok(Some(reason)) => {
                 return AppError::Blocked(format!(
                     "Your network is banned from making changes: {reason}"
@@ -366,8 +366,8 @@ mod tests {
     use axum::Router;
     use axum::http::StatusCode;
     use axum::routing::{get, post};
+    use moekura_db::users::{self, NewUser, UserStatus};
     use sqlx::PgPool;
-    use uwu_db::users::{self, NewUser, UserStatus};
 
     use super::*;
     use crate::test_support::{TestApp, test_state};
@@ -404,7 +404,7 @@ mod tests {
     }
 
     async fn member(pool: &PgPool, name: &str) -> User {
-        let role_id = uwu_db::roles::by_system(pool, SystemRole::Member)
+        let role_id = moekura_db::roles::by_system(pool, SystemRole::Member)
             .await
             .unwrap()
             .id;
@@ -418,7 +418,7 @@ mod tests {
         users::insert(pool, new).await.unwrap()
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn visitors_are_anonymous(pool: PgPool) {
         let app = app(&pool).await;
         assert_eq!(
@@ -427,7 +427,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn login_sets_a_cookie_that_identifies_the_user(pool: PgPool) {
         member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -446,7 +446,7 @@ mod tests {
         assert_eq!(me.body, "alice upload=true");
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn stale_cookies_are_cleared(pool: PgPool) {
         let app = app(&pool).await;
         let response = app.get("/whoami", Some("not-a-session")).await;
@@ -455,11 +455,11 @@ mod tests {
             response
                 .set_cookie
                 .iter()
-                .any(|c| c.starts_with("uwu_session=;") && c.contains("Max-Age=0"))
+                .any(|c| c.starts_with("moekura_session=;") && c.contains("Max-Age=0"))
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn logging_in_over_a_stale_cookie_keeps_the_new_session(pool: PgPool) {
         member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -467,7 +467,7 @@ mod tests {
         let session_cookies: Vec<_> = login
             .set_cookie
             .iter()
-            .filter(|c| c.starts_with("uwu_session="))
+            .filter(|c| c.starts_with("moekura_session="))
             .collect();
         assert_eq!(session_cookies.len(), 1, "{session_cookies:?}");
         let cookie = login.session_cookie().unwrap();
@@ -477,7 +477,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn logout_ends_the_session(pool: PgPool) {
         member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -494,7 +494,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn deactivated_users_lose_their_sessions(pool: PgPool) {
         let alice = member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -512,7 +512,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn cross_site_posts_are_rejected(pool: PgPool) {
         member(&pool, "alice").await;
         let app = app(&pool).await;
@@ -544,10 +544,15 @@ mod tests {
         ));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn changes_pin_reads_to_the_primary_for_a_while(pool: sqlx::PgPool) {
         use crate::test_support::{TestApp, session_for, test_state, test_state_with_replica};
-        let alice = session_for(&pool, "alice", uwu_core::permissions::SystemRole::Member).await;
+        let alice = session_for(
+            &pool,
+            "alice",
+            moekura_core::permissions::SystemRole::Member,
+        )
+        .await;
         let form = "per_page=&theme=dark";
 
         let app = TestApp::new(test_state_with_replica(&pool).await, crate::users::routes());
@@ -555,11 +560,16 @@ mod tests {
         let cookie = saved
             .set_cookie
             .iter()
-            .find(|c| c.starts_with("uwu_recent="))
+            .find(|c| c.starts_with("moekura_recent="))
             .expect("a change sets the cookie");
         assert!(cookie.contains("Max-Age=10"), "{cookie}");
         let read = app.get("/settings", Some(&alice)).await;
-        assert!(!read.set_cookie.iter().any(|c| c.starts_with("uwu_recent=")));
+        assert!(
+            !read
+                .set_cookie
+                .iter()
+                .any(|c| c.starts_with("moekura_recent="))
+        );
 
         // Without replicas there's nothing to pin.
         let app = TestApp::new(test_state(&pool).await, crate::users::routes());
@@ -568,7 +578,7 @@ mod tests {
             !saved
                 .set_cookie
                 .iter()
-                .any(|c| c.starts_with("uwu_recent="))
+                .any(|c| c.starts_with("moekura_recent="))
         );
 
         // The cookie sends reads to the primary.

@@ -13,7 +13,7 @@ PostgreSQL:
 run workers as separate processes and turn them off in the web servers:
 
 ```sh
-uwubooru worker          # as many as you like, on any machine
+moekura worker          # as many as you like, on any machine
 ```
 
 ```toml

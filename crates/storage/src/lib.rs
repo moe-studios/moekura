@@ -12,6 +12,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
+use moekura_core::config::{StorageBackend, StorageConfig};
 pub use object_store::GetRange;
 use object_store::aws::AmazonS3Builder;
 use object_store::local::LocalFileSystem;
@@ -22,7 +23,6 @@ use object_store::{
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use url::Url;
-use uwu_core::config::{StorageBackend, StorageConfig};
 
 /// Files at most this large are uploaded in one request; larger ones in parts.
 const SINGLE_PUT_LIMIT: u64 = 16 * 1024 * 1024;
@@ -373,7 +373,8 @@ mod tests {
     const HASH: &str = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("uwu-storage-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("moekura-storage-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }

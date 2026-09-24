@@ -7,12 +7,12 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::context;
+use moekura_core::permissions::SystemRole;
+use moekura_core::settings::RegistrationMode;
+use moekura_db::accounts::{self, AuthError, CreateError, NewAccount};
+use moekura_db::invites;
+use moekura_db::users::UserStatus;
 use serde::Deserialize;
-use uwu_core::permissions::SystemRole;
-use uwu_core::settings::RegistrationMode;
-use uwu_db::accounts::{self, AuthError, CreateError, NewAccount};
-use uwu_db::invites;
-use uwu_db::users::UserStatus;
 
 use crate::AppState;
 use crate::auth::{self, RequestInfo};
@@ -296,10 +296,10 @@ async fn logout(State(state): State<AppState>, jar: CookieJar) -> Result<Respons
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_db::users::{self, UserStatus};
+    use moekura_db::{invites, settings};
     use serde_json::json;
     use sqlx::PgPool;
-    use uwu_db::users::{self, UserStatus};
-    use uwu_db::{invites, settings};
 
     use super::*;
     use crate::test_support::{TestApp, test_state};
@@ -346,7 +346,7 @@ mod tests {
         assert_eq!(safe_next(None), "/");
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn open_registration_logs_the_new_user_in(pool: PgPool) {
         let app = app(&pool).await;
         let form = format!("{}&next=%2Fsomewhere", signup("alice"));
@@ -362,7 +362,7 @@ mod tests {
         assert_eq!(user.status, UserStatus::Active);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn validation_errors_keep_input_but_not_passwords(pool: PgPool) {
         let app = app(&pool).await;
         let bad = form(&[
@@ -400,7 +400,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn approval_mode_creates_pending_accounts(pool: PgPool) {
         set_mode(&pool, "approval").await;
         let app = app(&pool).await;
@@ -424,7 +424,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn invite_mode_requires_a_working_code(pool: PgPool) {
         set_mode(&pool, "invite").await;
         let code = invites::create(
@@ -475,7 +475,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn closed_mode_refuses_registration(pool: PgPool) {
         set_mode(&pool, "closed").await;
         let app = app(&pool).await;
@@ -492,7 +492,7 @@ mod tests {
         assert!(!app.get("/", None).await.body.contains("href=\"/register\""));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn login_and_logout(pool: PgPool) {
         let app = app(&pool).await;
         app.post_form("/register", None, &[], &signup("alice"))
@@ -528,7 +528,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn login_page_keeps_next_for_registering(pool: PgPool) {
         let app = app(&pool).await;
         let response = app.get("/login?next=%2Fupload%3Fa%3D1", None).await;
@@ -543,7 +543,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn repeated_login_failures_are_rate_limited(pool: PgPool) {
         let app = app(&pool).await;
         let wrong = form(&[("name", "alice"), ("password", "wrong horse")]);
@@ -561,7 +561,7 @@ mod tests {
         assert!(limited.retry_after.is_some_and(|s| s >= 1));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn registration_is_limited_per_client_ip_behind_a_proxy(pool: PgPool) {
         let mut state = test_state(&pool).await;
         let mut config = (*state.config).clone();
@@ -596,7 +596,7 @@ mod tests {
         assert_eq!(ip, "198.51.100.1");
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn flash_messages_show_once(pool: PgPool) {
         let app = app(&pool).await;
         let response = app
@@ -605,7 +605,7 @@ mod tests {
         let flash_cookie = response
             .set_cookie
             .iter()
-            .find(|c| c.starts_with("uwu_flash="))
+            .find(|c| c.starts_with("moekura_flash="))
             .unwrap()
             .split(';')
             .next()
@@ -617,6 +617,10 @@ mod tests {
             "{}",
             page.body
         );
-        assert!(page.set_cookie.iter().any(|c| c.starts_with("uwu_flash=;")));
+        assert!(
+            page.set_cookie
+                .iter()
+                .any(|c| c.starts_with("moekura_flash=;"))
+        );
     }
 }

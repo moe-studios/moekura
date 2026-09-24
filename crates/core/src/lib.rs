@@ -1,4 +1,4 @@
-//! Domain types and pure logic for uwubooru.
+//! Domain types and pure logic for Moekura.
 //!
 //! Nothing in this crate performs IO; it is shared by the database, web and
 //! binary crates.

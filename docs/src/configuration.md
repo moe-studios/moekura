@@ -8,24 +8,24 @@ There are two kinds of settings:
 - **Site settings**, stored in the database and changed while the site
   runs: the site's name, registration, the approval queue, the default
   blacklist. Change them under **Admin → Settings** or with
-  `uwubooru admin settings`.
+  `moekura admin settings`.
 
 ## Where server configuration comes from
 
 Each layer overrides the one before:
 
 1. built-in defaults,
-2. `uwubooru.toml` in the working directory, or the file given with
-   `--config <path>` or `UWU_CONFIG`,
+2. `moekura.toml` in the working directory, or the file given with
+   `--config <path>` or `MOEKURA_CONFIG`,
 3. environment variables.
 
-Every key has an environment variable `UWU_<SECTION>__<KEY>` (two
-underscores), for example `UWU_DATABASE__URL` or
-`UWU_STORAGE__S3__BUCKET`. Lists are written as TOML, e.g.
-`UWU_SERVER__TRUSTED_PROXIES='["10.0.0.0/8"]'`. Unknown keys are refused, so
+Every key has an environment variable `MOEKURA_<SECTION>__<KEY>` (two
+underscores), for example `MOEKURA_DATABASE__URL` or
+`MOEKURA_STORAGE__S3__BUCKET`. Lists are written as TOML, e.g.
+`MOEKURA_SERVER__TRUSTED_PROXIES='["10.0.0.0/8"]'`. Unknown keys are refused, so
 a typo fails loudly instead of being ignored.
 
-`uwubooru check-config` validates the configuration and prints the result
+`moekura check-config` validates the configuration and prints the result
 with passwords redacted.
 
 ## `[server]`
@@ -47,7 +47,7 @@ with passwords redacted.
 | `min_connections` | `0` | |
 | `acquire_timeout_secs` | `5` | how long to wait for a free connection |
 | `statement_timeout_ms` | `30000` | server-side limit per statement; `0` for none |
-| `auto_migrate` | `true` | migrate on start; with several servers, set `false` and run `uwubooru migrate` when deploying |
+| `auto_migrate` | `true` | migrate on start; with several servers, set `false` and run `moekura migrate` when deploying |
 | `replica_max_lag_secs` | `10` | replicas further behind are skipped until they catch up; also how long someone's reads stay on the primary after they change something |
 
 ## `[auth]`
@@ -64,7 +64,7 @@ with passwords redacted.
 | `backend` | `"memory"` | where rate limit counters and cached search counts live: `"memory"` (each process on its own) or `"valkey"` (shared by every web server) |
 | `url` | *(unset)* | for `valkey`: `redis://host:6379`, or `rediss://` for TLS; Redis and other compatible servers work too |
 | `count_ttl_secs` | `30` | how long a search count that reached `search.count_limit` ("10,000+") is reused; `0` turns this off |
-| `prefix` | `"uwu"` | starts every key stored in Valkey; give sites that share a server different prefixes |
+| `prefix` | `"moekura"` | starts every key stored in Valkey; give sites that share a server different prefixes |
 
 If Valkey stops answering, each server counts rate limits on its own and
 stops caching until it's back, and logs a warning; nothing fails.
@@ -74,7 +74,7 @@ stops caching until it's back, and logs a warning; nothing fails.
 | Key | Default | Meaning |
 |---|---|---|
 | `workers` | `2` | background jobs processed at once, per process |
-| `run_in_serve` | `true` | also run workers inside `serve`; set `false` when you run `uwubooru worker` separately |
+| `run_in_serve` | `true` | also run workers inside `serve`; set `false` when you run `moekura worker` separately |
 | `lock_timeout_secs` | `300` | a job whose worker stopped responding is retried after this |
 
 ## `[search]`

@@ -43,8 +43,8 @@ pub fn is_api_path(path: &str) -> bool {
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "uwubooru API",
-        description = "Read and change a uwubooru site: search and upload posts, edit tags, \
+        title = "Moekura API",
+        description = "Read and change a Moekura site: search and upload posts, edit tags, \
                        moderate. Responses are JSON; errors look like \
                        `{\"error\": {\"status\": 404, \"message\": \"Not found\"}}`.\n\n\
                        Send an API key (created in your account settings) as \
@@ -213,7 +213,7 @@ mod tests {
 
     use crate::test_support::{TestApp, test_state};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn errors_are_json(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, super::routes(1024));
         let response = app.get("/api/v1/nope", None).await;
@@ -237,7 +237,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn serves_its_openapi_description(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, super::routes(1024));
         let response = app.get("/api/v1/openapi.json", None).await;
@@ -276,7 +276,7 @@ mod tests {
         }
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn renders_a_reference_page(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, super::routes(1024));
         let page = app.get("/api/docs", None).await;

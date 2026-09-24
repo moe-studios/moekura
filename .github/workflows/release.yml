@@ -116,18 +116,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --locked -p uwubooru
+      - run: cargo build --release --locked -p moekura
       - name: Package
         run: |
-          name="uwubooru-$GITHUB_REF_NAME-${{ matrix.target }}"
+          name="moekura-$GITHUB_REF_NAME-${{ matrix.target }}"
           mkdir "$name"
-          cp target/release/uwubooru LICENSE README.md CHANGELOG.md uwubooru.example.toml "$name/"
+          cp target/release/moekura LICENSE README.md CHANGELOG.md moekura.example.toml "$name/"
           tar czf "$name.tar.gz" "$name"
           sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
       - uses: actions/upload-artifact@v7
         with:
           name: binary-${{ matrix.target }}
-          path: uwubooru-*.tar.gz*
+          path: moekura-*.tar.gz*
 
   release:
     needs: [manifest, binaries]

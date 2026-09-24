@@ -28,7 +28,7 @@ impl NewToken {
 
 /// What every API key starts with, so secret scanners can recognise one
 /// that leaked.
-pub const API_KEY_PREFIX: &str = "uwu_";
+pub const API_KEY_PREFIX: &str = "mka_";
 
 impl NewToken {
     /// A token for an API key: [`API_KEY_PREFIX`] and 64 hex digits.
@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn api_keys_are_recognisable() {
         let key = NewToken::api_key();
-        assert!(key.token.starts_with("uwu_"));
+        assert!(key.token.starts_with("mka_"));
         assert_eq!(key.token.len(), 4 + 64);
         assert_eq!(hash_token(&key.token), key.hash);
     }

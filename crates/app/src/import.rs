@@ -1,16 +1,16 @@
-//! `uwubooru admin import`: a folder of files, with tags from sidecar
+//! `moekura admin import`: a folder of files, with tags from sidecar
 //! files, as posts.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
 use clap::Args;
-use uwu_core::config::Config;
-use uwu_core::import::{Sidecar, is_media, parse_json, parse_rating, parse_txt, sidecar_paths};
-use uwu_db::Db;
-use uwu_db::site_cache::SiteCache;
-use uwu_web::AppState;
-use uwu_web::import::{ImportFile, Imported, existing_post, import_file, usable_tags};
+use moekura_core::config::Config;
+use moekura_core::import::{Sidecar, is_media, parse_json, parse_rating, parse_txt, sidecar_paths};
+use moekura_db::Db;
+use moekura_db::site_cache::SiteCache;
+use moekura_web::AppState;
+use moekura_web::import::{ImportFile, Imported, existing_post, import_file, usable_tags};
 
 #[derive(Args)]
 pub struct ImportArgs {
@@ -94,7 +94,7 @@ pub async fn run(config: Config, db: &Db, args: ImportArgs) -> anyhow::Result<()
                 .ok_or_else(|| anyhow!("unknown rating {text:?}: use g, s, q or e"))?,
         ),
     };
-    let uploader = uwu_db::users::by_name(db.primary(), &args.uploader)
+    let uploader = moekura_db::users::by_name(db.primary(), &args.uploader)
         .await?
         .ok_or_else(|| anyhow!("there is no user called {:?}", args.uploader))?;
     let files = collect(&args.dir, args.recursive)
@@ -107,10 +107,10 @@ pub async fn run(config: Config, db: &Db, args: ImportArgs) -> anyhow::Result<()
     let site = SiteCache::load(db.primary())
         .await
         .context("could not load site settings")?;
-    let file_key = uwu_db::secrets::get_or_create(
+    let file_key = moekura_db::secrets::get_or_create(
         db.primary(),
         "file_urls",
-        uwu_core::tokens::NewToken::generate().hash,
+        moekura_core::tokens::NewToken::generate().hash,
     )
     .await
     .context("could not load the file URL key")?;
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn collects_media_and_reads_sidecars() {
-        let dir = std::env::temp_dir().join(format!("uwu-import-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moekura-import-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         std::fs::create_dir_all(dir.join(".hidden")).unwrap();
@@ -229,7 +229,7 @@ mod tests {
         let sidecar = read_sidecars(&dir.join("b.png")).unwrap();
         assert_eq!(sidecar.tags, ["cat", "dog"]);
         // The JSON sidecar's rating wins.
-        assert_eq!(sidecar.rating, Some(uwu_core::posts::Rating::Explicit));
+        assert_eq!(sidecar.rating, Some(moekura_core::posts::Rating::Explicit));
         assert_eq!(
             read_sidecars(&dir.join("sub/c.webm")).unwrap(),
             Sidecar::default()

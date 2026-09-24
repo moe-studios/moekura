@@ -2,12 +2,12 @@
 
 use std::path::{Path, PathBuf};
 
+use moekura_core::jobs::{ProcessMedia, PurgePost};
+use moekura_core::posts::PostStatus;
+use moekura_db::media::{self, Asset, Variant};
+use moekura_media::{Media, MediaError, MediaType};
+use moekura_storage::{Key, Storage};
 use sqlx::PgPool;
-use uwu_core::jobs::{ProcessMedia, PurgePost};
-use uwu_core::posts::PostStatus;
-use uwu_db::media::{self, Asset, Variant};
-use uwu_media::{Media, MediaError, MediaType};
-use uwu_storage::{Key, Storage};
 
 use crate::{JobError, Registry};
 
@@ -38,7 +38,7 @@ impl MediaJobs {
     /// missing files and a missing post are fine. A post restored in the
     /// meantime is left alone.
     pub async fn purge(&self, post_id: i64) -> Result<(), JobError> {
-        let Some(post) = uwu_db::posts::by_id(&self.db, post_id).await? else {
+        let Some(post) = moekura_db::posts::by_id(&self.db, post_id).await? else {
             return Ok(());
         };
         if post.status != PostStatus::Deleted {
@@ -60,7 +60,7 @@ impl MediaJobs {
                     .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
             }
         }
-        uwu_db::posts::delete(&self.db, post_id).await?;
+        moekura_db::posts::delete(&self.db, post_id).await?;
         tracing::info!(post_id, "post purged");
         Ok(())
     }
@@ -205,17 +205,17 @@ impl Drop for ScratchDir {
 mod tests {
     use std::process::Command;
 
-    use uwu_core::config::MediaConfig;
-    use uwu_core::posts::{PostStatus, Rating};
-    use uwu_db::media::NewAsset;
-    use uwu_db::posts::{self, NewPost};
+    use moekura_core::config::MediaConfig;
+    use moekura_core::posts::{PostStatus, Rating};
+    use moekura_db::media::NewAsset;
+    use moekura_db::posts::{self, NewPost};
 
     use super::*;
 
     const HASH: &str = "cafe0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab";
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("uwu-jobs-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moekura-jobs-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -287,7 +287,7 @@ mod tests {
             .collect()
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn large_images_get_thumbnails_and_a_sample(pool: PgPool) {
         let dir = scratch("image");
         let png = dir.join("big.png");
@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 3);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn videos_get_thumbnails_and_a_poster(pool: PgPool) {
         let dir = scratch("video");
         let webm = dir.join("clip.webm");
@@ -361,7 +361,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn purging_removes_files_then_the_post(pool: PgPool) {
         let dir = scratch("purge");
         let png = dir.join("p.png");
@@ -391,7 +391,7 @@ mod tests {
             assert!(!jobs.storage.exists(key).await.unwrap(), "{key}");
         }
         assert!(
-            uwu_db::posts::by_id(&pool, asset.post_id)
+            moekura_db::posts::by_id(&pool, asset.post_id)
                 .await
                 .unwrap()
                 .is_none()
@@ -400,7 +400,7 @@ mod tests {
         jobs.purge(asset.post_id).await.unwrap();
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn failures_are_classified(pool: PgPool) {
         let dir = scratch("failures");
         let broken = dir.join("broken.png");

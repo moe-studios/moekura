@@ -5,10 +5,10 @@ WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p uwubooru \
-    && cp target/release/uwubooru /usr/local/bin/uwubooru
+    cargo build --release --locked -p moekura \
+    && cp target/release/moekura /usr/local/bin/moekura
 
-# ffmpeg and libvips, built with only what uwubooru uses. Debian's packages
+# ffmpeg and libvips, built with only what Moekura uses. Debian's packages
 # pull in hundreds of megabytes it never touches (Mesa and LLVM through
 # ffmpeg's device support; ImageMagick, Poppler, HDF5, OpenEXR and more
 # through libvips).
@@ -85,17 +85,17 @@ RUN apt-get update \
         libwebp7 libwebpmux3 libwebpdemux2 libsharpyuv0 \
         libjxl0.11 libexif12 liblcms2-2 libhwy1t64 \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --home-dir /var/lib/uwubooru --create-home uwubooru \
-    && install -d -o uwubooru -g uwubooru /var/lib/uwubooru/data
+    && useradd --system --uid 10001 --home-dir /var/lib/moekura --create-home moekura \
+    && install -d -o moekura -g moekura /var/lib/moekura/data
 COPY --from=media /opt/media /usr/local
 # Fails the build if a library is missing.
 RUN ldconfig \
     && ! ldd /usr/local/bin/* /usr/local/lib/*.so | grep "not found"
-COPY --from=build /usr/local/bin/uwubooru /usr/local/bin/uwubooru
-USER uwubooru
-WORKDIR /var/lib/uwubooru
+COPY --from=build /usr/local/bin/moekura /usr/local/bin/moekura
+USER moekura
+WORKDIR /var/lib/moekura
 # Stored files (storage.path defaults to ./data); mount a volume here.
-VOLUME /var/lib/uwubooru/data
+VOLUME /var/lib/moekura/data
 EXPOSE 8080
-ENTRYPOINT ["uwubooru"]
+ENTRYPOINT ["moekura"]
 CMD ["serve"]

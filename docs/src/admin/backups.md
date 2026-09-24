@@ -7,19 +7,19 @@ is missing is not.
 ## The database
 
 ```sh
-pg_dump --format=custom --file=uwubooru-$(date +%F).dump uwu
+pg_dump --format=custom --file=moekura-$(date +%F).dump moekura
 # with compose:
-docker compose -f deploy/compose.tiny.yml exec -T db pg_dump -U uwu --format=custom uwu > uwubooru-$(date +%F).dump
+docker compose -f deploy/compose.tiny.yml exec -T db pg_dump -U moekura --format=custom moekura > moekura-$(date +%F).dump
 ```
 
-Restore into an empty database with `pg_restore --dbname=uwu FILE`.
+Restore into an empty database with `pg_restore --dbname=moekura FILE`.
 
 ## Files
 
 Files never change once written, so incremental copies are cheap:
 
 ```sh
-rsync -a /var/lib/uwubooru/data/ backup:/srv/uwubooru-data/
+rsync -a /var/lib/moekura/data/ backup:/srv/moekura-data/
 ```
 
 For S3 storage, use the provider's replication or versioning, or a tool

@@ -8,11 +8,11 @@ use axum::extract::connect_info::MockConnectInfo;
 use axum::http::header::{COOKIE, SET_COOKIE};
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
+use moekura_core::config::Config;
+use moekura_db::Db;
+use moekura_db::site_cache::SiteCache;
 use sqlx::PgPool;
 use tower::ServiceExt;
-use uwu_core::config::Config;
-use uwu_db::Db;
-use uwu_db::site_cache::SiteCache;
 
 use crate::auth::SESSION_COOKIE;
 use crate::{AppState, with_middleware};
@@ -22,7 +22,7 @@ use crate::{AppState, with_middleware};
 pub fn test_config() -> Config {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("uwu-web-test-{}-{n}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("moekura-web-test-{}-{n}", std::process::id()));
     let mut config = Config::default();
     config.storage.path = root.join("storage");
     config.media.work_dir = Some(root.join("work"));
@@ -108,7 +108,7 @@ impl TestApp {
         fields: &[(&str, String)],
         file: Option<(&str, &[u8])>,
     ) -> TestResponse {
-        const BOUNDARY: &str = "uwu-test-boundary";
+        const BOUNDARY: &str = "moekura-test-boundary";
         let mut body = Vec::new();
         for (name, value) in fields {
             let part = format!(
@@ -237,10 +237,10 @@ impl TestApp {
 pub async fn session_for(
     pool: &PgPool,
     name: &str,
-    role: uwu_core::permissions::SystemRole,
+    role: moekura_core::permissions::SystemRole,
 ) -> String {
-    use uwu_db::users::{NewUser, UserStatus};
-    let role_id = uwu_db::roles::by_system(pool, role).await.unwrap().id;
+    use moekura_db::users::{NewUser, UserStatus};
+    let role_id = moekura_db::roles::by_system(pool, role).await.unwrap().id;
     let new = NewUser {
         name,
         email: None,
@@ -248,17 +248,17 @@ pub async fn session_for(
         role_id,
         status: UserStatus::Active,
     };
-    let user = uwu_db::users::insert(pool, new).await.unwrap();
-    let session = uwu_db::sessions::NewSession {
+    let user = moekura_db::users::insert(pool, new).await.unwrap();
+    let session = moekura_db::sessions::NewSession {
         user_id: user.id,
         user_agent: None,
         ip: None,
     };
-    let lifetime = uwu_db::sessions::Lifetime {
+    let lifetime = moekura_db::sessions::Lifetime {
         idle: std::time::Duration::from_secs(3600),
         max: std::time::Duration::from_secs(3600),
     };
-    uwu_db::sessions::create(pool, session, lifetime)
+    moekura_db::sessions::create(pool, session, lifetime)
         .await
         .unwrap()
 }

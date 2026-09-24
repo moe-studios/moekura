@@ -4,5 +4,5 @@ frontend
 .github
 deploy
 *.md
-uwubooru.toml
+moekura.toml
 .env

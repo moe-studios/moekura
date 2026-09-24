@@ -7,12 +7,12 @@ use axum::routing::get;
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
+use moekura_core::blacklist::Blacklist;
+use moekura_core::permissions::Permission;
+use moekura_core::user_settings::{PER_PAGE_CHOICES, Theme, UserSettings};
+use moekura_db::users::{self, UserStatus};
+use moekura_db::{favorites, posts};
 use serde::Deserialize;
-use uwu_core::blacklist::Blacklist;
-use uwu_core::permissions::Permission;
-use uwu_core::user_settings::{PER_PAGE_CHOICES, Theme, UserSettings};
-use uwu_db::users::{self, UserStatus};
-use uwu_db::{favorites, posts};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -39,7 +39,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let staff =
         page.current.can(Permission::BanUsers) || page.current.can(Permission::ViewAuditLog);
     let ban_history = if staff {
-        uwu_db::bans::for_user(db, user.id).await?
+        moekura_db::bans::for_user(db, user.id).await?
     } else {
         Vec::new()
     };
@@ -156,14 +156,14 @@ async fn save_settings(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn profiles_and_settings(pool: PgPool) {
-        uwu_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
+        moekura_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
             .await
             .unwrap();
         let app = TestApp::new(

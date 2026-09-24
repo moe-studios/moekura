@@ -4,9 +4,9 @@
 
 use std::time::Duration;
 
+use moekura_core::tokens::{NewToken, hash_token};
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
-use uwu_core::tokens::{NewToken, hash_token};
 
 use crate::bans::ActiveBan;
 use crate::users::User;
@@ -167,8 +167,8 @@ pub async fn touch(db: impl PgExecutor<'_>, key_id: i64) -> sqlx::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use super::*;
     use crate::roles;
@@ -217,7 +217,7 @@ mod tests {
         let past = OffsetDateTime::now_utc() - time::Duration::hours(1);
         let expired = create(&pool, alice.id, "old", Some(past)).await.unwrap();
         assert!(lookup(&pool, &expired).await.unwrap().is_none());
-        assert!(lookup(&pool, "uwu_nonsense").await.unwrap().is_none());
+        assert!(lookup(&pool, "mka_nonsense").await.unwrap().is_none());
 
         let key = create(&pool, bob.id, "bot", None).await.unwrap();
         users::set_status(&pool, bob.id, UserStatus::Deactivated)

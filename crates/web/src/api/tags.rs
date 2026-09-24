@@ -3,12 +3,12 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use moekura_core::permissions::Permission;
+use moekura_db::tag_relations::{self, Kind, Relation, Status};
+use moekura_db::tags::{self, Category, ListOrder, Tag};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
-use uwu_core::permissions::Permission;
-use uwu_db::tag_relations::{self, Kind, Relation, Status};
-use uwu_db::tags::{self, Category, ListOrder, Tag};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -118,7 +118,7 @@ pub(crate) async fn list(
         TagOrder::Name => ListOrder::Name,
         TagOrder::Newest => ListOrder::Newest,
     };
-    let pattern = uwu_core::tags::normalize(&params.name);
+    let pattern = moekura_core::tags::normalize(&params.name);
     let mut found = tags::list(
         db,
         &pattern,
@@ -157,7 +157,7 @@ pub(crate) async fn show(
 ) -> Result<Json<ApiTag>, AppError> {
     current.require(Permission::ViewPosts)?;
     let db = state.reader(&current);
-    let tag = tags::by_name(db, &uwu_core::tags::normalize(&name))
+    let tag = tags::by_name(db, &moekura_core::tags::normalize(&name))
         .await?
         .ok_or(AppError::NotFound)?;
     let categories = tags::categories(db).await?;
@@ -319,7 +319,7 @@ pub(crate) async fn relations(
         db,
         params.kind.into(),
         params.status.map(Status::from),
-        &uwu_core::tags::normalize(&params.name),
+        &moekura_core::tags::normalize(&params.name),
         (number - 1) * PAGE_SIZE,
         PAGE_SIZE + 1,
     )
@@ -366,7 +366,7 @@ pub(crate) async fn update(
 ) -> Result<Json<ApiTag>, AppError> {
     current.require(Permission::ManageTags)?;
     let db = state.db.primary();
-    let tag = tags::by_name(db, &uwu_core::tags::normalize(&name))
+    let tag = tags::by_name(db, &moekura_core::tags::normalize(&name))
         .await?
         .ok_or(AppError::NotFound)?;
     let categories = tags::categories(db).await?;
@@ -436,14 +436,14 @@ pub(crate) async fn request(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use serde_json::json;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use crate::api::test_support::{app, json, upload};
     use crate::test_support::{fixture, session_for};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn lists_and_finds_tags(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -488,19 +488,19 @@ mod tests {
         assert_eq!(suggestions[0]["name"], json!("cat"));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn lists_relations(pool: PgPool) {
         let app = app(&pool).await;
         session_for(&pool, "alice", SystemRole::Member).await;
-        let alice_id = uwu_db::users::by_name(&pool, "alice")
+        let alice_id = moekura_db::users::by_name(&pool, "alice")
             .await
             .unwrap()
             .unwrap()
             .id;
-        uwu_db::tag_relations::request(
+        moekura_db::tag_relations::request(
             &pool,
-            uwu_db::tag_relations::NewRequest {
-                kind: uwu_db::tag_relations::Kind::Alias,
+            moekura_db::tag_relations::NewRequest {
+                kind: moekura_db::tag_relations::Kind::Alias,
                 antecedent: "kitty",
                 consequent: "cat",
                 reason: "same thing",
@@ -531,7 +531,7 @@ mod tests {
         assert_eq!(missing_kind.status, StatusCode::BAD_REQUEST);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn edits_tags_and_requests_relations(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;

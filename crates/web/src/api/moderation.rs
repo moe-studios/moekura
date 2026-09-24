@@ -4,13 +4,13 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
+use moekura_core::moderation::ActionKind;
+use moekura_core::permissions::Permission;
+use moekura_db::mod_actions::{self, Entry, Filter};
+use moekura_db::{bans, flags, users};
 use serde::{Deserialize, Serialize};
 use time::{Duration, OffsetDateTime};
 use utoipa::{IntoParams, ToSchema};
-use uwu_core::moderation::ActionKind;
-use uwu_core::permissions::Permission;
-use uwu_db::mod_actions::{self, Entry, Filter};
-use uwu_db::{bans, flags, users};
 
 use super::posts::{ApiPost, one};
 use super::tags::ApiRelation;
@@ -252,7 +252,7 @@ async fn decide(
     decision: Decision,
 ) -> Result<Json<ApiRelation>, AppError> {
     crate::tag_relations::decide(state, current, id, decision).await?;
-    let relation = uwu_db::tag_relations::by_id(state.db.primary(), id)
+    let relation = moekura_db::tag_relations::by_id(state.db.primary(), id)
         .await?
         .ok_or(AppError::NotFound)?;
     Ok(Json(relation.into()))
@@ -665,15 +665,15 @@ pub(crate) async fn log(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
+    use moekura_db::settings;
     use serde_json::json;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
-    use uwu_db::settings;
 
     use crate::api::test_support::{app, json, upload};
     use crate::test_support::{fixture, session_for};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn reviews_posts_and_flags(pool: PgPool) {
         settings::set(&pool, "upload_approval", json!(true))
             .await
@@ -800,7 +800,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn decides_relations(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -848,7 +848,7 @@ mod tests {
         assert_eq!(active.status, StatusCode::FORBIDDEN);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn bans_users_and_networks(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;

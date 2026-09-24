@@ -1,18 +1,18 @@
 # Development
 
-uwubooru is written in Rust, with pages rendered on the server and a little
+Moekura is written in Rust, with pages rendered on the server and a little
 TypeScript on top. The plan and roadmap are in
-[`docs/design.md`](https://github.com/uwuumoe/uwubooru/blob/main/docs/design.md).
+[`docs/design.md`](https://github.com/uwuumoe/moekura/blob/main/docs/design.md).
 
 You need Rust 1.94+, the [media tools](install/bare-metal.md), and a
 PostgreSQL server for the database tests:
 
 ```sh
-podman run -d --name uwu-pg -p 55432:5432 \
-  -e POSTGRES_USER=uwu -e POSTGRES_PASSWORD=uwu -e POSTGRES_DB=uwu \
+podman run -d --name moekura-pg -p 55432:5432 \
+  -e POSTGRES_USER=moekura -e POSTGRES_PASSWORD=moekura -e POSTGRES_DB=moekura \
   docker.io/library/postgres:18-alpine
 
-export DATABASE_URL=postgres://uwu:uwu@localhost:55432/uwu
+export DATABASE_URL=postgres://moekura:moekura@localhost:55432/moekura
 cargo test --workspace          # each database test gets its own database
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
@@ -63,7 +63,7 @@ crates/storage  file storage: local disk or S3
 crates/media    identifying and processing media with vips and ffmpeg
 crates/jobs     the job queue's workers and handlers
 crates/web      the HTTP server: pages, the API, middleware
-crates/app      the uwubooru binary: commands, configuration, logging
+crates/app      the moekura binary: commands, configuration, logging
 frontend/       TypeScript for the pages
 deploy/         compose files
 docs/           this book

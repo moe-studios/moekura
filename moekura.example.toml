@@ -1,11 +1,11 @@
-# uwubooru configuration
+# Moekura configuration
 #
-# Copy to uwubooru.toml (read from the working directory) or pass
+# Copy to moekura.toml (read from the working directory) or pass
 # --config <path>. Every key can also be set through the environment:
-# UWU_<SECTION>__<KEY>, e.g. UWU_DATABASE__URL. Environment variables win
+# MOEKURA_<SECTION>__<KEY>, e.g. MOEKURA_DATABASE__URL. Environment variables win
 # over this file. Values shown are the defaults unless noted.
 #
-# `uwubooru check-config` prints the effective settings.
+# `moekura check-config` prints the effective settings.
 
 [server]
 # Address the HTTP server listens on.
@@ -22,7 +22,7 @@ request_timeout_secs = 30
 
 [database]
 # Required. Connection URL of the primary.
-url = "postgres://uwu:CHANGE_ME@localhost/uwu"
+url = "postgres://moekura:CHANGE_ME@localhost/moekura"
 # Read replicas for search and listings. Leave empty to use the primary.
 replicas = []
 # Replicas further behind the primary than this are skipped until they
@@ -37,7 +37,7 @@ acquire_timeout_secs = 5
 # Server-side limit per statement in milliseconds; 0 disables it.
 statement_timeout_ms = 30000
 # Apply pending migrations when `serve` starts. For multi-node deployments,
-# set this to false and run `uwubooru migrate` as a release step.
+# set this to false and run `moekura migrate` as a release step.
 auto_migrate = true
 
 [auth]
@@ -58,13 +58,13 @@ backend = "memory"
 count_ttl_secs = 30
 # Starts every key stored in Valkey; give sites that share a server
 # different prefixes.
-prefix = "uwu"
+prefix = "moekura"
 
 [jobs]
 # Background jobs (thumbnails, hashing) processed concurrently per process.
 workers = 2
 # Also run workers inside `serve`. Set to false when you run separate
-# `uwubooru worker` processes.
+# `moekura worker` processes.
 run_in_serve = true
 # Seconds before a job whose worker stopped responding is retried elsewhere.
 lock_timeout_secs = 300
@@ -100,7 +100,7 @@ region = "us-east-1"
 # For MinIO, Garage, R2, B2 etc. Leave unset for AWS.
 # endpoint = "http://localhost:9000"
 # Leave empty to use AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY or instance
-# credentials. Prefer UWU_STORAGE__S3__SECRET_ACCESS_KEY over this file.
+# credentials. Prefer MOEKURA_STORAGE__S3__SECRET_ACCESS_KEY over this file.
 access_key_id = ""
 secret_access_key = ""
 # Put the bucket in the path (http://host/bucket/key); most self-hosted
@@ -124,7 +124,7 @@ sample_size = 1600
 variant_format = "webp"
 tool_timeout_secs = 120
 # Scratch space for uploads and processing; the system temp dir by default.
-# work_dir = "/var/tmp/uwubooru"
+# work_dir = "/var/tmp/moekura"
 
 [media.tools]
 # Paths to the media programs, if they are not on PATH.
@@ -137,8 +137,8 @@ ffprobe = "ffprobe"
 [paths]
 # Directories whose files replace built-in templates and static files with
 # the same relative path, e.g. <templates_override>/base.html. Unset by default.
-# templates_override = "/etc/uwubooru/templates"
-# static_override = "/etc/uwubooru/static"
+# templates_override = "/etc/moekura/templates"
+# static_override = "/etc/moekura/static"
 
 [telemetry]
 # "text" or "json".

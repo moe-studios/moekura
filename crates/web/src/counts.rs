@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use moekura_db::search::{Count, Plan, SearchError};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use uwu_db::search::{Count, Plan, SearchError};
 
 use crate::auth::CurrentUser;
 use crate::shared::Valkey;
@@ -116,10 +116,10 @@ impl CountCache {
 
 #[cfg(test)]
 mod tests {
-    use uwu_core::config::SearchConfig;
-    use uwu_core::posts::PostStatus;
-    use uwu_core::search::Query;
-    use uwu_db::posts::Visibility;
+    use moekura_core::config::SearchConfig;
+    use moekura_core::posts::PostStatus;
+    use moekura_core::search::Query;
+    use moekura_db::posts::Visibility;
 
     use super::*;
     use crate::test_support::test_state;
@@ -188,12 +188,12 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn reuses_counts_at_the_limit_in_memory(pool: PgPool) {
         check_reuse(&pool, CountCache::new(Duration::from_secs(60), None)).await;
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn reuses_counts_at_the_limit_in_valkey(pool: PgPool) {
         let Some(valkey) = crate::shared::tests::valkey().await else {
             eprintln!("skipping: TEST_VALKEY_URL not set");

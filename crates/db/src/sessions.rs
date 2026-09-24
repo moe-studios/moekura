@@ -8,9 +8,9 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
+use moekura_core::tokens::{NewToken, hash_token};
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
-use uwu_core::tokens::{NewToken, hash_token};
 
 use crate::bans::ActiveBan;
 use crate::users::User;
@@ -168,8 +168,8 @@ fn truncate(s: &str, max_bytes: usize) -> &str {
 
 #[cfg(test)]
 mod tests {
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use super::*;
     use crate::roles;

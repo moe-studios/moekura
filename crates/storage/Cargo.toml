@@ -1,6 +1,6 @@
 [package]
-name = "uwu-storage"
-description = "File storage (local disk, S3) for uwubooru"
+name = "moekura-storage"
+description = "File storage (local disk, S3) for Moekura"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-uwu-core.workspace = true
+moekura-core.workspace = true
 bytes.workspace = true
 futures-util.workspace = true
 object_store.workspace = true

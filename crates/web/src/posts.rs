@@ -6,17 +6,17 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use minijinja::{Value, context};
+use moekura_core::permissions::Permission;
+use moekura_core::posts::{PostStatus, Rating};
+use moekura_core::search::{Order, Query as SearchQuery};
+use moekura_core::user_settings::UserSettings;
+use moekura_db::media::{self, Variant};
+use moekura_db::posts::{self, Card, Post, Visibility};
+use moekura_db::search::{Count, PageRef, Plan, SearchError};
+use moekura_db::{tags, users};
+use moekura_storage::Key;
 use serde::Deserialize;
 use time::format_description::well_known::Rfc3339;
-use uwu_core::permissions::Permission;
-use uwu_core::posts::{PostStatus, Rating};
-use uwu_core::search::{Order, Query as SearchQuery};
-use uwu_core::user_settings::UserSettings;
-use uwu_db::media::{self, Variant};
-use uwu_db::posts::{self, Card, Post, Visibility};
-use uwu_db::search::{Count, PageRef, Plan, SearchError};
-use uwu_db::{tags, users};
-use uwu_storage::Key;
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -527,7 +527,7 @@ pub(crate) async fn render_post(
         None
     };
     let flag_history = if page.current.can(Permission::ApprovePosts) {
-        uwu_db::flags::for_post(db, id)
+        moekura_db::flags::for_post(db, id)
             .await?
             .into_iter()
             .map(|f| {
@@ -562,8 +562,8 @@ pub(crate) async fn render_post(
     let me = page.current.user.as_ref().map(|u| u.id);
     let (favorited, vote) = match me {
         Some(user) => (
-            uwu_db::favorites::exists(db, user, id).await?,
-            uwu_db::favorites::vote_of(db, user, id).await?,
+            moekura_db::favorites::exists(db, user, id).await?,
+            moekura_db::favorites::vote_of(db, user, id).await?,
         ),
         None => (false, 0),
     };
@@ -784,8 +784,8 @@ pub(crate) fn human_size(bytes: i64) -> String {
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use super::*;
     use crate::test_support::{TestApp, fixture, session_for, test_state};
@@ -902,7 +902,7 @@ mod tests {
             .unwrap()
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn grid_lists_posts_newest_first(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -932,7 +932,7 @@ mod tests {
         assert!(page.body.contains(&format!("href=\"/posts/{older}?q=")));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn post_page_shows_the_file_and_details(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -966,7 +966,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn post_page_groups_tags_by_category(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -989,7 +989,7 @@ mod tests {
         assert!(body.contains("href=\"/posts?tags=c%2B%2B\""), "{body}");
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn searching_by_tags(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
@@ -1046,9 +1046,9 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn blacklists_hide_posts(pool: PgPool) {
-        uwu_db::settings::set(
+        moekura_db::settings::set(
             &pool,
             "default_blacklist",
             serde_json::json!("rating:e\nkitty"),
@@ -1090,7 +1090,7 @@ mod tests {
         assert!(!shown.contains("matches your blacklist"));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn post_pages_list_similar_posts(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -1111,7 +1111,7 @@ mod tests {
             .await
             .unwrap();
         }
-        uwu_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
+        moekura_db::settings::set(&pool, "default_blacklist", serde_json::json!("rating:e"))
             .await
             .unwrap();
         let (app, _) = super::tests::app(&pool).await;
@@ -1125,7 +1125,7 @@ mod tests {
         assert!(page.contains(&format!("href=\"/posts?tags=similar%3A{a}\"")));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn stepping_through_a_search(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -1174,9 +1174,9 @@ mod tests {
         assert!(!by_score.contains("rel=\"next\""), "only id order steps");
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn pending_posts_are_hidden_from_others(pool: PgPool) {
-        uwu_db::settings::set(&pool, "upload_approval", serde_json::json!(true))
+        moekura_db::settings::set(&pool, "upload_approval", serde_json::json!(true))
             .await
             .unwrap();
         let (app, _) = app(&pool).await;

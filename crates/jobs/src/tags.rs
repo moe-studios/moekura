@@ -1,10 +1,10 @@
 //! The `tags.apply_relation` job: rewriting existing posts after a tag
 //! alias or implication is approved.
 
+use moekura_core::jobs::ApplyTagRelation;
+use moekura_db::tag_relations::{self, Kind, Status};
+use moekura_db::tags::{self, WantedTag};
 use sqlx::PgPool;
-use uwu_core::jobs::ApplyTagRelation;
-use uwu_db::tag_relations::{self, Kind, Status};
-use uwu_db::tags::{self, WantedTag};
 
 use crate::{JobError, Registry};
 
@@ -92,7 +92,7 @@ impl TagJobs {
 
 #[cfg(test)]
 mod tests {
-    use uwu_db::tag_relations::NewRequest;
+    use moekura_db::tag_relations::NewRequest;
 
     use super::*;
 
@@ -155,7 +155,7 @@ mod tests {
         id
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn aliases_and_implications_rewrite_posts(pool: PgPool) {
         let jobs = TagJobs { db: pool.clone() };
         let first = post(&pool, &["kitty", "cute"]).await;
@@ -173,7 +173,7 @@ mod tests {
 
         assert_eq!(tag_names(&pool, first).await, ["animal", "cat", "cute"]);
         // The rewrite shows in the post's history, credited to the alias.
-        let latest = uwu_db::post_versions::list(&pool, first)
+        let latest = moekura_db::post_versions::list(&pool, first)
             .await
             .unwrap()
             .remove(0);

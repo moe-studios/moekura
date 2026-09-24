@@ -8,11 +8,11 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
-use uwu_core::permissions::Permission;
-use uwu_core::posts::Rating;
-use uwu_db::post_versions::{self, Version};
-use uwu_db::posts::{self, PostEdit};
-use uwu_db::tags::{self, Tag, WantedTag};
+use moekura_core::permissions::Permission;
+use moekura_core::posts::Rating;
+use moekura_db::post_versions::{self, Version};
+use moekura_db::posts::{self, PostEdit};
+use moekura_db::tags::{self, Tag, WantedTag};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -169,12 +169,12 @@ async fn revert(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, fixture, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn history_shows_changes_and_reverts(pool: PgPool) {
         let state = test_state(&pool).await;
         let max = state.config.media.max_upload_mb * 1024 * 1024;
@@ -215,9 +215,9 @@ mod tests {
             .post(&format!("/posts/{id}/revert/1"), Some(&alice), &[])
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
-        let post = uwu_db::posts::by_id(&pool, id).await.unwrap().unwrap();
+        let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
         assert_eq!((post.rating.code(), post.source.as_str()), ("s", ""));
-        let versions = uwu_db::post_versions::list(&pool, id).await.unwrap();
+        let versions = moekura_db::post_versions::list(&pool, id).await.unwrap();
         assert_eq!(versions.len(), 3);
         assert_eq!(versions[0].updater_name.as_deref(), Some("alice"));
         assert_eq!(

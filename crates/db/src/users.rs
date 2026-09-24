@@ -21,7 +21,7 @@ pub struct User {
     pub status: UserStatus,
     pub created_at: OffsetDateTime,
     pub last_seen_at: Option<OffsetDateTime>,
-    /// Preferences as stored; read with `uwu_core::user_settings`.
+    /// Preferences as stored; read with `moekura_core::user_settings`.
     pub settings: serde_json::Value,
 }
 

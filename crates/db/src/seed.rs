@@ -1,4 +1,4 @@
-//! Synthetic posts for load testing (`uwubooru admin seed`).
+//! Synthetic posts for load testing (`moekura admin seed`).
 //!
 //! Everything is generated inside PostgreSQL with set-based statements, so
 //! millions of posts take minutes. Tags follow a Zipf distribution: a tag's
@@ -433,7 +433,7 @@ mod tests {
         assert!(tag_name(n * n + 1).ends_with("_1"));
         for rank in [1, 1000, n * n + 5] {
             assert!(
-                uwu_core::tags::TagName::parse(&tag_name(rank)).is_ok(),
+                moekura_core::tags::TagName::parse(&tag_name(rank)).is_ok(),
                 "{}",
                 tag_name(rank)
             );

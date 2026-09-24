@@ -6,17 +6,17 @@ use axum::Json;
 use axum::extract::{Multipart, Path, Query, State};
 use axum::http::header::LOCATION;
 use axum::http::{HeaderName, StatusCode};
+use moekura_core::permissions::Permission;
+use moekura_core::search::{Order, Query as SearchQuery};
+use moekura_db::media::{self, Asset, Variant};
+use moekura_db::posts::{self, Post};
+use moekura_db::search::{Count, PageRef, Plan, SearchError};
+use moekura_db::{post_versions, tags, users};
+use moekura_storage::Key;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
-use uwu_core::permissions::Permission;
-use uwu_core::search::{Order, Query as SearchQuery};
-use uwu_db::media::{self, Asset, Variant};
-use uwu_db::posts::{self, Post};
-use uwu_db::search::{Count, PageRef, Plan, SearchError};
-use uwu_db::{post_versions, tags, users};
-use uwu_storage::Key;
 
 use super::absolute_url;
 use crate::AppState;
@@ -642,7 +642,7 @@ pub(crate) async fn update(
             let removed: Vec<String> = changes
                 .remove_tags
                 .iter()
-                .map(|t| uwu_core::tags::normalize(t))
+                .map(|t| moekura_core::tags::normalize(t))
                 .collect();
             names
                 .iter()
@@ -691,7 +691,7 @@ pub(crate) async fn favorite(
 ) -> Result<Json<Reactions>, AppError> {
     let user = favorites::user_for(&state, &current, id, Permission::Favorite).await?;
     let db = state.db.primary();
-    uwu_db::favorites::add(db, user, id).await?;
+    moekura_db::favorites::add(db, user, id).await?;
     Ok(Json(favorites::reactions(db, id, user).await?))
 }
 
@@ -713,7 +713,7 @@ pub(crate) async fn unfavorite(
 ) -> Result<Json<Reactions>, AppError> {
     let user = favorites::user_for(&state, &current, id, Permission::Favorite).await?;
     let db = state.db.primary();
-    uwu_db::favorites::remove(db, user, id).await?;
+    moekura_db::favorites::remove(db, user, id).await?;
     Ok(Json(favorites::reactions(db, id, user).await?))
 }
 
@@ -786,15 +786,15 @@ pub(crate) async fn flag(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::{Permissions, SystemRole};
+    use moekura_db::settings;
     use serde_json::json;
     use sqlx::PgPool;
-    use uwu_core::permissions::{Permissions, SystemRole};
-    use uwu_db::settings;
 
     use crate::api::test_support::{app, json, upload};
     use crate::test_support::{fixture, session_for};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn searches_page_with_cursors(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -838,7 +838,7 @@ mod tests {
         assert_eq!(by_score["next"], json!("2"));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn posts_carry_tags_and_files(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -877,7 +877,7 @@ mod tests {
         assert_eq!(missing.status, StatusCode::NOT_FOUND);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn pending_posts_stay_hidden_from_others(pool: PgPool) {
         settings::set(&pool, "upload_approval", json!(true))
             .await
@@ -896,7 +896,7 @@ mod tests {
         assert_eq!(search["posts"], json!([]));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn bad_searches_and_private_sites(pool: PgPool) {
         let app = app(&pool).await;
         let response = app.get("/api/v1/posts?tags=score:abc", None).await;
@@ -924,7 +924,7 @@ mod tests {
         assert!(response.headers().get("location").is_none());
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn history_lists_changes(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -950,7 +950,7 @@ mod tests {
         assert_eq!(versions[1]["added"], json!(["cat", "cute"]));
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn uploads_through_the_api(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -1013,7 +1013,7 @@ mod tests {
         assert_eq!(visitor.status, StatusCode::UNAUTHORIZED);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn edits_through_the_api(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -1100,7 +1100,7 @@ mod tests {
         assert_eq!(visitor.status, StatusCode::UNAUTHORIZED);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn reactions_and_flags(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;

@@ -1,8 +1,11 @@
-# uwubooru
+# Moekura
 
 A self-hostable booru (tag-based image board) that scales from a private
 single-user instance to a public site with millions of posts, using the same
 binary and schema at every size.
+
+The name is *moe* (萌え) + *kura* (蔵, "storehouse" or "warehouse"): a
+storehouse for the things you love.
 
 > **Status: early development.** Uploads, tags and search, the post pages,
 > moderation, the admin panel and the API work; see
@@ -29,7 +32,7 @@ Some starting points:
 ```sh
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > deploy/.env
 docker compose -f deploy/compose.tiny.yml up -d
-docker compose -f deploy/compose.tiny.yml exec app uwubooru admin create-user yourname --role admin
+docker compose -f deploy/compose.tiny.yml exec app moekura admin create-user yourname --role admin
 ```
 
 Then open <http://localhost:8080> and log in.

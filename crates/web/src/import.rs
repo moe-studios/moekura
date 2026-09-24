@@ -1,12 +1,12 @@
-//! Importing files from disk as posts, for `uwubooru admin import`. Each
+//! Importing files from disk as posts, for `moekura admin import`. Each
 //! file goes through the same checks and steps as an upload.
 
 use std::path::Path;
 
+use moekura_core::posts::Rating;
+use moekura_core::tags::parse_input;
+use moekura_db::users::User;
 use tokio::io::AsyncReadExt;
-use uwu_core::posts::Rating;
-use uwu_core::tags::parse_input;
-use uwu_db::users::User;
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -35,7 +35,7 @@ pub enum Imported {
 /// that aren't, explained. Deprecated tags are refused later, by the
 /// upload itself.
 pub async fn usable_tags(state: &AppState, tags: &[String]) -> sqlx::Result<(String, Vec<String>)> {
-    let categories = uwu_db::tags::categories(state.db.primary()).await?;
+    let categories = moekura_db::tags::categories(state.db.primary()).await?;
     let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
     let (valid, invalid) = parse_input(&tags.join(" "), &names);
     let input = valid
@@ -109,25 +109,25 @@ pub async fn import_file(
 /// importing it.
 pub async fn existing_post(state: &AppState, path: &Path) -> Result<Option<i64>, String> {
     let received = receive(state, path).await?;
-    uwu_db::media::post_with_sha256(state.db.primary(), &received.sha256)
+    moekura_db::media::post_with_sha256(state.db.primary(), &received.sha256)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
+    use moekura_core::permissions::SystemRole;
+    use moekura_core::posts::PostStatus;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
-    use uwu_core::posts::PostStatus;
 
     use super::*;
     use crate::test_support::{fixture, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn imports_files_once(pool: PgPool) {
         let state = test_state(&pool).await;
         session_for(&pool, "alice", SystemRole::Member).await;
-        let alice = uwu_db::users::by_name(&pool, "alice")
+        let alice = moekura_db::users::by_name(&pool, "alice")
             .await
             .unwrap()
             .unwrap();
@@ -157,7 +157,7 @@ mod tests {
         let Imported::Created(id) = import_file(&state, &alice, file.clone()).await.unwrap() else {
             panic!("expected a new post");
         };
-        let post = uwu_db::posts::by_id(&pool, id).await.unwrap().unwrap();
+        let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
         assert_eq!(post.status, PostStatus::Active);
         assert_eq!(post.uploader_id, Some(alice.id));
         assert_eq!(post.rating, Rating::Questionable);

@@ -1,5 +1,5 @@
 //! A fixed suite of searches for measuring search at scale
-//! (`uwubooru admin bench`), and the checks CI runs on their plans.
+//! (`moekura admin bench`), and the checks CI runs on their plans.
 //!
 //! The suite adapts to the data: it picks the most common tags, a mid-range
 //! pair, a rare tag and so on from `tags`, so it means the same on any
@@ -10,11 +10,11 @@
 
 use std::time::{Duration, Instant};
 
+use moekura_core::config::SearchConfig;
+use moekura_core::posts::PostStatus;
+use moekura_core::search::Query;
 use serde_json::Value as Json;
 use sqlx::PgPool;
-use uwu_core::config::SearchConfig;
-use uwu_core::posts::PostStatus;
-use uwu_core::search::Query;
 
 use crate::posts::Visibility;
 use crate::search::{Count, PageRef, Plan, SearchError};

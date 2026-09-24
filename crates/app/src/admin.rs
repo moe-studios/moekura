@@ -1,4 +1,4 @@
-//! `uwubooru admin …`: account and settings management from the shell,
+//! `moekura admin …`: account and settings management from the shell,
 //! for bootstrapping an instance before anyone can log in.
 
 use std::io::{BufRead, IsTerminal};
@@ -6,15 +6,15 @@ use std::time::Duration;
 
 use anyhow::{Context, bail};
 use clap::Subcommand;
+use moekura_core::jobs::ProcessMedia;
+use moekura_core::moderation::ActionKind;
+use moekura_core::permissions::{Role, SystemRole};
+use moekura_db::accounts::{self, NewAccount};
+use moekura_db::mod_actions::{self, NewAction};
+use moekura_db::users::{self, User, UserStatus};
+use moekura_db::{invites, roles, settings};
 use serde_json::Value;
 use sqlx::PgPool;
-use uwu_core::jobs::ProcessMedia;
-use uwu_core::moderation::ActionKind;
-use uwu_core::permissions::{Role, SystemRole};
-use uwu_db::accounts::{self, NewAccount};
-use uwu_db::mod_actions::{self, NewAction};
-use uwu_db::users::{self, User, UserStatus};
-use uwu_db::{invites, roles, settings};
 
 #[derive(Subcommand)]
 pub enum AdminCommand {
@@ -103,10 +103,10 @@ pub enum SettingsAction {
 
 async fn seed_posts(
     db: &PgPool,
-    options: &uwu_db::seed::Options,
+    options: &moekura_db::seed::Options,
     force: bool,
 ) -> anyhow::Result<()> {
-    use uwu_db::seed;
+    use moekura_db::seed;
     let started = std::time::Instant::now();
     let plan = seed::prepare(db, options, force).await?;
     println!(
@@ -135,13 +135,13 @@ async fn seed_posts(
 
 async fn bench(
     db: &PgPool,
-    config: &uwu_core::config::SearchConfig,
+    config: &moekura_core::config::SearchConfig,
     runs: usize,
     check: bool,
     explain: Option<&str>,
 ) -> anyhow::Result<()> {
-    use uwu_db::bench;
-    use uwu_db::search::Count;
+    use moekura_db::bench;
+    use moekura_db::search::Count;
     let posts: i64 = sqlx::query_scalar("SELECT count(*) FROM posts")
         .fetch_one(db)
         .await?;
@@ -161,10 +161,10 @@ async fn bench(
             Count::AtLeast(n) => format!("{n}+"),
         };
         let page = match case.page {
-            uwu_db::search::PageRef::Number(1) => String::new(),
-            uwu_db::search::PageRef::Number(n) => format!(" (page {n})"),
-            uwu_db::search::PageRef::Before(id) => format!(" (page b{id})"),
-            uwu_db::search::PageRef::After(id) => format!(" (page a{id})"),
+            moekura_db::search::PageRef::Number(1) => String::new(),
+            moekura_db::search::PageRef::Number(n) => format!(" (page {n})"),
+            moekura_db::search::PageRef::Before(id) => format!(" (page b{id})"),
+            moekura_db::search::PageRef::After(id) => format!(" (page a{id})"),
         };
         println!(
             "{:<22} {:>8.1} {:>8.1} {:>8.1} {:>9} {:<8} {:>9}  {}{page}",
@@ -179,15 +179,15 @@ async fn bench(
         );
         problems.extend(bench::problem(&m, table));
         if explain.is_some_and(|name| case.name.contains(name)) {
-            let query = uwu_core::search::Query::parse(&case.query)?;
-            let visitor = uwu_db::posts::Visibility {
+            let query = moekura_core::search::Query::parse(&case.query)?;
+            let visitor = moekura_db::posts::Visibility {
                 statuses: vec![
-                    uwu_core::posts::PostStatus::Active,
-                    uwu_core::posts::PostStatus::Flagged,
+                    moekura_core::posts::PostStatus::Active,
+                    moekura_core::posts::PostStatus::Flagged,
                 ],
                 viewer: None,
             };
-            let plan = uwu_db::search::Plan::resolve(db, &query, &visitor, config).await?;
+            let plan = moekura_db::search::Plan::resolve(db, &query, &visitor, config).await?;
             println!("{}\n", plan.explain_text(db, case.page).await?);
         }
     }
@@ -202,7 +202,7 @@ async fn bench(
 
 pub async fn run(
     db: &PgPool,
-    config: &uwu_core::config::Config,
+    config: &moekura_core::config::Config,
     command: AdminCommand,
 ) -> anyhow::Result<()> {
     match command {
@@ -240,7 +240,7 @@ pub async fn run(
             batch,
             force,
         } => {
-            let options = uwu_db::seed::Options {
+            let options = moekura_db::seed::Options {
                 posts,
                 tags,
                 seed,
@@ -249,7 +249,7 @@ pub async fn run(
             seed_posts(db, &options, force).await?;
         }
         AdminCommand::RecountTags => {
-            let fixed = uwu_db::tags::recount(db).await?;
+            let fixed = moekura_db::tags::recount(db).await?;
             println!("corrected {fixed} tag count(s)");
         }
         AdminCommand::Settings { action: None } => {
@@ -311,12 +311,12 @@ pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Rol
 /// Queues processing for the given posts' files (all when `None`).
 /// Returns how many were queued.
 pub async fn regenerate_media(db: &PgPool, posts: Option<&[i64]>) -> anyhow::Result<usize> {
-    let asset_ids = uwu_db::media::asset_ids(db, posts).await?;
+    let asset_ids = moekura_db::media::asset_ids(db, posts).await?;
     // Batches keep each transaction short on large sites.
     for batch in asset_ids.chunks(1000) {
         let mut tx = db.begin().await?;
         for &asset_id in batch {
-            uwu_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
+            moekura_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
         }
         tx.commit().await?;
     }
@@ -362,7 +362,7 @@ mod tests {
 
     use super::*;
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn creates_admins_by_key_or_name(pool: PgPool) {
         let user = create_user(&pool, "catherine", "admin", None, "correct horse")
             .await
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(user.role_id, admin.id);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn reports_unknown_roles_and_users(pool: PgPool) {
         let err = create_user(&pool, "catherine", "wizard", None, "correct horse")
             .await
@@ -395,7 +395,7 @@ mod tests {
         assert!(err.to_string().contains("no user named nobody"), "{err}");
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn changes_roles(pool: PgPool) {
         create_user(&pool, "catherine", "member", None, "correct horse")
             .await
@@ -405,7 +405,7 @@ mod tests {
         assert_eq!(user.role_id, role.id);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn regenerates_selected_or_all_media(pool: PgPool) {
         // Two posts with files, straight into the tables.
         for n in 1..=2u8 {
@@ -431,7 +431,7 @@ mod tests {
             1
         );
         assert_eq!(regenerate_media(&pool, None).await.unwrap(), 2);
-        assert_eq!(uwu_db::jobs::counts(&pool).await.unwrap().queued, 3);
+        assert_eq!(moekura_db::jobs::counts(&pool).await.unwrap().queued, 3);
     }
 
     #[test]

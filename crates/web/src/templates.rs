@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn overrides_replace_templates_and_are_checked_at_load() {
-        let dir = std::env::temp_dir().join(format!("uwu-templates-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moekura-templates-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
         std::fs::write(dir.join("error.html"), "custom {{ status }}").unwrap();

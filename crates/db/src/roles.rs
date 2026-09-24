@@ -1,7 +1,7 @@
 //! Queries on `roles`.
 
+use moekura_core::permissions::{Permissions, Role, SystemRole};
 use sqlx::PgExecutor;
-use uwu_core::permissions::{Permissions, Role, SystemRole};
 
 #[derive(sqlx::FromRow)]
 struct RoleRow {

@@ -126,7 +126,7 @@ impl Fetcher {
     /// `allow_private` exists for tests against a local server; the app
     /// always passes false.
     pub fn new(timeout: Duration, allow_private: bool) -> Self {
-        uwu_storage::install_crypto_provider();
+        moekura_storage::install_crypto_provider();
         let policy = redirect::Policy::custom(move |attempt| {
             if attempt.previous().len() >= MAX_REDIRECTS {
                 return attempt.error("too many redirects");
@@ -143,7 +143,7 @@ impl Fetcher {
             .no_proxy()
             .connect_timeout(Duration::from_secs(10))
             .timeout(timeout)
-            .user_agent(concat!("uwubooru/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("moekura/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("the HTTP client configuration is valid");
         Self {
@@ -307,7 +307,7 @@ mod tests {
     }
 
     async fn fetch(fetcher: &Fetcher, url: &str) -> Result<TempUpload, UploadError> {
-        let dir = std::env::temp_dir().join(format!("uwu-fetch-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("moekura-fetch-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let writer = TempWriter::create(&dir).await.unwrap();
         fetcher

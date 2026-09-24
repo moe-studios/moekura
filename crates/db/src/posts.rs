@@ -1,8 +1,8 @@
 //! Queries on `posts`.
 
+use moekura_core::posts::{PostStatus, Rating};
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
-use uwu_core::posts::{PostStatus, Rating};
 
 pub struct NewPost<'a> {
     pub uploader_id: Option<i64>,

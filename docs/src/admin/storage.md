@@ -7,7 +7,7 @@ derived from the file's SHA-256, such as
 ## On disk
 
 The default. Files go under `storage.path` (`./data`, or
-`/var/lib/uwubooru/data` in the container image), and the app serves them
+`/var/lib/moekura/data` in the container image), and the app serves them
 under `/data/` with long cache lifetimes: a key never changes content.
 
 ## S3-compatible storage
@@ -20,10 +20,10 @@ R2, Backblaze B2.
 backend = "s3"
 
 [storage.s3]
-bucket = "uwubooru"
+bucket = "moekura"
 region = "auto"
 endpoint = "https://ACCOUNT.r2.cloudflarestorage.com"
-# Or UWU_STORAGE__S3__ACCESS_KEY_ID / UWU_STORAGE__S3__SECRET_ACCESS_KEY.
+# Or MOEKURA_STORAGE__S3__ACCESS_KEY_ID / MOEKURA_STORAGE__S3__SECRET_ACCESS_KEY.
 access_key_id = "…"
 secret_access_key = "…"
 # Most self-hosted stores need this.
@@ -60,7 +60,7 @@ For a CDN in front of a bucket:
   `cdn.example.com`), so uploaded files can never run as the site.
 
 Files stored by versions before 0.1 have no content type or caching
-headers of their own. `uwubooru admin regenerate-media --all` stores the
+headers of their own. `moekura admin regenerate-media --all` stores the
 thumbnails and samples again; the originals keep what they had, so give the
 CDN a default `Cache-Control`.
 
@@ -70,5 +70,5 @@ After changing thumbnail sizes, the sample size or the format under
 `[media]`, regenerate what's stored:
 
 ```sh
-uwubooru admin regenerate-media --all
+moekura admin regenerate-media --all
 ```

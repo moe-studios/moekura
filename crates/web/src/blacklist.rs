@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
+use moekura_core::blacklist::Blacklist;
+use moekura_core::posts::Rating;
+use moekura_core::user_settings::UserSettings;
+use moekura_db::{tag_relations, tags};
 use sqlx::PgPool;
-use uwu_core::blacklist::Blacklist;
-use uwu_core::posts::Rating;
-use uwu_core::user_settings::UserSettings;
-use uwu_db::{tag_relations, tags};
 
 use crate::AppState;
 use crate::auth::CurrentUser;

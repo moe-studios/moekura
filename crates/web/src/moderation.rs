@@ -6,18 +6,18 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
+use moekura_core::jobs::PurgePost;
+use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::REASON_MAX_LEN;
+use moekura_core::permissions::Permission;
+use moekura_core::posts::PostStatus;
+use moekura_db::flags::{self, FlagError};
+use moekura_db::mod_actions::NewAction;
+use moekura_db::mod_actions::{self, Entry, Filter};
+use moekura_db::users;
+use moekura_db::{jobs, posts, tags};
+use moekura_storage::Key;
 use serde::Deserialize;
-use uwu_core::jobs::PurgePost;
-use uwu_core::moderation::ActionKind;
-use uwu_core::moderation::REASON_MAX_LEN;
-use uwu_core::permissions::Permission;
-use uwu_core::posts::PostStatus;
-use uwu_db::flags::{self, FlagError};
-use uwu_db::mod_actions::NewAction;
-use uwu_db::mod_actions::{self, Entry, Filter};
-use uwu_db::users;
-use uwu_db::{jobs, posts, tags};
-use uwu_storage::Key;
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -491,14 +491,14 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::moderation::ActionKind;
+    use moekura_core::permissions::SystemRole;
+    use moekura_db::mod_actions::{self, NewAction};
     use sqlx::PgPool;
-    use uwu_core::moderation::ActionKind;
-    use uwu_core::permissions::SystemRole;
-    use uwu_db::mod_actions::{self, NewAction};
 
     use crate::test_support::{TestApp, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn delete_restore_and_purge(pool: PgPool) {
         let state = test_state(&pool).await;
         let max = state.config.media.max_upload_mb * 1024 * 1024;
@@ -523,7 +523,7 @@ mod tests {
             .parse()
             .unwrap();
         let count = || async {
-            uwu_db::tags::by_name(&pool, "cat")
+            moekura_db::tags::by_name(&pool, "cat")
                 .await
                 .unwrap()
                 .unwrap()
@@ -600,9 +600,9 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn the_approval_queue(pool: PgPool) {
-        uwu_db::settings::set(&pool, "upload_approval", serde_json::json!(true))
+        moekura_db::settings::set(&pool, "upload_approval", serde_json::json!(true))
             .await
             .unwrap();
         let state = test_state(&pool).await;
@@ -671,7 +671,7 @@ mod tests {
         assert_eq!(again.status, StatusCode::BAD_REQUEST);
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn flags_are_raised_and_settled(pool: PgPool) {
         let state = test_state(&pool).await;
         let max = state.config.media.max_upload_mb * 1024 * 1024;
@@ -778,7 +778,7 @@ mod tests {
         );
     }
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn the_log_is_for_moderators(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, super::routes());
         let member = session_for(&pool, "alice", SystemRole::Member).await;

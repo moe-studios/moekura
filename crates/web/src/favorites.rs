@@ -8,9 +8,9 @@ use axum::http::header::ACCEPT;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::post;
 use axum::{Form, Json, Router};
+use moekura_core::permissions::Permission;
+use moekura_db::{favorites, posts};
 use serde::{Deserialize, Serialize};
-use uwu_core::permissions::Permission;
-use uwu_db::{favorites, posts};
 
 use sqlx::PgPool;
 
@@ -151,12 +151,12 @@ async fn vote(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
-    use uwu_core::permissions::SystemRole;
 
     use crate::test_support::{TestApp, session_for, test_state};
 
-    #[sqlx::test(migrator = "uwu_db::MIGRATOR")]
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn favorites_and_votes(pool: PgPool) {
         let app = TestApp::new(
             test_state(&pool).await,

@@ -6,7 +6,7 @@
 use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 
-pub const COOKIE: &str = "uwu_flash";
+pub const COOKIE: &str = "moekura_flash";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flash {

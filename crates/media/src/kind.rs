@@ -209,6 +209,6 @@ mod tests {
     #[test]
     fn search_knows_every_type() {
         let names: Vec<&str> = MediaType::ALL.iter().map(|t| t.name()).collect();
-        assert_eq!(names, uwu_core::search::FILETYPES);
+        assert_eq!(names, moekura_core::search::FILETYPES);
     }
 }

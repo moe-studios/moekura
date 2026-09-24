@@ -270,8 +270,8 @@ pub fn phash_chunks(hash: u64) -> [i16; 4] {
 
 #[cfg(test)]
 mod tests {
+    use moekura_core::posts::{PostStatus, Rating};
     use sqlx::PgPool;
-    use uwu_core::posts::{PostStatus, Rating};
 
     use super::*;
     use crate::posts::{self, NewPost};

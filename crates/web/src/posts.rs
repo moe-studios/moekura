@@ -803,6 +803,10 @@ pub(crate) async fn render_post(
             reactions => reactions,
             comments => comments,
             notes => notes,
+            can_edit_notes => !video
+                && page.current.is_logged_in()
+                && page.current.can(Permission::EditNotes)
+                && post.status != PostStatus::Deleted,
             pools => pools,
             favorite_groups => favorite_groups,
             edit => edit,

@@ -50,6 +50,8 @@ export function enableNotes(root: Document = document): void {
     shown = null;
   };
   const show = (rect: SVGRectElement) => {
+    // The editor has its own form.
+    if (layer.classList.contains("editing-notes")) return;
     const text = root.querySelector(`[data-note-text="${rect.dataset["note"]}"] .markup`);
     if (!text) return;
     shown?.classList.remove("active");

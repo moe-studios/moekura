@@ -529,7 +529,14 @@ tr.is-deleted td { opacity: 0.6; }
 .note-popup .markup > :last-child { margin-bottom: 0; }
 .note-list { margin-top: 8px; }
 .note-list ol { margin: 8px 0 0; padding-left: 24px; }
-.note-toggle { margin-top: 6px; }
+.note-toggle { margin: 6px 6px 0 0; }
+.editing-notes .notes { pointer-events: all; cursor: crosshair; touch-action: none; }
+.editing-notes .note-box { cursor: move; fill: rgb(255 255 238 / 0.4); stroke: var(--accent); stroke-width: 2; }
+.note-box.draft { fill: rgb(255 255 238 / 0.3); stroke: var(--accent); stroke-dasharray: 4 3; }
+.note-form { max-width: 480px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.note-form textarea { width: 100%; }
+.note-form .actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.note-form[hidden], .note-popup[hidden] { display: none; }
 
 /* Votes and favorites */
 

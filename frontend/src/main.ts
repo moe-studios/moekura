@@ -3,6 +3,7 @@
 
 import { attachAll } from "./autocomplete.ts";
 import { enableShortcuts } from "./keyboard.ts";
+import { enableNoteEditor } from "./note-editor.ts";
 import { enableNotes } from "./notes.ts";
 import { enablePoolOrder } from "./pool-order.ts";
 import { enhanceReactions } from "./reactions.ts";
@@ -17,3 +18,4 @@ enableShortcuts();
 enablePoolOrder();
 enableReader();
 enableNotes();
+enableNoteEditor();

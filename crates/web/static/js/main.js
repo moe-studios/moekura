@@ -406,6 +406,201 @@ function enableShortcuts() {
   });
 }
 
+// src/note-editor.ts
+function boxBetween(a, b, width, height) {
+  const clamp = (v, max) => Math.min(Math.max(Math.round(v), 0), max);
+  const [x1, x2] = [clamp(Math.min(a.x, b.x), width), clamp(Math.max(a.x, b.x), width)];
+  const [y1, y2] = [clamp(Math.min(a.y, b.y), height), clamp(Math.max(a.y, b.y), height)];
+  return { x: x1, y: y1, width: x2 - x1, height: y2 - y1 };
+}
+function moved(box, dx, dy, width, height) {
+  const x = Math.min(Math.max(Math.round(box.x + dx), 0), Math.max(width - box.width, 0));
+  const y = Math.min(Math.max(Math.round(box.y + dy), 0), Math.max(height - box.height, 0));
+  return { ...box, x, y };
+}
+function resized(box, dx, dy, width, height) {
+  const w = Math.min(Math.max(Math.round(box.width + dx), 1), width - box.x);
+  const h = Math.min(Math.max(Math.round(box.height + dy), 1), height - box.y);
+  return { ...box, width: w, height: h };
+}
+var MIN_DRAG = 4;
+var HANDLE = 12;
+async function send(method, url, body) {
+  const init = {
+    method,
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credentials: "same-origin"
+  };
+  if (body !== void 0) init.body = JSON.stringify(body);
+  const response = await fetch(url, init);
+  if (response.ok) return null;
+  try {
+    const error = await response.json();
+    return error.error?.message ?? `Error ${response.status}`;
+  } catch {
+    return `Error ${response.status}`;
+  }
+}
+function enableNoteEditor(root = document) {
+  const layer = root.querySelector("[data-notes-editable]");
+  const svg = layer?.querySelector("svg.notes");
+  const post = layer?.dataset["post"];
+  if (!layer || !svg || !post) return;
+  const [, , width, height] = (svg.getAttribute("viewBox") ?? "0 0 1 1").split(" ").map(Number);
+  const toImage = (event) => {
+    const box = svg.getBoundingClientRect();
+    return {
+      x: (event.clientX - box.left) / box.width * width,
+      y: (event.clientY - box.top) / box.height * height
+    };
+  };
+  const scale = () => svg.getBoundingClientRect().width / width;
+  const toggle = root.createElement("button");
+  toggle.type = "button";
+  toggle.className = "secondary note-toggle";
+  toggle.textContent = "Edit notes";
+  toggle.setAttribute("aria-pressed", "false");
+  (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
+  toggle.addEventListener("click", () => {
+    const on = !layer.classList.contains("editing-notes");
+    layer.classList.toggle("editing-notes", on);
+    layer.classList.remove("notes-hidden");
+    toggle.setAttribute("aria-pressed", String(on));
+    toggle.textContent = on ? "Done editing notes" : "Edit notes";
+    if (!on) closeForm();
+  });
+  const form = root.createElement("form");
+  form.className = "note-form";
+  form.hidden = true;
+  form.innerHTML = `
+    <label for="note-body">Note</label>
+    <textarea id="note-body" rows="4" maxlength="10000" required></textarea>
+    <p class="form-error" role="alert" hidden></p>
+    <div class="actions">
+      <button type="submit">Save</button>
+      <button type="button" class="secondary" data-cancel>Cancel</button>
+      <button type="button" class="danger" data-delete>Delete</button>
+    </div>`;
+  toggle.after(form);
+  const text = form.querySelector("textarea");
+  const error = form.querySelector(".form-error");
+  const deleteButton = form.querySelector("[data-delete]");
+  let editing = null;
+  let draft = null;
+  function closeForm() {
+    form.hidden = true;
+    editing = null;
+    draft?.remove();
+    draft = null;
+  }
+  const openForm = (target2) => {
+    editing = target2;
+    text.value = target2.body ?? "";
+    error.hidden = true;
+    deleteButton.hidden = target2.id === void 0;
+    form.hidden = false;
+    text.focus();
+  };
+  const done = (message) => {
+    if (message === null) {
+      window.location.reload();
+    } else {
+      error.textContent = message;
+      error.hidden = false;
+    }
+  };
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!editing) return;
+    const body = text.value;
+    if (editing.id === void 0) {
+      void send("POST", `/api/v1/posts/${post}/notes`, { ...editing.box, body }).then(done);
+    } else {
+      void send("PUT", `/api/v1/notes/${editing.id}`, { body, base_version: Number(editing.version) }).then(done);
+    }
+  });
+  form.querySelector("[data-cancel]").addEventListener("click", closeForm);
+  deleteButton.addEventListener("click", () => {
+    if (!editing?.id) return;
+    void send("DELETE", `/api/v1/notes/${editing.id}?base_version=${editing.version}`).then(done);
+  });
+  const boxOf = (rect) => ({
+    x: Number(rect.getAttribute("x")),
+    y: Number(rect.getAttribute("y")),
+    width: Number(rect.getAttribute("width")),
+    height: Number(rect.getAttribute("height"))
+  });
+  const draw = (rect, box) => {
+    rect.setAttribute("x", String(box.x));
+    rect.setAttribute("y", String(box.y));
+    rect.setAttribute("width", String(box.width));
+    rect.setAttribute("height", String(box.height));
+  };
+  svg.addEventListener("pointerdown", (event) => {
+    if (!layer.classList.contains("editing-notes") || event.button !== 0) return;
+    event.preventDefault();
+    svg.setPointerCapture(event.pointerId);
+    const start = toImage(event);
+    const target2 = event.target.closest("rect.note-box");
+    let mode;
+    let original;
+    let rect;
+    if (target2 && !target2.classList.contains("draft")) {
+      rect = target2;
+      original = boxOf(rect);
+      const corner = { x: original.x + original.width, y: original.y + original.height };
+      const near = Math.hypot(corner.x - start.x, corner.y - start.y) * scale() < HANDLE;
+      mode = near ? "resize" : "move";
+    } else {
+      closeForm();
+      mode = "draw";
+      original = { x: start.x, y: start.y, width: 0, height: 0 };
+      rect = root.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("class", "note-box draft");
+      rect.setAttribute("vector-effect", "non-scaling-stroke");
+      svg.append(rect);
+      draft = rect;
+    }
+    let current = original;
+    let dragged = false;
+    const onMove = (move) => {
+      const at = toImage(move);
+      const [dx, dy] = [at.x - start.x, at.y - start.y];
+      if (Math.hypot(dx, dy) * scale() >= MIN_DRAG) dragged = true;
+      if (!dragged) return;
+      current = mode === "draw" ? boxBetween(start, at, width, height) : mode === "move" ? moved(original, dx, dy, width, height) : resized(original, dx, dy, width, height);
+      draw(rect, current);
+    };
+    const onUp = () => {
+      svg.removeEventListener("pointermove", onMove);
+      svg.removeEventListener("pointerup", onUp);
+      svg.removeEventListener("pointercancel", onUp);
+      if (mode === "draw") {
+        if (dragged && current.width > 0 && current.height > 0) openForm({ box: current });
+        else closeForm();
+        return;
+      }
+      const id = rect.dataset["note"];
+      const version = rect.dataset["version"];
+      if (!dragged) {
+        openForm({ id, version, body: rect.dataset["body"], box: original });
+        return;
+      }
+      void send("PUT", `/api/v1/notes/${id}`, { ...current, base_version: Number(version) }).then((message) => {
+        if (message === null) {
+          window.location.reload();
+        } else {
+          draw(rect, original);
+          window.alert(message);
+        }
+      });
+    };
+    svg.addEventListener("pointermove", onMove);
+    svg.addEventListener("pointerup", onUp);
+    svg.addEventListener("pointercancel", onUp);
+  });
+}
+
 // src/notes.ts
 var HIDDEN_KEY = "moekura:notes-hidden";
 function remembered() {
@@ -442,6 +637,7 @@ function enableNotes(root = document) {
     shown = null;
   };
   const show = (rect) => {
+    if (layer.classList.contains("editing-notes")) return;
     const text = root.querySelector(`[data-note-text="${rect.dataset["note"]}"] .markup`);
     if (!text) return;
     shown?.classList.remove("active");
@@ -500,11 +696,11 @@ function enableNotes(root = document) {
 }
 
 // src/pool-order.ts
-function reorder(ids, moved, before) {
-  const rest = ids.filter((id) => id !== moved);
+function reorder(ids, moved2, before) {
+  const rest = ids.filter((id) => id !== moved2);
   const at = before === null ? -1 : rest.indexOf(before);
-  if (at < 0) return [...rest, moved];
-  return [...rest.slice(0, at), moved, ...rest.slice(at)];
+  if (at < 0) return [...rest, moved2];
+  return [...rest.slice(0, at), moved2, ...rest.slice(at)];
 }
 function enablePoolOrder(root = document) {
   const list = root.querySelector("[data-pool-order]");
@@ -536,10 +732,10 @@ function enablePoolOrder(root = document) {
   list.addEventListener("drop", (event) => {
     event.preventDefault();
     if (!dragged) return;
-    const moved = dragged.dataset["id"] ?? "";
+    const moved2 = dragged.dataset["id"] ?? "";
     const next = dragged.nextElementSibling;
     const ids = field.value.split(/[\s,]+/).filter((id) => id !== "").map((id) => id.replace(/^#/, ""));
-    field.value = reorder(ids, moved, next?.dataset["id"] ?? null).join(" ");
+    field.value = reorder(ids, moved2, next?.dataset["id"] ?? null).join(" ");
   });
 }
 
@@ -644,3 +840,4 @@ enableShortcuts();
 enablePoolOrder();
 enableReader();
 enableNotes();
+enableNoteEditor();

@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::notes::{MAX_LEN, NoteBox};
+use moekura_core::notes::{MAX_LEN, MAX_PER_POST, NoteBox};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
 use moekura_db::notes::{self, Changes, Note, SaveError};
@@ -91,6 +91,28 @@ pub(crate) fn fit(note_box: NoteBox, width: i32, height: i32) -> Result<NoteBox,
     note_box
         .fit(width, height)
         .map_err(|e| AppError::Unprocessable(e.to_string()))
+}
+
+/// Adds a note to post `post_id` as `current`, checking everything.
+pub(crate) async fn create(
+    state: &AppState,
+    current: &CurrentUser,
+    post_id: i64,
+    note_box: NoteBox,
+    body: &str,
+) -> Result<i64, AppError> {
+    let (post, width, height) = visible_post(state, current, post_id).await?;
+    check_editor(current, &post)?;
+    let body = clean_body(body)?;
+    let note_box = fit(note_box, width, height)?;
+    let db = state.db.primary();
+    if post.note_count as usize >= MAX_PER_POST {
+        return Err(AppError::Unprocessable(format!(
+            "A post can have at most {MAX_PER_POST} notes."
+        )));
+    }
+    let user = current.user.as_ref().map(|u| u.id);
+    Ok(notes::create(db, post_id, note_box, &body, user).await?)
 }
 
 pub(crate) fn conflict() -> AppError {

@@ -25,13 +25,13 @@
     <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
            width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
     {% else %}
-    <div class="note-layer" data-notes>
+    <div class="note-layer" data-notes{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
       <a href="{{ file.original }}">
         <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">
       </a>
-      {% if notes %}
+      {% if notes or can_edit_notes %}
       <svg class="notes" viewBox="0 0 {{ file.width }} {{ file.height }}" preserveAspectRatio="none" aria-hidden="true">
-        {% for n in notes %}<rect class="note-box" data-note="{{ n.id }}" x="{{ n.x }}" y="{{ n.y }}" width="{{ n.width }}" height="{{ n.height }}" vector-effect="non-scaling-stroke"><title>{{ n.body }}</title></rect>{% endfor %}
+        {% for n in notes %}<rect class="note-box" data-note="{{ n.id }}" data-version="{{ n.version }}" data-body="{{ n.body }}" x="{{ n.x }}" y="{{ n.y }}" width="{{ n.width }}" height="{{ n.height }}" vector-effect="non-scaling-stroke"><title>{{ n.body }}</title></rect>{% endfor %}
       </svg>
       {% endif %}
     </div>

@@ -5,6 +5,8 @@ documents its own version of the API at `/api/docs`, generated from the
 code, and serves the OpenAPI description at `/api/v1/openapi.json` for
 generating clients (`moekura openapi` prints it too).
 
+Apps made for Danbooru can use the site too; see [Danbooru apps](using/danbooru-clients.md).
+
 ## Authenticating
 
 Create a key under **Settings → API keys** and send it with each request:

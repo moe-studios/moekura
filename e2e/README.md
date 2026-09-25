@@ -18,3 +18,8 @@ E2E_ADMIN_NAME=boss E2E_ADMIN_PASSWORD="e2e admin password" npx playwright test
 ```
 
 `BASE_URL` points them elsewhere than `http://localhost:8080`.
+
+`clients/gallery-dl.sh` checks the [Danbooru API](../docs/src/using/danbooru-clients.md)
+with gallery-dl, against the same site and admin (`BASE_URL`,
+`E2E_ADMIN_NAME`, `E2E_ADMIN_PASSWORD`); it needs `gallery-dl` and
+`python3`.

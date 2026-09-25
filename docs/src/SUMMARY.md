@@ -30,6 +30,7 @@
 - [Tags](using/tags.md)
 - [The wiki](using/wiki.md)
 - [The API](api.md)
+- [Danbooru apps](using/danbooru-clients.md)
 
 # Contributing
 

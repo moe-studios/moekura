@@ -11,6 +11,7 @@ mod bans;
 mod blacklist;
 mod client_ip;
 mod counts;
+mod danbooru;
 mod edit;
 mod email;
 pub mod error;
@@ -208,6 +209,7 @@ pub fn router(state: AppState) -> Router {
     let routes = posts::routes()
         .merge(api::routes(max_upload_bytes))
         .merge(api_keys::routes())
+        .merge(danbooru::routes())
         .merge(account::routes())
         .merge(admin::routes())
         .merge(bans::routes())
@@ -263,7 +265,7 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
             HeaderValue::from_static("strict-origin-when-cross-origin"),
         ));
 
-    routes
+    let routes = routes
         .fallback(error::not_found)
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -284,7 +286,10 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .route("/static/{*path}", get(assets::serve))
         .route("/data/{*key}", get(files::serve))
         .layer(middleware)
-        .with_state(state)
+        .with_state(state);
+    // Before routing, which layers on the router run after.
+    let danbooru_urls = tower::util::MapRequestLayer::new(danbooru::rewrite);
+    Router::new().fallback_service(tower::Layer::layer(&danbooru_urls, routes))
 }
 
 fn request_span<B>(request: &Request<B>) -> Span {

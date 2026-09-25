@@ -174,6 +174,33 @@ pub async fn resolve_session(
     mut request: Request,
     next: Next,
 ) -> Response {
+    // Danbooru clients send a name and API key their own way.
+    if request
+        .extensions()
+        .get::<crate::danbooru::DanbooruRequest>()
+        .is_some()
+        && let Some((name, key)) = crate::danbooru::credentials(&request)
+    {
+        let current = match key_user(&state, &key).await {
+            Ok(Some(current))
+                if current
+                    .user
+                    .as_ref()
+                    .is_some_and(|u| u.name.eq_ignore_ascii_case(&name)) =>
+            {
+                current
+            }
+            Ok(_) => {
+                return crate::danbooru::error(
+                    StatusCode::UNAUTHORIZED,
+                    "The name or API key is wrong, or the key was revoked or expired",
+                );
+            }
+            Err(error) => return AppError::from(error).into_response(),
+        };
+        request.extensions_mut().insert(current);
+        return next.run(request).await;
+    }
     if let Some(token) = bearer_token(request.headers()) {
         let current = match key_user(&state, token).await {
             Ok(Some(current)) => current,

@@ -176,6 +176,22 @@ impl TestApp {
         self.post_form(path, session, headers, "").await
     }
 
+    /// A form body sent with any method (`PUT`, `PATCH`, …).
+    pub async fn form(
+        &self,
+        method: &str,
+        path: &str,
+        session: Option<&str>,
+        form: &str,
+    ) -> TestResponse {
+        let builder = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/x-www-form-urlencoded");
+        self.send(builder, session, Body::from(form.to_owned()))
+            .await
+    }
+
     pub async fn post_form(
         &self,
         path: &str,

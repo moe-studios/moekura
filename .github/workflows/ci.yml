@@ -161,6 +161,10 @@ jobs:
           npm run check
           npx playwright install --with-deps chromium
           npx playwright test
+      - name: Danbooru clients (gallery-dl)
+        run: |
+          pipx install gallery-dl==1.32.13
+          e2e/clients/gallery-dl.sh
       - name: Server logs
         if: failure()
         run: docker compose -f deploy/compose.tiny.yml logs app

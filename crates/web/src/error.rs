@@ -112,6 +112,9 @@ pub async fn render_errors(
     if crate::api::is_api_path(request.uri().path()) {
         return json_error(next.run(request).await).await;
     }
+    if crate::danbooru::is_danbooru_path(request.uri().path()) {
+        return crate::danbooru::error_response(next.run(request).await).await;
+    }
     let current = request.extensions().get::<CurrentUser>().cloned();
     let is_get = request.method() == Method::GET;
     let target = request

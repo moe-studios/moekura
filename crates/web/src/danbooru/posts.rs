@@ -290,7 +290,7 @@ struct SearchParams {
 }
 
 /// The posts matching `tags`, on `page`, at most `limit`.
-async fn find(
+pub(super) async fn find(
     state: &AppState,
     current: &CurrentUser,
     tags: &str,

@@ -362,11 +362,13 @@ fn file_url(state: &AppState, key: &str) -> Option<Value> {
 }
 
 /// Grid cards for posts `ids` (their ids and contexts, in order), leaving
-/// out posts the viewer's blacklist hides.
+/// out posts the viewer's blacklist hides. `post_query` is added to the
+/// post links, as for [`card_context`].
 pub(crate) async fn grid(
     page: &Page,
     db: &sqlx::PgPool,
     ids: &[i64],
+    post_query: Option<&str>,
 ) -> Result<Vec<(i64, Value)>, AppError> {
     let state = page.state();
     let sizes = &state.media.config().thumbnail_sizes;
@@ -385,8 +387,58 @@ pub(crate) async fn grid(
                 list.matching(rating, &card.tag_ids).is_none()
             })
         })
-        .map(|card| (card.id, card_context(state, card, box_size, None)))
+        .map(|card| (card.id, card_context(state, card, box_size, post_query)))
         .collect())
+}
+
+/// Posts `ids` as a reader shows them: the resized sample of stills, the
+/// original of animations and videos, in order. Posts the viewer's
+/// blacklist hides come without a file.
+pub(crate) async fn displays(
+    page: &Page,
+    db: &sqlx::PgPool,
+    ids: &[i64],
+) -> Result<Vec<Value>, AppError> {
+    let state = page.state();
+    let found = posts::by_ids(db, ids).await?;
+    let assets = media::for_posts(db, ids).await?;
+    let asset_ids: Vec<i64> = assets.iter().map(|a| a.id).collect();
+    let variants = media::variants_of(db, &asset_ids).await?;
+    let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
+    let mut shown = Vec::with_capacity(ids.len());
+    for id in ids {
+        let (Some(post), Some(asset)) = (
+            found.iter().find(|p| p.id == *id),
+            assets.iter().find(|a| a.post_id == *id),
+        ) else {
+            continue;
+        };
+        let blacklisted = blacklist
+            .as_ref()
+            .and_then(|list| list.matching(post.rating, &post.tag_ids).map(str::to_owned));
+        let variant = |kind: &str| {
+            variants
+                .iter()
+                .find(|v| v.asset_id == asset.id && v.kind == kind)
+        };
+        let video = matches!(asset.media_type.as_str(), "mp4" | "webm");
+        let display = match variant("sample") {
+            Some(sample) if !video && asset.frames <= 1 => {
+                (&sample.storage_key, sample.width, sample.height)
+            }
+            _ => (&asset.storage_key, asset.width, asset.height),
+        };
+        shown.push(context! {
+            id => post.id,
+            blacklisted => blacklisted,
+            url => blacklisted.is_none().then(|| file_url(state, display.0)).flatten(),
+            poster => variant("poster").and_then(|v| file_url(state, &v.storage_key)),
+            video => video,
+            width => display.1,
+            height => display.2,
+        });
+    }
+    Ok(shown)
 }
 
 /// A grid card. `post_query` (`q=…`) is added to the post link so the post
@@ -488,6 +540,8 @@ struct ShowQuery {
     blacklist: String,
     /// A comment to start a reply to.
     reply: Option<i64>,
+    /// The pool the post was opened from, for stepping through it.
+    pool: Option<i32>,
 }
 
 async fn show(
@@ -506,6 +560,7 @@ async fn show(
         params.blacklist == "off",
         Extra {
             comment,
+            pool: params.pool,
             ..Extra::default()
         },
     )
@@ -530,6 +585,8 @@ pub(crate) struct Extra<'a> {
     /// Refills the edit form after a rejected edit.
     pub failed_edit: Option<FailedEdit<'a>>,
     pub comment: Option<CommentDraft>,
+    /// The pool the post was opened from.
+    pub pool: Option<i32>,
 }
 
 /// The post page.
@@ -708,7 +765,13 @@ pub(crate) async fn render_post(
         .collect();
     let comments =
         crate::comments::thread(state, &page.current, &post, extra.comment.as_ref()).await?;
-    let pools = crate::pools::for_post(state, &page.current, post.id, post.status).await?;
+    let pools = crate::pools::for_post(
+        state,
+        &page.current,
+        &post,
+        extra.pool.filter(|_| !from_search),
+    )
+    .await?;
     let comment_refused = extra.comment.as_ref().is_some_and(|c| c.error.is_some());
     let status = if failed.is_some() || comment_refused {
         StatusCode::UNPROCESSABLE_ENTITY

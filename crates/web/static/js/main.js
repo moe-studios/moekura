@@ -478,9 +478,59 @@ function enhanceReactions(root = document) {
   }
 }
 
+// src/reader.ts
+var PREFIX = "moekura:read:";
+function load(pool) {
+  try {
+    const value = Number(localStorage.getItem(PREFIX + pool));
+    return Number.isInteger(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+function save(pool, page) {
+  try {
+    localStorage.setItem(PREFIX + pool, String(page));
+  } catch {
+  }
+}
+function enableReader(root = document) {
+  const reader = root.querySelector("[data-reader]");
+  const pool = reader?.dataset["reader"];
+  if (reader && pool) {
+    const pages = [...reader.querySelectorAll("[data-page]")];
+    const [only] = pages;
+    if (pages.length === 1 && only) {
+      save(pool, Number(only.dataset["page"]));
+    } else if (pages.length > 1 && "IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) save(pool, Number(entry.target.dataset["page"]));
+          }
+        },
+        { threshold: 0.5 }
+      );
+      for (const page of pages) observer.observe(page);
+    }
+  }
+  const resume = root.querySelector("[data-reader-resume]");
+  const resumePool = resume?.dataset["readerResume"];
+  const link = resume?.querySelector("a");
+  if (resume && resumePool && link) {
+    const page = load(resumePool);
+    if (page !== null && page > 1) {
+      link.href = `/pools/${resumePool}/read/${page}`;
+      link.textContent = `Continue reading from page ${page}`;
+      resume.hidden = false;
+    }
+  }
+}
+
 // src/main.ts
 document.documentElement.classList.add("js");
 attachAll();
 enhanceReactions();
 enableShortcuts();
 enablePoolOrder();
+enableReader();

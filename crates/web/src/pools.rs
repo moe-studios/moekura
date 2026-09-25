@@ -29,6 +29,9 @@ use crate::templates::{search_url, url_value};
 /// Posts per page of a pool.
 const POSTS_PER_PAGE: i64 = 40;
 
+/// Posts per page of the scrolling reader.
+const READ_CHUNK: i64 = 20;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/pools", get(index).post(create))
@@ -36,6 +39,8 @@ pub fn routes() -> Router<AppState> {
         .route("/pools/{id}", get(show))
         .route("/pools/{id}/edit", get(edit_form).post(edit))
         .route("/pools/{id}/history", get(history))
+        .route("/pools/{id}/read", get(read_scroll))
+        .route("/pools/{id}/read/{n}", get(read_page))
         .route("/pools/{id}/revert/{version}", post(revert))
         .route("/pools/{id}/delete", post(delete))
         .route("/pools/{id}/undelete", post(undelete))
@@ -224,7 +229,7 @@ async fn show(
     .await?;
     let has_next = ids.len() > POSTS_PER_PAGE as usize;
     ids.truncate(POSTS_PER_PAGE as usize);
-    let cards: Vec<Value> = crate::posts::grid(&page, db, &ids)
+    let cards: Vec<Value> = crate::posts::grid(&page, db, &ids, Some(&format!("pool={id}")))
         .await?
         .into_iter()
         .map(|(_, card)| card)
@@ -249,6 +254,80 @@ async fn show(
     ))
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ScrollQuery {
+    /// The first page shown, 1-based.
+    start: Option<i64>,
+}
+
+/// The reader: a pool's posts one after another at a readable size,
+/// [`READ_CHUNK`] at a time.
+async fn read_scroll(
+    page: Page,
+    Path(id): Path<i32>,
+    Query(query): Query<ScrollQuery>,
+) -> Result<Response, AppError> {
+    let db = page.state().reader(&page.current);
+    let pool = visible_pool(db, &page.current, id).await?;
+    let visibility = visibility(&page.current);
+    let total = pools::visible_count(db, id, &visibility).await?;
+    let start = query.start.unwrap_or(1).clamp(1, total.max(1));
+    let ids = pools::visible_post_ids(db, id, &visibility, start - 1, READ_CHUNK).await?;
+    let shown = crate::posts::displays(&page, db, &ids).await?;
+    let pages: Vec<Value> = shown
+        .into_iter()
+        .zip(start..)
+        .map(|(post, number)| context! { number => number, post => post })
+        .collect();
+    let end = start + READ_CHUNK;
+    Ok(page.render(
+        "pool_read.html",
+        context! {
+            pool => summary_context(&pool),
+            total => total,
+            pages => pages,
+            single => false,
+            previous_url => (start > 1)
+                .then(|| url_value(&format!("/pools/{id}/read?start={}", (start - READ_CHUNK).max(1)))),
+            next_url => (end <= total).then(|| url_value(&format!("/pools/{id}/read?start={end}"))),
+            page_url => url_value(&format!("/pools/{id}/read/{start}")),
+        },
+    ))
+}
+
+/// The reader, one page (post) at a time; `n` is 1-based.
+async fn read_page(page: Page, Path((id, n)): Path<(i32, i64)>) -> Result<Response, AppError> {
+    let db = page.state().reader(&page.current);
+    let pool = visible_pool(db, &page.current, id).await?;
+    let visibility = visibility(&page.current);
+    let total = pools::visible_count(db, id, &visibility).await?;
+    if n < 1 || n > total {
+        return Err(AppError::NotFound);
+    }
+    let ids = pools::visible_post_ids(db, id, &visibility, n - 1, 1).await?;
+    let shown = crate::posts::displays(&page, db, &ids).await?;
+    let pages: Vec<Value> = shown
+        .into_iter()
+        .map(|post| context! { number => n, post => post })
+        .collect();
+    let at = |n: i64| url_value(&format!("/pools/{id}/read/{n}"));
+    Ok(page.render(
+        "pool_read.html",
+        context! {
+            pool => summary_context(&pool),
+            total => total,
+            pages => pages,
+            single => true,
+            number => n,
+            previous_url => (n > 1).then(|| at(n - 1)),
+            next_url => (n < total).then(|| at(n + 1)),
+            first_url => (n > 1).then(|| at(1)),
+            last_url => (n < total).then(|| at(total)),
+            scroll_url => url_value(&format!("/pools/{id}/read?start={n}")),
+        },
+    ))
+}
+
 /// The pool editor, filled with `fields`.
 struct Fields<'a> {
     name: &'a str,
@@ -268,7 +347,7 @@ async fn edit_context(
     let ids = pool_names::parse_post_ids(&fields.posts).unwrap_or_default();
     let db = page.state().db.primary();
     let shown: Vec<i64> = ids.iter().copied().take(500).collect();
-    let cards: Vec<Value> = crate::posts::grid(page, db, &shown)
+    let cards: Vec<Value> = crate::posts::grid(page, db, &shown, None)
         .await?
         .into_iter()
         .map(|(_, card)| card)
@@ -628,32 +707,50 @@ async fn add_post(
         .into_response())
 }
 
-/// The pools section of a post page.
+/// Most pools a post page shows bars for.
+const POST_PAGE_POOLS: usize = 10;
+
+/// The pools section of a post page: a bar for stepping through each pool
+/// the post is in. The bar of `opened_from` gets the keyboard's previous
+/// and next.
 pub(crate) async fn for_post(
     state: &AppState,
     current: &CurrentUser,
-    post_id: i64,
-    status: PostStatus,
+    post: &posts::Post,
+    opened_from: Option<i32>,
 ) -> Result<Value, AppError> {
-    let memberships = pools::for_post(state.db.primary(), post_id).await?;
-    let rows: Vec<Value> = memberships
-        .iter()
-        .map(|m| {
-            context! {
-                id => m.id,
-                name => PoolName::display(&m.name),
-                url => url_value(&pool_url(m.id)),
-                category => m.category,
-                position => m.position + 1,
-                post_count => m.post_count,
-            }
-        })
-        .collect();
+    let db = state.db.primary();
+    let memberships = pools::for_post(db, post.id).await?;
+    let visibility = visibility(current);
+    let mut rows = Vec::new();
+    for m in memberships.iter().take(POST_PAGE_POOLS) {
+        let (first, previous, next, last) =
+            pools::neighbours(db, m.id, m.position, &visibility).await?;
+        let step = |target: Option<i64>| {
+            target
+                .filter(|&id| id != post.id)
+                .map(|id| url_value(&format!("/posts/{id}?pool={}", m.id)))
+        };
+        rows.push(context! {
+            id => m.id,
+            name => PoolName::display(&m.name),
+            url => url_value(&pool_url(m.id)),
+            read_url => url_value(&format!("/pools/{}/read", m.id)),
+            category => m.category,
+            position => m.position + 1,
+            post_count => m.post_count,
+            first => step(first),
+            previous => step(previous),
+            next => step(next),
+            last => step(last),
+            current => opened_from == Some(m.id),
+        });
+    }
     Ok(context! {
         pools => rows,
         can_add => current.is_logged_in()
             && current.can(Permission::EditPools)
-            && status != PostStatus::Deleted,
+            && post.status != PostStatus::Deleted,
     })
 }
 
@@ -739,11 +836,21 @@ mod tests {
         assert!(shown.body.contains("Part <strong>one</strong>"));
         // In order, without the pending post.
         let (first, second) = (
-            shown.body.find(&format!("href=\"/posts/{b}\"")).unwrap(),
-            shown.body.find(&format!("href=\"/posts/{a}\"")).unwrap(),
+            shown
+                .body
+                .find(&format!("href=\"/posts/{b}?pool="))
+                .unwrap(),
+            shown
+                .body
+                .find(&format!("href=\"/posts/{a}?pool="))
+                .unwrap(),
         );
         assert!(first < second);
-        assert!(!shown.body.contains(&format!("href=\"/posts/{hidden}\"")));
+        assert!(
+            !shown
+                .body
+                .contains(&format!("href=\"/posts/{hidden}?pool="))
+        );
 
         let taken = app
             .post_form(
@@ -836,7 +943,7 @@ mod tests {
         let page = app.get(&format!("/posts/{a}"), Some(&alice)).await;
         assert!(
             page.body.contains(&format!(
-                "href=\"/pools/{id}\">Series</a> <span class=\"count\">1/1"
+                "href=\"/pools/{id}\">Series</a> <span class=\"hint\">1/1"
             )),
             "{}",
             page.body
@@ -905,6 +1012,74 @@ mod tests {
         assert_eq!(
             app.get(&format!("/pools/{id}"), None).await.status,
             StatusCode::OK
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn stepping_and_reading(pool: PgPool) {
+        let app = app(&pool).await;
+        let a = post(&pool, "active").await;
+        let hidden = post(&pool, "pending").await;
+        let b = post(&pool, "active").await;
+        let c = post(&pool, "active").await;
+        let id = pools::create(
+            &pool,
+            &Contents {
+                name: "Comic".into(),
+                description: String::new(),
+                category: "series".into(),
+                is_deleted: false,
+                post_ids: vec![c, a, hidden, b],
+            },
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Post a is second; the pending post is skipped.
+        let page = app.get(&format!("/posts/{a}?pool={id}"), None).await;
+        assert!(
+            page.body
+                .contains(&format!("href=\"/posts/{c}?pool={id}\" rel=\"prev\"")),
+            "{}",
+            page.body
+        );
+        assert!(
+            page.body
+                .contains(&format!("href=\"/posts/{b}?pool={id}\" rel=\"next\""))
+        );
+        // Opened from elsewhere, the bar has no keyboard links.
+        let plain = app.get(&format!("/posts/{a}"), None).await;
+        assert!(
+            plain
+                .body
+                .contains(&format!("href=\"/posts/{b}?pool={id}\""))
+        );
+        assert!(!plain.body.contains("rel=\"next\""));
+        // The pool page links posts back into the pool.
+        assert!(
+            app.get(&format!("/pools/{id}"), None)
+                .await
+                .body
+                .contains(&format!("href=\"/posts/{a}?pool={id}\""))
+        );
+
+        let scroll = app.get(&format!("/pools/{id}/read"), None).await;
+        assert_eq!(scroll.status, StatusCode::OK);
+        assert!(scroll.body.contains("3 pages"), "{}", scroll.body);
+        assert!(scroll.body.contains("id=\"page-3\""));
+        assert!(!scroll.body.contains("id=\"page-4\""));
+        let second = app.get(&format!("/pools/{id}/read/2"), None).await;
+        assert!(second.body.contains("Page 2 of 3"), "{}", second.body);
+        assert!(second.body.contains(&format!("/posts/{a}?pool={id}")));
+        assert!(
+            second
+                .body
+                .contains(&format!("href=\"/pools/{id}/read/3\" rel=\"next\""))
+        );
+        assert_eq!(
+            app.get(&format!("/pools/{id}/read/4"), None).await.status,
+            StatusCode::NOT_FOUND
         );
     }
 }

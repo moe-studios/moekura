@@ -9,11 +9,13 @@
     · version {{ version }}, {{ pool.date }}{% if pool.updater %} by {{ pool.updater }}{% endif %}
     · <a href="{{ pool.url }}/history">History</a>
     · <a href="{{ search_url }}">Search</a>
+    {% if pool.post_count %}· <a href="{{ pool.url }}/read">Read</a>{% endif %}
     {% if can_edit %} · <a href="{{ pool.url }}/edit">Edit</a>{% endif %}
   </p>
 </header>
 {% if pool.deleted %}<p class="notice">This pool is deleted.</p>{% endif %}
 {% if html %}<div class="markup pool-description">{{ html }}</div>{% endif %}
+<p class="reader-resume" data-reader-resume="{{ pool.id }}" hidden><a class="button" href="{{ pool.url }}/read">Continue reading</a></p>
 {% if cards %}
 <ul class="post-grid">
   {% for card in cards %}<li>{% include "card.html" %}</li>{% endfor %}

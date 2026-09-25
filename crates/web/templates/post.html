@@ -6,6 +6,19 @@
     {% if deleted %}<p class="notice">Deleted {{ deleted.when }}{% if deleted.by %} by {{ deleted.by }}{% endif %}{% if deleted.reason %}: “{{ deleted.reason }}”{% endif %}</p>
     {% elif post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
+    {% for p in pools.pools %}
+    <nav class="pool-nav{% if p.current %} current{% endif %}" aria-label="Pool {{ p.name }}">
+      <span class="pool-steps">
+        {% if p.first %}<a href="{{ p.first }}" title="First">«</a>{% else %}<span aria-hidden="true">«</span>{% endif %}
+        {% if p.previous %}<a href="{{ p.previous }}"{% if p.current %} rel="prev"{% endif %} title="Previous">‹ prev</a>{% else %}<span aria-hidden="true">‹ prev</span>{% endif %}
+      </span>
+      <span class="pool-name"><a href="{{ p.url }}">{{ p.name }}</a> <span class="hint">{{ p.position }}/{{ p.post_count }}</span>{% if p.category == "series" %} · <a href="{{ p.read_url }}/{{ p.position }}">Read</a>{% endif %}</span>
+      <span class="pool-steps">
+        {% if p.next %}<a href="{{ p.next }}"{% if p.current %} rel="next"{% endif %} title="Next">next ›</a>{% else %}<span aria-hidden="true">next ›</span>{% endif %}
+        {% if p.last %}<a href="{{ p.last }}" title="Last">»</a>{% else %}<span aria-hidden="true">»</span>{% endif %}
+      </span>
+    </nav>
+    {% endfor %}
     {% if blacklisted %}
     <p class="notice blacklisted">This post matches your blacklist (<code>{{ blacklisted.rule }}</code>). <a href="{{ blacklisted.show_url }}">Show it anyway</a></p>
     {% elif file.video %}
@@ -161,15 +174,9 @@
       {% endif %}
     </dl>
     <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a></p>
-    {% if pools.pools or pools.can_add %}
+    {% if pools.can_add %}
     <section class="tag-group post-pools">
       <h2>Pools</h2>
-      {% if pools.pools %}
-      <ul class="tag-list">
-        {% for p in pools.pools %}<li><a href="{{ p.url }}">{{ p.name }}</a> <span class="count">{{ p.position }}/{{ p.post_count }}</span></li>{% endfor %}
-      </ul>
-      {% endif %}
-      {% if pools.can_add %}
       <details class="edit">
         <summary>Add to a pool</summary>
         <form method="post" action="/posts/{{ post.id }}/pools">
@@ -178,7 +185,6 @@
           <button type="submit">Add</button>
         </form>
       </details>
-      {% endif %}
     </section>
     {% endif %}
     {% for group in tag_groups %}

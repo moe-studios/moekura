@@ -668,7 +668,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
     // Each comment beside its post's thumbnail, left out if blacklisted.
     let mut post_ids: Vec<i64> = found.iter().map(|c| c.post_id).collect();
     post_ids.dedup();
-    let cards = crate::posts::grid(&page, db, &post_ids).await?;
+    let cards = crate::posts::grid(&page, db, &post_ids, None).await?;
     let contexts = comment_contexts(state, &page.current, &found).await?;
     let rows: Vec<Value> = found
         .iter()

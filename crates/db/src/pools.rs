@@ -123,6 +123,25 @@ pub async fn visible_post_ids(
     .await
 }
 
+/// How many of a pool's posts `visibility` allows.
+pub async fn visible_count(
+    db: impl PgExecutor<'_>,
+    pool_id: i32,
+    visibility: &Visibility,
+) -> sqlx::Result<i64> {
+    let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pool_posts pp JOIN posts p ON p.id = pp.post_id
+         WHERE pp.pool_id = $1
+           AND (p.status = ANY($2) OR (p.status = 'pending' AND p.uploader_id = $3))",
+    )
+    .bind(pool_id)
+    .bind(statuses)
+    .bind(visibility.viewer)
+    .fetch_one(db)
+    .await
+}
+
 /// A pool a post is in.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Membership {
@@ -500,6 +519,7 @@ mod tests {
             visible_post_ids(&pool, id, &public, 1, 1).await.unwrap(),
             [ids[1]]
         );
+        assert_eq!(visible_count(&pool, id, &public).await.unwrap(), 3);
         // Post 1 is third; the pending post before it is skipped.
         assert_eq!(
             neighbours(&pool, id, 2, &public).await.unwrap(),

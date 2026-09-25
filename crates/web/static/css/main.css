@@ -502,6 +502,18 @@ details.inline[open] { display: block; flex-basis: 100%; }
 .pool-order li.dragging { opacity: 0.4; }
 .pool-order img { display: block; max-width: 110px; max-height: 110px; width: auto; height: auto; }
 tr.is-deleted td { opacity: 0.6; }
+.pool-nav { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 0 8px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.pool-nav.current { border-color: var(--accent); }
+.pool-nav .pool-steps { display: flex; gap: 12px; white-space: nowrap; }
+.pool-nav .pool-steps span { color: var(--muted); opacity: 0.5; }
+.pool-nav .pool-name { text-align: center; overflow-wrap: anywhere; }
+.reader { max-width: 1000px; margin: 0 auto; }
+.reader-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.reader-page { margin: 0 0 24px; text-align: center; }
+.reader-page img, .reader-page video { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.reader-page figcaption { margin-top: 4px; }
+.reader-pager { gap: 12px; }
+.reader-resume { margin: 0 0 16px; }
 
 /* Votes and favorites */
 

@@ -7,6 +7,19 @@
 {% else %}
 <div class="results-layout">
   <aside class="results-sidebar">
+    {% if save_search %}
+    <details class="edit save-search">
+      <summary>Save this search</summary>
+      <form method="post" action="/saved_searches">
+        <input type="hidden" name="query" value="{{ save_search.query }}">
+        <input type="hidden" name="back" value="true">
+        <label for="save-labels">Labels <span class="hint">(optional)</span></label>
+        <input id="save-labels" name="labels" autocomplete="off" spellcheck="false" placeholder="e.g. artists">
+        <button type="submit">Save</button>
+      </form>
+      <p class="hint"><a href="{{ save_search.list_url }}">Your saved searches</a></p>
+    </details>
+    {% endif %}
     {% if sidebar %}
     <h2>Tags</h2>
     <ul class="tag-list">

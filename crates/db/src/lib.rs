@@ -17,6 +17,7 @@ pub mod pools;
 pub mod post_versions;
 pub mod posts;
 pub mod roles;
+pub mod saved_searches;
 pub mod search;
 pub mod secrets;
 pub mod seed;

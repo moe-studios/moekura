@@ -40,6 +40,7 @@ pub const RESERVED_PREFIXES: &[&str] = &[
     "ratio",
     "score",
     "similar",
+    "search",
     "source",
     "status",
     "tagcount",

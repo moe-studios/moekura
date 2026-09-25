@@ -48,3 +48,13 @@ log.
 
 [API keys](../api.md) don't need a code: keep them secret, and revoke any
 you no longer use.
+
+## Saved searches
+
+Save a search from its results (**Save this search**, beside the
+results), or under **Settings → Saved searches**, optionally with labels.
+Then `search:all` shows the newest posts of all your saved searches
+together, and `search:artists` those of the searches labelled `artists`;
+both combine with other tags and filters, like `search:all rating:g`.
+Each saved search adds up to its newest 500 posts, and a `search:` term
+runs at most 20 saved searches. Only you see your saved searches.

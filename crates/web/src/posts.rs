@@ -181,6 +181,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         "posts.html",
         context! {
             search => context! { tags => normalized },
+            save_search => crate::saved_searches::save_form(&page.current, &normalized),
             cards => card_values,
             blacklisted => blacklisted,
             count => count_text(count),

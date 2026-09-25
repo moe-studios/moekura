@@ -51,6 +51,7 @@ pub const METATAGS: &[&str] = &[
     "commentcount",
     "pool",
     "ordpool",
+    "search",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -202,6 +203,9 @@ pub enum Filter {
     /// Looks like this post (perceptual hash), the post included.
     Similar(i64),
     Pool(PoolFilter),
+    /// Among the viewer's saved searches with this label (`all` for all
+    /// of them).
+    Search(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -434,6 +438,12 @@ impl Query {
                 "none" => PoolFilter::None,
                 value => PoolFilter::In(pool_ref(value)),
             }),
+            "search" => {
+                if value.is_empty() {
+                    return Err(invalid("expected a label of your saved searches, or all"));
+                }
+                Filter::Search(value.into())
+            }
             "similar" => Filter::Similar(value.parse().map_err(|_| invalid("expected a post id"))?),
             "fav" => {
                 if value.is_empty() {
@@ -717,6 +727,7 @@ impl fmt::Display for Condition {
             Filter::Pool(PoolFilter::Any) => f.write_str("pool:any"),
             Filter::Pool(PoolFilter::None) => f.write_str("pool:none"),
             Filter::Pool(PoolFilter::In(pool)) => write!(f, "pool:{pool}"),
+            Filter::Search(label) => write!(f, "search:{label}"),
             Filter::Width(b) => write!(f, "width:{b}"),
             Filter::Height(b) => write!(f, "height:{b}"),
             Filter::Mpixels(b) => write!(f, "mpixels:{b}"),
@@ -982,6 +993,7 @@ mod tests {
             "pool:any -pool:none ordpool:x"
         );
         assert!(error("pool:").contains("expected a pool"));
+        assert_eq!(filter("search:Pets"), Filter::Search("pets".into()));
         assert!(error("fav:").contains("expected a user name"));
     }
 

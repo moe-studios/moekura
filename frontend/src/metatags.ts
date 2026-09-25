@@ -48,6 +48,7 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
   similar: [],
   pool: ["any", "none"],
   ordpool: [],
+  search: ["all"],
 };
 
 /// Prefixes that set a new tag's category when tagging.

@@ -37,6 +37,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
 | `fav:` | `fav:alice` | favorited by this user |
+| `search:` | `search:all`, `search:artists` | the newest posts (500 each) of your [saved searches](account.md#saved-searches), all or those with a label |
 | `pool:` | `pool:my_comic`, `pool:12`, `pool:any`, `pool:none` | in this pool (by name or number), in any pool, or in none |
 | `width:`, `height:` | `width:>=1920` | size in pixels |
 | `mpixels:` | `mpixels:>2` | megapixels (width × height ÷ 1,000,000) |

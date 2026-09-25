@@ -29,6 +29,12 @@ use crate::tag_relations;
 /// Most posts a `similar:` search considers.
 const SIMILAR_LIMIT: i64 = 1000;
 
+/// Most saved searches a `search:` term runs.
+const SAVED_SEARCH_LIMIT: usize = 20;
+
+/// Newest posts of each saved search a `search:` term includes.
+const SAVED_SEARCH_POSTS: u32 = 500;
+
 /// Which page of results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageRef {
@@ -119,8 +125,8 @@ pub struct Plan {
     favorited_by: Vec<(bool, i64)>,
     /// `ordfav:`'s user.
     ordfav: Option<i64>,
-    /// `similar:` filters resolved to the matching posts.
-    similar_to: Vec<(bool, Vec<i64>)>,
+    /// `similar:` and `search:` filters resolved to the matching posts.
+    post_sets: Vec<(bool, Vec<i64>)>,
     /// `pool:` filters: a pool's id, or `None` for any pool.
     pools: Vec<(bool, Option<i32>)>,
     /// `ordpool:`'s pool.
@@ -169,7 +175,7 @@ impl Plan {
             uploaders: Vec::new(),
             favorited_by: Vec::new(),
             ordfav: None,
-            similar_to: Vec::new(),
+            post_sets: Vec::new(),
             pools: Vec::new(),
             ordpool: None,
             statuses,
@@ -250,12 +256,24 @@ impl Plan {
                             .into_iter()
                             .map(|s| s.post_id)
                             .collect();
-                            plan.similar_to.push((condition.negated, ids));
+                            plan.post_sets.push((condition.negated, ids));
                         }
                         // Unknown or not yet processed: nothing to compare with.
                         None if !condition.negated => plan.nothing = true,
                         None => {}
                     }
+                }
+                Filter::Search(label) => {
+                    let ids = match visibility.viewer {
+                        Some(viewer) => {
+                            saved_search_posts(db, viewer, label, visibility, config).await?
+                        }
+                        None => Vec::new(),
+                    };
+                    if ids.is_empty() && !condition.negated {
+                        plan.nothing = true;
+                    }
+                    plan.post_sets.push((condition.negated, ids));
                 }
                 Filter::Pool(PoolFilter::Any) => plan.pools.push((condition.negated, None)),
                 Filter::Pool(PoolFilter::None) => plan.pools.push((!condition.negated, None)),
@@ -346,7 +364,7 @@ impl Plan {
                 &self.uploaders,
                 &self.favorited_by,
                 self.ordfav,
-                (&self.similar_to, &self.pools, self.ordpool),
+                (&self.post_sets, &self.pools, self.ordpool),
             )
         )
     }
@@ -707,7 +725,7 @@ impl Plan {
             })
             .push_bind(*uploader);
         }
-        for (negated, ids) in &self.similar_to {
+        for (negated, ids) in &self.post_sets {
             sql.push(if *negated {
                 " AND NOT p.id = ANY("
             } else {
@@ -782,7 +800,7 @@ impl Plan {
         let unfiltered = self.conditions.is_empty()
             && self.uploaders.is_empty()
             && self.favorited_by.is_empty()
-            && self.similar_to.is_empty()
+            && self.post_sets.is_empty()
             && self.ordfav.is_none()
             && self.pools.is_empty()
             && self.ordpool.is_none()
@@ -842,6 +860,52 @@ impl Plan {
         sql.push(" LIMIT ").push_bind(limit + 1).push(") AS hits");
         Some(sql)
     }
+}
+
+/// The newest posts matching `viewer`'s saved searches labelled `label`
+/// (`all`: every one), up to [`SAVED_SEARCH_POSTS`] per search. Saved
+/// searches that use `search:` themselves are skipped.
+async fn saved_search_posts(
+    db: &PgPool,
+    viewer: i64,
+    label: &str,
+    visibility: &Visibility,
+    config: &SearchConfig,
+) -> Result<Vec<i64>, SearchError> {
+    let label = (label != "all").then_some(label);
+    let queries = crate::saved_searches::queries(db, viewer, label).await?;
+    let config = SearchConfig {
+        per_page: SAVED_SEARCH_POSTS,
+        max_per_page: SAVED_SEARCH_POSTS,
+        ..config.clone()
+    };
+    let mut ids = Vec::new();
+    for text in queries.iter().take(SAVED_SEARCH_LIMIT) {
+        let Ok(mut query) = Query::parse(text) else {
+            continue;
+        };
+        if query
+            .conditions
+            .iter()
+            .any(|c| matches!(c.filter, Filter::Search(_)))
+        {
+            continue;
+        }
+        // The newest posts, whatever order the search was saved with.
+        query.order = None;
+        query.ordfav = None;
+        query.ordpool = None;
+        query.limit = None;
+        let plan = match Box::pin(Plan::resolve(db, &query, visibility, &config)).await {
+            Ok(plan) => plan,
+            Err(SearchError::Invalid(_)) => continue,
+            Err(e) => return Err(e),
+        };
+        ids.extend(plan.ids(db, PageRef::Number(1)).await?);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
 }
 
 /// The statuses a search covers, and the viewer if their own pending
@@ -970,6 +1034,7 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         | Filter::User(_)
         | Filter::Fav(_)
         | Filter::Similar(_)
+        | Filter::Search(_)
         | Filter::Pool(_) => {
             unreachable!("resolved in Plan::resolve")
         }
@@ -1572,6 +1637,73 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn saved_searches(pool: PgPool) {
+        let cat = seed(
+            &pool,
+            Seed {
+                tags: &["cat"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let dog = seed(
+            &pool,
+            Seed {
+                tags: &["dog"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let tree = seed(
+            &pool,
+            Seed {
+                tags: &["tree"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let alice: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let pets = ["pets".to_owned()];
+        crate::saved_searches::save(&pool, alice, "cat", &pets)
+            .await
+            .unwrap();
+        crate::saved_searches::save(&pool, alice, "dog order:score", &pets)
+            .await
+            .unwrap();
+        crate::saved_searches::save(&pool, alice, "tree", &[])
+            .await
+            .unwrap();
+        // Would loop.
+        crate::saved_searches::save(&pool, alice, "search:all", &pets)
+            .await
+            .unwrap();
+
+        let as_alice = Visibility {
+            viewer: Some(alice),
+            ..public()
+        };
+        assert_eq!(search_as(&pool, "search:pets", &as_alice).await, [dog, cat]);
+        assert_eq!(
+            search_as(&pool, "search:all", &as_alice).await,
+            [tree, dog, cat]
+        );
+        assert_eq!(search_as(&pool, "-search:pets", &as_alice).await, [tree]);
+        assert_eq!(search_as(&pool, "search:pets -dog", &as_alice).await, [cat]);
+        assert!(
+            search_as(&pool, "search:nothing", &as_alice)
+                .await
+                .is_empty()
+        );
+        // Visitors have no saved searches.
+        assert!(search(&pool, "search:all").await.is_empty());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn orders_and_pages(pool: PgPool) {
         let mut ids = Vec::new();
         for (i, score) in [3, 1, 2, 5, 4].into_iter().enumerate() {
@@ -1790,7 +1922,7 @@ mod tests {
             uploaders: Vec::new(),
             favorited_by: Vec::new(),
             ordfav: None,
-            similar_to: Vec::new(),
+            post_sets: Vec::new(),
             pools: Vec::new(),
             ordpool: None,
             statuses: vec!["active"],

@@ -63,3 +63,15 @@ impl Job for PromoteUsers {
     const KIND: &'static str = "users.promote";
     const MAX_ATTEMPTS: i32 = 3;
 }
+
+/// Apply a mass tag edit (`mass_updates` row `id`) to every post matching
+/// its search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MassUpdate {
+    pub id: i64,
+}
+
+impl Job for MassUpdate {
+    const KIND: &'static str = "tags.mass_update";
+    const MAX_ATTEMPTS: i32 = 3;
+}

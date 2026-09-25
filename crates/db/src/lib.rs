@@ -12,6 +12,7 @@ pub mod flags;
 pub mod identities;
 pub mod invites;
 pub mod jobs;
+pub mod mass_updates;
 pub mod media;
 pub mod mod_actions;
 pub mod notes;

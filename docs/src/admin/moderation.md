@@ -49,6 +49,17 @@ Members request them under **Tags → Aliases** or **Implications**; people
 who can manage tags approve or reject them (their own requests apply at
 once). See [Tags](../using/tags.md).
 
+## Mass tag edits
+
+**Moderation → Mass edit** (for those with *Mass edit tags*) adds and
+removes tags on every post a search finds: `cat_ears` → add
+`animal_ears`, remove `cat_ears`. **Preview** shows how many posts match
+and the first of them; **Change** starts a background job. The page
+lists recent mass edits with their progress. Changes show in each
+post's history, credited to whoever started the edit, and added tags
+bring the tags they imply. Deleted posts are only changed if the search
+asks for them (`status:deleted` or `status:any`).
+
 ## The moderation log
 
 **Moderation → Log** lists every staff action: approvals, deletions,

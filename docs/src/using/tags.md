@@ -37,3 +37,13 @@ implication.
 
 A deprecated tag can't be added to posts any more, but stays on the posts
 that already have it until someone takes it off.
+
+## Tag scripts
+
+To tag many posts quickly, open **Tag script** beside search results
+(for those who can edit posts), type a script and tick **Apply by
+clicking posts**. Clicking a post then applies the script to it instead
+of opening it: `tag` adds a tag, `-tag` removes one, and `rating:s` sets
+the rating, so `cat_ears -cat rating:g` does all three. Changed posts
+are outlined green, refused ones red with the reason below the script.
+Each change is in the post's history as if you had edited it.

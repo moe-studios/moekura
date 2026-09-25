@@ -832,6 +832,97 @@ function enableReader(root = document) {
   }
 }
 
+// src/tag-script.ts
+var RATINGS = {
+  g: "g",
+  general: "g",
+  s: "s",
+  sensitive: "s",
+  q: "q",
+  questionable: "q",
+  e: "e",
+  explicit: "e"
+};
+function parseScript(text) {
+  const script = { add: [], remove: [], rating: null };
+  for (const word of text.trim().split(/\s+/)) {
+    if (word === "") continue;
+    const lower = word.toLowerCase();
+    if (lower.startsWith("rating:")) {
+      const rating = RATINGS[lower.slice("rating:".length)];
+      if (!rating) throw new Error(`Unknown rating in \u201C${word}\u201D.`);
+      script.rating = rating;
+    } else if (word.startsWith("-") && word.length > 1) {
+      script.remove.push(word.slice(1));
+    } else {
+      script.add.push(word);
+    }
+  }
+  return script;
+}
+function postId(href) {
+  return /\/posts\/(\d+)/.exec(href)?.[1] ?? null;
+}
+function enableTagScript(root = document) {
+  const panel = root.querySelector("[data-tag-script]");
+  const input = panel?.querySelector("input");
+  const toggle = panel?.querySelector("input[type=checkbox]");
+  const status = panel?.querySelector("[data-tag-script-status]");
+  const text = panel?.querySelector("input[type=text]");
+  if (!panel || !input || !toggle || !status || !text) return;
+  panel.hidden = false;
+  const say = (message) => {
+    status.textContent = message;
+  };
+  root.addEventListener(
+    "click",
+    (event) => {
+      if (!toggle.checked) return;
+      const card = event.target.closest(".post-grid a.card");
+      if (!card) return;
+      event.preventDefault();
+      const id = postId(card.getAttribute("href") ?? "");
+      if (!id) return;
+      let script;
+      try {
+        script = parseScript(text.value);
+      } catch (error) {
+        say(error.message);
+        return;
+      }
+      if (script.add.length === 0 && script.remove.length === 0 && script.rating === null) {
+        say("Type a script first.");
+        return;
+      }
+      const body = { add_tags: script.add, remove_tags: script.remove };
+      if (script.rating) body["rating"] = script.rating;
+      card.classList.remove("script-ok", "script-failed");
+      card.classList.add("script-busy");
+      void fetch(`/api/v1/posts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify(body)
+      }).then(async (response) => {
+        card.classList.remove("script-busy");
+        if (response.ok) {
+          card.classList.add("script-ok");
+          say(`Post #${id} changed.`);
+        } else {
+          card.classList.add("script-failed");
+          const error = await response.json().catch(() => null);
+          say(`Post #${id}: ${error?.error?.message ?? `error ${response.status}`}`);
+        }
+      }).catch(() => {
+        card.classList.remove("script-busy");
+        card.classList.add("script-failed");
+        say(`Post #${id} couldn't be changed.`);
+      });
+    },
+    true
+  );
+}
+
 // src/main.ts
 document.documentElement.classList.add("js");
 attachAll();
@@ -841,3 +932,4 @@ enablePoolOrder();
 enableReader();
 enableNotes();
 enableNoteEditor();
+enableTagScript();

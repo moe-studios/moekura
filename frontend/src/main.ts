@@ -8,6 +8,7 @@ import { enableNotes } from "./notes.ts";
 import { enablePoolOrder } from "./pool-order.ts";
 import { enhanceReactions } from "./reactions.ts";
 import { enableReader } from "./reader.ts";
+import { enableTagScript } from "./tag-script.ts";
 
 // Lets styles tell whether scripts run.
 document.documentElement.classList.add("js");
@@ -19,3 +20,4 @@ enablePoolOrder();
 enableReader();
 enableNotes();
 enableNoteEditor();
+enableTagScript();

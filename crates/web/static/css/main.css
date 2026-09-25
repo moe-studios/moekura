@@ -538,6 +538,17 @@ tr.is-deleted td { opacity: 0.6; }
 .note-form .actions { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
 .note-form[hidden], .note-popup[hidden] { display: none; }
 
+/* Tag scripts and mass edits */
+
+.tag-script { margin-bottom: 16px; }
+.tag-script h2 { font-size: 1rem; margin: 0 0 6px; }
+.post-grid a.card.script-busy { opacity: 0.5; }
+.post-grid a.card.script-ok { outline: 3px solid var(--tag-character, #2b8a3e); outline-offset: 2px; }
+.post-grid a.card.script-failed { outline: 3px solid var(--danger); outline-offset: 2px; }
+.mass-preview { margin: 16px 0; }
+.added { color: var(--tag-character); }
+.removed { color: var(--danger); }
+
 /* Votes and favorites */
 
 .vote, .favorite { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }

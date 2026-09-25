@@ -24,6 +24,7 @@ pub mod flash;
 mod health;
 mod history;
 pub mod import;
+mod mass_edit;
 mod moderation;
 mod notes;
 pub mod oidc;
@@ -224,6 +225,7 @@ pub fn router(state: AppState) -> Router {
         .merge(favorite_groups::routes())
         .merge(favorites::routes())
         .merge(history::routes())
+        .merge(mass_edit::routes())
         .merge(moderation::routes())
         .merge(notes::routes())
         .merge(oidc::routes())

@@ -1,7 +1,14 @@
-//! The `tags.apply_relation` job: rewriting existing posts after a tag
-//! alias or implication is approved.
+//! The `tags.apply_relation` job, rewriting existing posts after a tag
+//! alias or implication is approved, and `tags.mass_update`, adding and
+//! removing tags on every post matching a search.
 
-use moekura_core::jobs::ApplyTagRelation;
+use moekura_core::config::SearchConfig;
+use moekura_core::jobs::{ApplyTagRelation, MassUpdate};
+use moekura_core::posts::PostStatus;
+use moekura_core::search::Query;
+use moekura_db::mass_updates;
+use moekura_db::posts::Visibility;
+use moekura_db::search::{PageRef, Plan, SearchError};
 use moekura_db::tag_relations::{self, Kind, Status};
 use moekura_db::tags::{self, WantedTag};
 use sqlx::PgPool;
@@ -19,9 +26,20 @@ pub struct TagJobs {
 
 impl TagJobs {
     pub fn register(self, registry: &mut Registry) {
+        let jobs = self.clone();
         registry.register(move |job: ApplyTagRelation| {
-            let jobs = self.clone();
+            let jobs = jobs.clone();
             async move { jobs.apply(job.relation_id).await }
+        });
+        registry.register(move |job: MassUpdate| {
+            let jobs = self.clone();
+            async move {
+                let result = jobs.mass_update(job.id).await;
+                if let Err(JobError::Permanent(error)) = &result {
+                    mass_updates::finish(&jobs.db, job.id, Some(error)).await?;
+                }
+                result
+            }
         });
     }
 
@@ -90,6 +108,98 @@ impl TagJobs {
     }
 }
 
+impl TagJobs {
+    /// Adds and removes a mass edit's tags on every post its search
+    /// matches, newest first, recording progress. Safe to repeat.
+    pub async fn mass_update(&self, id: i64) -> Result<(), JobError> {
+        let Some(update) = mass_updates::by_id(&self.db, id).await? else {
+            return Ok(());
+        };
+        if update.status == "done" {
+            return Ok(());
+        }
+        mass_updates::start(&self.db, id).await?;
+        let mut query = Query::parse(&update.query).map_err(JobError::permanent)?;
+        // Newest first by id, so every post is reached with keyset pages.
+        query.order = None;
+        query.ordfav = None;
+        query.ordpool = None;
+        query.ordfavgroup = None;
+        query.limit = None;
+        let config = SearchConfig {
+            per_page: BATCH as u32,
+            max_per_page: BATCH as u32,
+            ..SearchConfig::default()
+        };
+        // Everything staff could see; deleted posts only with status:.
+        let visibility = Visibility {
+            statuses: vec![
+                PostStatus::Active,
+                PostStatus::Flagged,
+                PostStatus::Pending,
+                PostStatus::Deleted,
+            ],
+            viewer: None,
+        };
+        let plan = Plan::resolve(&self.db, &query, &visibility, &config)
+            .await
+            .map_err(search_error)?;
+
+        let mut conn = self.db.acquire().await?;
+        let wanted: Vec<WantedTag<'_>> = update
+            .add_tags
+            .iter()
+            .map(|name| WantedTag {
+                name,
+                category_id: None,
+            })
+            .collect();
+        // With what the added tags imply, as when tagging a post.
+        let mut add: Vec<i32> = tags::for_post(&mut conn, &wanted, false)
+            .await?
+            .iter()
+            .map(|t| t.id)
+            .collect();
+        drop(conn);
+        add.sort_unstable();
+        let mut remove = Vec::new();
+        for name in &update.remove_tags {
+            if let Some(tag) = tags::by_name(&self.db, name).await? {
+                remove.push(tag.id);
+            }
+        }
+        remove.sort_unstable();
+
+        let (mut seen, mut changed) = (0i32, 0i32);
+        let mut page = PageRef::Number(1);
+        loop {
+            let ids = plan.ids(&self.db, page).await.map_err(search_error)?;
+            let Some(&last) = ids.last() else { break };
+            let n = mass_updates::retag(&self.db, &ids, &add, &remove, update.creator_id).await?;
+            seen += ids.len() as i32;
+            changed += n as i32;
+            mass_updates::progress(&self.db, id, seen, changed).await?;
+            page = PageRef::Before(last);
+        }
+        mass_updates::finish(&self.db, id, None).await?;
+        tracing::info!(
+            id,
+            query = update.query,
+            seen,
+            changed,
+            "mass tag edit done"
+        );
+        Ok(())
+    }
+}
+
+fn search_error(error: SearchError) -> JobError {
+    match error {
+        SearchError::Invalid(message) => JobError::permanent(message),
+        SearchError::Db(error) => error.into(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use moekura_db::tag_relations::NewRequest;
@@ -153,6 +263,61 @@ mod tests {
         .unwrap();
         tag_relations::approve(pool, id, admin).await.unwrap();
         id
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn mass_updates_retag_every_match(pool: PgPool) {
+        let jobs = TagJobs { db: pool.clone() };
+        let mut matching = Vec::new();
+        for _ in 0..(BATCH + 3) {
+            matching.push(post(&pool, &["cat_ears", "solo"]).await);
+        }
+        let other = post(&pool, &["dog"]).await;
+        let already = post(&pool, &["cat_ears", "animal_ears"]).await;
+        let admin: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'admin', id FROM roles WHERE system_key = 'admin' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let id = mass_updates::create(
+            &pool,
+            Some(admin),
+            "cat_ears",
+            &["animal_ears".to_owned()],
+            &["cat_ears".to_owned()],
+        )
+        .await
+        .unwrap();
+        jobs.mass_update(id).await.unwrap();
+
+        assert_eq!(tag_names(&pool, matching[0]).await, ["animal_ears", "solo"]);
+        assert_eq!(
+            tag_names(&pool, *matching.last().unwrap()).await,
+            ["animal_ears", "solo"]
+        );
+        assert_eq!(tag_names(&pool, other).await, ["dog"]);
+        assert_eq!(tag_names(&pool, already).await, ["animal_ears"]);
+        let done = mass_updates::by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(
+            (done.status.as_str(), done.seen, done.changed),
+            ("done", BATCH as i32 + 4, BATCH as i32 + 4)
+        );
+        let latest = moekura_db::post_versions::list(&pool, matching[0])
+            .await
+            .unwrap()
+            .remove(0);
+        assert_eq!(latest.updater_id, Some(admin));
+        // Again: nothing left to change.
+        jobs.mass_update(id).await.unwrap();
+
+        let bad = mass_updates::create(&pool, None, "~", &[], &[])
+            .await
+            .unwrap();
+        assert!(matches!(
+            jobs.mass_update(bad).await,
+            Err(JobError::Permanent(_))
+        ));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

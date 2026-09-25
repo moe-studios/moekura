@@ -161,6 +161,26 @@
       {% endif %}
     </dl>
     <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a></p>
+    {% if pools.pools or pools.can_add %}
+    <section class="tag-group post-pools">
+      <h2>Pools</h2>
+      {% if pools.pools %}
+      <ul class="tag-list">
+        {% for p in pools.pools %}<li><a href="{{ p.url }}">{{ p.name }}</a> <span class="count">{{ p.position }}/{{ p.post_count }}</span></li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if pools.can_add %}
+      <details class="edit">
+        <summary>Add to a pool</summary>
+        <form method="post" action="/posts/{{ post.id }}/pools">
+          <label for="add-pool">Pool name or number</label>
+          <input id="add-pool" name="pool" required autocomplete="off" spellcheck="false">
+          <button type="submit">Add</button>
+        </form>
+      </details>
+      {% endif %}
+    </section>
+    {% endif %}
     {% for group in tag_groups %}
     <section class="tag-group">
       <h2>{{ group.label }}</h2>

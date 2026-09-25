@@ -42,10 +42,12 @@ pub enum Permission {
     UploadWithoutApproval = 17,
     /// Hide and restore anyone's comments, and settle reports about them.
     ModerateComments = 18,
+    /// Create pools and change their posts, names and descriptions.
+    EditPools = 19,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 19] = [
+    pub const ALL: [Permission; 20] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -65,6 +67,7 @@ impl Permission {
         Permission::ViewAuditLog,
         Permission::UploadWithoutApproval,
         Permission::ModerateComments,
+        Permission::EditPools,
     ];
 
     const fn bit(self) -> u64 {
@@ -93,6 +96,7 @@ impl Permission {
             Permission::ViewAuditLog => "view_audit_log",
             Permission::UploadWithoutApproval => "upload_without_approval",
             Permission::ModerateComments => "moderate_comments",
+            Permission::EditPools => "edit_pools",
         }
     }
 
@@ -118,6 +122,7 @@ impl Permission {
             Permission::ViewAuditLog => "Read the moderation log",
             Permission::UploadWithoutApproval => "Upload without approval",
             Permission::ModerateComments => "Hide comments and handle reports about them",
+            Permission::EditPools => "Create and edit pools",
         }
     }
 }
@@ -241,7 +246,7 @@ impl SystemRole {
         use Permission::*;
         const ANONYMOUS: Permissions = Permissions::of(&[ViewPosts]);
         const MEMBER: Permissions = ANONYMOUS.with(Permissions::of(&[
-            Upload, EditPosts, Comment, Favorite, Vote, Flag, EditWiki,
+            Upload, EditPosts, Comment, Favorite, Vote, Flag, EditWiki, EditPools,
         ]));
         const CONTRIBUTOR: Permissions = MEMBER.with(Permissions::of(&[UploadWithoutApproval]));
         const JANITOR: Permissions = CONTRIBUTOR.with(Permissions::of(&[

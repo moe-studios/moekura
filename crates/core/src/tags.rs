@@ -33,6 +33,7 @@ pub const RESERVED_PREFIXES: &[&str] = &[
     "note",
     "order",
     "ordfav",
+    "ordpool",
     "parent",
     "pool",
     "rating",

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}History of {{ pool.name }} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="{{ pool.url }}">« {{ pool.name }}</a></p>
+<h1>History of {{ pool.name }}</h1>
+<ol class="history">
+  {% for v in versions %}
+  <li>
+    <div class="history-head">
+      <strong>Version {{ v.version }}</strong>{% if v.current %} <span class="hint">(current)</span>{% endif %}
+      <span class="hint">{{ v.date }}{% if v.updater %} · by {{ v.updater }}{% endif %}</span>
+      {% if v.can_revert %}
+      <form method="post" action="{{ pool.url }}/revert/{{ v.version }}"><button type="submit" class="secondary">Revert to this</button></form>
+      {% endif %}
+    </div>
+    <ul class="changes">
+      {% if v.name %}<li>name: {{ v.name }}</li>{% endif %}
+      {% if v.category %}<li>kind: {{ v.category }}</li>{% endif %}
+      {% if v.description_changed %}<li>description changed</li>{% endif %}
+      {% if v.deleted is not none %}<li>{{ "deleted" if v.deleted else "restored" }}</li>{% endif %}
+      {% for id in v.added %}<li class="added">+<a href="/posts/{{ id }}">#{{ id }}</a></li>{% endfor %}
+      {% for id in v.removed %}<li class="removed">−<a href="/posts/{{ id }}">#{{ id }}</a></li>{% endfor %}
+      {% if v.reordered %}<li>reordered</li>{% endif %}
+    </ul>
+  </li>
+  {% endfor %}
+</ol>
+{% endblock %}

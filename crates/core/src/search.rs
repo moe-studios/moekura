@@ -49,6 +49,8 @@ pub const METATAGS: &[&str] = &[
     "ordfav",
     "similar",
     "commentcount",
+    "pool",
+    "ordpool",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -128,6 +130,32 @@ impl StatusFilter {
     }
 }
 
+/// Which pool `pool:` means.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PoolRef {
+    Id(i32),
+    /// As typed; matched regardless of case.
+    Name(String),
+}
+
+impl fmt::Display for PoolRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PoolRef::Id(id) => write!(f, "{id}"),
+            PoolRef::Name(name) => f.write_str(name),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PoolFilter {
+    /// Posts in any (not deleted) pool.
+    Any,
+    /// Posts in no pool.
+    None,
+    In(PoolRef),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentFilter {
     /// Posts without a parent.
@@ -173,6 +201,7 @@ pub enum Filter {
     Fav(String),
     /// Looks like this post (perceptual hash), the post included.
     Similar(i64),
+    Pool(PoolFilter),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -208,6 +237,8 @@ pub enum Order {
     /// Most recently commented first; only posts with comments.
     CommentDesc,
     CommentAsc,
+    /// In the order of [`Query::ordpool`] (`ordpool:name`).
+    Pool,
 }
 
 impl Order {
@@ -264,6 +295,8 @@ pub struct Query {
     pub limit: Option<u32>,
     /// With `ordfav:name`: the user whose favorites these are.
     pub ordfav: Option<String>,
+    /// With `ordpool:name`: the pool whose order this is.
+    pub ordpool: Option<PoolRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -376,7 +409,7 @@ impl Query {
         };
         const NUMBER: &str = "expected a number like 5, >=5, <5, 5..10 or 1,2,3";
         let filter = match name {
-            "order" | "limit" | "ordfav" if negated => {
+            "order" | "limit" | "ordfav" | "ordpool" if negated => {
                 return Err(SearchError::CantNegate(word.into()));
             }
             "ordfav" => {
@@ -387,6 +420,20 @@ impl Query {
                 self.order = Some(Order::Favorited);
                 return Ok(());
             }
+            "ordpool" => {
+                if value.is_empty() {
+                    return Err(invalid("expected a pool name or id"));
+                }
+                self.ordpool = Some(pool_ref(value));
+                self.order = Some(Order::Pool);
+                return Ok(());
+            }
+            "pool" => Filter::Pool(match value {
+                "" => return Err(invalid("expected a pool name or id, any or none")),
+                "any" => PoolFilter::Any,
+                "none" => PoolFilter::None,
+                value => PoolFilter::In(pool_ref(value)),
+            }),
             "similar" => Filter::Similar(value.parse().map_err(|_| invalid("expected a post id"))?),
             "fav" => {
                 if value.is_empty() {
@@ -503,6 +550,13 @@ fn tag_term(word: &str, raw: &str) -> Result<TagTerm, SearchError> {
             term: word.into(),
             error,
         })
+}
+
+fn pool_ref(value: &str) -> PoolRef {
+    match value.parse() {
+        Ok(id) => PoolRef::Id(id),
+        Err(_) => PoolRef::Name(value.to_owned()),
+    }
 }
 
 fn int(s: &str) -> Option<i64> {
@@ -660,6 +714,9 @@ impl fmt::Display for Condition {
             Filter::Score(b) => write!(f, "score:{b}"),
             Filter::FavCount(b) => write!(f, "favcount:{b}"),
             Filter::CommentCount(b) => write!(f, "commentcount:{b}"),
+            Filter::Pool(PoolFilter::Any) => f.write_str("pool:any"),
+            Filter::Pool(PoolFilter::None) => f.write_str("pool:none"),
+            Filter::Pool(PoolFilter::In(pool)) => write!(f, "pool:{pool}"),
             Filter::Width(b) => write!(f, "width:{b}"),
             Filter::Height(b) => write!(f, "height:{b}"),
             Filter::Mpixels(b) => write!(f, "mpixels:{b}"),
@@ -699,10 +756,11 @@ impl fmt::Display for Query {
         terms.extend(self.any.iter().map(|t| format!("~{t}")));
         terms.extend(self.none.iter().map(|t| format!("-{t}")));
         terms.extend(self.conditions.iter().map(ToString::to_string));
-        match (self.order, &self.ordfav) {
-            (Some(Order::Favorited), Some(user)) => terms.push(format!("ordfav:{user}")),
-            (Some(order), _) => terms.push(format!("order:{}", order.name())),
-            (None, _) => {}
+        match (self.order, &self.ordfav, &self.ordpool) {
+            (Some(Order::Favorited), Some(user), _) => terms.push(format!("ordfav:{user}")),
+            (Some(Order::Pool), _, Some(pool)) => terms.push(format!("ordpool:{pool}")),
+            (Some(order), ..) => terms.push(format!("order:{}", order.name())),
+            (None, ..) => {}
         }
         if let Some(limit) = self.limit {
             terms.push(format!("limit:{limit}"));
@@ -900,6 +958,30 @@ mod tests {
         // A later order: replaces ordfav's order.
         assert_eq!(parse("ordfav:a order:score").order, Some(Order::ScoreDesc));
         assert!(error("-ordfav:a").contains("can't be negated"));
+
+        let query = parse("pool:My_Comic -pool:12 ordpool:7");
+        assert_eq!(
+            query.conditions,
+            [
+                Condition {
+                    negated: false,
+                    filter: Filter::Pool(PoolFilter::In(PoolRef::Name("my_comic".into())))
+                },
+                Condition {
+                    negated: true,
+                    filter: Filter::Pool(PoolFilter::In(PoolRef::Id(12)))
+                },
+            ]
+        );
+        assert_eq!(
+            (query.order, query.ordpool),
+            (Some(Order::Pool), Some(PoolRef::Id(7)))
+        );
+        assert_eq!(
+            parse("pool:any -pool:none ordpool:x").to_string(),
+            "pool:any -pool:none ordpool:x"
+        );
+        assert!(error("pool:").contains("expected a pool"));
         assert!(error("fav:").contains("expected a user name"));
     }
 
@@ -942,7 +1024,7 @@ mod tests {
     fn malformed_terms() {
         assert_eq!(error("-~a"), "`-~a`: use either `-` or `~`, not both");
         assert_eq!(error("-"), "`-` is missing a tag");
-        assert_eq!(error("pool:12"), "`pool:` searches aren't supported yet");
+        assert_eq!(error("note:12"), "`note:` searches aren't supported yet");
         assert_eq!(filter("similar:12"), Filter::Similar(12));
         assert!(error("similar:x").contains("expected a post id"));
         assert_eq!(

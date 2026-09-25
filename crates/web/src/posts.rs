@@ -708,6 +708,7 @@ pub(crate) async fn render_post(
         .collect();
     let comments =
         crate::comments::thread(state, &page.current, &post, extra.comment.as_ref()).await?;
+    let pools = crate::pools::for_post(state, &page.current, post.id, post.status).await?;
     let comment_refused = extra.comment.as_ref().is_some_and(|c| c.error.is_some());
     let status = if failed.is_some() || comment_refused {
         StatusCode::UNPROCESSABLE_ENTITY
@@ -729,6 +730,7 @@ pub(crate) async fn render_post(
             blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
             reactions => reactions,
             comments => comments,
+            pools => pools,
             edit => edit,
             ratings => ratings,
             search => context! {

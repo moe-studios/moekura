@@ -26,6 +26,7 @@ pub mod import;
 mod moderation;
 pub mod oidc;
 pub mod pages;
+mod pools;
 mod posts;
 pub mod rate_limit;
 pub mod shared;
@@ -221,6 +222,7 @@ pub fn router(state: AppState) -> Router {
         .merge(history::routes())
         .merge(moderation::routes())
         .merge(oidc::routes())
+        .merge(pools::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(two_factor::routes())

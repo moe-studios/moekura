@@ -11,6 +11,7 @@ pub mod jobs;
 pub mod markup;
 pub mod moderation;
 pub mod permissions;
+pub mod pools;
 pub mod posts;
 pub mod search;
 pub mod settings;

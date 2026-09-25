@@ -31,10 +31,12 @@ pub enum ActionKind {
     CommentHide,
     CommentRestore,
     CommentReportDismiss,
+    PoolDelete,
+    PoolUndelete,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 24] = [
+    pub const ALL: [ActionKind; 26] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -59,6 +61,8 @@ impl ActionKind {
         ActionKind::CommentHide,
         ActionKind::CommentRestore,
         ActionKind::CommentReportDismiss,
+        ActionKind::PoolDelete,
+        ActionKind::PoolUndelete,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -87,6 +91,8 @@ impl ActionKind {
             ActionKind::CommentHide => "comment.hide",
             ActionKind::CommentRestore => "comment.restore",
             ActionKind::CommentReportDismiss => "comment_report.dismiss",
+            ActionKind::PoolDelete => "pool.delete",
+            ActionKind::PoolUndelete => "pool.undelete",
         }
     }
 
@@ -117,6 +123,8 @@ impl ActionKind {
             ActionKind::CommentHide => "hid a comment on post",
             ActionKind::CommentRestore => "restored a comment on post",
             ActionKind::CommentReportDismiss => "dismissed reports about a comment on post",
+            ActionKind::PoolDelete => "deleted a pool",
+            ActionKind::PoolUndelete => "restored a pool",
         }
     }
 

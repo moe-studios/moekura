@@ -18,7 +18,7 @@ use std::str::FromStr;
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
-    Bound, Condition, Filter, Order, ParentFilter, Query, StatusFilter, TagTerm,
+    Bound, Condition, Filter, Order, ParentFilter, PoolFilter, Query, StatusFilter, TagTerm,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -121,6 +121,10 @@ pub struct Plan {
     ordfav: Option<i64>,
     /// `similar:` filters resolved to the matching posts.
     similar_to: Vec<(bool, Vec<i64>)>,
+    /// `pool:` filters: a pool's id, or `None` for any pool.
+    pools: Vec<(bool, Option<i32>)>,
+    /// `ordpool:`'s pool.
+    ordpool: Option<i32>,
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
@@ -166,6 +170,8 @@ impl Plan {
             favorited_by: Vec::new(),
             ordfav: None,
             similar_to: Vec::new(),
+            pools: Vec::new(),
+            ordpool: None,
             statuses,
             own_pending,
             order: query.order.unwrap_or_default(),
@@ -251,7 +257,30 @@ impl Plan {
                         None => {}
                     }
                 }
+                Filter::Pool(PoolFilter::Any) => plan.pools.push((condition.negated, None)),
+                Filter::Pool(PoolFilter::None) => plan.pools.push((!condition.negated, None)),
+                Filter::Pool(PoolFilter::In(pool)) => {
+                    match crate::pools::find(db, pool)
+                        .await?
+                        .filter(|p| !p.is_deleted)
+                    {
+                        Some(pool) => plan.pools.push((condition.negated, Some(pool.id))),
+                        None if !condition.negated => plan.nothing = true,
+                        None => {}
+                    }
+                }
                 _ => plan.conditions.push(condition.clone()),
+            }
+        }
+        if let Some(pool) = &query.ordpool
+            && plan.order == Order::Pool
+        {
+            match crate::pools::find(db, pool)
+                .await?
+                .filter(|p| !p.is_deleted)
+            {
+                Some(pool) => plan.ordpool = Some(pool.id),
+                None => plan.nothing = true,
             }
         }
 
@@ -317,7 +346,7 @@ impl Plan {
                 &self.uploaders,
                 &self.favorited_by,
                 self.ordfav,
-                &self.similar_to,
+                (&self.similar_to, &self.pools, self.ordpool),
             )
         )
     }
@@ -569,6 +598,9 @@ impl Plan {
             Order::CommentAsc => {
                 sql.push("p.last_commented_at ASC, p.id ASC");
             }
+            Order::Pool => {
+                sql.push("po.position ASC");
+            }
         }
         sql.push(" LIMIT ").push_bind(i64::from(self.per_page));
         if offset > 0 {
@@ -614,6 +646,10 @@ impl Plan {
         if let Some(user) = self.ordfav {
             sql.push(" JOIN favorites fo ON fo.post_id = p.id AND fo.user_id = ")
                 .push_bind(user);
+        }
+        if let Some(pool) = self.ordpool {
+            sql.push(" JOIN pool_posts po ON po.post_id = p.id AND po.pool_id = ")
+                .push_bind(pool);
         }
         sql.push(" WHERE (p.status = ANY(")
             .push_bind(self.statuses.clone())
@@ -680,6 +716,22 @@ impl Plan {
             .push_bind(ids.clone())
             .push(")");
         }
+        for (negated, pool) in &self.pools {
+            sql.push(if *negated { " AND NOT" } else { " AND" });
+            match pool {
+                Some(pool) => {
+                    sql.push(" EXISTS (SELECT 1 FROM pool_posts pp WHERE pp.post_id = p.id AND pp.pool_id = ")
+                        .push_bind(*pool)
+                        .push(")");
+                }
+                None => {
+                    sql.push(
+                        " EXISTS (SELECT 1 FROM pool_posts pp JOIN pools pl ON pl.id = pp.pool_id \
+                         WHERE pp.post_id = p.id AND NOT pl.is_deleted)",
+                    );
+                }
+            }
+        }
         for (negated, user) in &self.favorited_by {
             sql.push(if *negated { " AND NOT" } else { " AND" })
                 .push(" EXISTS (SELECT 1 FROM favorites f WHERE f.post_id = p.id AND f.user_id = ")
@@ -732,6 +784,8 @@ impl Plan {
             && self.favorited_by.is_empty()
             && self.similar_to.is_empty()
             && self.ordfav.is_none()
+            && self.pools.is_empty()
+            && self.ordpool.is_none()
             && !self.only_commented()
             && self.excluded.is_empty()
             && self.any.is_none();
@@ -912,7 +966,11 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
                 .push(" OR p.id = ")
                 .push_bind(*id);
         }
-        Filter::Status(_) | Filter::User(_) | Filter::Fav(_) | Filter::Similar(_) => {
+        Filter::Status(_)
+        | Filter::User(_)
+        | Filter::Fav(_)
+        | Filter::Similar(_)
+        | Filter::Pool(_) => {
             unreachable!("resolved in Plan::resolve")
         }
     }
@@ -1457,6 +1515,63 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn pools_and_pool_order(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            ids.push(
+                seed(
+                    &pool,
+                    Seed {
+                        tags: &["x"],
+                        ..Seed::default()
+                    },
+                )
+                .await,
+            );
+        }
+        let contents = |name: &str, post_ids: Vec<i64>, is_deleted| crate::pools::Contents {
+            name: name.into(),
+            description: String::new(),
+            category: "series".into(),
+            is_deleted,
+            post_ids,
+        };
+        let comic = crate::pools::create(
+            &pool,
+            &contents("Comic", vec![ids[2], ids[0], ids[1]], false),
+            None,
+        )
+        .await
+        .unwrap();
+        crate::pools::create(&pool, &contents("Gone", vec![ids[3]], true), None)
+            .await
+            .unwrap();
+
+        assert_eq!(search(&pool, "pool:comic").await, [ids[2], ids[1], ids[0]]);
+        assert_eq!(
+            search(&pool, &format!("pool:{comic}")).await,
+            [ids[2], ids[1], ids[0]]
+        );
+        assert_eq!(search(&pool, "-pool:comic").await, [ids[3]]);
+        assert_eq!(search(&pool, "pool:any").await, [ids[2], ids[1], ids[0]]);
+        assert_eq!(search(&pool, "pool:none").await, [ids[3]]);
+        // Deleted pools match nothing.
+        assert!(search(&pool, "pool:gone").await.is_empty());
+        assert!(search(&pool, "pool:nothing").await.is_empty());
+        assert_eq!(
+            search(&pool, "x ordpool:comic").await,
+            [ids[2], ids[0], ids[1]]
+        );
+        assert!(search(&pool, "ordpool:gone").await.is_empty());
+
+        let query = Query::parse("ordpool:comic").unwrap();
+        let plan = Plan::resolve(&pool, &query, &public(), &SearchConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(plan.count(&pool).await.unwrap(), Count::Exact(3));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn orders_and_pages(pool: PgPool) {
         let mut ids = Vec::new();
         for (i, score) in [3, 1, 2, 5, 4].into_iter().enumerate() {
@@ -1676,6 +1791,8 @@ mod tests {
             favorited_by: Vec::new(),
             ordfav: None,
             similar_to: Vec::new(),
+            pools: Vec::new(),
+            ordpool: None,
             statuses: vec!["active"],
             own_pending: None,
             order,

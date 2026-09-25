@@ -44,7 +44,9 @@ var METATAGS = {
   limit: [],
   fav: [],
   ordfav: [],
-  similar: []
+  similar: [],
+  pool: ["any", "none"],
+  ordpool: []
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 
@@ -388,6 +390,50 @@ function enableShortcuts() {
   });
 }
 
+// src/pool-order.ts
+function reorder(ids, moved, before) {
+  const rest = ids.filter((id) => id !== moved);
+  const at = before === null ? -1 : rest.indexOf(before);
+  if (at < 0) return [...rest, moved];
+  return [...rest.slice(0, at), moved, ...rest.slice(at)];
+}
+function enablePoolOrder(root = document) {
+  const list = root.querySelector("[data-pool-order]");
+  const field = root.querySelector("[data-pool-posts]");
+  if (!list || !field) return;
+  let dragged = null;
+  for (const item of list.querySelectorAll("li[data-id]")) {
+    item.draggable = true;
+    item.addEventListener("dragstart", (event) => {
+      dragged = item;
+      item.classList.add("dragging");
+      event.dataTransfer?.setData("text/plain", item.dataset["id"] ?? "");
+    });
+    item.addEventListener("dragend", () => {
+      item.classList.remove("dragging");
+      dragged = null;
+    });
+    item.querySelector("a")?.addEventListener("click", (event) => event.preventDefault());
+  }
+  list.addEventListener("dragover", (event) => {
+    if (!dragged) return;
+    event.preventDefault();
+    const target2 = event.target.closest("li[data-id]");
+    if (!target2 || target2 === dragged) return;
+    const box = target2.getBoundingClientRect();
+    const after = event.clientX > box.left + box.width / 2;
+    list.insertBefore(dragged, after ? target2.nextSibling : target2);
+  });
+  list.addEventListener("drop", (event) => {
+    event.preventDefault();
+    if (!dragged) return;
+    const moved = dragged.dataset["id"] ?? "";
+    const next = dragged.nextElementSibling;
+    const ids = field.value.split(/[\s,]+/).filter((id) => id !== "").map((id) => id.replace(/^#/, ""));
+    field.value = reorder(ids, moved, next?.dataset["id"] ?? null).join(" ");
+  });
+}
+
 // src/reactions.ts
 function update(root, state) {
   const score = root.querySelector(".vote .score");
@@ -437,3 +483,4 @@ document.documentElement.classList.add("js");
 attachAll();
 enhanceReactions();
 enableShortcuts();
+enablePoolOrder();

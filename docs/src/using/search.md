@@ -37,6 +37,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
 | `fav:` | `fav:alice` | favorited by this user |
+| `pool:` | `pool:my_comic`, `pool:12`, `pool:any`, `pool:none` | in this pool (by name or number), in any pool, or in none |
 | `width:`, `height:` | `width:>=1920` | size in pixels |
 | `mpixels:` | `mpixels:>2` | megapixels (width × height ÷ 1,000,000) |
 | `ratio:` | `ratio:16:9`, `ratio:<1` | width ÷ height (`16:9` or a number; exact values match within 0.01) |
@@ -85,6 +86,7 @@ those allowed to see them.
 | `order:comment`, `order:comment_asc` | most / least recently commented (only posts with comments) |
 | `order:random` | shuffled |
 | `ordfav:alice` | alice's favorites, most recently favorited first |
+| `ordpool:my_comic` | the pool's posts, in the pool's order |
 
 `limit:100` shows more posts per page (up to the site's maximum, 200 by
 default).

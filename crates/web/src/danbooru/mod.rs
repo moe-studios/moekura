@@ -9,6 +9,7 @@
 //! Danbooru's shape ([`error_response`]).
 
 mod posts;
+mod tags;
 
 use axum::Router;
 use axum::extract::Request;
@@ -31,7 +32,7 @@ pub(crate) const PREFIX: &str = "/__danbooru";
 pub(crate) struct DanbooruRequest;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().nest(PREFIX, posts::routes())
+    Router::new().nest(PREFIX, posts::routes().merge(tags::routes()))
 }
 
 /// Paths that end in `.json` without being Danbooru's.
@@ -130,6 +131,12 @@ pub(crate) async fn error_response(response: Response) -> Response {
     danbooru
 }
 
+/// Danbooru's timestamps: RFC 3339.
+fn timestamp(at: time::OffsetDateTime) -> String {
+    at.format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_default()
+}
+
 /// Paging and field selection, as every Danbooru list takes them.
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct ListParams {
@@ -197,6 +204,19 @@ pub(crate) mod test_support {
     /// front (as `with_middleware` puts it).
     pub(crate) async fn app(pool: &PgPool) -> TestApp {
         TestApp::new(test_state(pool).await, routes())
+    }
+
+    /// Uploads a `width`×20 PNG as the user of `session`; returns the post.
+    pub(crate) async fn upload(app: &TestApp, session: &str, width: u32, tags: &str) -> i64 {
+        let fields = vec![("rating", "s".to_owned()), ("tags", tags.to_owned())];
+        let file = crate::test_support::fixture::png(width, 20);
+        let response = app
+            .post_multipart("/upload", Some(session), &fields, Some(("a.png", &file)))
+            .await;
+        let location = response
+            .location
+            .unwrap_or_else(|| panic!("{}: {}", response.status, response.body));
+        location["/posts/".len()..].parse().unwrap()
     }
 
     pub(crate) fn routes() -> Router<AppState> {

@@ -13,10 +13,8 @@ use moekura_db::posts::{self, Extras, Post};
 use moekura_db::search::{PageRef, Plan, SearchError};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use time::OffsetDateTime;
-use time::format_description::well_known::Rfc3339;
 
-use super::{ListParams, json};
+use super::{ListParams, json, timestamp};
 use crate::AppState;
 use crate::api::posts::{ApiPost, load, one};
 use crate::auth::CurrentUser;
@@ -107,10 +105,6 @@ struct MediaVariant {
     width: i32,
     height: i32,
     file_ext: String,
-}
-
-fn timestamp(at: OffsetDateTime) -> String {
-    at.format(&Rfc3339).unwrap_or_default()
 }
 
 /// Danbooru's extensions: `jpg` rather than `jpeg`.
@@ -279,7 +273,7 @@ pub(crate) async fn danbooru_posts(
         .collect())
 }
 
-fn search_error(error: SearchError) -> AppError {
+pub(super) fn search_error(error: SearchError) -> AppError {
     match error {
         SearchError::Invalid(message) => AppError::Unprocessable(message),
         SearchError::Db(error) => error.into(),
@@ -410,23 +404,8 @@ mod tests {
     use serde_json::{Value, json};
     use sqlx::PgPool;
 
-    use crate::danbooru::test_support::app;
-    use crate::test_support::{TestApp, fixture, session_for};
-
-    async fn upload(app: &TestApp, session: &str, width: u32, tags: &str) -> i64 {
-        let fields = vec![("rating", "s".to_owned()), ("tags", tags.to_owned())];
-        let response = app
-            .post_multipart(
-                "/upload",
-                Some(session),
-                &fields,
-                Some(("a.png", &fixture::png(width, 20))),
-            )
-            .await;
-        response.location.unwrap()["/posts/".len()..]
-            .parse()
-            .unwrap()
-    }
+    use crate::danbooru::test_support::{app, upload};
+    use crate::test_support::session_for;
 
     fn body(response: &crate::test_support::TestResponse) -> Value {
         serde_json::from_str(&response.body).unwrap_or_else(|_| panic!("{}", response.body))

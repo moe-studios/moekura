@@ -216,6 +216,38 @@ pub async fn list(
     rows.into_iter().map(Relation::try_from).collect()
 }
 
+/// Relations of `kind` by exact names: `antecedent`, `consequent`, or
+/// `either` side, newest first.
+#[allow(clippy::too_many_arguments)]
+pub async fn find(
+    db: impl PgExecutor<'_>,
+    kind: Kind,
+    status: Option<Status>,
+    antecedent: Option<&str>,
+    consequent: Option<&str>,
+    either: Option<&str>,
+    offset: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<Relation>> {
+    let rows: Vec<RelationRow> = sqlx::query_as(select_relations!(
+        "WHERE r.kind = $1 AND ($2::text IS NULL OR r.status = $2)
+           AND ($3::text IS NULL OR r.antecedent_name = $3)
+           AND ($4::text IS NULL OR r.consequent_name = $4)
+           AND ($5::text IS NULL OR r.antecedent_name = $5 OR r.consequent_name = $5)
+         ORDER BY r.id DESC OFFSET $6 LIMIT $7"
+    ))
+    .bind(kind.as_str())
+    .bind(status.map(Status::as_str))
+    .bind(antecedent)
+    .bind(consequent)
+    .bind(either)
+    .bind(offset)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    rows.into_iter().map(Relation::try_from).collect()
+}
+
 /// The active aliases among `names`, as (antecedent, consequent).
 pub async fn aliases_of(
     db: impl PgExecutor<'_>,

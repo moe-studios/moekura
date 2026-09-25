@@ -215,6 +215,81 @@ pub async fn list(
         .await
 }
 
+/// Which tags [`filter`] finds; every condition given must hold.
+#[derive(Debug, Clone, Default)]
+pub struct TagFilter<'a> {
+    /// Exactly these names.
+    pub names: Option<&'a [String]>,
+    /// A name pattern where `*` matches anything; without one, the whole
+    /// name.
+    pub pattern: Option<&'a str>,
+    /// In one of these categories (any if empty).
+    pub categories: &'a [i16],
+    /// Only tags on at least one post.
+    pub used_only: bool,
+}
+
+/// A page of tags matching `filter`.
+pub async fn filter(
+    db: impl PgExecutor<'_>,
+    filter: &TagFilter<'_>,
+    order: ListOrder,
+    offset: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<Tag>> {
+    // Without a `*`, like_pattern matches a prefix; this matches the name.
+    let like = filter.pattern.map(|p| {
+        let mut like = like_pattern(p);
+        if !p.contains('*') {
+            like.pop();
+        }
+        like
+    });
+    let query = match order {
+        ListOrder::Count => select_tags!(
+            "WHERE ($1::text[] IS NULL OR name = ANY($1)) AND ($2::text IS NULL OR name LIKE $2)
+               AND (cardinality($3::int2[]) = 0 OR category_id = ANY($3)) AND (NOT $4 OR post_count > 0)
+             ORDER BY post_count DESC, id OFFSET $5 LIMIT $6"
+        ),
+        ListOrder::Name => select_tags!(
+            "WHERE ($1::text[] IS NULL OR name = ANY($1)) AND ($2::text IS NULL OR name LIKE $2)
+               AND (cardinality($3::int2[]) = 0 OR category_id = ANY($3)) AND (NOT $4 OR post_count > 0)
+             ORDER BY name OFFSET $5 LIMIT $6"
+        ),
+        ListOrder::Newest => select_tags!(
+            "WHERE ($1::text[] IS NULL OR name = ANY($1)) AND ($2::text IS NULL OR name LIKE $2)
+               AND (cardinality($3::int2[]) = 0 OR category_id = ANY($3)) AND (NOT $4 OR post_count > 0)
+             ORDER BY id DESC OFFSET $5 LIMIT $6"
+        ),
+    };
+    sqlx::query_as(query)
+        .bind(filter.names)
+        .bind(like)
+        .bind(filter.categories)
+        .bind(filter.used_only)
+        .bind(offset)
+        .bind(limit)
+        .fetch_all(db)
+        .await
+}
+
+/// How many of `post_ids` carry each of their tags, most first, at most
+/// `limit` tags.
+pub async fn counts_among(
+    db: impl PgExecutor<'_>,
+    post_ids: &[i64],
+    limit: i64,
+) -> sqlx::Result<Vec<(i32, i64)>> {
+    sqlx::query_as(
+        "SELECT tag_id, count(*) AS n FROM posts, unnest(tag_ids) AS tag_id
+         WHERE id = ANY($1) GROUP BY tag_id ORDER BY n DESC, tag_id LIMIT $2",
+    )
+    .bind(post_ids)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// A tag suggested while typing.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Suggestion {

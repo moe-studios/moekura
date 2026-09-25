@@ -55,8 +55,10 @@ jobs:
       - run: cargo test --workspace --locked
       - name: Search plans at scale
         # Seeds 200,000 posts and fails if a search that should be
-        # selective reads most of the table.
-        run: cargo test -p moekura-db --locked -- --ignored
+        # selective reads most of the table. A minute, so only on main.
+        # --workspace, like the step above, so nothing builds again.
+        if: github.event_name == 'push'
+        run: cargo test --workspace --locked -- --ignored
 
   s3:
     # The S3 backend against a real S3-compatible server. (Service
@@ -114,7 +116,16 @@ jobs:
       E2E_ADMIN_PASSWORD: e2e admin password
     steps:
       - uses: actions/checkout@v5
-      - run: docker build --tag moekura:ci .
+      - uses: docker/setup-buildx-action@v4
+      # Layers cached between runs: the media tools rarely change, and the
+      # Rust dependencies only with Cargo.lock.
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: moekura:ci
+          cache-from: type=gha,scope=ci
+          cache-to: type=gha,mode=max,scope=ci
       - name: Media tools work in the image
         # The image builds its own ffmpeg and libvips; run them on one file
         # of every accepted type, the way the app does.

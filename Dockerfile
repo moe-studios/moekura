@@ -1,11 +1,24 @@
 # syntax=docker/dockerfile:1
 
-FROM docker.io/library/rust:1.98-trixie AS build
+FROM docker.io/library/rust:1.98-trixie AS chef
+ARG CARGO_CHEF_VERSION=0.1.78
+RUN cargo install cargo-chef --locked --version "${CARGO_CHEF_VERSION}"
 WORKDIR /src
+
+# The dependency list, from the manifests and Cargo.lock only.
+FROM chef AS plan
 COPY . .
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p moekura \
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Dependencies build in a layer of their own, which layer caches (CI's
+# and release's) keep until a manifest or Cargo.lock changes; then only
+# Moekura's crates build. No cache mounts: what's in them never reaches
+# the layers.
+FROM chef AS build
+COPY --from=plan /src/recipe.json recipe.json
+RUN cargo chef cook --release --locked -p moekura --recipe-path recipe.json
+COPY . .
+RUN cargo build --release --locked -p moekura \
     && cp target/release/moekura /usr/local/bin/moekura
 
 # ffmpeg and libvips, built with only what Moekura uses. Debian's packages

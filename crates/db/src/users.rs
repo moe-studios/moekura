@@ -115,6 +115,38 @@ pub async fn names(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result<Vec<(i6
         .await
 }
 
+/// The users with the given ids, in no particular order.
+pub async fn by_ids(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result<Vec<User>> {
+    sqlx::query_as(select_users!("WHERE id = ANY($1)"))
+        .bind(ids)
+        .fetch_all(db)
+        .await
+}
+
+/// What a user has done, for profiles.
+#[derive(Debug, Clone, Default, PartialEq, Eq, sqlx::FromRow)]
+pub struct Activity {
+    pub uploads: i64,
+    /// Post changes after the upload.
+    pub edits: i64,
+    pub favorites: i64,
+    /// A ban is in force.
+    pub banned: bool,
+}
+
+pub async fn activity(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Activity> {
+    sqlx::query_as(
+        "SELECT (SELECT count(*) FROM posts WHERE uploader_id = $1) AS uploads,
+                (SELECT count(*) FROM post_versions WHERE updater_id = $1 AND version > 1) AS edits,
+                (SELECT count(*) FROM favorites WHERE user_id = $1) AS favorites,
+                EXISTS (SELECT 1 FROM bans WHERE user_id = $1 AND lifted_at IS NULL
+                        AND (expires_at IS NULL OR expires_at > now())) AS banned",
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await
+}
+
 /// Case-insensitive.
 pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> sqlx::Result<Option<User>> {
     sqlx::query_as(select_users!("WHERE name = $1::citext"))

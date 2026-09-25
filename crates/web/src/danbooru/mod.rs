@@ -10,6 +10,7 @@
 
 mod posts;
 mod tags;
+mod users;
 
 use axum::Router;
 use axum::extract::Request;
@@ -32,7 +33,10 @@ pub(crate) const PREFIX: &str = "/__danbooru";
 pub(crate) struct DanbooruRequest;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().nest(PREFIX, posts::routes().merge(tags::routes()))
+    Router::new().nest(
+        PREFIX,
+        posts::routes().merge(tags::routes()).merge(users::routes()),
+    )
 }
 
 /// Paths that end in `.json` without being Danbooru's.

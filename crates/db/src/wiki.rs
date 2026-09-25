@@ -43,6 +43,18 @@ pub async fn by_title(db: impl PgExecutor<'_>, title: &str) -> sqlx::Result<Opti
     .await
 }
 
+pub async fn by_id(db: impl PgExecutor<'_>, id: i32) -> sqlx::Result<Option<WikiPage>> {
+    sqlx::query_as(
+        "SELECT p.id, p.title, p.body, p.version, u.name::text AS updater_name,
+                p.created_at, p.updated_at
+         FROM wiki_pages p LEFT JOIN users u ON u.id = p.updater_id
+         WHERE p.id = $1",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
+}
+
 /// Pages whose title matches `pattern` (see [`crate::tags::like_pattern`]),
 /// most recently changed first.
 pub async fn list(

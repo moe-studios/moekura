@@ -1,12 +1,20 @@
 import { expect, test } from "@playwright/test";
-import { admin, logIn, png } from "./helpers.ts";
+import { logIn, png } from "./helpers.ts";
 
 test.describe.configure({ mode: "serial" });
 
+// Its own account: the admin's logins are rate limited, and other tests
+// and the Danbooru client check use them.
+const member = { name: `e2e_n_${Date.now().toString(36)}`, password: "correct horse battery" };
 let postPath = "";
 
 test("draw a note, move it and change it", async ({ page }) => {
-  await logIn(page, admin.name, admin.password);
+  await page.goto("/register");
+  await page.getByLabel("Name").fill(member.name);
+  await page.getByLabel("Password", { exact: true }).fill(member.password);
+  await page.getByLabel("Repeat password").fill(member.password);
+  await page.getByRole("button", { name: "Register" }).click();
+  await expect(page.getByText("Your account is ready")).toBeVisible();
   await page.goto("/upload");
   await page.locator("#file").setInputFiles({ name: "page.png", mimeType: "image/png", buffer: png(400, 300) });
   await page.locator("input[name=rating][value=g]").check();
@@ -64,7 +72,7 @@ test("hide notes, and revert from the history", async ({ page }) => {
   await page.getByRole("button", { name: "Show notes" }).click();
   await expect(page.locator("svg.notes")).toBeVisible();
 
-  await logIn(page, admin.name, admin.password);
+  await logIn(page, member.name, member.password);
   await page.goto(`${postPath}/notes/history`);
   await page.getByRole("button", { name: "Revert to this" }).last().click();
   await page.goto(postPath);

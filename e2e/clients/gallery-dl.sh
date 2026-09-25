@@ -20,7 +20,9 @@ tag="gdl_$run"
 
 # Forms are only accepted from the site's own origin.
 origin="Origin: $base"
-curl -fsS -c jar -b jar -H "$origin" -o /dev/null \
+# The browser tests log in as the same account just before; wait out its
+# login rate limit rather than fail.
+curl -fsS --retry 3 -c jar -b jar -H "$origin" -o /dev/null \
   --data-urlencode "name=$name" --data-urlencode "password=$password" "$base/login"
 
 for i in 1 2 3; do

@@ -513,6 +513,7 @@ fn upload_error(error: UploadError) -> AppError {
     match error {
         UploadError::Invalid(message) => AppError::Unprocessable(message),
         UploadError::Duplicate(id) => AppError::Duplicate(id),
+        UploadError::Limit(message) => AppError::Blocked(message),
         UploadError::Internal(detail) => AppError::Internal(detail),
     }
 }
@@ -541,6 +542,9 @@ pub(crate) async fn upload(
     multipart: Multipart,
 ) -> Result<(StatusCode, [(HeaderName, String); 1], Json<ApiPost>), AppError> {
     current.require(Permission::Upload)?;
+    crate::upload::check_limits(&state, &current)
+        .await
+        .map_err(upload_error)?;
     let (mut fields, file) = crate::upload::receive(&state, multipart).await;
     let file = match file.map_err(upload_error)? {
         Some(file) => file,

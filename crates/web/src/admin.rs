@@ -10,6 +10,7 @@ use minijinja::{Value, context};
 use moekura_core::moderation::ActionKind;
 use moekura_core::permissions::{Permission, Permissions};
 use moekura_core::settings::{RegistrationMode, SiteSettings};
+use moekura_core::uploads::UploadLimits;
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, UserStatus};
 use moekura_db::{jobs, roles, settings};
@@ -130,6 +131,7 @@ fn render_settings(
                 registration_mode => mode_name(current.registration_mode),
                 email_verification => current.email_verification,
                 upload_approval => current.upload_approval,
+                upload_limit_scaling => current.upload_limit_scaling,
                 default_blacklist => current.default_blacklist,
             },
             mail_enabled => page.state().config.mail.is_enabled(),
@@ -155,6 +157,8 @@ struct SettingsForm {
     email_verification: Option<String>,
     /// Present when ticked.
     upload_approval: Option<String>,
+    /// Present when ticked.
+    upload_limit_scaling: Option<String>,
     #[serde(default)]
     default_blacklist: String,
 }
@@ -176,6 +180,10 @@ async fn save_settings(
             json!(form.email_verification.is_some()),
         ),
         ("upload_approval", json!(form.upload_approval.is_some())),
+        (
+            "upload_limit_scaling",
+            json!(form.upload_limit_scaling.is_some()),
+        ),
         (
             "default_blacklist",
             json!(form.default_blacklist.replace("\r\n", "\n").trim()),
@@ -363,6 +371,8 @@ async fn role_list(page: Page) -> Result<Response, AppError> {
                 name => role.name,
                 rank => role.rank,
                 editable => role.rank < my_rank,
+                pending_limit => role.upload_limits.pending,
+                daily_limit => role.upload_limits.daily,
                 permissions => Permission::ALL.iter().map(|p| context! {
                     key => p.key(),
                     label => p.label(),
@@ -407,7 +417,24 @@ async fn update_role(
     let known = Permissions::of(&Permission::ALL);
     let unknown = role.permissions.bits() & !known.bits();
     let permissions = Permissions::from_bits(unknown).with(Permissions::of(&granted));
-    roles::update(db, id, name, permissions)
+    let limit = |key: &str| -> Result<Option<i32>, AppError> {
+        match form.iter().find(|(k, _)| k == key).map(|(_, v)| v.trim()) {
+            None | Some("") => Ok(None),
+            Some(value) => value
+                .parse::<i32>()
+                .ok()
+                .filter(|n| *n >= 0)
+                .map(Some)
+                .ok_or_else(|| {
+                    AppError::BadRequest("An upload limit is a number, or empty for none".into())
+                }),
+        }
+    };
+    let limits = UploadLimits {
+        pending: limit("pending_upload_limit")?,
+        daily: limit("daily_upload_limit")?,
+    };
+    roles::update(db, id, name, permissions, limits)
         .await
         .map_err(|e| match &e {
             sqlx::Error::Database(d) if d.is_unique_violation() => {
@@ -420,6 +447,8 @@ async fn update_role(
         NewAction::new(actor(&page), ActionKind::RoleUpdate).details(json!({
             "role": name,
             "permissions": granted.iter().map(|p| p.key()).collect::<Vec<_>>(),
+            "pending_upload_limit": limits.pending,
+            "daily_upload_limit": limits.daily,
         })),
     )
     .await?;
@@ -599,6 +628,40 @@ mod tests {
         // Without view_posts, visitors are sent to log in: a private site.
         let home = app.get("/", None).await;
         assert_eq!(home.status, StatusCode::SEE_OTHER);
+        // Upload limits: numbers, or empty for none.
+        let member = role_id(SystemRole::Member);
+        let saved = app
+            .post_form(
+                &format!("/admin/roles/{member}"),
+                Some(&admin),
+                &[],
+                "name=Member&upload=on&pending_upload_limit=3&daily_upload_limit=",
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        let limits: (Option<i32>, Option<i32>) = sqlx::query_as(
+            "SELECT pending_upload_limit, daily_upload_limit FROM roles WHERE id = $1",
+        )
+        .bind(member)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(limits, (Some(3), None));
+        let bad = app
+            .post_form(
+                &format!("/admin/roles/{member}"),
+                Some(&admin),
+                &[],
+                "name=Member&daily_upload_limit=-1",
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+        assert!(
+            app.get("/admin/roles", Some(&admin))
+                .await
+                .body
+                .contains("name=\"pending_upload_limit\" type=\"number\" min=\"0\" value=\"3\"")
+        );
         let own = role_id(SystemRole::Admin);
         assert_eq!(
             app.post_form(

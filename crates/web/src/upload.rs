@@ -18,6 +18,7 @@ use minijinja::context;
 use moekura_core::jobs::ProcessMedia;
 use moekura_core::permissions::Permission;
 use moekura_core::posts::{DESCRIPTION_MAX_LEN, PostStatus, Rating, SOURCE_MAX_LEN};
+use moekura_core::uploads::{self, UploadLimits};
 use moekura_db::media::{self, InsertAssetError, NewAsset};
 use moekura_db::posts::{self, NewPost};
 use moekura_media::MediaError;
@@ -89,6 +90,9 @@ pub enum UploadError {
     Invalid(String),
     #[error("this file was already uploaded as post #{0}")]
     Duplicate(i64),
+    /// Over the uploader's upload limits.
+    #[error("{0}")]
+    Limit(String),
     #[error("{0}")]
     Internal(String),
 }
@@ -108,17 +112,76 @@ impl From<sqlx::Error> for UploadError {
     }
 }
 
+/// What `uploader` may still upload now.
+pub(crate) struct Allowance {
+    /// Why they can't upload now, if they can't.
+    pub refusal: Option<String>,
+    /// Uploads left before the approval queue's limit, if one applies.
+    pub pending_left: Option<i64>,
+    /// Uploads left today, if there's a daily limit.
+    pub today_left: Option<i64>,
+}
+
+/// Works out `uploader`'s [`Allowance`] from their role's limits.
+pub(crate) async fn allowance(
+    state: &AppState,
+    uploader: &CurrentUser,
+) -> Result<Allowance, sqlx::Error> {
+    let limits = uploader.role.upload_limits;
+    let Some(user) = &uploader.user else {
+        return Ok(Allowance {
+            refusal: None,
+            pending_left: None,
+            today_left: None,
+        });
+    };
+    if limits == UploadLimits::default() {
+        return Ok(Allowance {
+            refusal: None,
+            pending_left: None,
+            today_left: None,
+        });
+    }
+    let settings = &state.site.get().settings;
+    let counts = posts::upload_counts(state.db.primary(), user.id).await?;
+    let queued = settings.upload_approval && !uploader.can(Permission::UploadWithoutApproval);
+    let scaling = settings.upload_limit_scaling;
+    Ok(Allowance {
+        refusal: uploads::refusal(&limits, &counts, scaling, queued),
+        pending_left: limits
+            .pending
+            .filter(|_| queued)
+            .map(|base| (uploads::pending_limit(base, &counts, scaling) - counts.pending).max(0)),
+        today_left: limits
+            .daily
+            .map(|daily| (i64::from(daily) - counts.today).max(0)),
+    })
+}
+
+/// Refuses an upload over `uploader`'s limits.
+pub(crate) async fn check_limits(
+    state: &AppState,
+    uploader: &CurrentUser,
+) -> Result<(), UploadError> {
+    match allowance(state, uploader).await?.refusal {
+        Some(message) => Err(UploadError::Limit(message)),
+        None => Ok(()),
+    }
+}
+
 fn max_bytes(state: &AppState) -> u64 {
     state.media.config().max_upload_mb * 1024 * 1024
 }
 
 async fn upload_form(page: Page) -> Result<Response, AppError> {
     page.current.require(Permission::Upload)?;
+    let allowance = allowance(page.state(), &page.current).await?;
     Ok(render_form(
         &page,
         &UploadFields::default(),
         None,
         StatusCode::OK,
+        Some(&allowance),
     ))
 }
 
@@ -127,6 +190,7 @@ fn render_form(
     fields: &UploadFields,
     error: Option<&UploadError>,
     status: StatusCode,
+    allowance: Option<&Allowance>,
 ) -> Response {
     let ratings: Vec<_> = Rating::ALL
         .iter()
@@ -152,6 +216,11 @@ fn render_form(
             error => message,
             duplicate_of => duplicate_of,
             max_mb => page.state().media.config().max_upload_mb,
+            allowance => allowance.map(|a| context! {
+                refusal => a.refusal,
+                pending_left => a.pending_left,
+                today_left => a.today_left,
+            }),
         },
     )
 }
@@ -162,6 +231,9 @@ async fn upload(
     multipart: Multipart,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::Upload)?;
+    if let Err(error) = check_limits(&state, &page.current).await {
+        return Ok(failed(&page, &UploadFields::default(), error));
+    }
     let (mut fields, file) = match receive(&state, multipart).await {
         (fields, Ok(file)) => (fields, file),
         (fields, Err(error)) => return Ok(failed(&page, &fields, error)),
@@ -208,9 +280,15 @@ fn failed(page: &Page, fields: &UploadFields, error: UploadError) -> Response {
             fields,
             Some(&error),
             StatusCode::INTERNAL_SERVER_ERROR,
+            None,
         );
     }
-    render_form(page, fields, Some(&error), StatusCode::UNPROCESSABLE_ENTITY)
+    let status = if matches!(error, UploadError::Limit(_)) {
+        StatusCode::TOO_MANY_REQUESTS
+    } else {
+        StatusCode::UNPROCESSABLE_ENTITY
+    };
+    render_form(page, fields, Some(&error), status, None)
 }
 
 /// Reads the form, streaming the file to disk. The fields read so far come
@@ -818,6 +896,68 @@ mod tests {
         };
         assert_eq!(status_of(queued.location).await, PostStatus::Pending);
         assert_eq!(status_of(direct.location).await, PostStatus::Active);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn upload_limits(pool: PgPool) {
+        settings::set(&pool, "upload_approval", json!(true))
+            .await
+            .unwrap();
+        sqlx::query("UPDATE roles SET pending_upload_limit = 1 WHERE system_key = 'member'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE roles SET daily_upload_limit = 1 WHERE system_key = 'contributor'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (app, _) = app(&pool).await;
+        let member = session_for(&pool, "alice", SystemRole::Member).await;
+        let contributor = session_for(&pool, "bob", SystemRole::Contributor).await;
+        let upload = async |session: &str, width: u32| {
+            app.post_multipart(
+                "/upload",
+                Some(session),
+                &fields("g"),
+                Some(("a.png", &fixture::png(width, 20))),
+            )
+            .await
+        };
+
+        let form = app.get("/upload", Some(&member)).await;
+        assert!(
+            form.body
+                .contains("You can upload\n    1 more before some are approved"),
+            "{}",
+            form.body
+        );
+        assert_eq!(upload(&member, 20).await.status, StatusCode::SEE_OTHER);
+        let refused = upload(&member, 24).await;
+        assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            refused.body.contains("waiting for approval"),
+            "{}",
+            refused.body
+        );
+        assert!(
+            app.get("/upload", Some(&member))
+                .await
+                .body
+                .contains("waiting for approval")
+        );
+
+        // Contributors skip the queue, so only their daily limit counts.
+        assert_eq!(upload(&contributor, 28).await.status, StatusCode::SEE_OTHER);
+        let refused = upload(&contributor, 32).await;
+        assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(refused.body.contains("uploads a day"), "{}", refused.body);
+
+        // Approving the member's upload frees their place.
+        sqlx::query("UPDATE posts SET status = 'active' WHERE status = 'pending'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(upload(&member, 36).await.status, StatusCode::SEE_OTHER);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

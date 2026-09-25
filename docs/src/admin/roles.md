@@ -38,6 +38,25 @@ The built-in roles and what they start with:
 | Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log |
 | Admin | 50 | everything |
 
+## Upload limits
+
+Each role can limit uploads, under **Admin → Roles** (empty means no
+limit):
+
+- **Waiting for approval at once**: when the approval queue is on, how
+  many of a user's uploads may wait in it. Members start at 10. Roles
+  with *Upload without approval* skip the queue, so this doesn't apply
+  to them.
+- **Per day**: uploads in the last 24 hours, queued or not.
+
+With **Limits on uploads waiting for approval grow…** ticked in the site
+settings, the queue limit follows each user's record, as on Danbooru:
+one more for every 10 of their uploads that were approved, one fewer for
+every 5 that were deleted, from 1 up to four times the role's limit.
+
+The upload page tells users how many uploads they have left, and why an
+upload was refused; the API's `/users/me` says the same under `uploads`.
+
 ## Rank
 
 Staff act only on people below them: a moderator can ban members and

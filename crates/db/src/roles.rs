@@ -1,6 +1,7 @@
 //! Queries on `roles`.
 
 use moekura_core::permissions::{Permissions, Role, SystemRole};
+use moekura_core::uploads::UploadLimits;
 use sqlx::PgExecutor;
 
 #[derive(sqlx::FromRow)]
@@ -10,6 +11,8 @@ struct RoleRow {
     permissions: i64,
     rank: i16,
     system_key: Option<String>,
+    pending_upload_limit: Option<i32>,
+    daily_upload_limit: Option<i32>,
 }
 
 impl From<RoleRow> for Role {
@@ -20,6 +23,10 @@ impl From<RoleRow> for Role {
             permissions: Permissions::from_db(row.permissions),
             rank: row.rank,
             system: row.system_key.as_deref().and_then(SystemRole::from_key),
+            upload_limits: UploadLimits {
+                pending: row.pending_upload_limit,
+                daily: row.daily_upload_limit,
+            },
         }
     }
 }
@@ -28,7 +35,9 @@ impl From<RoleRow> for Role {
 macro_rules! select_roles {
     ($rest:literal) => {
         concat!(
-            "SELECT id, name::text, permissions, rank, system_key FROM roles ",
+            "SELECT id, name::text, permissions, rank, system_key, pending_upload_limit,
+                    daily_upload_limit
+             FROM roles ",
             $rest
         )
     };
@@ -42,21 +51,28 @@ pub async fn list(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<Role>> {
     Ok(rows.into_iter().map(Role::from).collect())
 }
 
-/// Renames a role and sets its permissions, telling every node's site
-/// cache.
+/// Renames a role and sets its permissions and upload limits, telling
+/// every node's site cache.
 pub async fn update(
     db: &sqlx::PgPool,
     id: i32,
     name: &str,
     permissions: Permissions,
+    limits: UploadLimits,
 ) -> sqlx::Result<()> {
     let mut tx = db.begin().await?;
-    sqlx::query("UPDATE roles SET name = $2, permissions = $3 WHERE id = $1")
-        .bind(id)
-        .bind(name)
-        .bind(permissions.to_db())
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE roles SET name = $2, permissions = $3, pending_upload_limit = $4,
+                          daily_upload_limit = $5
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(permissions.to_db())
+    .bind(limits.pending)
+    .bind(limits.daily)
+    .execute(&mut *tx)
+    .await?;
     sqlx::query("SELECT pg_notify($1, 'roles')")
         .bind(crate::site_cache::CHANNEL)
         .execute(&mut *tx)

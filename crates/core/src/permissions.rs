@@ -282,6 +282,7 @@ pub struct Role {
     pub permissions: Permissions,
     pub rank: i16,
     pub system: Option<SystemRole>,
+    pub upload_limits: crate::uploads::UploadLimits,
 }
 
 impl Role {

@@ -15,6 +15,8 @@
     <label class="choice"><input type="checkbox" name="email_verification"{% if settings.email_verification %} checked{% endif %}> New accounts must confirm their email address</label>
     {% if not mail_enabled %}<p class="hint">Mail isn't set up (<code>[mail]</code> in the server configuration), so addresses aren't checked.</p>{% endif %}
     <label class="choice"><input type="checkbox" name="upload_approval"{% if settings.upload_approval %} checked{% endif %}> New uploads wait for approval (unless the uploader's role skips it)</label>
+    <label class="choice"><input type="checkbox" name="upload_limit_scaling"{% if settings.upload_limit_scaling %} checked{% endif %}> Limits on uploads waiting for approval grow with a user's approved uploads and shrink with deleted ones</label>
+    <p class="hint">Each role's limits are set under <a href="/admin/roles">Roles</a>.</p>
     <label for="default_blacklist">Default blacklist</label>
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>
     <p class="hint">For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.</p>

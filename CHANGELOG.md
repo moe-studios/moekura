@@ -5,6 +5,51 @@ versioning](https://semver.org/); before 1.0, a minor release (0.2) may
 change configuration or behaviour, and says so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
+## [0.3.0] - 2026-09-25
+
+Apps made for Danbooru now work with a Moekura site, and accounts gain
+email, two-factor and single sign-on logins. Nothing needs changing to
+upgrade; the new features are off until you configure them.
+
+### Danbooru apps
+
+- A Danbooru-compatible API, so gallery-dl, Grabber and Boorusama work
+  unchanged: posts (with `b<id>`/`a<id>` paging and `only=`), counts,
+  tags, autocomplete, aliases, implications and related tags, users and
+  `/profile.json`, wiki pages, favorites, votes, post edits and post
+  history. API keys work as HTTP Basic or `login` and `api_key`
+  parameters. See [Danbooru apps](docs/src/using/danbooru-clients.md).
+- Features Moekura doesn't have yet (pools, comments, notes and so on)
+  answer with empty lists so apps carry on. Uploading through the
+  Danbooru API isn't supported yet.
+
+### Accounts
+
+- Mail over SMTP, set up in a new `[mail]` section and checked with
+  `moekura admin send-test-mail`.
+- With mail set up, the `email_verification` site setting makes new
+  accounts confirm their address, and anyone can reset a forgotten
+  password by email.
+- An account settings page for changing the email address and password.
+- Two-factor login with an authenticator app (TOTP), with recovery codes.
+  Staff who manage users can turn it off for someone who lost their
+  device.
+- Logging in through an OpenID Connect provider such as Authentik or
+  Keycloak, set up in a new `[auth.oidc]` section. Existing users can
+  link a provider account from their settings.
+
+### Tags
+
+- Wiki pages for tags at `/wiki/{tag}`, with history and reverts. A
+  search for a single tag shows the start of its page, and the API gains
+  `/wiki-pages` endpoints.
+
+### Project
+
+- Contributing, security and conduct guides, and issue forms.
+- Dependencies are checked with `cargo deny`, and CI runs browser tests
+  (Playwright) and gallery-dl against the built image.
+
 ## [0.2.0] - 2026-09-24
 
 The project is now called Moekura, from *moe* (萌え) and *kura* (蔵, a

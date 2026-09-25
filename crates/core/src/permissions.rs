@@ -40,10 +40,12 @@ pub enum Permission {
     ViewAuditLog = 16,
     /// Uploads skip the approval queue.
     UploadWithoutApproval = 17,
+    /// Hide and restore anyone's comments, and settle reports about them.
+    ModerateComments = 18,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 18] = [
+    pub const ALL: [Permission; 19] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -62,6 +64,7 @@ impl Permission {
         Permission::ManageSettings,
         Permission::ViewAuditLog,
         Permission::UploadWithoutApproval,
+        Permission::ModerateComments,
     ];
 
     const fn bit(self) -> u64 {
@@ -89,6 +92,7 @@ impl Permission {
             Permission::ManageSettings => "manage_settings",
             Permission::ViewAuditLog => "view_audit_log",
             Permission::UploadWithoutApproval => "upload_without_approval",
+            Permission::ModerateComments => "moderate_comments",
         }
     }
 
@@ -113,6 +117,7 @@ impl Permission {
             Permission::ManageSettings => "Manage site settings and roles",
             Permission::ViewAuditLog => "Read the moderation log",
             Permission::UploadWithoutApproval => "Upload without approval",
+            Permission::ModerateComments => "Hide comments and handle reports about them",
         }
     }
 }
@@ -244,6 +249,7 @@ impl SystemRole {
             DeletePosts,
             ManageTags,
             ViewDeleted,
+            ModerateComments,
         ]));
         const MODERATOR: Permissions = JANITOR.with(Permissions::of(&[BanUsers, ViewAuditLog]));
         match self {

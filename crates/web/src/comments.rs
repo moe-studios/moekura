@@ -1,19 +1,24 @@
 //! Comments: the thread under each post, posting, editing and deleting
-//! your own, and the list of recent comments.
+//! your own, votes, reports and hiding by staff, and the list of recent
+//! comments.
 
 use axum::extract::{Path, Query};
+use axum::http::HeaderMap;
+use axum::http::header::ACCEPT;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use axum::{Form, Router};
+use axum::{Form, Json, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
+use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
-use moekura_db::comments::{self, Comment, Filter};
+use moekura_db::comments::{self, Comment, Filter, ReportError};
+use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::posts::{self, Post};
 use moekura_db::users;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -32,12 +37,24 @@ const THREAD_SIZE: i64 = 50;
 /// Comments per page of the list.
 const PAGE_SIZE: i64 = 25;
 
+/// Comments scored this low or lower are collapsed.
+const COLLAPSE_AT: i32 = -5;
+
+/// Reported comments per page of the queue.
+const REPORT_PAGE: i64 = 30;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/comments", get(index))
         .route("/comments/{id}", get(show))
         .route("/comments/{id}/edit", get(edit_form).post(edit))
         .route("/comments/{id}/delete", post(delete))
+        .route("/comments/{id}/vote", post(vote))
+        .route("/comments/{id}/report", post(report))
+        .route("/comments/{id}/hide", post(hide))
+        .route("/comments/{id}/restore", post(restore))
+        .route("/comments/{id}/reports/dismiss", post(dismiss_reports))
+        .route("/moderation/comments", get(report_queue))
         .route("/posts/{id}/comments", post(create))
 }
 
@@ -73,7 +90,7 @@ async fn visible_post(state: &AppState, current: &CurrentUser, id: i64) -> Resul
 
 /// Whether `current` sees deleted comments.
 fn sees_deleted(current: &CurrentUser) -> bool {
-    current.can(Permission::ViewDeleted)
+    current.can(Permission::ViewDeleted) || current.can(Permission::ModerateComments)
 }
 
 /// Comment `id` and its post, if `current` may see them.
@@ -119,11 +136,37 @@ pub(crate) fn check_author(current: &CurrentUser, comment: &Comment) -> Result<(
     Ok(())
 }
 
-/// A comment for templates.
-fn comment_context(current: &CurrentUser, comment: &Comment) -> Value {
+/// Comments for templates, with the viewer's votes.
+async fn comment_contexts(
+    state: &AppState,
+    current: &CurrentUser,
+    comments: &[Comment],
+) -> Result<Vec<Value>, AppError> {
+    let votes = match &current.user {
+        Some(user) => {
+            let ids: Vec<i64> = comments.iter().map(|c| c.id).collect();
+            comments::votes_of(state.db.primary(), user.id, &ids).await?
+        }
+        None => Vec::new(),
+    };
+    Ok(comments
+        .iter()
+        .map(|c| {
+            let vote = votes
+                .iter()
+                .find(|(id, _)| *id == c.id)
+                .map_or(0, |(_, v)| *v);
+            comment_context(current, c, vote)
+        })
+        .collect())
+}
+
+/// A comment for templates; `vote` is the viewer's.
+fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value {
     let me = current.user.as_ref().map(|u| u.id);
-    let own = comment.creator_id.is_some() && comment.creator_id == me && !comment.is_deleted;
+    let own = comment.creator_id.is_some() && comment.creator_id == me;
     let may_comment = current.can(Permission::Comment);
+    let moderate = current.can(Permission::ModerateComments);
     context! {
         id => comment.id,
         post_id => comment.post_id,
@@ -137,8 +180,15 @@ fn comment_context(current: &CurrentUser, comment: &Comment) -> Value {
         created_iso => comment.created_at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         edited => comment.edited_at.is_some(),
         deleted => comment.is_deleted,
-        can_edit => own && may_comment,
+        score => comment.score,
+        vote => vote,
+        collapsed => comment.score <= COLLAPSE_AT,
+        can_vote => current.is_logged_in() && current.can(Permission::Vote) && !own && !comment.is_deleted,
+        can_edit => own && may_comment && !comment.is_deleted,
         can_reply => may_comment && current.is_logged_in() && !comment.is_deleted,
+        can_report => current.is_logged_in() && current.can(Permission::Flag) && !own && !comment.is_deleted,
+        can_hide => moderate && !comment.is_deleted,
+        can_restore => moderate && comment.is_deleted,
     }
 }
 
@@ -155,7 +205,7 @@ pub(crate) async fn thread(
     let shown = comments::for_post(db, post.id, with_deleted, THREAD_SIZE).await?;
     let visible_shown = shown.iter().filter(|c| !c.is_deleted).count() as i64;
     let older = i64::from(post.comment_count) - visible_shown;
-    let list: Vec<Value> = shown.iter().map(|c| comment_context(current, c)).collect();
+    let list = comment_contexts(state, current, &shown).await?;
     let can_comment = current.is_logged_in()
         && current.can(Permission::Comment)
         && post.status != PostStatus::Deleted;
@@ -308,6 +358,274 @@ async fn delete(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
     Ok(Redirect::to(&format!("/posts/{}#comments", comment.post_id)).into_response())
 }
 
+#[derive(Debug, Deserialize)]
+struct VoteForm {
+    /// `1`, `-1`, or `0` to take the vote back.
+    score: i16,
+}
+
+/// A comment's score and the viewer's vote.
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CommentScore {
+    pub score: i32,
+    /// Your vote: 1, -1, or 0 for none.
+    pub vote: i16,
+}
+
+/// Records `current`'s vote on comment `id`.
+pub(crate) async fn vote_on(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    score: i16,
+) -> Result<CommentScore, AppError> {
+    current.require(Permission::Vote)?;
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    if !(-1..=1).contains(&score) {
+        return Err(AppError::BadRequest("A vote is 1, -1 or 0".into()));
+    }
+    let (comment, _) = visible_comment(state, current, id).await?;
+    if comment.is_deleted {
+        return Err(AppError::NotFound);
+    }
+    if comment.creator_id == Some(user.id) {
+        return Err(AppError::Unprocessable(
+            "You can't vote on your own comment.".into(),
+        ));
+    }
+    let db = state.db.primary();
+    comments::vote(db, user.id, id, score).await?;
+    let comment = comments::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    Ok(CommentScore {
+        score: comment.score,
+        vote: score,
+    })
+}
+
+/// Plain forms redirect back to the comment; the page script asks for
+/// JSON to update the score in place.
+async fn vote(
+    page: Page,
+    headers: HeaderMap,
+    Path(id): Path<i64>,
+    Form(form): Form<VoteForm>,
+) -> Result<Response, AppError> {
+    let result = vote_on(page.state(), &page.current, id, form.score).await?;
+    let wants_json = headers
+        .get(ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("application/json"));
+    if wants_json {
+        return Ok(Json(result).into_response());
+    }
+    let comment = comments::by_id(page.state().db.primary(), id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Redirect::to(&url(&comment)).into_response())
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ReasonForm {
+    #[serde(default)]
+    reason: String,
+}
+
+/// Reports comment `id` to the moderators.
+pub(crate) async fn report_comment(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    reason: &str,
+) -> Result<(), AppError> {
+    current.require(Permission::Flag)?;
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err(AppError::BadRequest(
+            "Say what's wrong with the comment".into(),
+        ));
+    }
+    if reason.chars().count() > REASON_MAX_LEN {
+        return Err(AppError::BadRequest(format!(
+            "The reason may be at most {REASON_MAX_LEN} characters"
+        )));
+    }
+    let (comment, _) = visible_comment(state, current, id).await?;
+    if comment.is_deleted {
+        return Err(AppError::NotFound);
+    }
+    match comments::report(state.db.primary(), id, user.id, reason).await {
+        Ok(()) => {}
+        Err(ReportError::Db(e)) => return Err(e.into()),
+        Err(e) => return Err(AppError::BadRequest(e.to_string())),
+    }
+    tracing::info!(comment = id, user = user.name, "comment reported");
+    Ok(())
+}
+
+async fn report(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    report_comment(page.state(), &page.current, id, &form.reason).await?;
+    let comment = comments::by_id(page.state().db.primary(), id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok((flash::set(jar, Flash::Saved), Redirect::to(&url(&comment))).into_response())
+}
+
+/// Records a staff action on `comment`.
+fn comment_action(
+    actor: Option<i64>,
+    kind: ActionKind,
+    comment: &Comment,
+    reports: u64,
+) -> NewAction<'static> {
+    let action = NewAction::new(actor, kind)
+        .post(comment.post_id)
+        .details(serde_json::json!({ "comment_id": comment.id, "reports": reports }));
+    match comment.creator_id {
+        Some(author) => action.user(author),
+        None => action,
+    }
+}
+
+/// Hides (`hidden`) or restores comment `id` as staff, logging it with
+/// `reason`. Hiding upholds the comment's open reports.
+pub(crate) async fn moderate(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    hidden: bool,
+    reason: &str,
+) -> Result<Comment, AppError> {
+    current.require(Permission::ModerateComments)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let reason = reason.trim();
+    if reason.chars().count() > REASON_MAX_LEN {
+        return Err(AppError::BadRequest(format!(
+            "The reason may be at most {REASON_MAX_LEN} characters"
+        )));
+    }
+    let (comment, _) = visible_comment(state, current, id).await?;
+    let mut tx = state.db.primary().begin().await?;
+    if !comments::set_deleted(&mut *tx, id, hidden).await? {
+        return Err(AppError::BadRequest(if hidden {
+            "The comment is already hidden".into()
+        } else {
+            "The comment isn't hidden".into()
+        }));
+    }
+    let reports = if hidden {
+        comments::resolve_reports(&mut *tx, id, true, actor).await?
+    } else {
+        0
+    };
+    let kind = if hidden {
+        ActionKind::CommentHide
+    } else {
+        ActionKind::CommentRestore
+    };
+    mod_actions::record(
+        &mut *tx,
+        comment_action(actor, kind, &comment, reports).reason(reason),
+    )
+    .await?;
+    tx.commit().await?;
+    tracing::info!(comment = id, hidden, "comment moderated");
+    Ok(comment)
+}
+
+async fn hide(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    let comment = moderate(page.state(), &page.current, id, true, &form.reason).await?;
+    Ok((flash::set(jar, Flash::Saved), Redirect::to(&url(&comment))).into_response())
+}
+
+async fn restore(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
+    let comment = moderate(page.state(), &page.current, id, false, "").await?;
+    Ok((flash::set(jar, Flash::Saved), Redirect::to(&url(&comment))).into_response())
+}
+
+/// Dismisses comment `id`'s open reports, keeping the comment. Returns
+/// how many there were.
+pub(crate) async fn dismiss(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+) -> Result<u64, AppError> {
+    current.require(Permission::ModerateComments)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let (comment, _) = visible_comment(state, current, id).await?;
+    let mut tx = state.db.primary().begin().await?;
+    let dismissed = comments::resolve_reports(&mut *tx, id, false, actor).await?;
+    if dismissed == 0 {
+        return Err(AppError::BadRequest(
+            "The comment has no open reports".into(),
+        ));
+    }
+    mod_actions::record(
+        &mut *tx,
+        comment_action(actor, ActionKind::CommentReportDismiss, &comment, dismissed),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(dismissed)
+}
+
+async fn dismiss_reports(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    dismiss(page.state(), &page.current, id).await?;
+    Ok((
+        flash::set(jar, Flash::Saved),
+        Redirect::to("/moderation/comments"),
+    )
+        .into_response())
+}
+
+/// Comments with open reports, oldest report first.
+async fn report_queue(page: Page) -> Result<Response, AppError> {
+    page.current.require(Permission::ModerateComments)?;
+    let state = page.state();
+    let db = state.db.primary();
+    let reports = comments::open_reports(db, REPORT_PAGE).await?;
+    let mut ids: Vec<i64> = Vec::new();
+    for report in &reports {
+        if !ids.contains(&report.comment_id) {
+            ids.push(report.comment_id);
+        }
+    }
+    let mut found = Vec::with_capacity(ids.len());
+    for id in &ids {
+        if let Some(comment) = comments::by_id(db, *id).await? {
+            found.push(comment);
+        }
+    }
+    let contexts = comment_contexts(state, &page.current, &found).await?;
+    let rows: Vec<Value> = found
+        .iter()
+        .zip(contexts)
+        .map(|(c, comment)| {
+            let reasons: Vec<Value> = reports
+                .iter()
+                .filter(|r| r.comment_id == c.id)
+                .map(|r| context! { by => r.creator_name, reason => r.reason })
+                .collect();
+            context! { comment => comment, reports => reasons }
+        })
+        .collect();
+    Ok(page.render("moderation_comments.html", context! { rows => rows }))
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct IndexQuery {
     post_id: Option<i64>,
@@ -351,14 +669,16 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
     let mut post_ids: Vec<i64> = found.iter().map(|c| c.post_id).collect();
     post_ids.dedup();
     let cards = crate::posts::grid(&page, db, &post_ids).await?;
+    let contexts = comment_contexts(state, &page.current, &found).await?;
     let rows: Vec<Value> = found
         .iter()
-        .map(|c| {
+        .zip(contexts)
+        .map(|(c, comment)| {
             let card = cards
                 .iter()
                 .find(|(id, _)| *id == c.post_id)
                 .map(|(_, card)| card);
-            context! { comment => comment_context(&page.current, c), card => card }
+            context! { comment => comment, card => card }
         })
         .collect();
     let next_url = has_next.then(|| {
@@ -520,6 +840,198 @@ mod tests {
         let staff = session_for(&pool, "jan", SystemRole::Janitor).await;
         let page = app.get(&format!("/posts/{post}"), Some(&staff)).await;
         assert!(page.body.contains("Nice dog"), "staff see deleted comments");
+    }
+
+    async fn user_id(pool: &PgPool, name: &str) -> i64 {
+        sqlx::query_scalar("SELECT id FROM users WHERE name = $1")
+            .bind(name)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn votes_reports_and_hiding(pool: PgPool) {
+        let app = app(&pool).await;
+        let post = post(&pool, "active").await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let id = comments::create(&pool, post, user_id(&pool, "alice").await, "Hello")
+            .await
+            .unwrap();
+        let vote = format!("/comments/{id}/vote");
+
+        // Not on your own comment.
+        assert_eq!(
+            app.post_form(&vote, Some(&alice), &[], "score=1")
+                .await
+                .status,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let voted = app
+            .post_form(
+                &vote,
+                Some(&bob),
+                &[("accept", "application/json")],
+                "score=-1",
+            )
+            .await;
+        assert_eq!(voted.status, StatusCode::OK, "{}", voted.body);
+        let json: serde_json::Value = serde_json::from_str(&voted.body).unwrap();
+        assert_eq!(json, serde_json::json!({ "score": -1, "vote": -1 }));
+        let page = app.get(&format!("/posts/{post}"), Some(&bob)).await;
+        assert!(
+            page.body
+                .contains(&format!("action=\"/comments/{id}/vote\"")),
+            "{}",
+            page.body
+        );
+        assert!(
+            !app.get(&format!("/posts/{post}"), Some(&alice))
+                .await
+                .body
+                .contains(&vote)
+        );
+
+        // Low scores collapse.
+        sqlx::query("UPDATE comments SET score = -5 WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            app.get(&format!("/posts/{post}"), None)
+                .await
+                .body
+                .contains("Hidden for its low score")
+        );
+
+        // Reports go to the queue, for staff only.
+        let report = format!("/comments/{id}/report");
+        assert_eq!(
+            app.post_form(&report, Some(&bob), &[], "reason=+")
+                .await
+                .status,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.post_form(&report, Some(&bob), &[], "reason=rude")
+                .await
+                .status,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(
+            app.post_form(&report, Some(&bob), &[], "reason=rude")
+                .await
+                .status,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            app.get("/moderation/comments", Some(&bob)).await.status,
+            StatusCode::FORBIDDEN
+        );
+        let queue = app.get("/moderation/comments", Some(&jan)).await;
+        assert!(queue.body.contains("“rude”"), "{}", queue.body);
+        assert_eq!(
+            app.post(&format!("/comments/{id}/reports/dismiss"), Some(&jan), &[])
+                .await
+                .status,
+            StatusCode::SEE_OTHER
+        );
+        assert!(
+            app.get("/moderation/comments", Some(&jan))
+                .await
+                .body
+                .contains("No reported comments.")
+        );
+
+        // Staff hide and restore anyone's comment, in the log.
+        app.post_form(&report, Some(&bob), &[], "reason=still+rude")
+            .await;
+        assert_eq!(
+            app.post_form(&format!("/comments/{id}/hide"), Some(&bob), &[], "reason=")
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.post_form(
+                &format!("/comments/{id}/hide"),
+                Some(&jan),
+                &[],
+                "reason=spam"
+            )
+            .await
+            .status,
+            StatusCode::SEE_OTHER
+        );
+        assert!(
+            !app.get(&format!("/posts/{post}"), None)
+                .await
+                .body
+                .contains("Hello")
+        );
+        let upheld: String = sqlx::query_scalar(
+            "SELECT status FROM comment_reports WHERE comment_id = $1 ORDER BY id DESC LIMIT 1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(upheld, "upheld");
+        let staff_view = app.get(&format!("/posts/{post}"), Some(&jan)).await;
+        assert!(staff_view.body.contains(&format!("/comments/{id}/restore")));
+        app.post(&format!("/comments/{id}/restore"), Some(&jan), &[])
+            .await;
+        assert!(
+            app.get(&format!("/posts/{post}"), None)
+                .await
+                .body
+                .contains("Hello")
+        );
+        let logged: Vec<(String, String)> =
+            sqlx::query_as("SELECT action, reason FROM mod_actions WHERE post_id = $1 ORDER BY id")
+                .bind(post)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            logged,
+            [
+                ("comment_report.dismiss".to_owned(), String::new()),
+                ("comment.hide".to_owned(), "spam".to_owned()),
+                ("comment.restore".to_owned(), String::new()),
+            ]
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn banned_users_cant_comment(pool: PgPool) {
+        let app = app(&pool).await;
+        let post = post(&pool, "active").await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        sqlx::query(
+            "INSERT INTO bans (user_id, reason) SELECT id, 'spam' FROM users WHERE name = 'alice'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let refused = app
+            .post_form(
+                &format!("/posts/{post}/comments"),
+                Some(&alice),
+                &[],
+                "body=hi",
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
+        assert!(
+            !app.get(&format!("/posts/{post}"), Some(&alice))
+                .await
+                .body
+                .contains("id=\"new-comment\"")
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

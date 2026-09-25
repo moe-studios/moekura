@@ -393,7 +393,7 @@ function update(root, state) {
   const score = root.querySelector(".vote .score");
   if (score) score.textContent = String(state.score);
   const favCount = root.querySelector(".favorite .fav-count");
-  if (favCount) favCount.textContent = String(state.fav_count);
+  if (favCount && state.fav_count !== void 0) favCount.textContent = String(state.fav_count);
   for (const button of root.querySelectorAll(".vote button[name=score]")) {
     const direction = button.getAttribute("aria-label") === "Vote up" ? 1 : -1;
     const pressed = state.vote === direction;
@@ -401,7 +401,7 @@ function update(root, state) {
     button.value = String(pressed ? 0 : direction);
   }
   const favorite = root.querySelector(".favorite button[name=favorite]");
-  if (favorite) {
+  if (favorite && state.favorited !== void 0) {
     favorite.setAttribute("aria-pressed", String(state.favorited));
     favorite.value = state.favorited ? "remove" : "add";
   }
@@ -422,7 +422,8 @@ function enhanceReactions(root = document) {
         headers: { Accept: "application/json" }
       }).then(async (response) => {
         if (!response.ok) throw new Error(String(response.status));
-        update(root, await response.json());
+        const scope = form.closest(".comment") ?? form.closest(".post-info") ?? root;
+        update(scope, await response.json());
       }).catch(() => {
         form.dataset["plain"] = "1";
         form.requestSubmit(submitter);

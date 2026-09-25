@@ -10,13 +10,16 @@ rename them, and choose their permissions.
 | Upload | uploading posts |
 | Upload without approval | skipping the approval queue, when it's on |
 | Edit posts and tags | changing a post's tags, rating, source, description and parent; requesting aliases and implications |
-| Favorite, Vote | |
+| Favorite, Vote | favoriting posts; voting on posts and comments |
+| Comment | posting comments, and editing and deleting your own |
+| Edit the wiki | |
 | Flag posts | asking moderators to delete a post |
 | Approve posts and handle flags | the approval and flag queues |
 | Delete and restore posts | |
 | Purge posts | removing deleted posts and their files for good |
 | Manage tags, aliases and implications | tag categories, deprecating tags, deciding alias and implication requests |
-| See deleted posts | |
+| See deleted posts | deleted posts and comments |
+| Hide comments and handle reports about them | hiding and restoring anyone's comments, and the reported comments queue |
 | Ban users and networks | |
 | Manage users | changing other users' roles and account status |
 | Manage site settings and roles | |
@@ -27,9 +30,9 @@ The built-in roles and what they start with:
 | Role | Rank | Permissions |
 |---|---|---|
 | Anonymous | 0 | View posts |
-| Member | 10 | Anonymous, plus Upload, Edit posts and tags, Favorite, Vote, Flag posts |
+| Member | 10 | Anonymous, plus Upload, Edit posts and tags, Comment, Favorite, Vote, Flag posts, Edit the wiki |
 | Contributor | 20 | Member, plus Upload without approval |
-| Janitor | 30 | Contributor, plus Approve posts, Delete and restore posts, Manage tags, See deleted posts |
+| Janitor | 30 | Contributor, plus Approve posts, Delete and restore posts, Manage tags, See deleted posts, Hide comments |
 | Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log |
 | Admin | 50 | everything |
 

@@ -28,10 +28,13 @@ pub enum ActionKind {
     TagRelationRemove,
     JobRetry,
     JobDiscard,
+    CommentHide,
+    CommentRestore,
+    CommentReportDismiss,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 21] = [
+    pub const ALL: [ActionKind; 24] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -53,6 +56,9 @@ impl ActionKind {
         ActionKind::TagRelationRemove,
         ActionKind::JobRetry,
         ActionKind::JobDiscard,
+        ActionKind::CommentHide,
+        ActionKind::CommentRestore,
+        ActionKind::CommentReportDismiss,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -78,6 +84,9 @@ impl ActionKind {
             ActionKind::TagRelationRemove => "tag_relation.remove",
             ActionKind::JobRetry => "job.retry",
             ActionKind::JobDiscard => "job.discard",
+            ActionKind::CommentHide => "comment.hide",
+            ActionKind::CommentRestore => "comment.restore",
+            ActionKind::CommentReportDismiss => "comment_report.dismiss",
         }
     }
 
@@ -105,6 +114,9 @@ impl ActionKind {
             ActionKind::TagRelationRemove => "removed a tag relation",
             ActionKind::JobRetry => "retried a job",
             ActionKind::JobDiscard => "discarded a job",
+            ActionKind::CommentHide => "hid a comment on post",
+            ActionKind::CommentRestore => "restored a comment on post",
+            ActionKind::CommentReportDismiss => "dismissed reports about a comment on post",
         }
     }
 

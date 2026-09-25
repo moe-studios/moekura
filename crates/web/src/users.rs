@@ -46,6 +46,13 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let can_ban = crate::bans::may_ban(page.state(), &page.current, &user);
     let banned = ban_history.iter().any(|b| b.active);
     let favorites = favorites::count_by_user(db, user.id).await?;
+    let comments = moekura_db::comments::count_by_user(db, user.id).await?;
+    let comments_url = format!(
+        "/comments?{}",
+        url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("user", &user.name)
+            .finish()
+    );
     Ok(page.render(
         "profile.html",
         context! {
@@ -59,6 +66,8 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             uploads_url => Value::from_safe_string(search_url(&format!("user:{}", user.name))),
             favorites => favorites,
             favorites_url => Value::from_safe_string(search_url(&format!("ordfav:{}", user.name))),
+            comments => comments,
+            comments_url => crate::templates::url_value(&comments_url),
             bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
             can_ban => can_ban && !banned,
             can_unban => can_ban && banned,
@@ -177,6 +186,7 @@ mod tests {
         assert!(profile.body.contains("Member"), "{}", profile.body);
         assert!(profile.body.contains("href=\"/posts?tags=user%3Aalice\""));
         assert!(profile.body.contains("href=\"/posts?tags=ordfav%3Aalice\""));
+        assert!(profile.body.contains("href=\"/comments?user=alice\""));
         assert_eq!(
             app.get("/users/nobody", None).await.status,
             StatusCode::NOT_FOUND

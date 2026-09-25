@@ -1,5 +1,6 @@
-//! Comments on posts. A trigger keeps `posts.comment_count` and
-//! `posts.last_commented_at` in step with the visible ones.
+//! Comments on posts, their votes and reports. Triggers keep
+//! `posts.comment_count` and `posts.last_commented_at` in step with the
+//! visible comments, and `comments.score` with the votes.
 
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
@@ -14,6 +15,7 @@ pub struct Comment {
     pub creator_name: Option<String>,
     pub body: String,
     pub is_deleted: bool,
+    pub score: i32,
     pub created_at: OffsetDateTime,
     pub edited_at: Option<OffsetDateTime>,
 }
@@ -24,7 +26,7 @@ macro_rules! select_comments {
     ($rest:literal) => {
         concat!(
             "SELECT c.id, c.post_id, c.creator_id, u.name::text AS creator_name, c.body,
-                    c.is_deleted, c.created_at, c.edited_at
+                    c.is_deleted, c.score, c.created_at, c.edited_at
              FROM comments c LEFT JOIN users u ON u.id = c.creator_id ",
             $rest
         )
@@ -134,6 +136,128 @@ pub async fn set_deleted(db: impl PgExecutor<'_>, id: i64, deleted: bool) -> sql
     Ok(result.rows_affected() == 1)
 }
 
+/// Sets `user_id`'s vote on a comment: `1`, `-1`, or `0` to take it back.
+pub async fn vote(
+    db: impl PgExecutor<'_>,
+    user_id: i64,
+    comment_id: i64,
+    score: i16,
+) -> sqlx::Result<()> {
+    if score == 0 {
+        sqlx::query("DELETE FROM comment_votes WHERE user_id = $1 AND comment_id = $2")
+            .bind(user_id)
+            .bind(comment_id)
+            .execute(db)
+            .await?;
+    } else {
+        sqlx::query(
+            "INSERT INTO comment_votes (user_id, comment_id, score) VALUES ($1, $2, $3)
+             ON CONFLICT (comment_id, user_id) DO UPDATE SET score = EXCLUDED.score
+             WHERE comment_votes.score <> EXCLUDED.score",
+        )
+        .bind(user_id)
+        .bind(comment_id)
+        .bind(score)
+        .execute(db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// `user_id`'s votes among `comment_ids`, as (comment, score) pairs.
+pub async fn votes_of(
+    db: impl PgExecutor<'_>,
+    user_id: i64,
+    comment_ids: &[i64],
+) -> sqlx::Result<Vec<(i64, i16)>> {
+    sqlx::query_as(
+        "SELECT comment_id, score FROM comment_votes WHERE user_id = $1 AND comment_id = ANY($2)",
+    )
+    .bind(user_id)
+    .bind(comment_ids)
+    .fetch_all(db)
+    .await
+}
+
+/// How many comments a user has written that aren't deleted.
+pub async fn count_by_user(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<i64> {
+    sqlx::query_scalar("SELECT count(*) FROM comments WHERE creator_id = $1 AND NOT is_deleted")
+        .bind(user_id)
+        .fetch_one(db)
+        .await
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ReportError {
+    #[error("You already reported this comment.")]
+    AlreadyReported,
+    #[error(transparent)]
+    Db(#[from] sqlx::Error),
+}
+
+/// Reports a comment to the moderators.
+pub async fn report(
+    db: impl PgExecutor<'_>,
+    comment_id: i64,
+    creator_id: i64,
+    reason: &str,
+) -> Result<(), ReportError> {
+    sqlx::query("INSERT INTO comment_reports (comment_id, creator_id, reason) VALUES ($1, $2, $3)")
+        .bind(comment_id)
+        .bind(creator_id)
+        .bind(reason)
+        .execute(db)
+        .await
+        .map_err(|e| match &e {
+            sqlx::Error::Database(db) if db.is_unique_violation() => ReportError::AlreadyReported,
+            _ => ReportError::Db(e),
+        })?;
+    Ok(())
+}
+
+/// Closes a comment's open reports as `dismissed` or `upheld`; returns how
+/// many there were.
+pub async fn resolve_reports(
+    db: impl PgExecutor<'_>,
+    comment_id: i64,
+    upheld: bool,
+    resolver_id: Option<i64>,
+) -> sqlx::Result<u64> {
+    let result = sqlx::query(
+        "UPDATE comment_reports SET status = $2, resolver_id = $3, resolved_at = now()
+         WHERE comment_id = $1 AND status = 'open'",
+    )
+    .bind(comment_id)
+    .bind(if upheld { "upheld" } else { "dismissed" })
+    .bind(resolver_id)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Report {
+    pub comment_id: i64,
+    pub creator_name: Option<String>,
+    pub reason: String,
+    pub created_at: OffsetDateTime,
+}
+
+/// Open reports, oldest first, for at most `limit` comments.
+pub async fn open_reports(db: impl PgExecutor<'_>, limit: i64) -> sqlx::Result<Vec<Report>> {
+    sqlx::query_as(
+        "SELECT r.comment_id, u.name::text AS creator_name, r.reason, r.created_at
+         FROM comment_reports r LEFT JOIN users u ON u.id = r.creator_id
+         WHERE r.status = 'open' AND r.comment_id IN (
+             SELECT comment_id FROM comment_reports WHERE status = 'open'
+             GROUP BY comment_id ORDER BY min(id) LIMIT $1)
+         ORDER BY r.id",
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use moekura_core::posts::PostStatus;
@@ -192,6 +316,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(counts(&pool, post).await, (0, None));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn votes_and_reports(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let bob = user(&pool, "bob").await;
+        let post = post(&pool, "active").await;
+        let id = create(&pool, post, alice, "Hello").await.unwrap();
+        let score = |pool: PgPool| async move { by_id(&pool, id).await.unwrap().unwrap().score };
+
+        vote(&pool, alice, id, 1).await.unwrap();
+        vote(&pool, bob, id, 1).await.unwrap();
+        assert_eq!(score(pool.clone()).await, 2);
+        vote(&pool, bob, id, -1).await.unwrap();
+        vote(&pool, bob, id, -1).await.unwrap();
+        assert_eq!(score(pool.clone()).await, 0);
+        vote(&pool, alice, id, 0).await.unwrap();
+        assert_eq!(score(pool.clone()).await, -1);
+        assert_eq!(votes_of(&pool, bob, &[id]).await.unwrap(), [(id, -1)]);
+        assert!(votes_of(&pool, alice, &[id]).await.unwrap().is_empty());
+
+        report(&pool, id, bob, "rude").await.unwrap();
+        assert!(matches!(
+            report(&pool, id, bob, "again").await,
+            Err(ReportError::AlreadyReported)
+        ));
+        report(&pool, id, alice, "mine").await.unwrap();
+        let open = open_reports(&pool, 10).await.unwrap();
+        assert_eq!(
+            open.iter().map(|r| r.reason.as_str()).collect::<Vec<_>>(),
+            ["rude", "mine"]
+        );
+        assert_eq!(
+            resolve_reports(&pool, id, false, Some(alice))
+                .await
+                .unwrap(),
+            2
+        );
+        assert!(open_reports(&pool, 10).await.unwrap().is_empty());
+        // Settled reports don't stop a new one.
+        report(&pool, id, bob, "still rude").await.unwrap();
+        assert_eq!(count_by_user(&pool, alice).await.unwrap(), 1);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

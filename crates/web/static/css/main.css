@@ -478,6 +478,12 @@ button.secondary, .button.secondary { background: var(--border); color: var(--te
 .comment-actions form { display: inline; }
 button.link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
 button.link:hover { text-decoration: underline; }
+.comment-head .vote { margin-left: auto; font-size: 0.875rem; }
+.comment .collapsed summary { color: var(--muted); cursor: pointer; }
+details.inline { display: inline-block; }
+details.inline summary { color: var(--accent); cursor: pointer; list-style: none; }
+details.inline[open] { display: block; flex-basis: 100%; }
+.comment-actions { flex-wrap: wrap; }
 .comment-form { margin-top: 12px; }
 .comment-form textarea { width: 100%; }
 .markup blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid var(--border); color: var(--muted); }

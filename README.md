@@ -24,7 +24,8 @@ Some starting points:
 - [Configuration](docs/src/configuration.md)
 - [Search syntax](docs/src/using/search.md)
 - [The API](docs/src/api.md); each site also serves its own reference at
-  `/api/docs`
+  `/api/docs`. Apps made for Danbooru work too:
+  [Danbooru apps](docs/src/using/danbooru-clients.md)
 - [Development](docs/src/development.md)
 
 ## Quick start

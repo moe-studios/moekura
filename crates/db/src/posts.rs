@@ -213,6 +213,34 @@ pub async fn delete(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
 
 /// Posts with `status`, oldest first, after `after` (keyset), with their
 /// uploaders' names.
+/// Vote totals and children of a post, for APIs that report them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, sqlx::FromRow)]
+pub struct Extras {
+    pub post_id: i64,
+    pub up_votes: i64,
+    pub down_votes: i64,
+    /// Any child post, deleted ones included.
+    pub has_children: bool,
+    /// A child that's active or flagged.
+    pub has_active_children: bool,
+}
+
+/// [`Extras`] for each of `ids`.
+pub async fn extras(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result<Vec<Extras>> {
+    sqlx::query_as(
+        "SELECT p.id AS post_id,
+                (SELECT count(*) FROM post_votes v WHERE v.post_id = p.id AND v.score > 0) AS up_votes,
+                (SELECT count(*) FROM post_votes v WHERE v.post_id = p.id AND v.score < 0) AS down_votes,
+                EXISTS (SELECT 1 FROM posts c WHERE c.parent_id = p.id) AS has_children,
+                EXISTS (SELECT 1 FROM posts c WHERE c.parent_id = p.id
+                        AND c.status IN ('active', 'flagged')) AS has_active_children
+         FROM unnest($1::bigint[]) AS p (id)",
+    )
+    .bind(ids)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn by_status(
     db: impl PgExecutor<'_>,
     status: PostStatus,

@@ -7,7 +7,7 @@
 
 mod docs;
 mod moderation;
-mod posts;
+pub(crate) mod posts;
 mod tags;
 mod users;
 mod wiki;

@@ -7,6 +7,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
+use moekura_core::markup;
 use moekura_core::notes::{MAX_LEN, NoteBox};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
@@ -129,6 +130,24 @@ pub(crate) async fn update(
         })
 }
 
+/// Notes for templates. Boxes stay in the original's pixels: the overlay
+/// is an SVG with the image's size as its view box, stretched over the
+/// image however large it's shown.
+pub(crate) fn note_contexts(notes: &[Note]) -> Vec<Value> {
+    notes
+        .iter()
+        .map(|n| {
+            context! {
+                id => n.id,
+                version => n.version,
+                x => n.x, y => n.y, width => n.width, height => n.height,
+                body => n.body,
+                html => Value::from_safe_string(markup::render(&n.body)),
+            }
+        })
+        .collect()
+}
+
 async fn history(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
     let (post, _, _) = visible_post(page.state(), &page.current, id).await?;
     let db = page.state().reader(&page.current);
@@ -203,6 +222,44 @@ mod tests {
         .await
         .unwrap();
         post
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn notes_show_over_the_image(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, crate::posts::routes());
+        let post = post(&pool, "active").await;
+        let bare = app.get(&format!("/posts/{post}"), None).await;
+        assert!(!bare.body.contains("class=\"notes\""));
+        let note_box = NoteBox {
+            x: 10,
+            y: 20,
+            width: 50,
+            height: 30,
+        };
+        notes::create(&pool, post, note_box, "Hello <there> [b]you[/b]", None)
+            .await
+            .unwrap();
+        let page = app.get(&format!("/posts/{post}"), None).await;
+        assert!(
+            page.body.contains("viewBox=\"0 0 200 100\""),
+            "{}",
+            page.body
+        );
+        assert!(
+            page.body
+                .contains("x=\"10\" y=\"20\" width=\"50\" height=\"30\"")
+        );
+        // Escaped in the tooltip, rendered in the list.
+        assert!(
+            page.body
+                .contains("<title>Hello &lt;there&gt; [b]you[&#x2f;b]</title>")
+        );
+        assert!(
+            page.body
+                .contains("Hello &lt;there&gt; <strong>you</strong>")
+        );
+        assert!(page.body.contains("Notes (1)"));
+        assert!(page.body.contains(&format!("/posts/{post}/notes/history")));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

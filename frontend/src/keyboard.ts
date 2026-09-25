@@ -7,6 +7,7 @@ export const SHORTCUTS: readonly (readonly [string, string])[] = [
   ["d, →", "Next post or page"],
   ["e", "Edit the post"],
   ["f", "Favorite the post"],
+  ["n", "Show or hide notes"],
   ["/", "Search"],
   ["?", "Show these shortcuts"],
 ];
@@ -24,6 +25,8 @@ export function actionFor(key: string): string | null {
       return "edit";
     case "f":
       return "favorite";
+    case "n":
+      return "notes";
     case "/":
       return "search";
     case "?":
@@ -90,6 +93,12 @@ function run(action: string): boolean {
     }
     case "favorite": {
       const button = document.querySelector<HTMLButtonElement>(".favorite button");
+      if (!button) return false;
+      button.click();
+      return true;
+    }
+    case "notes": {
+      const button = document.querySelector<HTMLButtonElement>("[data-notes-toggle]");
       if (!button) return false;
       button.click();
       return true;

@@ -298,6 +298,7 @@ var SHORTCUTS = [
   ["d, \u2192", "Next post or page"],
   ["e", "Edit the post"],
   ["f", "Favorite the post"],
+  ["n", "Show or hide notes"],
   ["/", "Search"],
   ["?", "Show these shortcuts"]
 ];
@@ -313,6 +314,8 @@ function actionFor(key) {
       return "edit";
     case "f":
       return "favorite";
+    case "n":
+      return "notes";
     case "/":
       return "search";
     case "?":
@@ -375,6 +378,12 @@ function run(action) {
       button.click();
       return true;
     }
+    case "notes": {
+      const button = document.querySelector("[data-notes-toggle]");
+      if (!button) return false;
+      button.click();
+      return true;
+    }
     case "search": {
       const input = document.querySelector(".site-header input[name=tags]");
       if (!input) return false;
@@ -395,6 +404,99 @@ function enableShortcuts() {
     const action = actionFor(event.key);
     if (action && run(action)) event.preventDefault();
   });
+}
+
+// src/notes.ts
+var HIDDEN_KEY = "moekura:notes-hidden";
+function remembered() {
+  try {
+    return localStorage.getItem(HIDDEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function remember(hidden) {
+  try {
+    if (hidden) localStorage.setItem(HIDDEN_KEY, "1");
+    else localStorage.removeItem(HIDDEN_KEY);
+  } catch {
+  }
+}
+function popupPosition(box, layerWidth, popupWidth) {
+  const left = Math.max(0, Math.min(box.left, layerWidth - popupWidth));
+  return { left, top: box.top + box.height + 4 };
+}
+function enableNotes(root = document) {
+  const layer = root.querySelector("[data-notes]");
+  const svg = layer?.querySelector("svg.notes");
+  if (!layer || !svg) return;
+  const popup = root.createElement("div");
+  popup.className = "note-popup";
+  popup.hidden = true;
+  popup.setAttribute("role", "tooltip");
+  layer.append(popup);
+  let shown = null;
+  const hide = () => {
+    popup.hidden = true;
+    shown?.classList.remove("active");
+    shown = null;
+  };
+  const show = (rect) => {
+    const text = root.querySelector(`[data-note-text="${rect.dataset["note"]}"] .markup`);
+    if (!text) return;
+    shown?.classList.remove("active");
+    shown = rect;
+    rect.classList.add("active");
+    popup.innerHTML = "";
+    popup.append(text.cloneNode(true));
+    popup.hidden = false;
+    const layerBox = layer.getBoundingClientRect();
+    const rectBox = rect.getBoundingClientRect();
+    const place = popupPosition(
+      {
+        left: rectBox.left - layerBox.left,
+        top: rectBox.top - layerBox.top,
+        width: rectBox.width,
+        height: rectBox.height
+      },
+      layerBox.width,
+      popup.offsetWidth
+    );
+    popup.style.left = `${place.left}px`;
+    popup.style.top = `${place.top}px`;
+  };
+  for (const rect of svg.querySelectorAll("rect.note-box")) {
+    rect.querySelector("title")?.remove();
+    rect.setAttribute("tabindex", "0");
+    rect.addEventListener("mouseenter", () => show(rect));
+    rect.addEventListener("focus", () => show(rect));
+    rect.addEventListener("click", (event) => {
+      event.preventDefault();
+      if (shown === rect) hide();
+      else show(rect);
+    });
+  }
+  layer.addEventListener("mouseleave", hide);
+  root.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") hide();
+  });
+  const toggle = root.createElement("button");
+  toggle.type = "button";
+  toggle.className = "secondary note-toggle";
+  toggle.dataset["notesToggle"] = "";
+  const apply = (hidden) => {
+    layer.classList.toggle("notes-hidden", hidden);
+    toggle.textContent = hidden ? "Show notes" : "Hide notes";
+    toggle.setAttribute("aria-pressed", String(hidden));
+    if (hidden) hide();
+  };
+  toggle.addEventListener("click", () => {
+    const hidden = !layer.classList.contains("notes-hidden");
+    remember(hidden);
+    apply(hidden);
+  });
+  apply(remembered());
+  layer.after(toggle);
 }
 
 // src/pool-order.ts
@@ -541,3 +643,4 @@ enhanceReactions();
 enableShortcuts();
 enablePoolOrder();
 enableReader();
+enableNotes();

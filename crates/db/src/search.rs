@@ -322,6 +322,11 @@ impl Plan {
         )
     }
 
+    /// Whether the order leaves out posts without comments.
+    fn only_commented(&self) -> bool {
+        matches!(self.order, Order::CommentDesc | Order::CommentAsc)
+    }
+
     /// Whether `page=b…` / `page=a…` work for this search.
     pub fn supports_keyset(&self) -> bool {
         matches!(self.order, Order::IdDesc | Order::IdAsc)
@@ -558,6 +563,12 @@ impl Plan {
             Order::Favorited => {
                 sql.push("fo.created_at DESC, p.id DESC");
             }
+            Order::CommentDesc => {
+                sql.push("p.last_commented_at DESC, p.id DESC");
+            }
+            Order::CommentAsc => {
+                sql.push("p.last_commented_at ASC, p.id ASC");
+            }
         }
         sql.push(" LIMIT ").push_bind(i64::from(self.per_page));
         if offset > 0 {
@@ -613,6 +624,9 @@ impl Plan {
                 .push(")");
         }
         sql.push(")");
+        if self.only_commented() {
+            sql.push(" AND p.last_commented_at IS NOT NULL");
+        }
 
         // Walks must not use the tag index: `IS TRUE` makes the condition
         // one Postgres can't match to an index.
@@ -718,6 +732,7 @@ impl Plan {
             && self.favorited_by.is_empty()
             && self.similar_to.is_empty()
             && self.ordfav.is_none()
+            && !self.only_commented()
             && self.excluded.is_empty()
             && self.any.is_none();
         let shortcut = match &self.required[..] {
@@ -850,6 +865,7 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         Filter::Id(b) => push_bound(sql, "p.id", b),
         Filter::Score(b) => push_bound(sql, "p.score", b),
         Filter::FavCount(b) => push_bound(sql, "p.fav_count", b),
+        Filter::CommentCount(b) => push_bound(sql, "p.comment_count", b),
         Filter::TagCount(b) => push_bound(sql, "p.tag_count", b),
         Filter::Width(b) => push_bound(sql, "a.width", b),
         Filter::Height(b) => push_bound(sql, "a.height", b),
@@ -1398,6 +1414,46 @@ mod tests {
             search_as(&pool, "status:any -status:flagged -status:pending", &staff).await,
             [deleted, active]
         );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn comment_counts_and_order(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(
+                seed(
+                    &pool,
+                    Seed {
+                        tags: &["x"],
+                        ..Seed::default()
+                    },
+                )
+                .await,
+            );
+        }
+        let user: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // Post 0 gets two comments, then post 2 one.
+        for post in [ids[0], ids[0], ids[2]] {
+            crate::comments::create(&pool, post, user, "hi")
+                .await
+                .unwrap();
+        }
+        assert_eq!(search(&pool, "commentcount:2").await, [ids[0]]);
+        assert_eq!(search(&pool, "commentcount:>0").await, [ids[2], ids[0]]);
+        assert_eq!(search(&pool, "-commentcount:>0").await, [ids[1]]);
+        assert_eq!(search(&pool, "order:comment").await, [ids[2], ids[0]]);
+        assert_eq!(search(&pool, "x order:comment_asc").await, [ids[0], ids[2]]);
+
+        let query = Query::parse("order:comment").unwrap();
+        let plan = Plan::resolve(&pool, &query, &public(), &SearchConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(plan.count(&pool).await.unwrap(), Count::Exact(2));
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

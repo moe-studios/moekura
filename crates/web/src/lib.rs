@@ -10,6 +10,7 @@ pub mod auth;
 mod bans;
 mod blacklist;
 mod client_ip;
+mod comments;
 mod counts;
 mod danbooru;
 mod edit;
@@ -213,6 +214,7 @@ pub fn router(state: AppState) -> Router {
         .merge(account::routes())
         .merge(admin::routes())
         .merge(bans::routes())
+        .merge(comments::routes())
         .merge(edit::routes())
         .merge(email::routes())
         .merge(favorites::routes())

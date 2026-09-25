@@ -5,6 +5,7 @@ pub mod accounts;
 pub mod api_keys;
 pub mod bans;
 pub mod bench;
+pub mod comments;
 pub mod favorites;
 pub mod flags;
 pub mod identities;

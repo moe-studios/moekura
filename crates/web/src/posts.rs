@@ -361,6 +361,34 @@ fn file_url(state: &AppState, key: &str) -> Option<Value> {
     Key::parse(key).map(|k| url_value(&state.file_url(&k)))
 }
 
+/// Grid cards for posts `ids` (their ids and contexts, in order), leaving
+/// out posts the viewer's blacklist hides.
+pub(crate) async fn grid(
+    page: &Page,
+    db: &sqlx::PgPool,
+    ids: &[i64],
+) -> Result<Vec<(i64, Value)>, AppError> {
+    let state = page.state();
+    let sizes = &state.media.config().thumbnail_sizes;
+    let box_size = sizes.first().copied().unwrap_or(250);
+    let kinds = (
+        format!("thumb-{box_size}"),
+        format!("thumb-{}", sizes.get(1).copied().unwrap_or(box_size)),
+    );
+    let cards = posts::cards(db, ids, (&kinds.0, &kinds.1)).await?;
+    let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
+    Ok(cards
+        .iter()
+        .filter(|card| {
+            blacklist.as_ref().is_none_or(|list| {
+                let rating = card.rating.parse().unwrap_or(Rating::Explicit);
+                list.matching(rating, &card.tag_ids).is_none()
+            })
+        })
+        .map(|card| (card.id, card_context(state, card, box_size, None)))
+        .collect())
+}
+
 /// A grid card. `post_query` (`q=…`) is added to the post link so the post
 /// page can lead back to the search.
 fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option<&str>) -> Value {
@@ -458,6 +486,8 @@ struct ShowQuery {
     /// `off` shows the post even if the viewer's blacklist matches it.
     #[serde(default)]
     blacklist: String,
+    /// A comment to start a reply to.
+    reply: Option<i64>,
 }
 
 async fn show(
@@ -465,12 +495,19 @@ async fn show(
     Path(id): Path<i64>,
     Query(params): Query<ShowQuery>,
 ) -> Result<Response, AppError> {
+    let comment = match params.reply {
+        Some(reply) => crate::comments::reply_draft(page.state(), id, reply).await?,
+        None => None,
+    };
     render_post(
         &page,
         id,
         params.q.as_deref(),
         params.blacklist == "off",
-        None,
+        Extra {
+            comment,
+            ..Extra::default()
+        },
     )
     .await
 }
@@ -481,14 +518,29 @@ pub(crate) struct FailedEdit<'a> {
     pub error: String,
 }
 
-/// The post page. `failed` refills the edit form after a rejected edit.
+/// Text for the new comment form: a reply's quote, or a refused comment.
+pub(crate) struct CommentDraft {
+    pub body: String,
+    pub error: Option<String>,
+}
+
+/// What a post page shows besides the post.
+#[derive(Default)]
+pub(crate) struct Extra<'a> {
+    /// Refills the edit form after a rejected edit.
+    pub failed_edit: Option<FailedEdit<'a>>,
+    pub comment: Option<CommentDraft>,
+}
+
+/// The post page.
 pub(crate) async fn render_post(
     page: &Page,
     id: i64,
     search: Option<&str>,
     show_blacklisted: bool,
-    failed: Option<FailedEdit<'_>>,
+    extra: Extra<'_>,
 ) -> Result<Response, AppError> {
+    let failed = extra.failed_edit;
     page.current.require(Permission::ViewPosts)?;
     let from_search = search.is_some();
     let search = search.unwrap_or_default();
@@ -654,7 +706,10 @@ pub(crate) async fn render_post(
         .iter()
         .map(|r| context! { code => r.code(), label => r.label() })
         .collect();
-    let status = if failed.is_some() {
+    let comments =
+        crate::comments::thread(state, &page.current, &post, extra.comment.as_ref()).await?;
+    let comment_refused = extra.comment.as_ref().is_some_and(|c| c.error.is_some());
+    let status = if failed.is_some() || comment_refused {
         StatusCode::UNPROCESSABLE_ENTITY
     } else {
         StatusCode::OK
@@ -673,6 +728,7 @@ pub(crate) async fn render_post(
             moderate => moderate,
             blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
             reactions => reactions,
+            comments => comments,
             edit => edit,
             ratings => ratings,
             search => context! {

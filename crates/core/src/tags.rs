@@ -17,6 +17,7 @@ pub const RESERVED_PREFIXES: &[&str] = &[
     // Metatags.
     "approver",
     "comment",
+    "commentcount",
     "commenter",
     "date",
     "duration",

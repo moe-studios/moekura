@@ -6,8 +6,11 @@
 //! - Lines starting with `* ` (`** ` and so on to nest) make a list.
 //! - `[b]`, `[i]`, `[s]` and `[u]` for bold, italic, struck and
 //!   underlined text.
+//! - `[quote]` and `[/quote]` on lines of their own quote what's between
+//!   them.
 //! - `[[tag]]` or `[[tag|text]]` links to a tag's wiki page, `{{search}}`
-//!   to search results, and `post #123` to a post.
+//!   to search results, `post #123` to a post and `comment #45` to a
+//!   comment.
 //! - `http://` and `https://` URLs become links.
 //!
 //! The output is built from escaped text and a fixed set of elements, so
@@ -32,9 +35,23 @@ pub fn render(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + text.len() / 4);
     let mut paragraph: Vec<&str> = Vec::new();
     let mut list_depth = 0;
+    let mut quotes = 0;
     for line in text.lines() {
         let line = line.trim_end();
-        if line.is_empty() {
+        let quote = line.trim_start();
+        if quote.eq_ignore_ascii_case("[quote]")
+            || (quotes > 0 && quote.eq_ignore_ascii_case("[/quote]"))
+        {
+            flush_paragraph(&mut out, &mut paragraph);
+            close_list(&mut out, &mut list_depth, 0);
+            if quote.len() == "[quote]".len() {
+                out.push_str("<blockquote>");
+                quotes += 1;
+            } else {
+                out.push_str("</blockquote>");
+                quotes -= 1;
+            }
+        } else if line.is_empty() {
             flush_paragraph(&mut out, &mut paragraph);
             close_list(&mut out, &mut list_depth, 0);
         } else if let Some((level, rest)) = heading(line) {
@@ -64,7 +81,39 @@ pub fn render(text: &str) -> String {
     }
     flush_paragraph(&mut out, &mut paragraph);
     close_list(&mut out, &mut list_depth, 0);
+    for _ in 0..quotes {
+        out.push_str("</blockquote>");
+    }
     out
+}
+
+/// `text` quoted for a reply to `author`, without the quotes it contains
+/// itself, followed by a blank line to type the reply after.
+pub fn quote(author: &str, text: &str) -> String {
+    let mut depth = 0usize;
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("[quote]") {
+            depth += 1;
+        } else if depth > 0 && trimmed.eq_ignore_ascii_case("[/quote]") {
+            depth -= 1;
+        } else if depth == 0 {
+            kept.push(line.trim_end());
+        }
+    }
+    // Blank lines left where the inner quotes were.
+    let mut body = String::new();
+    for line in kept {
+        if !(line.is_empty() && (body.is_empty() || body.ends_with("\n\n"))) {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    format!(
+        "[quote]\n{author} said:\n\n{}\n[/quote]\n\n",
+        body.trim_end()
+    )
 }
 
 /// The first paragraph of `text`, skipping headings, cut to about 500
@@ -72,7 +121,12 @@ pub fn render(text: &str) -> String {
 pub fn excerpt(text: &str) -> String {
     let mut lines = Vec::new();
     for line in text.lines().map(str::trim_end) {
-        let other_block = line.is_empty() || heading(line).is_some() || list_item(line).is_some();
+        let quote = line.trim_start();
+        let other_block = line.is_empty()
+            || heading(line).is_some()
+            || list_item(line).is_some()
+            || quote.eq_ignore_ascii_case("[quote]")
+            || quote.eq_ignore_ascii_case("[/quote]");
         match (other_block, lines.is_empty()) {
             (true, true) => continue,
             (true, false) => break,
@@ -155,7 +209,15 @@ fn inline(out: &mut String, text: &str) {
             open.pop();
             let _ = write!(out, "</{element}>");
             rest = &rest[used..];
-        } else if let Some(used) = at_word_start.then(|| post_link(out, rest)).flatten() {
+        } else if let Some(used) = at_word_start
+            .then(|| id_link(out, rest, "post", "/posts"))
+            .flatten()
+        {
+            rest = &rest[used..];
+        } else if let Some(used) = at_word_start
+            .then(|| id_link(out, rest, "comment", "/comments"))
+            .flatten()
+        {
             rest = &rest[used..];
         } else if let Some(used) = at_word_start.then(|| url_link(out, rest)).flatten() {
             rest = &rest[used..];
@@ -227,15 +289,18 @@ fn link(
     Some(inner_start + end + close.len())
 }
 
-/// `post #123` at the start of `text`.
-fn post_link(out: &mut String, text: &str) -> Option<usize> {
-    let rest = text
-        .strip_prefix("post #")
-        .or_else(|| text.strip_prefix("Post #"))?;
+/// `post #123` (for `word` post, linking to `/posts/123` for `path`
+/// `/posts`) at the start of `text`, capitalised or not.
+fn id_link(out: &mut String, text: &str, word: &str, path: &str) -> Option<usize> {
+    let (first, rest) = text.split_at_checked(1)?;
+    let rest = rest.strip_prefix(&word[1..])?.strip_prefix(" #")?;
+    if !first.eq_ignore_ascii_case(&word[..1]) {
+        return None;
+    }
     let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
     let id: i64 = rest[..digits].parse().ok()?;
     let used = text.len() - rest.len() + digits;
-    let _ = write!(out, "<a href=\"/posts/{id}\">");
+    let _ = write!(out, "<a href=\"{path}/{id}\">");
     escape(out, &text[..used]);
     out.push_str("</a>");
     Some(used)
@@ -378,6 +443,41 @@ mod tests {
             render("post #12, Post #3 but not repost #4 or post #x"),
             "<p><a href=\"/posts/12\">post #12</a>, <a href=\"/posts/3\">Post #3</a> \
              but not repost #4 or post #x</p>"
+        );
+    }
+
+    #[test]
+    fn comment_links() {
+        assert_eq!(
+            render("comment #5 and Comment #6, not comments #7"),
+            "<p><a href=\"/comments/5\">comment #5</a> and <a href=\"/comments/6\">Comment #6</a>, \
+             not comments #7</p>"
+        );
+    }
+
+    #[test]
+    fn quotes() {
+        assert_eq!(
+            render("[quote]\nalice said:\n\n[quote]\ninner\n[/quote]\nyes\n[/QUOTE]\nReply"),
+            "<blockquote><p>alice said:</p><blockquote><p>inner</p></blockquote><p>yes</p></blockquote><p>Reply</p>"
+        );
+        // Unclosed quotes close at the end; stray closings are text.
+        assert_eq!(
+            render("[quote]\nopen"),
+            "<blockquote><p>open</p></blockquote>"
+        );
+        assert_eq!(render("[/quote]"), "<p>[/quote]</p>");
+        assert_eq!(render("a [quote] b"), "<p>a [quote] b</p>");
+    }
+
+    #[test]
+    fn quoting_for_replies() {
+        assert_eq!(
+            quote(
+                "bob",
+                "[quote]\nalice said:\n\nold\n[/quote]\n\nI agree.\n\nMore.  "
+            ),
+            "[quote]\nbob said:\n\nI agree.\n\nMore.\n[/quote]\n\n"
         );
     }
 

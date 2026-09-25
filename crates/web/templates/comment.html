@@ -1,0 +1,19 @@
+{# One comment; `comment` is set by the page that includes this. #}
+<article class="comment{% if comment.deleted %} is-deleted{% endif %}" id="comment-{{ comment.id }}">
+  <header class="comment-head">
+    {% if comment.author_url %}<a class="comment-author" href="{{ comment.author_url }}">{{ comment.author }}</a>{% else %}<span class="comment-author">Deleted user</span>{% endif %}
+    <a class="hint" href="{{ comment.url }}"><time datetime="{{ comment.created_iso }}">{{ comment.date }}</time></a>
+    {% if comment.edited %}<span class="hint">· edited</span>{% endif %}
+    {% if comment.deleted %}<span class="status status-deleted">deleted</span>{% endif %}
+  </header>
+  <div class="markup">{{ comment.html }}</div>
+  {% if comment.can_reply or comment.can_edit %}
+  <footer class="comment-actions">
+    {% if comment.can_reply %}<a href="/posts/{{ comment.post_id }}?reply={{ comment.id }}#new-comment">Reply</a>{% endif %}
+    {% if comment.can_edit %}
+    <a href="/comments/{{ comment.id }}/edit">Edit</a>
+    <form method="post" action="/comments/{{ comment.id }}/delete"><button type="submit" class="link">Delete</button></form>
+    {% endif %}
+  </footer>
+  {% endif %}
+</article>

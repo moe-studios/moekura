@@ -17,7 +17,7 @@ use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
-use crate::posts::{FailedEdit, render_post, visibility};
+use crate::posts::{Extra, FailedEdit, render_post, visibility};
 use crate::tags::{TagFieldError, parse_edit, too_many};
 
 pub fn routes() -> Router<AppState> {
@@ -94,7 +94,10 @@ async fn edit(
                 id,
                 (!query.q.is_empty()).then_some(query.q.as_str()),
                 true,
-                Some(FailedEdit { form: &form, error }),
+                Extra {
+                    failed_edit: Some(FailedEdit { form: &form, error }),
+                    ..Extra::default()
+                },
             )
             .await
         }

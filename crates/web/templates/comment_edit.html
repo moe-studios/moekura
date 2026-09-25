@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Edit comment · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="{{ url }}">« Post #{{ post_id }}</a></p>
+<h1>Edit comment</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<form class="comment-form" method="post" action="/comments/{{ id }}/edit">
+  <label for="comment-body">Comment</label>
+  <textarea id="comment-body" name="body" rows="8" maxlength="{{ max_len }}" required>{{ body }}</textarea>
+  {% include "comment_help.html" %}
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

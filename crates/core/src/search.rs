@@ -26,9 +26,29 @@ pub const FILETYPES: &[&str] = &["jpeg", "png", "gif", "webp", "avif", "jxl", "m
 /// Metatags this version understands. Other reserved prefixes
 /// ([`RESERVED_PREFIXES`]) are refused as not supported yet.
 pub const METATAGS: &[&str] = &[
-    "id", "rating", "status", "user", "score", "favcount", "width", "height", "mpixels", "ratio",
-    "filesize", "duration", "date", "filetype", "md5", "parent", "tagcount", "order", "limit",
-    "fav", "ordfav", "similar",
+    "id",
+    "rating",
+    "status",
+    "user",
+    "score",
+    "favcount",
+    "width",
+    "height",
+    "mpixels",
+    "ratio",
+    "filesize",
+    "duration",
+    "date",
+    "filetype",
+    "md5",
+    "parent",
+    "tagcount",
+    "order",
+    "limit",
+    "fav",
+    "ordfav",
+    "similar",
+    "commentcount",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -128,6 +148,8 @@ pub enum Filter {
     User(String),
     Score(Bound<i64>),
     FavCount(Bound<i64>),
+    /// Comments that aren't deleted.
+    CommentCount(Bound<i64>),
     Width(Bound<i64>),
     Height(Bound<i64>),
     /// Width × height in millions of pixels.
@@ -183,6 +205,9 @@ pub enum Order {
     Random,
     /// Newest favorites of [`Query::ordfav`] first (`ordfav:name`).
     Favorited,
+    /// Most recently commented first; only posts with comments.
+    CommentDesc,
+    CommentAsc,
 }
 
 impl Order {
@@ -212,6 +237,9 @@ impl Order {
         ("tagcount_desc", Order::TagCountDesc),
         ("tagcount_asc", Order::TagCountAsc),
         ("random", Order::Random),
+        ("comment", Order::CommentDesc),
+        ("comment_desc", Order::CommentDesc),
+        ("comment_asc", Order::CommentAsc),
     ];
 
     pub fn name(self) -> &'static str {
@@ -387,6 +415,9 @@ impl Query {
             "id" => Filter::Id(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "score" => Filter::Score(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "favcount" => Filter::FavCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
+            "commentcount" => {
+                Filter::CommentCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?)
+            }
             "width" => Filter::Width(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "height" => Filter::Height(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "tagcount" => Filter::TagCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
@@ -628,6 +659,7 @@ impl fmt::Display for Condition {
             Filter::User(name) => write!(f, "user:{name}"),
             Filter::Score(b) => write!(f, "score:{b}"),
             Filter::FavCount(b) => write!(f, "favcount:{b}"),
+            Filter::CommentCount(b) => write!(f, "commentcount:{b}"),
             Filter::Width(b) => write!(f, "width:{b}"),
             Filter::Height(b) => write!(f, "height:{b}"),
             Filter::Mpixels(b) => write!(f, "mpixels:{b}"),
@@ -744,6 +776,10 @@ mod tests {
         assert_eq!(filter("id:1,2,3"), Filter::Id(Bound::In(vec![1, 2, 3])));
         assert_eq!(filter("favcount:>0"), Filter::FavCount(Bound::Gt(0)));
         assert_eq!(filter("tagcount:<5"), Filter::TagCount(Bound::Lt(5)));
+        assert_eq!(
+            filter("commentcount:>=2"),
+            Filter::CommentCount(Bound::Ge(2))
+        );
         assert_eq!(filter("mpixels:>2.5"), Filter::Mpixels(Bound::Gt(2.5)));
         assert_eq!(
             filter("duration:10..30"),
@@ -885,6 +921,7 @@ mod tests {
         );
         // The last order wins.
         assert_eq!(query.order, Some(Order::FavCountDesc));
+        assert_eq!(parse("order:comment").order, Some(Order::CommentDesc));
         assert_eq!(query.limit, Some(20));
         assert_eq!(query.status(), None);
         assert_eq!(

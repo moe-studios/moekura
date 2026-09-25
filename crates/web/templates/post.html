@@ -105,6 +105,22 @@
       </form>
     </details>
     {% endif %}
+    <section id="comments" class="comments" aria-labelledby="comments-heading">
+      <h2 id="comments-heading">Comments{% if comments.count %} <span class="count">{{ comments.count }}</span>{% endif %}</h2>
+      {% if comments.older %}<p><a href="{{ comments.all_url }}">{{ comments.older }} older comment{% if comments.older != 1 %}s{% endif %}</a></p>{% endif %}
+      {% for comment in comments.comments %}{% include "comment.html" %}{% else %}<p class="empty">No comments yet.</p>{% endfor %}
+      {% if comments.error %}<p class="form-error" role="alert">{{ comments.error }}</p>{% endif %}
+      {% if comments.can_comment %}
+      <form id="new-comment" class="comment-form" method="post" action="/posts/{{ post.id }}/comments">
+        <label for="comment-body">Add a comment</label>
+        <textarea id="comment-body" name="body" rows="4" maxlength="{{ comments.max_len }}" required>{{ comments.draft }}</textarea>
+        {% include "comment_help.html" %}
+        <button type="submit">Post comment</button>
+      </form>
+      {% elif comments.login_needed %}
+      <p class="hint"><a href="/login?next=%2Fposts%2F{{ post.id }}">Log in</a> to comment.</p>
+      {% endif %}
+    </section>
   </section>
   <aside class="post-info">
     {% if search.back_url %}

@@ -9,6 +9,8 @@
     {% if user.status != "active" %}<dt>Status</dt><dd>{{ user.status }}</dd>{% endif %}
     <dt>Uploads</dt><dd><a href="{{ uploads_url }}">{{ uploads }}</a></dd>
     <dt>Favorites</dt><dd><a href="{{ favorites_url }}">{{ favorites }}</a></dd>
+    <dt>Favorite groups</dt><dd><a href="{{ favorite_groups_url }}">{{ favorite_groups }}</a></dd>
+    <dt>Comments</dt><dd><a href="{{ comments_url }}">{{ comments }}</a></dd>
   </dl>
   {% if bans %}
   <h2>Bans</h2>

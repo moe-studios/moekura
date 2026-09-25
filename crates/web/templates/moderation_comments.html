@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Reported comments · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Reported comments</h1>
+{% if rows %}
+<ul class="review plain">
+  {% for row in rows %}
+  <li>
+    <div class="review-body">
+      <p><a href="/posts/{{ row.comment.post_id }}">Post #{{ row.comment.post_id }}</a></p>
+      {% with comment = row.comment %}{% include "comment.html" %}{% endwith %}
+      <ul class="plain">
+        {% for r in row.reports %}<li>“{{ r.reason }}”{% if r.by %} <span class="hint">— {{ r.by }}</span>{% endif %}</li>{% endfor %}
+      </ul>
+      <div class="actions">
+        <form method="post" action="/comments/{{ row.comment.id }}/reports/dismiss"><button type="submit" class="secondary">Dismiss</button></form>
+        <form class="reject" method="post" action="/comments/{{ row.comment.id }}/hide">
+          <input name="reason" placeholder="Reason" maxlength="2000" aria-label="Reason for hiding comment #{{ row.comment.id }}">
+          <button type="submit">Hide comment</button>
+        </form>
+      </div>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">No reported comments.</p>
+{% endif %}
+{% endblock %}

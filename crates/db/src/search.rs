@@ -18,7 +18,7 @@ use std::str::FromStr;
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
-    Bound, Condition, Filter, Order, ParentFilter, Query, StatusFilter, TagTerm,
+    Bound, Condition, Filter, Order, ParentFilter, PoolFilter, Query, StatusFilter, TagTerm,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -28,6 +28,12 @@ use crate::tag_relations;
 
 /// Most posts a `similar:` search considers.
 const SIMILAR_LIMIT: i64 = 1000;
+
+/// Most saved searches a `search:` term runs.
+const SAVED_SEARCH_LIMIT: usize = 20;
+
+/// Newest posts of each saved search a `search:` term includes.
+const SAVED_SEARCH_POSTS: u32 = 500;
 
 /// Which page of results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,8 +125,16 @@ pub struct Plan {
     favorited_by: Vec<(bool, i64)>,
     /// `ordfav:`'s user.
     ordfav: Option<i64>,
-    /// `similar:` filters resolved to the matching posts.
-    similar_to: Vec<(bool, Vec<i64>)>,
+    /// `similar:` and `search:` filters resolved to the matching posts.
+    post_sets: Vec<(bool, Vec<i64>)>,
+    /// `pool:` filters: a pool's id, or `None` for any pool.
+    pools: Vec<(bool, Option<i32>)>,
+    /// `ordpool:`'s pool.
+    ordpool: Option<i32>,
+    /// `favgroup:` filters resolved to group ids.
+    favgroups: Vec<(bool, i32)>,
+    /// `ordfavgroup:`'s group.
+    ordfavgroup: Option<i32>,
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
@@ -165,7 +179,11 @@ impl Plan {
             uploaders: Vec::new(),
             favorited_by: Vec::new(),
             ordfav: None,
-            similar_to: Vec::new(),
+            post_sets: Vec::new(),
+            pools: Vec::new(),
+            ordpool: None,
+            favgroups: Vec::new(),
+            ordfavgroup: None,
             statuses,
             own_pending,
             order: query.order.unwrap_or_default(),
@@ -244,14 +262,64 @@ impl Plan {
                             .into_iter()
                             .map(|s| s.post_id)
                             .collect();
-                            plan.similar_to.push((condition.negated, ids));
+                            plan.post_sets.push((condition.negated, ids));
                         }
                         // Unknown or not yet processed: nothing to compare with.
                         None if !condition.negated => plan.nothing = true,
                         None => {}
                     }
                 }
+                Filter::FavGroup(group) => {
+                    match favorite_group(db, group, visibility.viewer).await? {
+                        Some(id) => plan.favgroups.push((condition.negated, id)),
+                        None if !condition.negated => plan.nothing = true,
+                        None => {}
+                    }
+                }
+                Filter::Search(label) => {
+                    let ids = match visibility.viewer {
+                        Some(viewer) => {
+                            saved_search_posts(db, viewer, label, visibility, config).await?
+                        }
+                        None => Vec::new(),
+                    };
+                    if ids.is_empty() && !condition.negated {
+                        plan.nothing = true;
+                    }
+                    plan.post_sets.push((condition.negated, ids));
+                }
+                Filter::Pool(PoolFilter::Any) => plan.pools.push((condition.negated, None)),
+                Filter::Pool(PoolFilter::None) => plan.pools.push((!condition.negated, None)),
+                Filter::Pool(PoolFilter::In(pool)) => {
+                    match crate::pools::find(db, pool)
+                        .await?
+                        .filter(|p| !p.is_deleted)
+                    {
+                        Some(pool) => plan.pools.push((condition.negated, Some(pool.id))),
+                        None if !condition.negated => plan.nothing = true,
+                        None => {}
+                    }
+                }
                 _ => plan.conditions.push(condition.clone()),
+            }
+        }
+        if let Some(group) = &query.ordfavgroup
+            && plan.order == Order::FavGroup
+        {
+            match favorite_group(db, group, visibility.viewer).await? {
+                Some(id) => plan.ordfavgroup = Some(id),
+                None => plan.nothing = true,
+            }
+        }
+        if let Some(pool) = &query.ordpool
+            && plan.order == Order::Pool
+        {
+            match crate::pools::find(db, pool)
+                .await?
+                .filter(|p| !p.is_deleted)
+            {
+                Some(pool) => plan.ordpool = Some(pool.id),
+                None => plan.nothing = true,
             }
         }
 
@@ -317,9 +385,15 @@ impl Plan {
                 &self.uploaders,
                 &self.favorited_by,
                 self.ordfav,
-                &self.similar_to,
+                (&self.post_sets, &self.pools, self.ordpool),
+                (&self.favgroups, self.ordfavgroup),
             )
         )
+    }
+
+    /// Whether the order leaves out posts without comments.
+    fn only_commented(&self) -> bool {
+        matches!(self.order, Order::CommentDesc | Order::CommentAsc)
     }
 
     /// Whether `page=b…` / `page=a…` work for this search.
@@ -558,6 +632,18 @@ impl Plan {
             Order::Favorited => {
                 sql.push("fo.created_at DESC, p.id DESC");
             }
+            Order::CommentDesc => {
+                sql.push("p.last_commented_at DESC, p.id DESC");
+            }
+            Order::CommentAsc => {
+                sql.push("p.last_commented_at ASC, p.id ASC");
+            }
+            Order::Pool => {
+                sql.push("po.position ASC");
+            }
+            Order::FavGroup => {
+                sql.push("fgo.position ASC");
+            }
         }
         sql.push(" LIMIT ").push_bind(i64::from(self.per_page));
         if offset > 0 {
@@ -604,6 +690,14 @@ impl Plan {
             sql.push(" JOIN favorites fo ON fo.post_id = p.id AND fo.user_id = ")
                 .push_bind(user);
         }
+        if let Some(group) = self.ordfavgroup {
+            sql.push(" JOIN favorite_group_posts fgo ON fgo.post_id = p.id AND fgo.group_id = ")
+                .push_bind(group);
+        }
+        if let Some(pool) = self.ordpool {
+            sql.push(" JOIN pool_posts po ON po.post_id = p.id AND po.pool_id = ")
+                .push_bind(pool);
+        }
         sql.push(" WHERE (p.status = ANY(")
             .push_bind(self.statuses.clone())
             .push(")");
@@ -613,6 +707,9 @@ impl Plan {
                 .push(")");
         }
         sql.push(")");
+        if self.only_commented() {
+            sql.push(" AND p.last_commented_at IS NOT NULL");
+        }
 
         // Walks must not use the tag index: `IS TRUE` makes the condition
         // one Postgres can't match to an index.
@@ -657,7 +754,7 @@ impl Plan {
             })
             .push_bind(*uploader);
         }
-        for (negated, ids) in &self.similar_to {
+        for (negated, ids) in &self.post_sets {
             sql.push(if *negated {
                 " AND NOT p.id = ANY("
             } else {
@@ -665,6 +762,28 @@ impl Plan {
             })
             .push_bind(ids.clone())
             .push(")");
+        }
+        for (negated, group) in &self.favgroups {
+            sql.push(if *negated { " AND NOT" } else { " AND" })
+                .push(" EXISTS (SELECT 1 FROM favorite_group_posts fg WHERE fg.post_id = p.id AND fg.group_id = ")
+                .push_bind(*group)
+                .push(")");
+        }
+        for (negated, pool) in &self.pools {
+            sql.push(if *negated { " AND NOT" } else { " AND" });
+            match pool {
+                Some(pool) => {
+                    sql.push(" EXISTS (SELECT 1 FROM pool_posts pp WHERE pp.post_id = p.id AND pp.pool_id = ")
+                        .push_bind(*pool)
+                        .push(")");
+                }
+                None => {
+                    sql.push(
+                        " EXISTS (SELECT 1 FROM pool_posts pp JOIN pools pl ON pl.id = pp.pool_id \
+                         WHERE pp.post_id = p.id AND NOT pl.is_deleted)",
+                    );
+                }
+            }
         }
         for (negated, user) in &self.favorited_by {
             sql.push(if *negated { " AND NOT" } else { " AND" })
@@ -716,8 +835,13 @@ impl Plan {
         let unfiltered = self.conditions.is_empty()
             && self.uploaders.is_empty()
             && self.favorited_by.is_empty()
-            && self.similar_to.is_empty()
+            && self.post_sets.is_empty()
             && self.ordfav.is_none()
+            && self.pools.is_empty()
+            && self.ordpool.is_none()
+            && self.favgroups.is_empty()
+            && self.ordfavgroup.is_none()
+            && !self.only_commented()
             && self.excluded.is_empty()
             && self.any.is_none();
         let shortcut = match &self.required[..] {
@@ -773,6 +897,73 @@ impl Plan {
         sql.push(" LIMIT ").push_bind(limit + 1).push(") AS hits");
         Some(sql)
     }
+}
+
+/// The favorite group `group` names for `viewer`: by id, if it's public
+/// or theirs; by name, one of theirs.
+async fn favorite_group(
+    db: &PgPool,
+    group: &moekura_core::search::PoolRef,
+    viewer: Option<i64>,
+) -> sqlx::Result<Option<i32>> {
+    use moekura_core::search::PoolRef;
+    let found = match group {
+        PoolRef::Id(id) => crate::favorite_groups::by_id(db, *id)
+            .await?
+            .filter(|g| g.is_public || Some(g.creator_id) == viewer),
+        PoolRef::Name(name) => match viewer {
+            Some(viewer) => crate::favorite_groups::by_name(db, viewer, name).await?,
+            None => None,
+        },
+    };
+    Ok(found.map(|g| g.id))
+}
+
+/// The newest posts matching `viewer`'s saved searches labelled `label`
+/// (`all`: every one), up to [`SAVED_SEARCH_POSTS`] per search. Saved
+/// searches that use `search:` themselves are skipped.
+async fn saved_search_posts(
+    db: &PgPool,
+    viewer: i64,
+    label: &str,
+    visibility: &Visibility,
+    config: &SearchConfig,
+) -> Result<Vec<i64>, SearchError> {
+    let label = (label != "all").then_some(label);
+    let queries = crate::saved_searches::queries(db, viewer, label).await?;
+    let config = SearchConfig {
+        per_page: SAVED_SEARCH_POSTS,
+        max_per_page: SAVED_SEARCH_POSTS,
+        ..config.clone()
+    };
+    let mut ids = Vec::new();
+    for text in queries.iter().take(SAVED_SEARCH_LIMIT) {
+        let Ok(mut query) = Query::parse(text) else {
+            continue;
+        };
+        if query
+            .conditions
+            .iter()
+            .any(|c| matches!(c.filter, Filter::Search(_)))
+        {
+            continue;
+        }
+        // The newest posts, whatever order the search was saved with.
+        query.order = None;
+        query.ordfav = None;
+        query.ordpool = None;
+        query.ordfavgroup = None;
+        query.limit = None;
+        let plan = match Box::pin(Plan::resolve(db, &query, visibility, &config)).await {
+            Ok(plan) => plan,
+            Err(SearchError::Invalid(_)) => continue,
+            Err(e) => return Err(e),
+        };
+        ids.extend(plan.ids(db, PageRef::Number(1)).await?);
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
 }
 
 /// The statuses a search covers, and the viewer if their own pending
@@ -850,6 +1041,7 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         Filter::Id(b) => push_bound(sql, "p.id", b),
         Filter::Score(b) => push_bound(sql, "p.score", b),
         Filter::FavCount(b) => push_bound(sql, "p.fav_count", b),
+        Filter::CommentCount(b) => push_bound(sql, "p.comment_count", b),
         Filter::TagCount(b) => push_bound(sql, "p.tag_count", b),
         Filter::Width(b) => push_bound(sql, "a.width", b),
         Filter::Height(b) => push_bound(sql, "a.height", b),
@@ -896,7 +1088,13 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
                 .push(" OR p.id = ")
                 .push_bind(*id);
         }
-        Filter::Status(_) | Filter::User(_) | Filter::Fav(_) | Filter::Similar(_) => {
+        Filter::Status(_)
+        | Filter::User(_)
+        | Filter::Fav(_)
+        | Filter::Similar(_)
+        | Filter::Search(_)
+        | Filter::FavGroup(_)
+        | Filter::Pool(_) => {
             unreachable!("resolved in Plan::resolve")
         }
     }
@@ -1401,6 +1599,241 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn comment_counts_and_order(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(
+                seed(
+                    &pool,
+                    Seed {
+                        tags: &["x"],
+                        ..Seed::default()
+                    },
+                )
+                .await,
+            );
+        }
+        let user: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        // Post 0 gets two comments, then post 2 one.
+        for post in [ids[0], ids[0], ids[2]] {
+            crate::comments::create(&pool, post, user, "hi")
+                .await
+                .unwrap();
+        }
+        assert_eq!(search(&pool, "commentcount:2").await, [ids[0]]);
+        assert_eq!(search(&pool, "commentcount:>0").await, [ids[2], ids[0]]);
+        assert_eq!(search(&pool, "-commentcount:>0").await, [ids[1]]);
+        assert_eq!(search(&pool, "order:comment").await, [ids[2], ids[0]]);
+        assert_eq!(search(&pool, "x order:comment_asc").await, [ids[0], ids[2]]);
+
+        let query = Query::parse("order:comment").unwrap();
+        let plan = Plan::resolve(&pool, &query, &public(), &SearchConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(plan.count(&pool).await.unwrap(), Count::Exact(2));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn pools_and_pool_order(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            ids.push(
+                seed(
+                    &pool,
+                    Seed {
+                        tags: &["x"],
+                        ..Seed::default()
+                    },
+                )
+                .await,
+            );
+        }
+        let contents = |name: &str, post_ids: Vec<i64>, is_deleted| crate::pools::Contents {
+            name: name.into(),
+            description: String::new(),
+            category: "series".into(),
+            is_deleted,
+            post_ids,
+        };
+        let comic = crate::pools::create(
+            &pool,
+            &contents("Comic", vec![ids[2], ids[0], ids[1]], false),
+            None,
+        )
+        .await
+        .unwrap();
+        crate::pools::create(&pool, &contents("Gone", vec![ids[3]], true), None)
+            .await
+            .unwrap();
+
+        assert_eq!(search(&pool, "pool:comic").await, [ids[2], ids[1], ids[0]]);
+        assert_eq!(
+            search(&pool, &format!("pool:{comic}")).await,
+            [ids[2], ids[1], ids[0]]
+        );
+        assert_eq!(search(&pool, "-pool:comic").await, [ids[3]]);
+        assert_eq!(search(&pool, "pool:any").await, [ids[2], ids[1], ids[0]]);
+        assert_eq!(search(&pool, "pool:none").await, [ids[3]]);
+        // Deleted pools match nothing.
+        assert!(search(&pool, "pool:gone").await.is_empty());
+        assert!(search(&pool, "pool:nothing").await.is_empty());
+        assert_eq!(
+            search(&pool, "x ordpool:comic").await,
+            [ids[2], ids[0], ids[1]]
+        );
+        assert!(search(&pool, "ordpool:gone").await.is_empty());
+
+        let query = Query::parse("ordpool:comic").unwrap();
+        let plan = Plan::resolve(&pool, &query, &public(), &SearchConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(plan.count(&pool).await.unwrap(), Count::Exact(3));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn saved_searches(pool: PgPool) {
+        let cat = seed(
+            &pool,
+            Seed {
+                tags: &["cat"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let dog = seed(
+            &pool,
+            Seed {
+                tags: &["dog"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let tree = seed(
+            &pool,
+            Seed {
+                tags: &["tree"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let alice: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let pets = ["pets".to_owned()];
+        crate::saved_searches::save(&pool, alice, "cat", &pets)
+            .await
+            .unwrap();
+        crate::saved_searches::save(&pool, alice, "dog order:score", &pets)
+            .await
+            .unwrap();
+        crate::saved_searches::save(&pool, alice, "tree", &[])
+            .await
+            .unwrap();
+        // Would loop.
+        crate::saved_searches::save(&pool, alice, "search:all", &pets)
+            .await
+            .unwrap();
+
+        let as_alice = Visibility {
+            viewer: Some(alice),
+            ..public()
+        };
+        assert_eq!(search_as(&pool, "search:pets", &as_alice).await, [dog, cat]);
+        assert_eq!(
+            search_as(&pool, "search:all", &as_alice).await,
+            [tree, dog, cat]
+        );
+        assert_eq!(search_as(&pool, "-search:pets", &as_alice).await, [tree]);
+        assert_eq!(search_as(&pool, "search:pets -dog", &as_alice).await, [cat]);
+        assert!(
+            search_as(&pool, "search:nothing", &as_alice)
+                .await
+                .is_empty()
+        );
+        // Visitors have no saved searches.
+        assert!(search(&pool, "search:all").await.is_empty());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn favorite_groups(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(seed(&pool, Seed::default()).await);
+        }
+        let user = |name: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO users (name, role_id) SELECT $1, id FROM roles WHERE system_key = 'member' RETURNING id",
+                )
+                .bind(name)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let (alice, bob) = (user("alice").await, user("bob").await);
+        let group = |name: &str, is_public, post_ids: Vec<i64>| crate::favorite_groups::Contents {
+            name: name.into(),
+            is_public,
+            post_ids,
+        };
+        let best = crate::favorite_groups::create(
+            &pool,
+            alice,
+            &group("Best", true, vec![ids[0], ids[2]]),
+        )
+        .await
+        .unwrap();
+        let hidden =
+            crate::favorite_groups::create(&pool, alice, &group("Secret", false, vec![ids[1]]))
+                .await
+                .unwrap();
+        let as_user = |viewer| Visibility {
+            viewer: Some(viewer),
+            ..public()
+        };
+
+        // By name: the viewer's own group.
+        assert_eq!(
+            search_as(&pool, "favgroup:best", &as_user(alice)).await,
+            [ids[2], ids[0]]
+        );
+        assert!(
+            search_as(&pool, "favgroup:best", &as_user(bob))
+                .await
+                .is_empty()
+        );
+        // By id: public groups for anyone, private ones for their owner.
+        assert_eq!(
+            search(&pool, &format!("favgroup:{best}")).await,
+            [ids[2], ids[0]]
+        );
+        assert!(
+            search(&pool, &format!("favgroup:{hidden}"))
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            search_as(&pool, &format!("favgroup:{hidden}"), &as_user(alice)).await,
+            [ids[1]]
+        );
+        assert_eq!(search(&pool, &format!("-favgroup:{best}")).await, [ids[1]]);
+        assert_eq!(
+            search_as(&pool, "ordfavgroup:best", &as_user(alice)).await,
+            [ids[0], ids[2]]
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn orders_and_pages(pool: PgPool) {
         let mut ids = Vec::new();
         for (i, score) in [3, 1, 2, 5, 4].into_iter().enumerate() {
@@ -1619,7 +2052,11 @@ mod tests {
             uploaders: Vec::new(),
             favorited_by: Vec::new(),
             ordfav: None,
-            similar_to: Vec::new(),
+            post_sets: Vec::new(),
+            pools: Vec::new(),
+            ordpool: None,
+            favgroups: Vec::new(),
+            ordfavgroup: None,
             statuses: vec!["active"],
             own_pending: None,
             order,

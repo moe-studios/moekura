@@ -6,6 +6,19 @@
     {% if deleted %}<p class="notice">Deleted {{ deleted.when }}{% if deleted.by %} by {{ deleted.by }}{% endif %}{% if deleted.reason %}: “{{ deleted.reason }}”{% endif %}</p>
     {% elif post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
+    {% for p in pools.pools %}
+    <nav class="pool-nav{% if p.current %} current{% endif %}" aria-label="Pool {{ p.name }}">
+      <span class="pool-steps">
+        {% if p.first %}<a href="{{ p.first }}" title="First">«</a>{% else %}<span aria-hidden="true">«</span>{% endif %}
+        {% if p.previous %}<a href="{{ p.previous }}"{% if p.current %} rel="prev"{% endif %} title="Previous">‹ prev</a>{% else %}<span aria-hidden="true">‹ prev</span>{% endif %}
+      </span>
+      <span class="pool-name"><a href="{{ p.url }}">{{ p.name }}</a> <span class="hint">{{ p.position }}/{{ p.post_count }}</span>{% if p.category == "series" %} · <a href="{{ p.read_url }}/{{ p.position }}">Read</a>{% endif %}</span>
+      <span class="pool-steps">
+        {% if p.next %}<a href="{{ p.next }}"{% if p.current %} rel="next"{% endif %} title="Next">next ›</a>{% else %}<span aria-hidden="true">next ›</span>{% endif %}
+        {% if p.last %}<a href="{{ p.last }}" title="Last">»</a>{% else %}<span aria-hidden="true">»</span>{% endif %}
+      </span>
+    </nav>
+    {% endfor %}
     {% if blacklisted %}
     <p class="notice blacklisted">This post matches your blacklist (<code>{{ blacklisted.rule }}</code>). <a href="{{ blacklisted.show_url }}">Show it anyway</a></p>
     {% elif file.video %}
@@ -105,6 +118,22 @@
       </form>
     </details>
     {% endif %}
+    <section id="comments" class="comments" aria-labelledby="comments-heading">
+      <h2 id="comments-heading">Comments{% if comments.count %} <span class="count">{{ comments.count }}</span>{% endif %}</h2>
+      {% if comments.older %}<p><a href="{{ comments.all_url }}">{{ comments.older }} older comment{% if comments.older != 1 %}s{% endif %}</a></p>{% endif %}
+      {% for comment in comments.comments %}{% include "comment.html" %}{% else %}<p class="empty">No comments yet.</p>{% endfor %}
+      {% if comments.error %}<p class="form-error" role="alert">{{ comments.error }}</p>{% endif %}
+      {% if comments.can_comment %}
+      <form id="new-comment" class="comment-form" method="post" action="/posts/{{ post.id }}/comments">
+        <label for="comment-body">Add a comment</label>
+        <textarea id="comment-body" name="body" rows="4" maxlength="{{ comments.max_len }}" required>{{ comments.draft }}</textarea>
+        {% include "comment_help.html" %}
+        <button type="submit">Post comment</button>
+      </form>
+      {% elif comments.login_needed %}
+      <p class="hint"><a href="/login?next=%2Fposts%2F{{ post.id }}">Log in</a> to comment.</p>
+      {% endif %}
+    </section>
   </section>
   <aside class="post-info">
     {% if search.back_url %}
@@ -145,6 +174,42 @@
       {% endif %}
     </dl>
     <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a></p>
+    {% if favorite_groups %}
+    <section class="tag-group post-favorite-groups">
+      <h2>Your favorite groups</h2>
+      {% if favorite_groups.holding %}
+      <ul class="tag-list">
+        {% for g in favorite_groups.holding %}
+        <li><a href="{{ g.url }}">{{ g.name }}</a>
+          <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups/remove"><input type="hidden" name="group" value="{{ g.id }}"><button type="submit" class="link" aria-label="Remove from {{ g.name }}">remove</button></form></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if favorite_groups.others %}
+      <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups">
+        <label class="visually-hidden" for="add-group">Group</label>
+        <select id="add-group" name="group">
+          {% for g in favorite_groups.others %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+        </select>
+        <button type="submit">Add</button>
+      </form>
+      {% endif %}
+      <p class="hint"><a href="/favorite_groups/new">New group</a></p>
+    </section>
+    {% endif %}
+    {% if pools.can_add %}
+    <section class="tag-group post-pools">
+      <h2>Pools</h2>
+      <details class="edit">
+        <summary>Add to a pool</summary>
+        <form method="post" action="/posts/{{ post.id }}/pools">
+          <label for="add-pool">Pool name or number</label>
+          <input id="add-pool" name="pool" required autocomplete="off" spellcheck="false">
+          <button type="submit">Add</button>
+        </form>
+      </details>
+    </section>
+    {% endif %}
     {% for group in tag_groups %}
     <section class="tag-group">
       <h2>{{ group.label }}</h2>

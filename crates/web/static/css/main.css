@@ -464,6 +464,57 @@ button.secondary, .button.secondary { background: var(--border); color: var(--te
 .wiki-form { max-width: 800px; }
 .wiki-form textarea { font-family: ui-monospace, "Cascadia Code", Menlo, monospace; font-size: 0.875rem; }
 
+/* Comments */
+
+.comments { margin-top: 24px; max-width: 800px; }
+.comments h2 { font-size: 1.125rem; margin: 0 0 12px; }
+.comments h2 .count { color: var(--muted); font-weight: normal; }
+.comment { padding: 10px 0; border-top: 1px solid var(--border); }
+.comment:target { background: var(--surface); outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
+.comment.is-deleted { opacity: 0.6; }
+.comment-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; margin-bottom: 4px; }
+.comment-author { font-weight: 600; }
+.comment-actions { display: flex; gap: 12px; align-items: baseline; margin-top: 6px; font-size: 0.875rem; }
+.comment-actions form { display: inline; }
+button.link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; font: inherit; }
+button.link:hover { text-decoration: underline; }
+.comment-head .vote { margin-left: auto; font-size: 0.875rem; }
+.comment .collapsed summary { color: var(--muted); cursor: pointer; }
+details.inline { display: inline-block; }
+details.inline summary { color: var(--accent); cursor: pointer; list-style: none; }
+details.inline[open] { display: block; flex-basis: 100%; }
+.comment-actions { flex-wrap: wrap; }
+.comment-form { margin-top: 12px; }
+.comment-form textarea { width: 100%; }
+.markup blockquote { margin: 8px 0; padding: 4px 12px; border-left: 3px solid var(--border); color: var(--muted); }
+.comment-list { max-width: 1000px; }
+.comment-row { display: flex; gap: 16px; align-items: flex-start; border-top: 1px solid var(--border); padding: 8px 0; }
+.comment-row .comment { border-top: none; padding: 0; flex: 1; min-width: 0; }
+.comment-post { flex: 0 0 150px; }
+.comment-post img { display: block; max-width: 150px; max-height: 150px; width: auto; height: auto; border-radius: calc(var(--radius) / 2); }
+
+/* Pools */
+
+.pool-description { max-width: 800px; margin-bottom: 16px; }
+.pool-order { list-style: none; margin: 8px 0 16px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; counter-reset: pool; }
+.pool-order li { position: relative; counter-increment: pool; cursor: grab; }
+.pool-order li::before { content: counter(pool); position: absolute; top: 2px; left: 4px; z-index: 1; font-size: 0.75rem; color: var(--accent-text); background: var(--accent); padding: 0 4px; border-radius: 4px; }
+.pool-order li.dragging { opacity: 0.4; }
+.pool-order img { display: block; max-width: 110px; max-height: 110px; width: auto; height: auto; }
+tr.is-deleted td { opacity: 0.6; }
+.pool-nav { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 0 8px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.pool-nav.current { border-color: var(--accent); }
+.pool-nav .pool-steps { display: flex; gap: 12px; white-space: nowrap; }
+.pool-nav .pool-steps span { color: var(--muted); opacity: 0.5; }
+.pool-nav .pool-name { text-align: center; overflow-wrap: anywhere; }
+.reader { max-width: 1000px; margin: 0 auto; }
+.reader-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.reader-page { margin: 0 0 24px; text-align: center; }
+.reader-page img, .reader-page video { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.reader-page figcaption { margin-top: 4px; }
+.reader-pager { gap: 12px; }
+.reader-resume { margin: 0 0 16px; }
+
 /* Votes and favorites */
 
 .vote, .favorite { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }

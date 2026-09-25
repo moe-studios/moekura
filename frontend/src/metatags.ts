@@ -9,6 +9,7 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
   user: [],
   score: [],
   favcount: [],
+  commentcount: [],
   width: [],
   height: [],
   mpixels: [],
@@ -38,11 +39,18 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
     "tagcount",
     "tagcount_asc",
     "random",
+    "comment",
+    "comment_asc",
   ],
   limit: [],
   fav: [],
   ordfav: [],
   similar: [],
+  pool: ["any", "none"],
+  ordpool: [],
+  search: ["all"],
+  favgroup: [],
+  ordfavgroup: [],
 };
 
 /// Prefixes that set a new tag's category when tagging.

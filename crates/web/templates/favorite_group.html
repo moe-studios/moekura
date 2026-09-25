@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}{{ group.name }} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="{{ owner_url }}">« {{ group.creator }}'s favorite groups</a></p>
+<header class="wiki-head">
+  <h1>{{ group.name }}</h1>
+  <p class="hint">
+    by {{ group.creator }} · {{ group.post_count }} post{% if group.post_count != 1 %}s{% endif %}
+    · {% if group.public %}public{% else %}private{% endif %}
+    · <a href="{{ search_url }}">Search</a>
+    {% if can_edit %} · <a href="{{ group.url }}/edit">Edit</a>{% endif %}
+  </p>
+</header>
+{% if cards %}
+<ul class="post-grid">
+  {% for card in cards %}<li>{% include "card.html" %}</li>{% endfor %}
+</ul>
+{% else %}
+<p class="empty">This group has no posts yet.</p>
+{% endif %}
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% if can_edit %}
+<form method="post" action="{{ group.url }}/delete"><button type="submit" class="danger">Delete group</button></form>
+{% endif %}
+{% endblock %}

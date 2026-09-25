@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ pool.name }}{% if single %} ({{ number }}/{{ total }}){% endif %} · {{ site.name }}{% endblock %}
+{% block content %}
+<div class="reader" data-reader="{{ pool.id }}">
+  <header class="reader-head">
+    <p class="back"><a href="{{ pool.url }}">« {{ pool.name }}</a></p>
+    <p class="hint">
+      {% if single %}Page {{ number }} of {{ total }} · <a href="{{ scroll_url }}">Scroll instead</a>
+      {% else %}{{ total }} page{% if total != 1 %}s{% endif %}{% if pages %} · <a href="{{ page_url }}">One page at a time</a>{% endif %}{% endif %}
+    </p>
+  </header>
+  {% if single %}
+  <nav class="pager reader-pager" aria-label="Pages">
+    {% if first_url %}<a href="{{ first_url }}">« First</a>{% endif %}
+    {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+    {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+    {% if last_url %}<a href="{{ last_url }}">Last »</a>{% endif %}
+  </nav>
+  {% endif %}
+  {% for page in pages %}
+  <figure class="reader-page" id="page-{{ page.number }}" data-page="{{ page.number }}">
+    {% if page.post.blacklisted %}
+    <p class="notice blacklisted">Page {{ page.number }} matches your blacklist (<code>{{ page.post.blacklisted }}</code>). <a href="/posts/{{ page.post.id }}?pool={{ pool.id }}&amp;blacklist=off">Show it anyway</a></p>
+    {% elif page.post.video %}
+    <video src="{{ page.post.url }}"{% if page.post.poster %} poster="{{ page.post.poster }}"{% endif %} width="{{ page.post.width }}" height="{{ page.post.height }}" controls loop preload="metadata" playsinline></video>
+    {% else %}
+    {% if single and next_url %}<a href="{{ next_url }}">{% endif %}
+    <img src="{{ page.post.url }}" width="{{ page.post.width }}" height="{{ page.post.height }}" alt="Page {{ page.number }}"{% if not single and not loop.first %} loading="lazy"{% endif %} decoding="async">
+    {% if single and next_url %}</a>{% endif %}
+    {% endif %}
+    <figcaption class="hint">{{ page.number }}/{{ total }} · <a href="/posts/{{ page.post.id }}?pool={{ pool.id }}">Post #{{ page.post.id }}</a></figcaption>
+  </figure>
+  {% else %}
+  <p class="empty">This pool has no posts yet.</p>
+  {% endfor %}
+  <nav class="pager reader-pager" aria-label="Pages">
+    {% if previous_url %}<a class="button" href="{{ previous_url }}"{% if not single %} rel="prev"{% endif %}>Previous</a>{% endif %}
+    {% if next_url %}<a class="button" href="{{ next_url }}"{% if not single %} rel="next"{% endif %}>Next</a>{% endif %}
+  </nav>
+</div>
+{% endblock %}

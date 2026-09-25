@@ -8,6 +8,7 @@
 //! `api_key` parameters (see [`credentials`]), and errors are answered in
 //! Danbooru's shape ([`error_response`]).
 
+mod community;
 mod missing;
 mod posts;
 mod reactions;
@@ -38,6 +39,7 @@ pub fn routes() -> Router<AppState> {
     Router::new().nest(
         PREFIX,
         posts::routes()
+            .merge(community::routes())
             .merge(missing::routes())
             .merge(reactions::routes())
             .merge(tags::routes())
@@ -224,7 +226,7 @@ pub(crate) struct ListParams {
     #[serde(default)]
     limit: String,
     #[serde(default)]
-    page: String,
+    pub(crate) page: String,
     #[serde(default)]
     only: String,
 }

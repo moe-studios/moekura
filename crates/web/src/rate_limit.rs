@@ -71,6 +71,13 @@ const CONFIRM_BY_USER: Limit = Limit {
     period: Duration::from_secs(30),
 };
 
+// Posting comments, against spam and floods.
+const COMMENT_BY_USER: Limit = Limit {
+    name: "comment_user",
+    burst: 5,
+    period: Duration::from_secs(20),
+};
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -85,6 +92,7 @@ pub struct RateLimits {
     mail_by_address: DefaultKeyedRateLimiter<String>,
     code_by_user: DefaultKeyedRateLimiter<i64>,
     confirm_by_user: DefaultKeyedRateLimiter<i64>,
+    comment_by_user: DefaultKeyedRateLimiter<i64>,
     valkey: Option<Valkey>,
 }
 
@@ -105,6 +113,7 @@ impl RateLimits {
             mail_by_address: RateLimiter::keyed(quota(MAIL_BY_ADDRESS)),
             code_by_user: RateLimiter::keyed(quota(CODE_BY_USER)),
             confirm_by_user: RateLimiter::keyed(quota(CONFIRM_BY_USER)),
+            comment_by_user: RateLimiter::keyed(quota(COMMENT_BY_USER)),
             valkey,
         }
     }
@@ -166,6 +175,17 @@ impl RateLimits {
         .await
     }
 
+    /// Counts a comment posted by user `user_id`.
+    pub async fn check_comment(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            COMMENT_BY_USER,
+            &self.comment_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
     /// Forgets keys that are back at full allowance, bounding memory use.
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
@@ -176,6 +196,7 @@ impl RateLimits {
         self.mail_by_address.retain_recent();
         self.code_by_user.retain_recent();
         self.confirm_by_user.retain_recent();
+        self.comment_by_user.retain_recent();
     }
 
     async fn check<K: std::hash::Hash + Eq + Clone>(

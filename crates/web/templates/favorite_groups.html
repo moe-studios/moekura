@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{% if own %}Your favorite groups{% else %}{{ owner }}'s favorite groups{% endif %} · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>{% if own %}Your favorite groups{% else %}{{ owner }}'s favorite groups{% endif %}</h1>
+{% if can_create %}<p><a class="button" href="/favorite_groups/new">New group</a></p>{% endif %}
+{% if groups %}
+<table class="tag-table">
+  <thead><tr><th scope="col">Name</th><th scope="col" class="num">Posts</th><th scope="col">Last changed</th></tr></thead>
+  <tbody>
+    {% for g in groups %}
+    <tr>
+      <td><a href="{{ g.url }}">{{ g.name }}</a>{% if not g.public %} <span class="hint">(private)</span>{% endif %}</td>
+      <td class="num">{{ g.post_count }}</td>
+      <td>{{ g.date }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No favorite groups{% if own %} yet{% endif %}.</p>
+{% endif %}
+{% endblock %}

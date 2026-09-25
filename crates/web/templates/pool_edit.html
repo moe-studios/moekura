@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{% if pool %}Edit {{ pool.name }}{% else %}New pool{% endif %} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back">{% if pool %}<a href="{{ pool.url }}">« {{ pool.name }}</a>{% else %}<a href="/pools">« Pools</a>{% endif %}</p>
+<h1>{% if pool %}Edit {{ pool.name }}{% else %}New pool{% endif %}</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}{% if pool %} <a href="{{ pool.url }}/history">History</a>{% endif %}</p>{% endif %}
+<form class="wiki-form" method="post" action="{{ action }}">
+  {% if pool %}<input type="hidden" name="base" value="{{ base }}">{% endif %}
+  <label for="pool-name">Name</label>
+  <input id="pool-name" name="name" value="{{ name }}" maxlength="170" required>
+  <fieldset class="ratings">
+    <legend>Kind</legend>
+    <label class="choice"><input type="radio" name="category" value="series"{% if category == "series" %} checked{% endif %}> Series <span class="hint">(read in order)</span></label>
+    <label class="choice"><input type="radio" name="category" value="collection"{% if category == "collection" %} checked{% endif %}> Collection</label>
+  </fieldset>
+  <label for="pool-description">Description</label>
+  <textarea id="pool-description" name="description" rows="6" maxlength="{{ max_len }}">{{ description }}</textarea>
+  <label for="pool-posts">Posts, in order</label>
+  <textarea id="pool-posts" name="posts" rows="4" spellcheck="false" data-pool-posts>{{ posts }}</textarea>
+  <p class="hint">Post numbers separated by spaces. {% if cards %}Drag the thumbnails below to reorder them.{% endif %}</p>
+  {% if cards %}
+  <ol class="pool-order" data-pool-order>
+    {% for card in cards %}<li data-id="{{ card.id }}">{% include "card.html" %}</li>{% endfor %}
+  </ol>
+  {% endif %}
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

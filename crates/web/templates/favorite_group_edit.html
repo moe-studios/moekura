@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}{% if group %}Edit {{ group.name }}{% else %}New favorite group{% endif %} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back">{% if group %}<a href="{{ group.url }}">« {{ group.name }}</a>{% else %}<a href="/favorite_groups">« Your favorite groups</a>{% endif %}</p>
+<h1>{% if group %}Edit {{ group.name }}{% else %}New favorite group{% endif %}</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<form class="wiki-form" method="post" action="{{ action }}">
+  <label for="group-name">Name</label>
+  <input id="group-name" name="name" value="{{ name }}" maxlength="170" required>
+  <label class="choice"><input type="checkbox" name="public" value="1"{% if public %} checked{% endif %}> Public: anyone can see it</label>
+  <label for="group-posts">Posts, in order</label>
+  <textarea id="group-posts" name="posts" rows="4" spellcheck="false" data-pool-posts>{{ posts }}</textarea>
+  <p class="hint">Post numbers separated by spaces. {% if cards %}Drag the thumbnails below to reorder them.{% endif %}</p>
+  {% if cards %}
+  <ol class="pool-order" data-pool-order>
+    {% for card in cards %}<li data-id="{{ card.id }}">{% include "card.html" %}</li>{% endfor %}
+  </ol>
+  {% endif %}
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

@@ -8,6 +8,7 @@ var METATAGS = {
   user: [],
   score: [],
   favcount: [],
+  commentcount: [],
   width: [],
   height: [],
   mpixels: [],
@@ -36,12 +37,19 @@ var METATAGS = {
     "duration_asc",
     "tagcount",
     "tagcount_asc",
-    "random"
+    "random",
+    "comment",
+    "comment_asc"
   ],
   limit: [],
   fav: [],
   ordfav: [],
-  similar: []
+  similar: [],
+  pool: ["any", "none"],
+  ordpool: [],
+  search: ["all"],
+  favgroup: [],
+  ordfavgroup: []
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 
@@ -385,12 +393,56 @@ function enableShortcuts() {
   });
 }
 
+// src/pool-order.ts
+function reorder(ids, moved, before) {
+  const rest = ids.filter((id) => id !== moved);
+  const at = before === null ? -1 : rest.indexOf(before);
+  if (at < 0) return [...rest, moved];
+  return [...rest.slice(0, at), moved, ...rest.slice(at)];
+}
+function enablePoolOrder(root = document) {
+  const list = root.querySelector("[data-pool-order]");
+  const field = root.querySelector("[data-pool-posts]");
+  if (!list || !field) return;
+  let dragged = null;
+  for (const item of list.querySelectorAll("li[data-id]")) {
+    item.draggable = true;
+    item.addEventListener("dragstart", (event) => {
+      dragged = item;
+      item.classList.add("dragging");
+      event.dataTransfer?.setData("text/plain", item.dataset["id"] ?? "");
+    });
+    item.addEventListener("dragend", () => {
+      item.classList.remove("dragging");
+      dragged = null;
+    });
+    item.querySelector("a")?.addEventListener("click", (event) => event.preventDefault());
+  }
+  list.addEventListener("dragover", (event) => {
+    if (!dragged) return;
+    event.preventDefault();
+    const target2 = event.target.closest("li[data-id]");
+    if (!target2 || target2 === dragged) return;
+    const box = target2.getBoundingClientRect();
+    const after = event.clientX > box.left + box.width / 2;
+    list.insertBefore(dragged, after ? target2.nextSibling : target2);
+  });
+  list.addEventListener("drop", (event) => {
+    event.preventDefault();
+    if (!dragged) return;
+    const moved = dragged.dataset["id"] ?? "";
+    const next = dragged.nextElementSibling;
+    const ids = field.value.split(/[\s,]+/).filter((id) => id !== "").map((id) => id.replace(/^#/, ""));
+    field.value = reorder(ids, moved, next?.dataset["id"] ?? null).join(" ");
+  });
+}
+
 // src/reactions.ts
 function update(root, state) {
   const score = root.querySelector(".vote .score");
   if (score) score.textContent = String(state.score);
   const favCount = root.querySelector(".favorite .fav-count");
-  if (favCount) favCount.textContent = String(state.fav_count);
+  if (favCount && state.fav_count !== void 0) favCount.textContent = String(state.fav_count);
   for (const button of root.querySelectorAll(".vote button[name=score]")) {
     const direction = button.getAttribute("aria-label") === "Vote up" ? 1 : -1;
     const pressed = state.vote === direction;
@@ -398,7 +450,7 @@ function update(root, state) {
     button.value = String(pressed ? 0 : direction);
   }
   const favorite = root.querySelector(".favorite button[name=favorite]");
-  if (favorite) {
+  if (favorite && state.favorited !== void 0) {
     favorite.setAttribute("aria-pressed", String(state.favorited));
     favorite.value = state.favorited ? "remove" : "add";
   }
@@ -419,7 +471,8 @@ function enhanceReactions(root = document) {
         headers: { Accept: "application/json" }
       }).then(async (response) => {
         if (!response.ok) throw new Error(String(response.status));
-        update(root, await response.json());
+        const scope = form.closest(".comment") ?? form.closest(".post-info") ?? root;
+        update(scope, await response.json());
       }).catch(() => {
         form.dataset["plain"] = "1";
         form.requestSubmit(submitter);
@@ -428,8 +481,59 @@ function enhanceReactions(root = document) {
   }
 }
 
+// src/reader.ts
+var PREFIX = "moekura:read:";
+function load(pool) {
+  try {
+    const value = Number(localStorage.getItem(PREFIX + pool));
+    return Number.isInteger(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
+}
+function save(pool, page) {
+  try {
+    localStorage.setItem(PREFIX + pool, String(page));
+  } catch {
+  }
+}
+function enableReader(root = document) {
+  const reader = root.querySelector("[data-reader]");
+  const pool = reader?.dataset["reader"];
+  if (reader && pool) {
+    const pages = [...reader.querySelectorAll("[data-page]")];
+    const [only] = pages;
+    if (pages.length === 1 && only) {
+      save(pool, Number(only.dataset["page"]));
+    } else if (pages.length > 1 && "IntersectionObserver" in window) {
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) save(pool, Number(entry.target.dataset["page"]));
+          }
+        },
+        { threshold: 0.5 }
+      );
+      for (const page of pages) observer.observe(page);
+    }
+  }
+  const resume = root.querySelector("[data-reader-resume]");
+  const resumePool = resume?.dataset["readerResume"];
+  const link = resume?.querySelector("a");
+  if (resume && resumePool && link) {
+    const page = load(resumePool);
+    if (page !== null && page > 1) {
+      link.href = `/pools/${resumePool}/read/${page}`;
+      link.textContent = `Continue reading from page ${page}`;
+      resume.hidden = false;
+    }
+  }
+}
+
 // src/main.ts
 document.documentElement.classList.add("js");
 attachAll();
 enhanceReactions();
 enableShortcuts();
+enablePoolOrder();
+enableReader();

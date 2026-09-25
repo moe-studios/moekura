@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Saved searches · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>Saved searches</h1>
+<p class="hint">
+  <code>search:all</code> shows the newest posts of all your saved searches together, and
+  <code>search:label</code> those of the searches with that label.
+</p>
+{% if searches %}
+<p><a class="button" href="{{ all_url }}">All together</a>
+  {% for l in labels %}<a class="tag" href="{{ l.url }}">{{ l.label }}</a> {% endfor %}</p>
+<table class="tag-table saved-searches">
+  <thead><tr><th scope="col">Search</th><th scope="col">Labels</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <tbody>
+    {% for s in searches %}
+    <tr>
+      <td><a href="{{ s.url }}">{{ s.query }}</a></td>
+      <td>{% for l in s.label_links %}<a href="{{ l.url }}">{{ l.label }}</a> {% endfor %}</td>
+      <td>
+        <details class="inline">
+          <summary>Edit</summary>
+          <form method="post" action="/saved_searches/{{ s.id }}">
+            <label for="query-{{ s.id }}">Search</label>
+            <input id="query-{{ s.id }}" name="query" value="{{ s.query }}" required data-autocomplete="search" autocomplete="off" autocapitalize="none" spellcheck="false">
+            <label for="labels-{{ s.id }}">Labels</label>
+            <input id="labels-{{ s.id }}" name="labels" value="{{ s.labels }}" autocomplete="off" spellcheck="false">
+            <button type="submit">Save</button>
+          </form>
+        </details>
+        <form class="inline" method="post" action="/saved_searches/{{ s.id }}/delete"><button type="submit" class="link">Remove</button></form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">You haven't saved any searches yet.</p>
+{% endif %}
+<h2>Save a search</h2>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<form class="wiki-form" method="post" action="/saved_searches">
+  <label for="new-query">Search</label>
+  <input id="new-query" name="query" value="{{ form.query }}" required data-autocomplete="search" autocomplete="off" autocapitalize="none" spellcheck="false">
+  <label for="new-labels">Labels <span class="hint">(optional, separated by spaces)</span></label>
+  <input id="new-labels" name="labels" value="{{ form.labels }}" autocomplete="off" spellcheck="false">
+  <button type="submit">Save</button>
+  <p class="hint">Up to {{ max }} searches.</p>
+</form>
+{% endblock %}

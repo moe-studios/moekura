@@ -16,6 +16,15 @@ Members flag posts that should go, with a reason. Flagged posts stay
 visible, marked *flagged*, and appear under **Moderation → Flags**.
 Dismiss the flags to keep the post, or delete it, which upholds them.
 
+## Comments
+
+Members report comments, with a reason; reported comments appear under
+**Moderation → Reported comments**. Staff with *Hide comments* can hide
+any comment (which upholds its reports) and restore it later, or dismiss
+the reports. Hidden comments, and those their authors deleted, stay
+visible to staff, marked *deleted*. Comments voted down to −5 or lower
+are collapsed for everyone.
+
 ## Deleting, restoring, purging
 
 Deleting a post (with a reason, shown on the post) hides it from everyone

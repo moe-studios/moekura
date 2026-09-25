@@ -33,9 +33,13 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `rating:` | `rating:e,q` | rating `g`eneral, `s`ensitive, `q`uestionable or `e`xplicit (letters or names, comma-separated) |
 | `score:` | `score:>=10` | score |
 | `favcount:` | `favcount:>5` | number of favourites |
+| `commentcount:` | `commentcount:>0` | number of comments |
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
 | `fav:` | `fav:alice` | favorited by this user |
+| `search:` | `search:all`, `search:artists` | the newest posts (500 each) of your [saved searches](account.md#saved-searches), all or those with a label |
+| `favgroup:` | `favgroup:best`, `favgroup:7` | in one of your favorite groups (by name), or any public group (by number) |
+| `pool:` | `pool:my_comic`, `pool:12`, `pool:any`, `pool:none` | in this pool (by name or number), in any pool, or in none |
 | `width:`, `height:` | `width:>=1920` | size in pixels |
 | `mpixels:` | `mpixels:>2` | megapixels (width × height ÷ 1,000,000) |
 | `ratio:` | `ratio:16:9`, `ratio:<1` | width ÷ height (`16:9` or a number; exact values match within 0.01) |
@@ -81,8 +85,11 @@ those allowed to see them.
 | `order:landscape`, `order:portrait` | widest / tallest first |
 | `order:duration`, `order:duration_asc` | longest / shortest video |
 | `order:tagcount`, `order:tagcount_asc` | most / fewest tags |
+| `order:comment`, `order:comment_asc` | most / least recently commented (only posts with comments) |
 | `order:random` | shuffled |
 | `ordfav:alice` | alice's favorites, most recently favorited first |
+| `ordpool:my_comic` | the pool's posts, in the pool's order |
+| `ordfavgroup:best` | the favorite group's posts, in its order |
 
 `limit:100` shows more posts per page (up to the site's maximum, 200 by
 default).

@@ -10,11 +10,13 @@ pub mod auth;
 mod bans;
 mod blacklist;
 mod client_ip;
+mod comments;
 mod counts;
 mod danbooru;
 mod edit;
 mod email;
 pub mod error;
+mod favorite_groups;
 mod favorites;
 mod fetch;
 mod files;
@@ -25,8 +27,10 @@ pub mod import;
 mod moderation;
 pub mod oidc;
 pub mod pages;
+mod pools;
 mod posts;
 pub mod rate_limit;
+mod saved_searches;
 pub mod shared;
 mod tag_relations;
 mod tags;
@@ -213,12 +217,16 @@ pub fn router(state: AppState) -> Router {
         .merge(account::routes())
         .merge(admin::routes())
         .merge(bans::routes())
+        .merge(comments::routes())
         .merge(edit::routes())
         .merge(email::routes())
+        .merge(favorite_groups::routes())
         .merge(favorites::routes())
         .merge(history::routes())
         .merge(moderation::routes())
         .merge(oidc::routes())
+        .merge(pools::routes())
+        .merge(saved_searches::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(two_factor::routes())

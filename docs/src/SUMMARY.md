@@ -29,6 +29,8 @@
 - [Search syntax](using/search.md)
 - [Tags](using/tags.md)
 - [The wiki](using/wiki.md)
+- [Comments](using/comments.md)
+- [Pools](using/pools.md)
 - [The API](api.md)
 - [Danbooru apps](using/danbooru-clients.md)
 

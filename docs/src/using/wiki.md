@@ -25,7 +25,8 @@ their change, and your text is kept so you can save again.
 | `[b]bold[/b]`, `[i]italic[/i]`, `[s]struck[/s]`, `[u]underlined[/u]` | Styles |
 | `[[long_hair]]`, `[[long_hair\|long hair]]` | A link to a wiki page, with its own text after the `\|` |
 | `{{cat -dog}}` | A link to search results |
-| `post #123` | A link to a post |
+| `post #123`, `comment #45` | A link to a post or a comment |
+| `[quote]` and `[/quote]` on lines of their own | A quote |
 | `https://example.com` | A link to another site |
 
 Everything else is shown as written; HTML isn't allowed. The syntax is a

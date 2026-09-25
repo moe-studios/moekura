@@ -9,6 +9,7 @@
 //! Danbooru's shape ([`error_response`]).
 
 mod posts;
+mod reactions;
 mod tags;
 mod users;
 
@@ -35,7 +36,10 @@ pub(crate) struct DanbooruRequest;
 pub fn routes() -> Router<AppState> {
     Router::new().nest(
         PREFIX,
-        posts::routes().merge(tags::routes()).merge(users::routes()),
+        posts::routes()
+            .merge(reactions::routes())
+            .merge(tags::routes())
+            .merge(users::routes()),
     )
 }
 
@@ -139,6 +143,77 @@ pub(crate) async fn error_response(response: Response) -> Response {
 fn timestamp(at: time::OffsetDateTime) -> String {
     at.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_default()
+}
+
+/// Parameters from the query string and the body, form or JSON, as
+/// Danbooru takes them. JSON objects are flattened to Danbooru's names:
+/// `{"post": {"rating": "s"}}` is `post[rating]`.
+#[derive(Debug, Default)]
+pub(crate) struct Fields(std::collections::HashMap<String, String>);
+
+impl Fields {
+    pub(crate) fn get(&self, name: &str) -> Option<&str> {
+        self.0.get(name).map(String::as_str)
+    }
+
+    fn flatten(&mut self, prefix: Option<&str>, value: Value) {
+        let name = |key: &str| match prefix {
+            Some(prefix) => format!("{prefix}[{key}]"),
+            None => key.to_owned(),
+        };
+        let Value::Object(map) = value else { return };
+        for (key, value) in map {
+            let name = name(&key);
+            let flat = match value {
+                Value::Object(_) => {
+                    self.flatten(Some(&name), value);
+                    continue;
+                }
+                Value::String(s) => s,
+                Value::Null => String::new(),
+                Value::Array(items) => items
+                    .into_iter()
+                    .map(|v| v.as_str().map_or_else(|| v.to_string(), str::to_owned))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                other => other.to_string(),
+            };
+            self.0.insert(name, flat);
+        }
+    }
+}
+
+impl<S: Send + Sync> axum::extract::FromRequest<S> for Fields {
+    type Rejection = AppError;
+
+    async fn from_request(request: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let mut fields = Fields::default();
+        if let Some(query) = request.uri().query() {
+            fields
+                .0
+                .extend(url::form_urlencoded::parse(query.as_bytes()).into_owned());
+        }
+        let is_json = request
+            .headers()
+            .get(CONTENT_TYPE)
+            .is_some_and(|v| v.as_bytes().starts_with(b"application/json"));
+        let body = axum::body::Bytes::from_request(request, state)
+            .await
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        if body.is_empty() {
+            return Ok(fields);
+        }
+        if is_json {
+            let value: Value = serde_json::from_slice(&body)
+                .map_err(|e| AppError::BadRequest(format!("The body isn't JSON: {e}")))?;
+            fields.flatten(None, value);
+        } else {
+            fields
+                .0
+                .extend(url::form_urlencoded::parse(&body).into_owned());
+        }
+        Ok(fields)
+    }
 }
 
 /// Paging and field selection, as every Danbooru list takes them.

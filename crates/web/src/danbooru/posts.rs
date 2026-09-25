@@ -14,7 +14,7 @@ use moekura_db::search::{PageRef, Plan, SearchError};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
-use super::{ListParams, json, timestamp};
+use super::{Fields, ListParams, json, timestamp};
 use crate::AppState;
 use crate::api::posts::{ApiPost, load, one};
 use crate::auth::CurrentUser;
@@ -25,8 +25,9 @@ pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/posts", get(index))
         .route("/posts/random", get(random))
-        .route("/posts/{id}", get(show))
+        .route("/posts/{id}", get(show).put(update).patch(update))
         .route("/counts/posts", get(count))
+        .route("/post_versions", get(versions))
 }
 
 /// A post as Danbooru describes it.
@@ -364,6 +365,122 @@ async fn random(
     json(posts.pop().ok_or(AppError::NotFound)?, &params.list.only)
 }
 
+/// Changes a post as Danbooru clients send it: `post[tag_string]`
+/// (with `post[old_tag_string]`, the tags the client started from, so
+/// others' changes meanwhile are kept), `post[rating]`, `post[source]`
+/// and `post[parent_id]`. The same rules apply as on the site.
+async fn update(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<String>,
+    fields: Fields,
+) -> Result<Response, AppError> {
+    current.require(Permission::EditPosts)?;
+    let id: i64 = id.parse().map_err(|_| AppError::NotFound)?;
+    let db = state.db.primary();
+    let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    if !visibility(&current).allows(&post) {
+        return Err(AppError::NotFound);
+    }
+    let names: Vec<String> = moekura_db::tags::by_ids(db, &post.tag_ids)
+        .await?
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    let current_tags = names.join(" ");
+    let field = |name: &str| fields.get(&format!("post[{name}]")).map(str::to_owned);
+    let form = crate::edit::EditForm {
+        tags: field("tag_string").unwrap_or_else(|| current_tags.clone()),
+        old_tags: field("old_tag_string").unwrap_or(current_tags),
+        rating: field("rating").unwrap_or_else(|| post.rating.code().to_owned()),
+        source: field("source").unwrap_or(post.source),
+        description: field("description").unwrap_or(post.description),
+        parent: field("parent_id")
+            .unwrap_or_else(|| post.parent_id.map(|p| p.to_string()).unwrap_or_default()),
+    };
+    match crate::edit::apply(&state, &current, id, &form).await {
+        Ok(()) => {}
+        Err(crate::edit::Refused::Invalid(message)) => {
+            return Err(AppError::Unprocessable(message));
+        }
+        Err(crate::edit::Refused::Error(error)) => return Err(error),
+    }
+    let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    let mut updated = danbooru_posts(&state, db, vec![post]).await?;
+    json(updated.pop().ok_or(AppError::NotFound)?, "")
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct VersionParams {
+    #[serde(rename = "search[post_id]", default)]
+    post_id: String,
+    #[serde(flatten)]
+    list: ListParams,
+}
+
+/// A post's history, newest first. Only by post (`search[post_id]`).
+async fn versions(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Query(params): Query<VersionParams>,
+) -> Result<Response, AppError> {
+    current.require(Permission::ViewPosts)?;
+    let Ok(id) = params.post_id.trim().parse::<i64>() else {
+        return json(Vec::<serde_json::Value>::new(), "");
+    };
+    one(&state, &current, id).await?;
+    let db = state.reader(&current);
+    let versions = moekura_db::post_versions::list(db, id).await?;
+    let mut tag_ids: Vec<i32> = versions
+        .iter()
+        .flat_map(|v| v.tag_ids.iter().copied())
+        .collect();
+    tag_ids.sort_unstable();
+    tag_ids.dedup();
+    let names: HashMap<i32, String> = moekura_db::tags::by_ids(db, &tag_ids)
+        .await?
+        .into_iter()
+        .map(|t| (t.id, t.name))
+        .collect();
+    let named = |ids: &[i32]| -> Vec<String> {
+        let mut list: Vec<String> = ids.iter().filter_map(|id| names.get(id).cloned()).collect();
+        list.sort();
+        list
+    };
+    let limit = params.list.limit(1000) as usize;
+    let result: Vec<serde_json::Value> = versions
+        .iter()
+        .enumerate()
+        .take(limit)
+        .map(|(i, v)| {
+            let previous = versions.get(i + 1);
+            let changed = |f: fn(&moekura_db::post_versions::Version) -> String| {
+                previous.is_some_and(|p| f(p) != f(v))
+            };
+            serde_json::json!({
+                "id": v.id,
+                "post_id": id,
+                "version": v.version,
+                "tags": named(&v.tag_ids).join(" "),
+                "added_tags": named(&v.added_tag_ids),
+                "removed_tags": named(&v.removed_tag_ids),
+                "rating": v.rating,
+                "rating_changed": changed(|v| v.rating.clone()),
+                "source": v.source,
+                "source_changed": changed(|v| v.source.clone()),
+                "parent_id": v.parent_id,
+                "parent_changed": changed(|v| format!("{:?}", v.parent_id)),
+                "updater_id": v.updater_id,
+                "updated_at": timestamp(v.created_at),
+                "obsolete_added_tags": "",
+                "obsolete_removed_tags": "",
+                "unchanged_tags": "",
+            })
+        })
+        .collect();
+    json(result, &params.list.only)
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct CountParams {
     #[serde(default)]
@@ -471,6 +588,53 @@ mod tests {
         assert_eq!(random["id"], json!(second));
         let counts = body(&app.get("/counts/posts.json?tags=cat", None).await);
         assert_eq!(counts, json!({ "counts": { "posts": 2 } }));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn editing_and_history(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = upload(&app, &alice, 20, "cat cute").await;
+        let path = format!("/posts/{id}.json");
+
+        let visitor = app.form("PUT", &path, None, "post%5Brating%5D=e").await;
+        assert_eq!(visitor.status, StatusCode::UNAUTHORIZED);
+        // A JSON body, the way Boorusama sends it.
+        let changes = json!({ "post": { "tag_string": "cat dog", "rating": "q" } });
+        let edited = app.json("PUT", &path, Some(&alice), Some(changes)).await;
+        assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+        let edited = body(&edited);
+        assert_eq!(edited["tag_string"], json!("cat dog"));
+        assert_eq!(edited["rating"], json!("q"));
+
+        // A form body with the tags the client started from: someone else's
+        // change in between stays.
+        let form = "post%5Bold_tag_string%5D=cat+cute&post%5Btag_string%5D=cat+cute+whiskers";
+        let response = app.form("PATCH", &path, Some(&alice), form).await;
+        assert_eq!(response.status, StatusCode::OK, "{}", response.body);
+        assert_eq!(body(&response)["tag_string"], json!("cat dog whiskers"));
+
+        let bad = app
+            .json(
+                "PUT",
+                &path,
+                Some(&alice),
+                Some(json!({ "post": { "rating": "x" } })),
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        let versions = body(
+            &app.get(&format!("/post_versions.json?search[post_id]={id}"), None)
+                .await,
+        );
+        let versions = versions.as_array().unwrap();
+        assert_eq!(versions.len(), 3);
+        assert_eq!(versions[0]["added_tags"], json!(["whiskers"]));
+        assert_eq!(versions[1]["added_tags"], json!(["dog"]));
+        assert_eq!(versions[1]["removed_tags"], json!(["cute"]));
+        assert_eq!(versions[1]["rating_changed"], json!(true));
+        assert_eq!(versions[2]["tags"], json!("cat cute"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

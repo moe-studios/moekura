@@ -53,7 +53,7 @@ fn level(role: Option<&Role>, site: &SiteSnapshot) -> i32 {
 
 /// A user as Danbooru describes them to anyone.
 #[derive(Debug, Serialize)]
-struct DanbooruUser {
+pub(super) struct DanbooruUser {
     id: i64,
     name: String,
     level: i32,
@@ -76,7 +76,7 @@ struct DanbooruUser {
     is_deleted: bool,
 }
 
-async fn danbooru_user(
+pub(super) async fn danbooru_user(
     state: &AppState,
     db: &sqlx::PgPool,
     user: &User,

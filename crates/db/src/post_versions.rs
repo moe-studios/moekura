@@ -7,7 +7,9 @@ use time::OffsetDateTime;
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Version {
+    pub id: i64,
     pub version: i32,
+    pub updater_id: Option<i64>,
     pub updater_name: Option<String>,
     /// For changes made by a tag alias or implication.
     pub relation_kind: Option<String>,
@@ -27,7 +29,7 @@ pub struct Version {
 macro_rules! select_versions {
     ($rest:literal) => {
         concat!(
-            "SELECT v.version, u.name::text AS updater_name, r.kind AS relation_kind,
+            "SELECT v.id, v.version, v.updater_id, u.name::text AS updater_name, r.kind AS relation_kind,
                     r.antecedent_name::text AS relation_antecedent,
                     r.consequent_name::text AS relation_consequent,
                     v.tag_ids, v.added_tag_ids, v.removed_tag_ids, v.rating, v.source,

@@ -396,6 +396,11 @@ impl Plan {
         matches!(self.order, Order::CommentDesc | Order::CommentAsc)
     }
 
+    /// Whether the order leaves out posts without notes.
+    fn only_noted(&self) -> bool {
+        matches!(self.order, Order::NoteDesc | Order::NoteAsc)
+    }
+
     /// Whether `page=b…` / `page=a…` work for this search.
     pub fn supports_keyset(&self) -> bool {
         matches!(self.order, Order::IdDesc | Order::IdAsc)
@@ -638,6 +643,12 @@ impl Plan {
             Order::CommentAsc => {
                 sql.push("p.last_commented_at ASC, p.id ASC");
             }
+            Order::NoteDesc => {
+                sql.push("p.last_noted_at DESC, p.id DESC");
+            }
+            Order::NoteAsc => {
+                sql.push("p.last_noted_at ASC, p.id ASC");
+            }
             Order::Pool => {
                 sql.push("po.position ASC");
             }
@@ -709,6 +720,9 @@ impl Plan {
         sql.push(")");
         if self.only_commented() {
             sql.push(" AND p.last_commented_at IS NOT NULL");
+        }
+        if self.only_noted() {
+            sql.push(" AND p.last_noted_at IS NOT NULL");
         }
 
         // Walks must not use the tag index: `IS TRUE` makes the condition
@@ -842,6 +856,7 @@ impl Plan {
             && self.favgroups.is_empty()
             && self.ordfavgroup.is_none()
             && !self.only_commented()
+            && !self.only_noted()
             && self.excluded.is_empty()
             && self.any.is_none();
         let shortcut = match &self.required[..] {
@@ -1042,6 +1057,15 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         Filter::Score(b) => push_bound(sql, "p.score", b),
         Filter::FavCount(b) => push_bound(sql, "p.fav_count", b),
         Filter::CommentCount(b) => push_bound(sql, "p.comment_count", b),
+        Filter::NoteCount(b) => push_bound(sql, "p.note_count", b),
+        Filter::Note(words) => {
+            sql.push(
+                "EXISTS (SELECT 1 FROM notes n WHERE n.post_id = p.id AND n.is_active \
+                 AND to_tsvector('simple', n.body) @@ plainto_tsquery('simple', ",
+            )
+            .push_bind(words.clone())
+            .push("))");
+        }
         Filter::TagCount(b) => push_bound(sql, "p.tag_count", b),
         Filter::Width(b) => push_bound(sql, "a.width", b),
         Filter::Height(b) => push_bound(sql, "a.height", b),
@@ -1831,6 +1855,47 @@ mod tests {
             search_as(&pool, "ordfavgroup:best", &as_user(alice)).await,
             [ids[0], ids[2]]
         );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn notes(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(seed(&pool, Seed::default()).await);
+        }
+        let note_box = moekura_core::notes::NoteBox {
+            x: 0,
+            y: 0,
+            width: 5,
+            height: 5,
+        };
+        crate::notes::create(&pool, ids[0], note_box, "Good morning, everyone", None)
+            .await
+            .unwrap();
+        crate::notes::create(&pool, ids[0], note_box, "Bye", None)
+            .await
+            .unwrap();
+        let gone = crate::notes::create(&pool, ids[2], note_box, "Good night", None)
+            .await
+            .unwrap();
+        crate::notes::create(&pool, ids[2], note_box, "Later", None)
+            .await
+            .unwrap();
+        let deleted = crate::notes::Changes {
+            is_active: Some(false),
+            ..crate::notes::Changes::default()
+        };
+        crate::notes::update(&pool, gone, &deleted, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(search(&pool, "note:morning").await, [ids[0]]);
+        assert_eq!(search(&pool, "note:good").await, [ids[0]]);
+        assert_eq!(search(&pool, "note:good_morning").await, [ids[0]]);
+        assert_eq!(search(&pool, "-note:good").await, [ids[2], ids[1]]);
+        assert_eq!(search(&pool, "notecount:2").await, [ids[0]]);
+        assert_eq!(search(&pool, "notecount:0").await, [ids[1]]);
+        assert_eq!(search(&pool, "order:note").await, [ids[2], ids[0]]);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

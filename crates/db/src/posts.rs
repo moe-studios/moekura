@@ -28,6 +28,9 @@ pub struct Post {
     /// Comments that aren't deleted.
     pub comment_count: i32,
     pub last_commented_at: Option<OffsetDateTime>,
+    /// Notes that aren't deleted.
+    pub note_count: i32,
+    pub last_noted_at: Option<OffsetDateTime>,
     pub tag_ids: Vec<i32>,
     pub created_at: OffsetDateTime,
 }
@@ -45,6 +48,8 @@ struct PostRow {
     fav_count: i32,
     comment_count: i32,
     last_commented_at: Option<OffsetDateTime>,
+    note_count: i32,
+    last_noted_at: Option<OffsetDateTime>,
     tag_ids: Vec<i32>,
     created_at: OffsetDateTime,
 }
@@ -74,6 +79,8 @@ impl TryFrom<PostRow> for Post {
             fav_count: row.fav_count,
             comment_count: row.comment_count,
             last_commented_at: row.last_commented_at,
+            note_count: row.note_count,
+            last_noted_at: row.last_noted_at,
             tag_ids: row.tag_ids,
             created_at: row.created_at,
         })
@@ -85,7 +92,8 @@ macro_rules! select_posts {
     ($rest:literal) => {
         concat!(
             "SELECT id, uploader_id, rating, status, source, description, parent_id, score,
-                    fav_count, comment_count, last_commented_at, tag_ids, created_at
+                    fav_count, comment_count, last_commented_at,
+                    note_count, last_noted_at, tag_ids, created_at
              FROM posts ",
             $rest
         )

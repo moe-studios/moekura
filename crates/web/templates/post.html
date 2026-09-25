@@ -173,7 +173,7 @@
       <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
-    <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a></p>
+    <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a>{% if post.has_notes %} · <a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
     {% if favorite_groups %}
     <section class="tag-group post-favorite-groups">
       <h2>Your favorite groups</h2>

@@ -10,6 +10,7 @@ pub mod import;
 pub mod jobs;
 pub mod markup;
 pub mod moderation;
+pub mod notes;
 pub mod permissions;
 pub mod pools;
 pub mod posts;

@@ -34,6 +34,8 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `score:` | `score:>=10` | score |
 | `favcount:` | `favcount:>5` | number of favourites |
 | `commentcount:` | `commentcount:>0` | number of comments |
+| `notecount:` | `notecount:>0` | number of notes |
+| `note:` | `note:good_morning` | notes contain these words (underscores for spaces) |
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
 | `fav:` | `fav:alice` | favorited by this user |
@@ -86,6 +88,7 @@ those allowed to see them.
 | `order:duration`, `order:duration_asc` | longest / shortest video |
 | `order:tagcount`, `order:tagcount_asc` | most / fewest tags |
 | `order:comment`, `order:comment_asc` | most / least recently commented (only posts with comments) |
+| `order:note`, `order:note_asc` | most / least recently noted (only posts with notes) |
 | `order:random` | shuffled |
 | `ordfav:alice` | alice's favorites, most recently favorited first |
 | `ordpool:my_comic` | the pool's posts, in the pool's order |

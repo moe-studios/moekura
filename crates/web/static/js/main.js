@@ -9,6 +9,8 @@ var METATAGS = {
   score: [],
   favcount: [],
   commentcount: [],
+  notecount: [],
+  note: [],
   width: [],
   height: [],
   mpixels: [],
@@ -39,7 +41,9 @@ var METATAGS = {
     "tagcount_asc",
     "random",
     "comment",
-    "comment_asc"
+    "comment_asc",
+    "note",
+    "note_asc"
   ],
   limit: [],
   fav: [],

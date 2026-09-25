@@ -735,6 +735,7 @@ pub(crate) async fn render_post(
         // is shown as text.
         source_link => is_web_url(&post.source),
         description => post.description,
+        has_notes => post.last_noted_at.is_some(),
         created => created.get(..10).unwrap_or_default(),
         created_iso => created,
     };

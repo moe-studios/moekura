@@ -515,6 +515,10 @@ tr.is-deleted td { opacity: 0.6; }
 .reader-pager { gap: 12px; }
 .reader-resume { margin: 0 0 16px; }
 
+/* Notes */
+
+.note-text { white-space: pre-wrap; margin: 4px 0 0; }
+
 /* Votes and favorites */
 
 .vote, .favorite { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }

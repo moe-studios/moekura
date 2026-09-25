@@ -23,6 +23,10 @@ use crate::templates::search_url;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/users/{name}", get(profile))
+        .route(
+            "/users/{name}/auto-promotion",
+            axum::routing::post(set_auto_promotion),
+        )
         .route("/settings", get(settings_form).post(save_settings))
 }
 
@@ -47,6 +51,14 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let banned = ban_history.iter().any(|b| b.active);
     let favorites = favorites::count_by_user(db, user.id).await?;
     let comments = moekura_db::comments::count_by_user(db, user.id).await?;
+    let (promotion_blocked, promoted_at) = moekura_db::promotion::status(db, user.id).await?;
+    let can_manage = page.current.can(Permission::ManageUsers)
+        && page
+            .state()
+            .site
+            .get()
+            .role(user.role_id)
+            .is_some_and(|r| page.current.role.outranks(r));
     let own = page.current.user.as_ref().map(|u| u.id) == Some(user.id);
     let favorite_groups = moekura_db::favorite_groups::for_user(db, user.id, own)
         .await?
@@ -71,6 +83,11 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             favorites => favorites,
             favorites_url => Value::from_safe_string(search_url(&format!("ordfav:{}", user.name))),
             comments => comments,
+            promotion => context! {
+                promoted => promoted_at.map(|at| at.date().to_string()),
+                blocked => promotion_blocked,
+                can_change => can_manage,
+            },
             favorite_groups => favorite_groups,
             favorite_groups_url => crate::templates::url_value(&format!(
                 "/favorite_groups?{}",
@@ -85,6 +102,50 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             durations => crate::bans::durations(),
         },
     ))
+}
+
+#[derive(Debug, Deserialize)]
+struct AutoPromotionForm {
+    /// Present to keep the user from automatic promotion.
+    blocked: Option<String>,
+}
+
+/// Keeps a user from automatic promotion, or allows it again.
+async fn set_auto_promotion(
+    page: Page,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Form(form): Form<AutoPromotionForm>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ManageUsers)?;
+    let db = page.state().db.primary();
+    let user = users::by_name(db, &name).await?.ok_or(AppError::NotFound)?;
+    let outranks = page
+        .state()
+        .site
+        .get()
+        .role(user.role_id)
+        .is_some_and(|r| page.current.role.outranks(r));
+    if !outranks {
+        return Err(AppError::Forbidden);
+    }
+    let blocked = form.blocked.is_some();
+    moekura_db::promotion::set_blocked(db, user.id, blocked).await?;
+    moekura_db::mod_actions::record(
+        db,
+        moekura_db::mod_actions::NewAction::new(
+            page.current.user.as_ref().map(|u| u.id),
+            moekura_core::moderation::ActionKind::UserStatus,
+        )
+        .user(user.id)
+        .details(serde_json::json!({ "auto_promotion_blocked": blocked })),
+    )
+    .await?;
+    let back = format!(
+        "/users/{}",
+        url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>()
+    );
+    Ok((flash::set(jar, Flash::Saved), Redirect::to(&back)).into_response())
 }
 
 async fn settings_form(page: Page) -> Result<Response, AppError> {
@@ -244,5 +305,59 @@ mod tests {
             .post_form("/settings", Some(&alice), &[], "per_page=7&theme=dark")
             .await;
         assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn staff_keep_users_from_promotion(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let member = session_for(&pool, "bob", SystemRole::Member).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        assert!(
+            !app.get("/users/alice", Some(&member))
+                .await
+                .body
+                .contains("auto-promotion")
+        );
+        let page = app.get("/users/alice", Some(&admin)).await;
+        assert!(
+            page.body.contains("Never promote automatically"),
+            "{}",
+            page.body
+        );
+        assert_eq!(
+            app.post_form(
+                "/users/alice/auto-promotion",
+                Some(&member),
+                &[],
+                "blocked=1"
+            )
+            .await
+            .status,
+            StatusCode::FORBIDDEN
+        );
+        let saved = app
+            .post_form(
+                "/users/alice/auto-promotion",
+                Some(&admin),
+                &[],
+                "blocked=1",
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        assert!(
+            app.get("/users/alice", Some(&admin))
+                .await
+                .body
+                .contains("Kept from automatic promotion.")
+        );
+        // Not someone of the same rank.
+        session_for(&pool, "root2", SystemRole::Admin).await;
+        assert_eq!(
+            app.post_form("/users/root2/auto-promotion", Some(&admin), &[], "")
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
     }
 }

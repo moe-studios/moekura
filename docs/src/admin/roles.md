@@ -57,6 +57,21 @@ every 5 that were deleted, from 1 up to four times the role's limit.
 The upload page tells users how many uploads they have left, and why an
 upload was refused; the API's `/users/me` says the same under `uploads`.
 
+## Automatic promotion
+
+With **Automatic promotion** ticked in the site settings, members become
+contributors (who upload without approval) once their record is good
+enough. Every hour, members are promoted who have at least the set
+number of approved uploads and post edits, have been registered for the
+set number of days, and have had at most the set number of uploads
+deleted in the last 30 days. Defaults: 50 uploads, no edits needed, 30
+days, no recent deletions.
+
+Banned members aren't promoted. Staff who manage users can keep someone
+from automatic promotion with **Never promote automatically** on their
+profile. Promotions are in the moderation log, and profiles say when
+someone was promoted.
+
 ## Rank
 
 Staff act only on people below them: a moderator can ban members and

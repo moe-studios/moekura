@@ -54,3 +54,12 @@ pub struct SendMail {
 impl Job for SendMail {
     const KIND: &'static str = "mail.send";
 }
+
+/// Promote members whose record meets the site's rules; scheduled hourly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromoteUsers {}
+
+impl Job for PromoteUsers {
+    const KIND: &'static str = "users.promote";
+    const MAX_ATTEMPTS: i32 = 3;
+}

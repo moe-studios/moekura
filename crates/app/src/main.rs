@@ -15,6 +15,7 @@ use moekura_db::site_cache::SiteCache;
 use moekura_jobs::mail::{MailJobs, Mailer};
 use moekura_jobs::media::MediaJobs;
 use moekura_jobs::tags::TagJobs;
+use moekura_jobs::users::UserJobs;
 use moekura_jobs::{PoolConfig, Registry};
 use moekura_media::Media;
 use moekura_storage::Storage;
@@ -212,6 +213,10 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
     }
     .register(&mut registry);
     TagJobs {
+        db: db.primary().clone(),
+    }
+    .register(&mut registry);
+    UserJobs {
         db: db.primary().clone(),
     }
     .register(&mut registry);

@@ -132,6 +132,13 @@ fn render_settings(
                 email_verification => current.email_verification,
                 upload_approval => current.upload_approval,
                 upload_limit_scaling => current.upload_limit_scaling,
+                auto_promotion => current.auto_promotion,
+                promotion => context! {
+                    uploads => current.promotion_rules.uploads,
+                    edits => current.promotion_rules.edits,
+                    account_days => current.promotion_rules.account_days,
+                    max_recent_deletions => current.promotion_rules.max_recent_deletions,
+                },
                 default_blacklist => current.default_blacklist,
             },
             mail_enabled => page.state().config.mail.is_enabled(),
@@ -159,8 +166,26 @@ struct SettingsForm {
     upload_approval: Option<String>,
     /// Present when ticked.
     upload_limit_scaling: Option<String>,
+    /// Present when ticked.
+    auto_promotion: Option<String>,
+    #[serde(default)]
+    promotion_uploads: String,
+    #[serde(default)]
+    promotion_edits: String,
+    #[serde(default)]
+    promotion_account_days: String,
+    #[serde(default)]
+    promotion_max_recent_deletions: String,
     #[serde(default)]
     default_blacklist: String,
+}
+
+/// A number field as JSON: the number, or the text as typed so the
+/// setting is refused as invalid.
+fn number(text: &str) -> serde_json::Value {
+    text.trim()
+        .parse::<u32>()
+        .map_or_else(|_| json!(text.trim()), |n| json!(n))
 }
 
 async fn save_settings(
@@ -183,6 +208,16 @@ async fn save_settings(
         (
             "upload_limit_scaling",
             json!(form.upload_limit_scaling.is_some()),
+        ),
+        ("auto_promotion", json!(form.auto_promotion.is_some())),
+        (
+            "promotion_rules",
+            json!({
+                "uploads": number(&form.promotion_uploads),
+                "edits": number(&form.promotion_edits),
+                "account_days": number(&form.promotion_account_days),
+                "max_recent_deletions": number(&form.promotion_max_recent_deletions),
+            }),
         ),
         (
             "default_blacklist",
@@ -520,13 +555,34 @@ mod tests {
                 "/admin/settings",
                 Some(&admin),
                 &[],
-                "site_name=Tiny+Booru&registration_mode=invite&upload_approval=on&default_blacklist=rating%3Ae",
+                "site_name=Tiny+Booru&registration_mode=invite&upload_approval=on&default_blacklist=rating%3Ae\
+                 &auto_promotion=on&promotion_uploads=20&promotion_edits=5&promotion_account_days=14\
+                 &promotion_max_recent_deletions=1",
             )
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
         let stored = moekura_db::settings::load(&pool).await.unwrap();
         assert_eq!(stored.site_name, "Tiny Booru");
         assert!(stored.upload_approval);
+        assert!(stored.auto_promotion);
+        assert_eq!(
+            stored.promotion_rules,
+            moekura_core::promotion::Rules {
+                uploads: 20,
+                edits: 5,
+                account_days: 14,
+                max_recent_deletions: 1
+            }
+        );
+        let bad = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                "site_name=Tiny+Booru&registration_mode=invite&promotion_uploads=lots",
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
         // The page title follows at once on this node.
         assert!(
             app.get("/", None)
@@ -554,7 +610,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(logged, 4);
+        assert_eq!(logged, 6);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

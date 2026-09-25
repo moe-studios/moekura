@@ -17,6 +17,19 @@
     <label class="choice"><input type="checkbox" name="upload_approval"{% if settings.upload_approval %} checked{% endif %}> New uploads wait for approval (unless the uploader's role skips it)</label>
     <label class="choice"><input type="checkbox" name="upload_limit_scaling"{% if settings.upload_limit_scaling %} checked{% endif %}> Limits on uploads waiting for approval grow with a user's approved uploads and shrink with deleted ones</label>
     <p class="hint">Each role's limits are set under <a href="/admin/roles">Roles</a>.</p>
+    <fieldset class="limits">
+      <legend>Automatic promotion</legend>
+      <label class="choice"><input type="checkbox" name="auto_promotion"{% if settings.auto_promotion %} checked{% endif %}> Promote members to contributors (hourly) once they have</label>
+      <label for="promotion_uploads">Approved uploads</label>
+      <input id="promotion_uploads" name="promotion_uploads" type="number" min="0" value="{{ settings.promotion.uploads }}">
+      <label for="promotion_edits">Post edits</label>
+      <input id="promotion_edits" name="promotion_edits" type="number" min="0" value="{{ settings.promotion.edits }}">
+      <label for="promotion_account_days">Days since registering</label>
+      <input id="promotion_account_days" name="promotion_account_days" type="number" min="0" value="{{ settings.promotion.account_days }}">
+      <label for="promotion_max_recent_deletions">At most this many uploads deleted in the last 30 days</label>
+      <input id="promotion_max_recent_deletions" name="promotion_max_recent_deletions" type="number" min="0" value="{{ settings.promotion.max_recent_deletions }}">
+      <p class="hint">Banned members, and those staff keep from promotion on their profile, aren't promoted.</p>
+    </fieldset>
     <label for="default_blacklist">Default blacklist</label>
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>
     <p class="hint">For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.</p>

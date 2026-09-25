@@ -33,10 +33,11 @@ pub enum ActionKind {
     CommentReportDismiss,
     PoolDelete,
     PoolUndelete,
+    UserPromote,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 26] = [
+    pub const ALL: [ActionKind; 27] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -63,6 +64,7 @@ impl ActionKind {
         ActionKind::CommentReportDismiss,
         ActionKind::PoolDelete,
         ActionKind::PoolUndelete,
+        ActionKind::UserPromote,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -93,6 +95,7 @@ impl ActionKind {
             ActionKind::CommentReportDismiss => "comment_report.dismiss",
             ActionKind::PoolDelete => "pool.delete",
             ActionKind::PoolUndelete => "pool.undelete",
+            ActionKind::UserPromote => "user.promote",
         }
     }
 
@@ -125,6 +128,7 @@ impl ActionKind {
             ActionKind::CommentReportDismiss => "dismissed reports about a comment on post",
             ActionKind::PoolDelete => "deleted a pool",
             ActionKind::PoolUndelete => "restored a pool",
+            ActionKind::UserPromote => "promoted",
         }
     }
 

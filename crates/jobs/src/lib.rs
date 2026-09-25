@@ -4,7 +4,8 @@
 //! ([`moekura_db::jobs`]) and hand them to the handler registered for their
 //! kind in a [`Registry`]. Idle workers wake on `NOTIFY` rather than
 //! polling hard, a reaper requeues jobs whose worker vanished, and shutdown
-//! stops claiming but lets running jobs finish.
+//! stops claiming but lets running jobs finish. Jobs registered with
+//! [`Registry::every`] are enqueued on a schedule, once across all nodes.
 
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -26,6 +27,7 @@ use tracing::Instrument;
 pub mod mail;
 pub mod media;
 pub mod tags;
+pub mod users;
 
 /// Why a job failed.
 #[derive(Debug, thiserror::Error)]
@@ -56,11 +58,22 @@ impl From<sqlx::Error> for JobError {
 
 type BoxFuture = Pin<Box<dyn Future<Output = Result<(), JobError>> + Send>>;
 type Handler = Arc<dyn Fn(Value) -> BoxFuture + Send + Sync>;
+type Enqueue =
+    Arc<dyn Fn(PgPool) -> Pin<Box<dyn Future<Output = sqlx::Result<bool>> + Send>> + Send + Sync>;
 
-/// Maps job kinds to handlers.
+/// A job enqueued every `every`.
+#[derive(Clone)]
+struct Scheduled {
+    kind: &'static str,
+    every: Duration,
+    enqueue: Enqueue,
+}
+
+/// Maps job kinds to handlers, and knows which jobs run on a schedule.
 #[derive(Default, Clone)]
 pub struct Registry {
     handlers: HashMap<&'static str, Handler>,
+    scheduled: Vec<Scheduled>,
 }
 
 impl Registry {
@@ -87,6 +100,19 @@ impl Registry {
                 })
             }),
         );
+        self
+    }
+
+    /// Enqueues a `J` every `every` (and shortly after start), unless one
+    /// is already waiting or running on any node.
+    pub fn every<J: Job + Default + Sync>(&mut self, every: Duration) -> &mut Self {
+        self.scheduled.push(Scheduled {
+            kind: J::KIND,
+            every,
+            enqueue: Arc::new(|db: PgPool| {
+                Box::pin(async move { jobs::enqueue_unique(&db, &J::default()).await })
+            }),
+        });
         self
     }
 }
@@ -122,10 +148,13 @@ pub async fn run(db: PgPool, registry: Registry, config: PoolConfig, shutdown: C
     let prefix = worker_prefix();
     tracing::info!(workers = config.workers, "job workers started");
 
-    let background = [
+    let mut background = vec![
         tokio::spawn(listen(db.clone(), wake.clone())),
         tokio::spawn(reap(db.clone(), config.reap_every)),
     ];
+    for scheduled in registry.scheduled.iter().cloned() {
+        background.push(tokio::spawn(schedule(db.clone(), scheduled)));
+    }
 
     let tracker = TaskTracker::new();
     for n in 0..config.workers {
@@ -276,6 +305,22 @@ async fn listen(db: PgPool, wake: Arc<Notify>) {
                     tracing::warn!(%error, "job listener failed; resubscribing");
                     break;
                 }
+            }
+        }
+    }
+}
+
+async fn schedule(db: PgPool, job: Scheduled) {
+    let mut interval = tokio::time::interval(job.every);
+    // A missed tick (a long pause) runs once, not in a burst.
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        interval.tick().await;
+        match (job.enqueue)(db.clone()).await {
+            Ok(true) => tracing::debug!(kind = job.kind, "scheduled job enqueued"),
+            Ok(false) => {}
+            Err(error) => {
+                tracing::warn!(%error, kind = job.kind, "could not enqueue a scheduled job")
             }
         }
     }

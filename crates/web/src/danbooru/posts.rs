@@ -222,7 +222,7 @@ impl DanbooruPost {
             bit_flags: 0,
             last_comment_bumped_at: post.last_commented_at.map(timestamp),
             last_commented_at: post.last_commented_at.map(timestamp),
-            last_noted_at: None,
+            last_noted_at: post.last_noted_at.map(timestamp),
             media_asset: MediaAsset {
                 id: post.id,
                 created_at: created.clone(),

@@ -9,6 +9,7 @@ mod comments;
 mod docs;
 mod favorite_groups;
 mod moderation;
+mod notes;
 mod pools;
 pub(crate) mod posts;
 mod saved_searches;
@@ -66,6 +67,7 @@ pub fn is_api_path(path: &str) -> bool {
         (name = "wiki", description = "Wiki pages about tags, and their history."),
         (name = "comments", description = "Comments on posts, their votes and reports."),
         (name = "pools", description = "Ordered collections of posts, and their history."),
+        (name = "notes", description = "Notes (translations) on posts' images, and their history."),
         (name = "moderation", description = "Reviewing posts and flags, deciding tag relations, bans \
                                              and the moderation log."),
     ),
@@ -130,6 +132,9 @@ fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
         .routes(routes!(comments::report))
         .routes(routes!(comments::hide))
         .routes(routes!(comments::restore))
+        .routes(routes!(notes::list, notes::create))
+        .routes(routes!(notes::versions))
+        .routes(routes!(notes::show, notes::update, notes::delete))
         .routes(routes!(pools::list, pools::create))
         .routes(routes!(pools::show, pools::update, pools::delete))
         .routes(routes!(pools::add_post))

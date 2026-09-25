@@ -46,6 +46,11 @@ pub struct ApiPost {
     /// When the newest of those was written.
     #[serde(with = "time::serde::rfc3339::option")]
     pub last_commented_at: Option<OffsetDateTime>,
+    /// Notes that aren't deleted.
+    pub note_count: i32,
+    /// When a note was last changed.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_noted_at: Option<OffsetDateTime>,
     /// The uploader's name, unless their account is gone.
     pub uploader: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -181,6 +186,8 @@ pub(crate) async fn load(
                 fav_count: post.fav_count,
                 comment_count: post.comment_count,
                 last_commented_at: post.last_commented_at,
+                note_count: post.note_count,
+                last_noted_at: post.last_noted_at,
                 created_at: post.created_at,
                 tags,
                 file: ApiFile {

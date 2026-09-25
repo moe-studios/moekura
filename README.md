@@ -8,7 +8,7 @@ The name is *moe* (萌え) + *kura* (蔵, "storehouse" or "warehouse"): a
 storehouse for the things you love.
 
 > **Status: early development.** Uploads, tags and search, the post pages,
-> comments, pools, moderation, the admin panel and the API work; see
+> comments, pools, notes, moderation, the admin panel and the API work; see
 > [docs/design.md](docs/design.md) for the plan and roadmap.
 
 ## Documentation

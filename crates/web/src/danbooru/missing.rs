@@ -17,9 +17,8 @@ use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::AppError;
 
-/// Lists of things Moekura doesn't have (yet: notes are planned).
+/// Lists of things Moekura doesn't have.
 pub(crate) const EMPTY_LISTS: &[&str] = &[
-    "/notes",
     "/artists",
     "/artist_urls",
     "/artist_commentaries",
@@ -145,14 +144,14 @@ mod tests {
         let app = app(&pool).await;
         for path in [
             "/artists.json",
-            "/notes.json?search[post_id]=1",
+            "/forum_topics.json?search[id]=1",
             "/users/1/uploads.json",
         ] {
             let response = app.get(path, None).await;
             assert_eq!(response.status, StatusCode::OK, "{path}");
             assert_eq!(response.body, "[]", "{path}");
         }
-        let missing = app.get("/notes/1.json", None).await;
+        let missing = app.get("/artists/1.json", None).await;
         assert_eq!(missing.status, StatusCode::NOT_FOUND);
         let body: Value = serde_json::from_str(&missing.body).unwrap();
         assert_eq!(body["success"], json!(false));

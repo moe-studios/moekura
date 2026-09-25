@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Note history of post #{{ post_id }} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>
+<h1>Note history of post #{{ post_id }}</h1>
+{% if versions %}
+<ol class="history">
+  {% for v in versions %}
+  <li>
+    <div class="history-head">
+      <strong>Note {{ v.note_id }}, version {{ v.version }}</strong>{% if v.current %} <span class="hint">(current)</span>{% endif %}
+      <span class="hint">{{ v.date }}{% if v.updater %} · by {{ v.updater }}{% endif %} · {{ v.box }}{% if not v.active %} · deleted{% endif %}</span>
+      {% if v.can_revert %}
+      <form method="post" action="/notes/{{ v.note_id }}/revert/{{ v.version }}"><button type="submit" class="secondary">Revert to this</button></form>
+      {% endif %}
+    </div>
+    <p class="note-text">{{ v.body }}</p>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="empty">This post has no notes.</p>
+{% endif %}
+{% endblock %}

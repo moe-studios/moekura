@@ -25,6 +25,7 @@ mod health;
 mod history;
 pub mod import;
 mod moderation;
+mod notes;
 pub mod oidc;
 pub mod pages;
 mod pools;
@@ -224,6 +225,7 @@ pub fn router(state: AppState) -> Router {
         .merge(favorites::routes())
         .merge(history::routes())
         .merge(moderation::routes())
+        .merge(notes::routes())
         .merge(oidc::routes())
         .merge(pools::routes())
         .merge(saved_searches::routes())

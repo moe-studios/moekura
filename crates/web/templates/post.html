@@ -25,9 +25,24 @@
     <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
            width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
     {% else %}
-    <a href="{{ file.original }}">
-      <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">
-    </a>
+    <div class="note-layer" data-notes{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
+      <a href="{{ file.original }}">
+        <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">
+      </a>
+      {% if notes or can_edit_notes %}
+      <svg class="notes" viewBox="0 0 {{ file.width }} {{ file.height }}" preserveAspectRatio="none" aria-hidden="true">
+        {% for n in notes %}<rect class="note-box" data-note="{{ n.id }}" data-version="{{ n.version }}" data-body="{{ n.body }}" x="{{ n.x }}" y="{{ n.y }}" width="{{ n.width }}" height="{{ n.height }}" vector-effect="non-scaling-stroke"><title>{{ n.body }}</title></rect>{% endfor %}
+      </svg>
+      {% endif %}
+    </div>
+    {% if notes %}
+    <details class="note-list">
+      <summary>Notes ({{ notes|length }})</summary>
+      <ol>
+        {% for n in notes %}<li id="note-{{ n.id }}" data-note-text="{{ n.id }}"><div class="markup">{{ n.html }}</div></li>{% endfor %}
+      </ol>
+    </details>
+    {% endif %}
     {% endif %}
     {% if post.description %}<p class="description">{{ post.description }}</p>{% endif %}
     {% if family %}
@@ -173,7 +188,7 @@
       <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
-    <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a></p>
+    <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a>{% if post.has_notes %} · <a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
     {% if favorite_groups %}
     <section class="tag-group post-favorite-groups">
       <h2>Your favorite groups</h2>

@@ -10,6 +10,7 @@
 
 mod community;
 mod missing;
+mod notes;
 mod posts;
 mod reactions;
 mod tags;
@@ -41,6 +42,7 @@ pub fn routes() -> Router<AppState> {
         posts::routes()
             .merge(community::routes())
             .merge(missing::routes())
+            .merge(notes::routes())
             .merge(reactions::routes())
             .merge(tags::routes())
             .merge(users::routes()),

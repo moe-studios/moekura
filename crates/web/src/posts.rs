@@ -710,6 +710,12 @@ pub(crate) async fn render_post(
         _ => original.clone(),
     };
     let poster = variant("poster").and_then(|v| url_of(&v.storage_key));
+    // Notes go on stills and animations, not videos.
+    let notes = if video {
+        Vec::new()
+    } else {
+        crate::notes::note_contexts(&moekura_db::notes::for_post(db, id, false).await?)
+    };
     let created = post.created_at.format(&Rfc3339).unwrap_or_default();
 
     let file = context! {
@@ -735,6 +741,7 @@ pub(crate) async fn render_post(
         // is shown as text.
         source_link => is_web_url(&post.source),
         description => post.description,
+        has_notes => post.last_noted_at.is_some(),
         created => created.get(..10).unwrap_or_default(),
         created_iso => created,
     };
@@ -795,6 +802,11 @@ pub(crate) async fn render_post(
             blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
             reactions => reactions,
             comments => comments,
+            notes => notes,
+            can_edit_notes => !video
+                && page.current.is_logged_in()
+                && page.current.can(Permission::EditNotes)
+                && post.status != PostStatus::Deleted,
             pools => pools,
             favorite_groups => favorite_groups,
             edit => edit,

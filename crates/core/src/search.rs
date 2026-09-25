@@ -54,6 +54,8 @@ pub const METATAGS: &[&str] = &[
     "search",
     "favgroup",
     "ordfavgroup",
+    "note",
+    "notecount",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -208,6 +210,10 @@ pub enum Filter {
     Pool(PoolFilter),
     /// In this favorite group.
     FavGroup(PoolRef),
+    /// Active notes on the post contain these words.
+    Note(String),
+    /// Active notes.
+    NoteCount(Bound<i64>),
     /// Among the viewer's saved searches with this label (`all` for all
     /// of them).
     Search(String),
@@ -250,6 +256,9 @@ pub enum Order {
     Pool,
     /// In the order of [`Query::ordfavgroup`] (`ordfavgroup:name`).
     FavGroup,
+    /// Most recently noted first; only posts with notes.
+    NoteDesc,
+    NoteAsc,
 }
 
 impl Order {
@@ -282,6 +291,9 @@ impl Order {
         ("comment", Order::CommentDesc),
         ("comment_desc", Order::CommentDesc),
         ("comment_asc", Order::CommentAsc),
+        ("note", Order::NoteDesc),
+        ("note_desc", Order::NoteDesc),
+        ("note_asc", Order::NoteAsc),
     ];
 
     pub fn name(self) -> &'static str {
@@ -449,6 +461,14 @@ impl Query {
                 self.order = Some(Order::FavGroup);
                 return Ok(());
             }
+            "note" => {
+                let words = value.replace('_', " ");
+                if words.trim().is_empty() {
+                    return Err(invalid("expected words to find in notes"));
+                }
+                Filter::Note(words.trim().to_owned())
+            }
+            "notecount" => Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "favgroup" => {
                 if value.is_empty() {
                     return Err(invalid("expected a favorite group name or id"));
@@ -752,6 +772,8 @@ impl fmt::Display for Condition {
             Filter::Pool(PoolFilter::In(pool)) => write!(f, "pool:{pool}"),
             Filter::Search(label) => write!(f, "search:{label}"),
             Filter::FavGroup(group) => write!(f, "favgroup:{group}"),
+            Filter::Note(words) => write!(f, "note:{}", words.replace(' ', "_")),
+            Filter::NoteCount(b) => write!(f, "notecount:{b}"),
             Filter::Width(b) => write!(f, "width:{b}"),
             Filter::Height(b) => write!(f, "height:{b}"),
             Filter::Mpixels(b) => write!(f, "mpixels:{b}"),
@@ -1022,6 +1044,13 @@ mod tests {
         assert!(error("pool:").contains("expected a pool"));
         assert_eq!(filter("search:Pets"), Filter::Search("pets".into()));
         assert_eq!(filter("favgroup:3"), Filter::FavGroup(PoolRef::Id(3)));
+        assert_eq!(
+            filter("note:Good_Morning"),
+            Filter::Note("good morning".into())
+        );
+        assert_eq!(filter("notecount:>2"), Filter::NoteCount(Bound::Gt(2)));
+        assert_eq!(parse("order:note").order, Some(Order::NoteDesc));
+        assert_eq!(parse("note:good_morning").to_string(), "note:good_morning");
         let query = parse("ordfavgroup:Best");
         assert_eq!(
             (query.order, &query.ordfavgroup),
@@ -1070,7 +1099,10 @@ mod tests {
     fn malformed_terms() {
         assert_eq!(error("-~a"), "`-~a`: use either `-` or `~`, not both");
         assert_eq!(error("-"), "`-` is missing a tag");
-        assert_eq!(error("note:12"), "`note:` searches aren't supported yet");
+        assert_eq!(
+            error("approver:12"),
+            "`approver:` searches aren't supported yet"
+        );
         assert_eq!(filter("similar:12"), Filter::Similar(12));
         assert!(error("similar:x").contains("expected a post id"));
         assert_eq!(

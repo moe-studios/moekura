@@ -85,6 +85,14 @@ curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json"
   https://booru.example.com/api/v1/pools/1/posts
 ```
 
+Add a note (the box is in the original image's pixels):
+
+```sh
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"x": 120, "y": 40, "width": 200, "height": 80, "body": "Good morning!"}' \
+  https://booru.example.com/api/v1/posts/123/notes
+```
+
 Saved searches (`/saved-searches`) and favorite groups
 (`/favorite-groups`) work the same way; the site's `/api/docs` lists
 every endpoint.

@@ -38,6 +38,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `user:` | `user:alice` | uploaded by this user |
 | `fav:` | `fav:alice` | favorited by this user |
 | `search:` | `search:all`, `search:artists` | the newest posts (500 each) of your [saved searches](account.md#saved-searches), all or those with a label |
+| `favgroup:` | `favgroup:best`, `favgroup:7` | in one of your favorite groups (by name), or any public group (by number) |
 | `pool:` | `pool:my_comic`, `pool:12`, `pool:any`, `pool:none` | in this pool (by name or number), in any pool, or in none |
 | `width:`, `height:` | `width:>=1920` | size in pixels |
 | `mpixels:` | `mpixels:>2` | megapixels (width × height ÷ 1,000,000) |
@@ -88,6 +89,7 @@ those allowed to see them.
 | `order:random` | shuffled |
 | `ordfav:alice` | alice's favorites, most recently favorited first |
 | `ordpool:my_comic` | the pool's posts, in the pool's order |
+| `ordfavgroup:best` | the favorite group's posts, in its order |
 
 `limit:100` shows more posts per page (up to the site's maximum, 200 by
 default).

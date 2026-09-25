@@ -131,6 +131,10 @@ pub struct Plan {
     pools: Vec<(bool, Option<i32>)>,
     /// `ordpool:`'s pool.
     ordpool: Option<i32>,
+    /// `favgroup:` filters resolved to group ids.
+    favgroups: Vec<(bool, i32)>,
+    /// `ordfavgroup:`'s group.
+    ordfavgroup: Option<i32>,
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
@@ -178,6 +182,8 @@ impl Plan {
             post_sets: Vec::new(),
             pools: Vec::new(),
             ordpool: None,
+            favgroups: Vec::new(),
+            ordfavgroup: None,
             statuses,
             own_pending,
             order: query.order.unwrap_or_default(),
@@ -263,6 +269,13 @@ impl Plan {
                         None => {}
                     }
                 }
+                Filter::FavGroup(group) => {
+                    match favorite_group(db, group, visibility.viewer).await? {
+                        Some(id) => plan.favgroups.push((condition.negated, id)),
+                        None if !condition.negated => plan.nothing = true,
+                        None => {}
+                    }
+                }
                 Filter::Search(label) => {
                     let ids = match visibility.viewer {
                         Some(viewer) => {
@@ -288,6 +301,14 @@ impl Plan {
                     }
                 }
                 _ => plan.conditions.push(condition.clone()),
+            }
+        }
+        if let Some(group) = &query.ordfavgroup
+            && plan.order == Order::FavGroup
+        {
+            match favorite_group(db, group, visibility.viewer).await? {
+                Some(id) => plan.ordfavgroup = Some(id),
+                None => plan.nothing = true,
             }
         }
         if let Some(pool) = &query.ordpool
@@ -365,6 +386,7 @@ impl Plan {
                 &self.favorited_by,
                 self.ordfav,
                 (&self.post_sets, &self.pools, self.ordpool),
+                (&self.favgroups, self.ordfavgroup),
             )
         )
     }
@@ -619,6 +641,9 @@ impl Plan {
             Order::Pool => {
                 sql.push("po.position ASC");
             }
+            Order::FavGroup => {
+                sql.push("fgo.position ASC");
+            }
         }
         sql.push(" LIMIT ").push_bind(i64::from(self.per_page));
         if offset > 0 {
@@ -664,6 +689,10 @@ impl Plan {
         if let Some(user) = self.ordfav {
             sql.push(" JOIN favorites fo ON fo.post_id = p.id AND fo.user_id = ")
                 .push_bind(user);
+        }
+        if let Some(group) = self.ordfavgroup {
+            sql.push(" JOIN favorite_group_posts fgo ON fgo.post_id = p.id AND fgo.group_id = ")
+                .push_bind(group);
         }
         if let Some(pool) = self.ordpool {
             sql.push(" JOIN pool_posts po ON po.post_id = p.id AND po.pool_id = ")
@@ -733,6 +762,12 @@ impl Plan {
             })
             .push_bind(ids.clone())
             .push(")");
+        }
+        for (negated, group) in &self.favgroups {
+            sql.push(if *negated { " AND NOT" } else { " AND" })
+                .push(" EXISTS (SELECT 1 FROM favorite_group_posts fg WHERE fg.post_id = p.id AND fg.group_id = ")
+                .push_bind(*group)
+                .push(")");
         }
         for (negated, pool) in &self.pools {
             sql.push(if *negated { " AND NOT" } else { " AND" });
@@ -804,6 +839,8 @@ impl Plan {
             && self.ordfav.is_none()
             && self.pools.is_empty()
             && self.ordpool.is_none()
+            && self.favgroups.is_empty()
+            && self.ordfavgroup.is_none()
             && !self.only_commented()
             && self.excluded.is_empty()
             && self.any.is_none();
@@ -862,6 +899,26 @@ impl Plan {
     }
 }
 
+/// The favorite group `group` names for `viewer`: by id, if it's public
+/// or theirs; by name, one of theirs.
+async fn favorite_group(
+    db: &PgPool,
+    group: &moekura_core::search::PoolRef,
+    viewer: Option<i64>,
+) -> sqlx::Result<Option<i32>> {
+    use moekura_core::search::PoolRef;
+    let found = match group {
+        PoolRef::Id(id) => crate::favorite_groups::by_id(db, *id)
+            .await?
+            .filter(|g| g.is_public || Some(g.creator_id) == viewer),
+        PoolRef::Name(name) => match viewer {
+            Some(viewer) => crate::favorite_groups::by_name(db, viewer, name).await?,
+            None => None,
+        },
+    };
+    Ok(found.map(|g| g.id))
+}
+
 /// The newest posts matching `viewer`'s saved searches labelled `label`
 /// (`all`: every one), up to [`SAVED_SEARCH_POSTS`] per search. Saved
 /// searches that use `search:` themselves are skipped.
@@ -895,6 +952,7 @@ async fn saved_search_posts(
         query.order = None;
         query.ordfav = None;
         query.ordpool = None;
+        query.ordfavgroup = None;
         query.limit = None;
         let plan = match Box::pin(Plan::resolve(db, &query, visibility, &config)).await {
             Ok(plan) => plan,
@@ -1035,6 +1093,7 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         | Filter::Fav(_)
         | Filter::Similar(_)
         | Filter::Search(_)
+        | Filter::FavGroup(_)
         | Filter::Pool(_) => {
             unreachable!("resolved in Plan::resolve")
         }
@@ -1704,6 +1763,77 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn favorite_groups(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(seed(&pool, Seed::default()).await);
+        }
+        let user = |name: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO users (name, role_id) SELECT $1, id FROM roles WHERE system_key = 'member' RETURNING id",
+                )
+                .bind(name)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let (alice, bob) = (user("alice").await, user("bob").await);
+        let group = |name: &str, is_public, post_ids: Vec<i64>| crate::favorite_groups::Contents {
+            name: name.into(),
+            is_public,
+            post_ids,
+        };
+        let best = crate::favorite_groups::create(
+            &pool,
+            alice,
+            &group("Best", true, vec![ids[0], ids[2]]),
+        )
+        .await
+        .unwrap();
+        let hidden =
+            crate::favorite_groups::create(&pool, alice, &group("Secret", false, vec![ids[1]]))
+                .await
+                .unwrap();
+        let as_user = |viewer| Visibility {
+            viewer: Some(viewer),
+            ..public()
+        };
+
+        // By name: the viewer's own group.
+        assert_eq!(
+            search_as(&pool, "favgroup:best", &as_user(alice)).await,
+            [ids[2], ids[0]]
+        );
+        assert!(
+            search_as(&pool, "favgroup:best", &as_user(bob))
+                .await
+                .is_empty()
+        );
+        // By id: public groups for anyone, private ones for their owner.
+        assert_eq!(
+            search(&pool, &format!("favgroup:{best}")).await,
+            [ids[2], ids[0]]
+        );
+        assert!(
+            search(&pool, &format!("favgroup:{hidden}"))
+                .await
+                .is_empty()
+        );
+        assert_eq!(
+            search_as(&pool, &format!("favgroup:{hidden}"), &as_user(alice)).await,
+            [ids[1]]
+        );
+        assert_eq!(search(&pool, &format!("-favgroup:{best}")).await, [ids[1]]);
+        assert_eq!(
+            search_as(&pool, "ordfavgroup:best", &as_user(alice)).await,
+            [ids[0], ids[2]]
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn orders_and_pages(pool: PgPool) {
         let mut ids = Vec::new();
         for (i, score) in [3, 1, 2, 5, 4].into_iter().enumerate() {
@@ -1925,6 +2055,8 @@ mod tests {
             post_sets: Vec::new(),
             pools: Vec::new(),
             ordpool: None,
+            favgroups: Vec::new(),
+            ordfavgroup: None,
             statuses: vec!["active"],
             own_pending: None,
             order,

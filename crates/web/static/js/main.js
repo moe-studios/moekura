@@ -47,7 +47,9 @@ var METATAGS = {
   similar: [],
   pool: ["any", "none"],
   ordpool: [],
-  search: ["all"]
+  search: ["all"],
+  favgroup: [],
+  ordfavgroup: []
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 

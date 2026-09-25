@@ -773,6 +773,7 @@ pub(crate) async fn render_post(
         extra.pool.filter(|_| !from_search),
     )
     .await?;
+    let favorite_groups = crate::favorite_groups::for_post(state, &page.current, post.id).await?;
     let comment_refused = extra.comment.as_ref().is_some_and(|c| c.error.is_some());
     let status = if failed.is_some() || comment_refused {
         StatusCode::UNPROCESSABLE_ENTITY
@@ -795,6 +796,7 @@ pub(crate) async fn render_post(
             reactions => reactions,
             comments => comments,
             pools => pools,
+            favorite_groups => favorite_groups,
             edit => edit,
             ratings => ratings,
             search => context! {

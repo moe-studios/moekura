@@ -174,6 +174,29 @@
       {% endif %}
     </dl>
     <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a></p>
+    {% if favorite_groups %}
+    <section class="tag-group post-favorite-groups">
+      <h2>Your favorite groups</h2>
+      {% if favorite_groups.holding %}
+      <ul class="tag-list">
+        {% for g in favorite_groups.holding %}
+        <li><a href="{{ g.url }}">{{ g.name }}</a>
+          <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups/remove"><input type="hidden" name="group" value="{{ g.id }}"><button type="submit" class="link" aria-label="Remove from {{ g.name }}">remove</button></form></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if favorite_groups.others %}
+      <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups">
+        <label class="visually-hidden" for="add-group">Group</label>
+        <select id="add-group" name="group">
+          {% for g in favorite_groups.others %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+        </select>
+        <button type="submit">Add</button>
+      </form>
+      {% endif %}
+      <p class="hint"><a href="/favorite_groups/new">New group</a></p>
+    </section>
+    {% endif %}
     {% if pools.can_add %}
     <section class="tag-group post-pools">
       <h2>Pools</h2>

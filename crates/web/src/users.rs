@@ -47,6 +47,10 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let banned = ban_history.iter().any(|b| b.active);
     let favorites = favorites::count_by_user(db, user.id).await?;
     let comments = moekura_db::comments::count_by_user(db, user.id).await?;
+    let own = page.current.user.as_ref().map(|u| u.id) == Some(user.id);
+    let favorite_groups = moekura_db::favorite_groups::for_user(db, user.id, own)
+        .await?
+        .len();
     let comments_url = format!(
         "/comments?{}",
         url::form_urlencoded::Serializer::new(String::new())
@@ -67,6 +71,13 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             favorites => favorites,
             favorites_url => Value::from_safe_string(search_url(&format!("ordfav:{}", user.name))),
             comments => comments,
+            favorite_groups => favorite_groups,
+            favorite_groups_url => crate::templates::url_value(&format!(
+                "/favorite_groups?{}",
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("user", &user.name)
+                    .finish()
+            )),
             comments_url => crate::templates::url_value(&comments_url),
             bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
             can_ban => can_ban && !banned,

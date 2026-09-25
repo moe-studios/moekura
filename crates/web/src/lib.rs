@@ -16,6 +16,7 @@ mod danbooru;
 mod edit;
 mod email;
 pub mod error;
+mod favorite_groups;
 mod favorites;
 mod fetch;
 mod files;
@@ -219,6 +220,7 @@ pub fn router(state: AppState) -> Router {
         .merge(comments::routes())
         .merge(edit::routes())
         .merge(email::routes())
+        .merge(favorite_groups::routes())
         .merge(favorites::routes())
         .merge(history::routes())
         .merge(moderation::routes())

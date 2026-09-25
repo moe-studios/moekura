@@ -58,3 +58,13 @@ together, and `search:artists` those of the searches labelled `artists`;
 both combine with other tags and filters, like `search:all rating:g`.
 Each saved search adds up to its newest 500 posts, and a `search:` term
 runs at most 20 saved searches. Only you see your saved searches.
+
+## Favorite groups
+
+Favorite groups are your own named lists of posts, in the order you
+choose: make one under **Your favorite groups** (linked from your
+profile) or from a post page, add posts from their pages, and reorder
+them by dragging on the group's edit page. A group is public (listed on
+your profile, and anyone can open it) unless you untick *Public*.
+`favgroup:name` searches one of your groups, `favgroup:7` any public
+group by number, and `ordfavgroup:name` shows a group in its own order.

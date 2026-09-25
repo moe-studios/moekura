@@ -52,6 +52,8 @@ pub const METATAGS: &[&str] = &[
     "pool",
     "ordpool",
     "search",
+    "favgroup",
+    "ordfavgroup",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -131,7 +133,8 @@ impl StatusFilter {
     }
 }
 
-/// Which pool `pool:` means.
+/// Which pool `pool:` means, or which favorite group `favgroup:` means
+/// (a name is then one of the viewer's own groups).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PoolRef {
     Id(i32),
@@ -203,6 +206,8 @@ pub enum Filter {
     /// Looks like this post (perceptual hash), the post included.
     Similar(i64),
     Pool(PoolFilter),
+    /// In this favorite group.
+    FavGroup(PoolRef),
     /// Among the viewer's saved searches with this label (`all` for all
     /// of them).
     Search(String),
@@ -243,6 +248,8 @@ pub enum Order {
     CommentAsc,
     /// In the order of [`Query::ordpool`] (`ordpool:name`).
     Pool,
+    /// In the order of [`Query::ordfavgroup`] (`ordfavgroup:name`).
+    FavGroup,
 }
 
 impl Order {
@@ -301,6 +308,8 @@ pub struct Query {
     pub ordfav: Option<String>,
     /// With `ordpool:name`: the pool whose order this is.
     pub ordpool: Option<PoolRef>,
+    /// With `ordfavgroup:name`: the favorite group whose order this is.
+    pub ordfavgroup: Option<PoolRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -413,7 +422,7 @@ impl Query {
         };
         const NUMBER: &str = "expected a number like 5, >=5, <5, 5..10 or 1,2,3";
         let filter = match name {
-            "order" | "limit" | "ordfav" | "ordpool" if negated => {
+            "order" | "limit" | "ordfav" | "ordpool" | "ordfavgroup" if negated => {
                 return Err(SearchError::CantNegate(word.into()));
             }
             "ordfav" => {
@@ -431,6 +440,20 @@ impl Query {
                 self.ordpool = Some(pool_ref(value));
                 self.order = Some(Order::Pool);
                 return Ok(());
+            }
+            "ordfavgroup" => {
+                if value.is_empty() {
+                    return Err(invalid("expected a favorite group name or id"));
+                }
+                self.ordfavgroup = Some(pool_ref(value));
+                self.order = Some(Order::FavGroup);
+                return Ok(());
+            }
+            "favgroup" => {
+                if value.is_empty() {
+                    return Err(invalid("expected a favorite group name or id"));
+                }
+                Filter::FavGroup(pool_ref(value))
             }
             "pool" => Filter::Pool(match value {
                 "" => return Err(invalid("expected a pool name or id, any or none")),
@@ -728,6 +751,7 @@ impl fmt::Display for Condition {
             Filter::Pool(PoolFilter::None) => f.write_str("pool:none"),
             Filter::Pool(PoolFilter::In(pool)) => write!(f, "pool:{pool}"),
             Filter::Search(label) => write!(f, "search:{label}"),
+            Filter::FavGroup(group) => write!(f, "favgroup:{group}"),
             Filter::Width(b) => write!(f, "width:{b}"),
             Filter::Height(b) => write!(f, "height:{b}"),
             Filter::Mpixels(b) => write!(f, "mpixels:{b}"),
@@ -767,9 +791,12 @@ impl fmt::Display for Query {
         terms.extend(self.any.iter().map(|t| format!("~{t}")));
         terms.extend(self.none.iter().map(|t| format!("-{t}")));
         terms.extend(self.conditions.iter().map(ToString::to_string));
-        match (self.order, &self.ordfav, &self.ordpool) {
-            (Some(Order::Favorited), Some(user), _) => terms.push(format!("ordfav:{user}")),
-            (Some(Order::Pool), _, Some(pool)) => terms.push(format!("ordpool:{pool}")),
+        match (self.order, &self.ordfav, &self.ordpool, &self.ordfavgroup) {
+            (Some(Order::Favorited), Some(user), ..) => terms.push(format!("ordfav:{user}")),
+            (Some(Order::Pool), _, Some(pool), _) => terms.push(format!("ordpool:{pool}")),
+            (Some(Order::FavGroup), .., Some(group)) => {
+                terms.push(format!("ordfavgroup:{group}"));
+            }
             (Some(order), ..) => terms.push(format!("order:{}", order.name())),
             (None, ..) => {}
         }
@@ -994,6 +1021,13 @@ mod tests {
         );
         assert!(error("pool:").contains("expected a pool"));
         assert_eq!(filter("search:Pets"), Filter::Search("pets".into()));
+        assert_eq!(filter("favgroup:3"), Filter::FavGroup(PoolRef::Id(3)));
+        let query = parse("ordfavgroup:Best");
+        assert_eq!(
+            (query.order, &query.ordfavgroup),
+            (Some(Order::FavGroup), &Some(PoolRef::Name("best".into())))
+        );
+        assert_eq!(query.to_string(), "ordfavgroup:best");
         assert!(error("fav:").contains("expected a user name"));
     }
 

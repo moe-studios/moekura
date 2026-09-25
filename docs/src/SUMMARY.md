@@ -31,6 +31,7 @@
 - [The wiki](using/wiki.md)
 - [Comments](using/comments.md)
 - [Pools](using/pools.md)
+- [Notes](using/notes.md)
 - [The API](api.md)
 - [Danbooru apps](using/danbooru-clients.md)
 

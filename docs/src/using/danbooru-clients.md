@@ -63,16 +63,17 @@ engine, then log in with your name and your API key.
 | `/comments/{id}/votes.json`, `/comment_votes.json` | only your own votes are listed |
 | `/pools.json`, `/pools/{id}.json` | by `search[name_matches]`, `search[name_contains]`, `search[id]` or `search[category]`; `post_ids` lists the posts you can see |
 | `/favorite_groups.json`, `/favorite_groups/{id}.json` | by `search[creator_id]` or `search[creator_name]`, otherwise yours |
+| `/notes.json`, `/notes/{id}.json`, `/note_versions.json` | notes by `search[post_id]` (one or more posts); versions by `search[post_id]` or `search[note_id]`; read-only |
 | `/saved_searches.json` | yours; add with `saved_search[query]` and `saved_search[label_string]`, and delete |
 
 ## What doesn't
 
 - **Uploading** through Danbooru's two-step upload isn't supported yet;
   upload on the site, or with [Moekura's API](../api.md).
-- Notes, artists, forums and messages don't exist in Moekura: their
-  lists are empty, and single ones are "not found".
+- Artists, forums and messages don't exist in Moekura: their lists are
+  empty, and single ones are "not found".
 - Favorites and your votes on posts and comments have no ids of their
   own: their `id` is the post's or comment's.
-- Pools and favorite groups are read-only here; change them on the site
-  or with [Moekura's API](../api.md).
+- Pools, favorite groups and notes are read-only here; change them on
+  the site or with [Moekura's API](../api.md).
 - Responses are JSON only, not XML.

@@ -5,7 +5,8 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use moekura_core::markup;
 use moekura_core::notes::NoteBox;
-use moekura_db::notes::{self, Changes, Note};
+use moekura_core::permissions::Permission;
+use moekura_db::notes::{self, Changes, Note, Version};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
@@ -13,7 +14,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, ErrorBody};
-use crate::notes::{create as create_note, update as update_note, visible_note};
+use crate::notes::{create as create_note, update as update_note, visible_note, visible_post};
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiNote {
@@ -64,6 +65,102 @@ async fn one(state: &AppState, id: i64) -> Result<ApiNote, AppError> {
         .await?
         .ok_or(AppError::NotFound)?
         .into())
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct ListParams {
+    /// Deleted notes too (for those who may edit notes).
+    #[serde(default)]
+    include_deleted: bool,
+}
+
+/// A post's notes.
+///
+/// Oldest first. Needs `view_posts`.
+#[utoipa::path(
+    get,
+    path = "/posts/{id}/notes",
+    operation_id = "list_post_notes",
+    tag = "notes",
+    params(("id" = i64, Path, description = "Post number"), ListParams),
+    responses((status = 200, body = Vec<ApiNote>), (status = 404, body = ErrorBody)),
+)]
+pub(crate) async fn list(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+    Query(params): Query<ListParams>,
+) -> Result<Json<Vec<ApiNote>>, AppError> {
+    visible_post(&state, &current, id).await?;
+    let with_deleted = params.include_deleted && current.can(Permission::EditNotes);
+    Ok(Json(
+        notes::for_post(state.reader(&current), id, with_deleted)
+            .await?
+            .into_iter()
+            .map(ApiNote::from)
+            .collect(),
+    ))
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ApiNoteVersion {
+    pub note_id: i64,
+    pub post_id: i64,
+    pub version: i32,
+    pub updater: Option<String>,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub body: String,
+    pub is_active: bool,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+}
+
+impl From<Version> for ApiNoteVersion {
+    fn from(v: Version) -> Self {
+        Self {
+            note_id: v.note_id,
+            post_id: v.post_id,
+            version: v.version,
+            updater: v.updater_name,
+            x: v.x,
+            y: v.y,
+            width: v.width,
+            height: v.height,
+            body: v.body,
+            is_active: v.is_active,
+            created_at: v.created_at,
+        }
+    }
+}
+
+/// A note's history.
+///
+/// Every version, newest first (at most 500). Needs `view_posts`.
+#[utoipa::path(
+    get,
+    path = "/notes/{id}/versions",
+    operation_id = "list_note_versions",
+    tag = "notes",
+    params(("id" = i64, Path, description = "Note number")),
+    responses((status = 200, body = Vec<ApiNoteVersion>), (status = 404, body = ErrorBody)),
+)]
+pub(crate) async fn versions(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<Vec<ApiNoteVersion>>, AppError> {
+    visible_note(&state, &current, id).await?;
+    Ok(Json(
+        notes::versions(state.reader(&current), Some(id), None, None, 500)
+            .await?
+            .into_iter()
+            .map(ApiNoteVersion::from)
+            .collect(),
+    ))
 }
 
 /// Get a note.
@@ -309,5 +406,16 @@ mod tests {
             (&shown["is_active"], &shown["version"]),
             (&json!(false), &json!(3))
         );
+        let listed = json(&app.get(&create, None).await.body);
+        assert_eq!(listed, json!([]));
+        let all = json(
+            &app.get(&format!("{create}?include_deleted=true"), Some(&alice))
+                .await
+                .body,
+        );
+        assert_eq!(all[0]["id"], json!(id));
+        let versions = json(&app.get(&format!("{note_url}/versions"), None).await.body);
+        assert_eq!(versions.as_array().unwrap().len(), 3);
+        assert_eq!(versions[2]["body"], json!("Hi [b]there[/b]"));
     }
 }

@@ -89,12 +89,12 @@ async fn visible_post(state: &AppState, current: &CurrentUser, id: i64) -> Resul
 }
 
 /// Whether `current` sees deleted comments.
-fn sees_deleted(current: &CurrentUser) -> bool {
+pub(crate) fn sees_deleted(current: &CurrentUser) -> bool {
     current.can(Permission::ViewDeleted) || current.can(Permission::ModerateComments)
 }
 
 /// Comment `id` and its post, if `current` may see them.
-async fn visible_comment(
+pub(crate) async fn visible_comment(
     state: &AppState,
     current: &CurrentUser,
     id: i64,

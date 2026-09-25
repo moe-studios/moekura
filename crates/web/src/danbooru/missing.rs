@@ -17,18 +17,12 @@ use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::AppError;
 
-/// Lists of things Moekura doesn't have (yet: pools and comments are
-/// planned).
+/// Lists of things Moekura doesn't have (yet: notes are planned).
 pub(crate) const EMPTY_LISTS: &[&str] = &[
-    "/pools",
-    "/comments",
-    "/comment_votes",
     "/notes",
     "/artists",
     "/artist_urls",
     "/artist_commentaries",
-    "/favorite_groups",
-    "/saved_searches",
     "/forum_topics",
     "/forum_posts",
     "/forum_post_votes",
@@ -150,16 +144,15 @@ mod tests {
     async fn missing_features_are_empty(pool: PgPool) {
         let app = app(&pool).await;
         for path in [
-            "/pools.json",
-            "/comments.json?search[post_id]=1",
-            "/notes.json",
+            "/artists.json",
+            "/notes.json?search[post_id]=1",
             "/users/1/uploads.json",
         ] {
             let response = app.get(path, None).await;
             assert_eq!(response.status, StatusCode::OK, "{path}");
             assert_eq!(response.body, "[]", "{path}");
         }
-        let missing = app.get("/pools/1.json", None).await;
+        let missing = app.get("/notes/1.json", None).await;
         assert_eq!(missing.status, StatusCode::NOT_FOUND);
         let body: Value = serde_json::from_str(&missing.body).unwrap();
         assert_eq!(body["success"], json!(false));

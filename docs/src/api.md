@@ -65,3 +65,26 @@ curl -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" 
   -d '{"body": "A small [[animal]].", "base_version": 3}' \
   https://booru.example.com/api/v1/wiki-pages/cat
 ```
+
+Comment on a post:
+
+```sh
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"body": "Lovely colours."}' \
+  https://booru.example.com/api/v1/posts/123/comments
+```
+
+Make a pool of three posts, then add a fourth at the end:
+
+```sh
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"name": "My comic", "category": "series", "post_ids": [120, 121, 122]}' \
+  https://booru.example.com/api/v1/pools
+curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"post_id": 123}' \
+  https://booru.example.com/api/v1/pools/1/posts
+```
+
+Saved searches (`/saved-searches`) and favorite groups
+(`/favorite-groups`) work the same way; the site's `/api/docs` lists
+every endpoint.

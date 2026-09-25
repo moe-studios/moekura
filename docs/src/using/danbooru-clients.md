@@ -59,14 +59,20 @@ engine, then log in with your name and your API key.
 | `/favorites.json`, `/favorites/{post_id}.json`, `/posts/{id}/favorites.json` | |
 | `/posts/{id}/votes.json`, `/post_votes.json` | only your own votes are listed |
 | `/explore/posts/popular.json` | the best-scored posts of a day, week or month |
+| `/comments.json`, `/comments/{id}.json` | listed newest first, by `search[post_id]`, `search[creator_id]` or `search[creator_name]`; `page` takes numbers and `b<id>`; post with `comment[post_id]` and `comment[body]`, and change or delete your own |
+| `/comments/{id}/votes.json`, `/comment_votes.json` | only your own votes are listed |
+| `/pools.json`, `/pools/{id}.json` | by `search[name_matches]`, `search[name_contains]`, `search[id]` or `search[category]`; `post_ids` lists the posts you can see |
+| `/favorite_groups.json`, `/favorite_groups/{id}.json` | by `search[creator_id]` or `search[creator_name]`, otherwise yours |
+| `/saved_searches.json` | yours; add with `saved_search[query]` and `saved_search[label_string]`, and delete |
 
 ## What doesn't
 
 - **Uploading** through Danbooru's two-step upload isn't supported yet;
   upload on the site, or with [Moekura's API](../api.md).
-- Pools, comments, notes, artists, favorite groups, saved searches,
-  forums and messages don't exist in Moekura: their lists are empty, and
-  single ones are "not found".
-- Favorites and your votes have no ids of their own: their `id` is the
-  post's.
+- Notes, artists, forums and messages don't exist in Moekura: their
+  lists are empty, and single ones are "not found".
+- Favorites and your votes on posts and comments have no ids of their
+  own: their `id` is the post's or comment's.
+- Pools and favorite groups are read-only here; change them on the site
+  or with [Moekura's API](../api.md).
 - Responses are JSON only, not XML.

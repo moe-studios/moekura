@@ -41,6 +41,11 @@ pub struct ApiPost {
     pub parent_id: Option<i64>,
     pub score: i32,
     pub fav_count: i32,
+    /// Comments that aren't deleted.
+    pub comment_count: i32,
+    /// When the newest of those was written.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub last_commented_at: Option<OffsetDateTime>,
     /// The uploader's name, unless their account is gone.
     pub uploader: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -174,6 +179,8 @@ pub(crate) async fn load(
                 parent_id: post.parent_id,
                 score: post.score,
                 fav_count: post.fav_count,
+                comment_count: post.comment_count,
+                last_commented_at: post.last_commented_at,
                 created_at: post.created_at,
                 tags,
                 file: ApiFile {

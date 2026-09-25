@@ -5,9 +5,13 @@
 //! rendered by [`crate::error::render_errors`]). The OpenAPI description is
 //! generated from the handlers' annotations, so it can't drift from them.
 
+mod comments;
 mod docs;
+mod favorite_groups;
 mod moderation;
+mod pools;
 pub(crate) mod posts;
+mod saved_searches;
 mod tags;
 mod users;
 mod wiki;
@@ -60,6 +64,8 @@ pub fn is_api_path(path: &str) -> bool {
         (name = "tags", description = "Tags, their categories, aliases and implications."),
         (name = "users", description = "Users and the account making the request."),
         (name = "wiki", description = "Wiki pages about tags, and their history."),
+        (name = "comments", description = "Comments on posts, their votes and reports."),
+        (name = "pools", description = "Ordered collections of posts, and their history."),
         (name = "moderation", description = "Reviewing posts and flags, deciding tag relations, bans \
                                              and the moderation log."),
     ),
@@ -117,6 +123,28 @@ fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
         .routes(routes!(wiki::list))
         .routes(routes!(wiki::show, wiki::save))
         .routes(routes!(wiki::versions))
+        .routes(routes!(comments::list))
+        .routes(routes!(comments::show, comments::update, comments::delete))
+        .routes(routes!(comments::create))
+        .routes(routes!(comments::vote))
+        .routes(routes!(comments::report))
+        .routes(routes!(comments::hide))
+        .routes(routes!(comments::restore))
+        .routes(routes!(pools::list, pools::create))
+        .routes(routes!(pools::show, pools::update, pools::delete))
+        .routes(routes!(pools::add_post))
+        .routes(routes!(pools::restore))
+        .routes(routes!(pools::versions))
+        .routes(routes!(saved_searches::list, saved_searches::create))
+        .routes(routes!(saved_searches::update, saved_searches::delete))
+        .routes(routes!(favorite_groups::list, favorite_groups::create))
+        .routes(routes!(
+            favorite_groups::show,
+            favorite_groups::update,
+            favorite_groups::delete
+        ))
+        .routes(routes!(favorite_groups::add_post))
+        .routes(routes!(favorite_groups::remove_post))
         .routes(routes!(users::show))
         .routes(routes!(users::me))
         .routes(routes!(moderation::approve))

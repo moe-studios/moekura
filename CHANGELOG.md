@@ -5,6 +5,93 @@ versioning](https://semver.org/); before 1.0, a minor release (0.2) may
 change configuration or behaviour, and says so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
+## [0.4.0] - 2026-09-26
+
+Posts gain comments, notes and pools, contributors get tools for
+larger edits, and a site can talk to the outside world through feeds,
+webhooks and link previews. An optional tagger suggests tags with a
+machine-learning model. Upgrading needs nothing beyond the usual
+steps, but read the notes on roles and `ai:` tags below.
+
+### Community
+
+- Comments on posts, in the wiki markup with quotes and replies, with
+  votes, reports and a moderation queue. `/comments` lists recent ones.
+- Pools: ordered series and collections with an editor, history and
+  reverts, pool navigation on post pages and a reader for series.
+- Notes: translation boxes drawn over images, with an editor that works
+  with a mouse, pen or touch, and a history with reverts.
+- Saved searches, found again with `search:all` or `search:<label>`.
+- Favorite groups, public or private.
+- New search terms: `commentcount:`, `order:comment`, `notecount:`,
+  `order:note`, `note:`, `pool:`, `ordpool:`, `favgroup:`,
+  `ordfavgroup:` and `search:`.
+
+### Contributing
+
+- Upload limits per role, for uploads waiting in the approval queue and
+  uploads a day, optionally scaling with a user's record as on
+  Danbooru (`upload_limit_scaling`).
+- Members can be promoted to contributors automatically once their
+  record meets the `promotion_rules` (`auto_promotion`).
+- Votes and discussion on alias and implication requests, and bulk
+  update requests: scripts of alias, imply, update and category lines,
+  approved as a whole.
+- Mass tag edits over a whole search, run in the background, and tag
+  scripts applied by clicking posts in search results.
+
+### Integrations
+
+- Atom feeds for any search (`/posts.atom?tags=…`) and for comments,
+  with feed tokens so readers see what their user sees.
+- Outgoing webhooks for new, approved, deleted and flagged posts, new
+  comments and new users, signed with HMAC-SHA256 and retried. See
+  [Webhooks](docs/src/admin/webhooks.md).
+- Link previews (OpenGraph and Twitter cards) for posts, pools and wiki
+  pages, and oEmbed for posts. Only general and sensitive posts show an
+  image unless `preview_all_ratings` is on; private sites show none.
+- `moekura admin import-remote` copies posts, with their tags, notes
+  and pools, from Danbooru, e621, Gelbooru, Moebooru and other Moekura
+  sites, and carries on where it stopped. See
+  [Bulk import](docs/src/admin/import.md).
+
+### Tagger
+
+- `moekura tagger` suggests tags and a rating for new posts with a
+  WD-tagger model, on the CPU, in a process of its own that can run on
+  another machine. Suggestions show when editing a post, and those it is
+  sure of can be applied automatically. `ai:tag` finds posts the tagger
+  thinks have a tag they're missing, and `moekura admin tag-backlog`
+  tags existing posts.
+- The image is published a second time as `X.Y.Z-tagger`, with ONNX
+  Runtime included, and `deploy/compose.tagger.yml` adds it to the tiny
+  setup. See [Tagger](docs/src/admin/tagger.md).
+
+### Danbooru apps
+
+- Comments, pools, notes, favorite groups, saved searches and tagger
+  suggestions (`/ai_tags.json`) answer with real data instead of empty
+  lists, so apps show translations and pools.
+- Uploads through the Danbooru API (`/uploads.json`, then
+  `/posts.json`), as Boorusama does them.
+
+### Fixed
+
+- `moekura worker` exited a minute after starting, leaving any running
+  job to be retried.
+
+### Upgrading
+
+- The new permissions (`moderate_comments`, `edit_pools`, `edit_notes`
+  and `mass_edit_tags`) are given to the built-in roles that should have
+  them. Roles you made yourself get none of them; add them on the Roles
+  page.
+- Members may now have at most 10 uploads waiting for approval at once.
+  This only matters with the approval queue on; change it on the Roles
+  page.
+- `ai:` is now a search term, so tag names can't start with it. Tags
+  that did are renamed to `ai_…` (or `ai_…_(tag)` if that's taken).
+
 ## [0.3.0] - 2026-09-25
 
 Apps made for Danbooru now work with a Moekura site, and accounts gain

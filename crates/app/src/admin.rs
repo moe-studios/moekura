@@ -55,6 +55,10 @@ pub enum AdminCommand {
     /// sidecar files next to them (pic.png.txt, pic.json, …). Files already
     /// here are skipped, so an interrupted import can be run again.
     Import(crate::import::ImportArgs),
+    /// Import posts from another booru through its API: Danbooru (and
+    /// other Moekura sites), e621, Gelbooru or Moebooru. Progress is kept,
+    /// so running it again carries on where it stopped.
+    ImportRemote(crate::import_remote::ImportRemoteArgs),
     /// Time a fixed suite of searches against this database (seed one
     /// first), and report the pages each touched
     Bench {
@@ -232,7 +236,9 @@ pub async fn run(
             let queued = regenerate_media(db, (!all).then_some(posts.as_slice())).await?;
             println!("queued {queued} file(s) for processing");
         }
-        AdminCommand::Import(_) => unreachable!("imports need the whole app; main runs them"),
+        AdminCommand::Import(_) | AdminCommand::ImportRemote(_) => {
+            unreachable!("imports need the whole app; main runs them")
+        }
         AdminCommand::Bench {
             runs,
             check,

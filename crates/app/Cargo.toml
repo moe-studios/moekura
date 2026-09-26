@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+url.workspace = true
 moekura-core.workspace = true
 moekura-db.workspace = true
 moekura-jobs.workspace = true

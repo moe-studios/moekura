@@ -16,6 +16,7 @@ pub mod permissions;
 pub mod pools;
 pub mod posts;
 pub mod promotion;
+pub mod remote;
 pub mod search;
 pub mod settings;
 pub mod tags;

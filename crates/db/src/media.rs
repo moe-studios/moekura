@@ -102,6 +102,14 @@ pub async fn post_with_sha256(
         .await
 }
 
+/// The post whose file has this MD5, if any.
+pub async fn post_with_md5(db: impl PgExecutor<'_>, md5: &[u8; 16]) -> sqlx::Result<Option<i64>> {
+    sqlx::query_scalar("SELECT post_id FROM media_assets WHERE md5 = $1 LIMIT 1")
+        .bind(&md5[..])
+        .fetch_optional(db)
+        .await
+}
+
 pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Asset>> {
     sqlx::query_as(select_assets!("WHERE id = $1"))
         .bind(id)

@@ -23,7 +23,7 @@ use crate::posts::visibility;
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
-        .route("/posts", get(index))
+        .route("/posts", get(index).post(super::uploads::create_post))
         .route("/posts/random", get(random))
         .route("/posts/{id}", get(show).put(update).patch(update))
         .route("/counts/posts", get(count))

@@ -28,7 +28,6 @@ pub(crate) const EMPTY_LISTS: &[&str] = &[
     "/dmails",
     "/user_feedbacks",
     "/user_name_change_requests",
-    "/uploads",
     "/media_assets",
     "/iqdb_queries",
     "/ai_tags",

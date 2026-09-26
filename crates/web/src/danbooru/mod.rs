@@ -14,6 +14,7 @@ mod notes;
 mod posts;
 mod reactions;
 mod tags;
+mod uploads;
 mod users;
 
 use axum::Router;
@@ -45,6 +46,7 @@ pub fn routes() -> Router<AppState> {
             .merge(notes::routes())
             .merge(reactions::routes())
             .merge(tags::routes())
+            .merge(uploads::routes())
             .merge(users::routes()),
     )
 }

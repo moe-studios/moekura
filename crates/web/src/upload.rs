@@ -354,7 +354,10 @@ fn too_large(state: &AppState) -> UploadError {
     ))
 }
 
-async fn save_to_temp(state: &AppState, mut field: Field<'_>) -> Result<TempUpload, UploadError> {
+pub(crate) async fn save_to_temp(
+    state: &AppState,
+    mut field: Field<'_>,
+) -> Result<TempUpload, UploadError> {
     let limit = max_bytes(state);
     let mut writer = TempWriter::create(&state.work_dir).await?;
     loop {
@@ -428,13 +431,27 @@ impl TempWriter {
     }
 }
 
-/// Turns a received file into a post. Returns the new post's id.
-pub async fn ingest(
-    state: &AppState,
-    uploader: &CurrentUser,
-    file: &TempUpload,
-    fields: &UploadFields,
-) -> Result<i64, UploadError> {
+/// A file checked and stored, ready to become a post: what [`prepare`]
+/// found, and what [`create_post`] needs. Staged uploads keep it in the
+/// database between the two.
+#[derive(Debug, Clone)]
+pub struct Prepared {
+    pub sha256: [u8; 32],
+    pub md5: [u8; 16],
+    /// `media_assets.media_type`.
+    pub media_type: String,
+    pub width: i32,
+    pub height: i32,
+    pub duration_ms: Option<i32>,
+    pub frames: i32,
+    pub has_audio: bool,
+    pub file_size: i64,
+    /// Where the original is stored.
+    pub storage_key: String,
+}
+
+/// Checks the fields a post needs, before any work on the file.
+fn check_fields(fields: &UploadFields) -> Result<Rating, UploadError> {
     let rating = fields
         .rating
         .ok_or_else(|| UploadError::Invalid("Choose a rating.".into()))?;
@@ -448,9 +465,27 @@ pub async fn ingest(
             "The description may be at most {DESCRIPTION_MAX_LEN} characters."
         )));
     }
+    Ok(rating)
+}
 
+/// Turns a received file into a post. Returns the new post's id.
+pub async fn ingest(
+    state: &AppState,
+    uploader: &CurrentUser,
+    file: &TempUpload,
+    fields: &UploadFields,
+) -> Result<i64, UploadError> {
+    check_fields(fields)?;
+    // Bad tags are refused before the file is looked at.
+    crate::tags::parse_field(state.db.primary(), &fields.tags).await?;
+    let prepared = prepare(state, file).await?;
+    create_post(state, uploader, &prepared, fields).await
+}
+
+/// Checks a received file isn't a duplicate, identifies and probes it,
+/// and stores the original.
+pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, UploadError> {
     let db = state.db.primary();
-    let tags = crate::tags::parse_field(db, &fields.tags).await?;
     if let Some(existing) = media::post_with_sha256(db, &file.sha256).await? {
         return Err(UploadError::Duplicate(existing));
     }
@@ -481,7 +516,31 @@ pub async fn ingest(
             .await
             .map_err(|e| UploadError::Internal(e.to_string()))?;
     }
+    let as_i32 = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
+    Ok(Prepared {
+        sha256: file.sha256,
+        md5: file.md5,
+        media_type: media_type.name().to_owned(),
+        width: as_i32(probe.width),
+        height: as_i32(probe.height),
+        duration_ms: probe.duration_ms.map(as_i32),
+        frames: as_i32(probe.frames),
+        has_audio: probe.has_audio,
+        file_size: i64::try_from(file.size).unwrap_or(i64::MAX),
+        storage_key: key.as_str().to_owned(),
+    })
+}
 
+/// Makes a post of a prepared file. Returns the new post's id.
+pub async fn create_post(
+    state: &AppState,
+    uploader: &CurrentUser,
+    prepared: &Prepared,
+    fields: &UploadFields,
+) -> Result<i64, UploadError> {
+    let rating = check_fields(fields)?;
+    let db = state.db.primary();
+    let tags = crate::tags::parse_field(db, &fields.tags).await?;
     let site = state.site.get();
     let status =
         if site.settings.upload_approval && !uploader.can(Permission::UploadWithoutApproval) {
@@ -489,7 +548,6 @@ pub async fn ingest(
         } else {
             PostStatus::Active
         };
-    let as_i32 = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
 
     let mut tx = db.begin().await?;
     let tag_ids: Vec<i32> = moekura_db::tags::for_post(
@@ -515,23 +573,23 @@ pub async fn ingest(
     .await?;
     let asset = NewAsset {
         post_id,
-        sha256: &file.sha256,
-        md5: &file.md5,
-        media_type: media_type.name(),
-        width: as_i32(probe.width),
-        height: as_i32(probe.height),
-        duration_ms: probe.duration_ms.map(as_i32),
-        frames: as_i32(probe.frames),
-        has_audio: probe.has_audio,
-        file_size: i64::try_from(file.size).unwrap_or(i64::MAX),
-        storage_key: key.as_str(),
+        sha256: &prepared.sha256,
+        md5: &prepared.md5,
+        media_type: &prepared.media_type,
+        width: prepared.width,
+        height: prepared.height,
+        duration_ms: prepared.duration_ms,
+        frames: prepared.frames,
+        has_audio: prepared.has_audio,
+        file_size: prepared.file_size,
+        storage_key: &prepared.storage_key,
     };
     let asset_id = match media::insert(&mut *tx, asset).await {
         Ok(id) => id,
         // Someone uploaded the same file a moment ago.
         Err(InsertAssetError::Duplicate(_)) => {
             drop(tx);
-            let existing = media::post_with_sha256(db, &file.sha256)
+            let existing = media::post_with_sha256(db, &prepared.sha256)
                 .await?
                 .unwrap_or_default();
             return Err(UploadError::Duplicate(existing));
@@ -541,7 +599,13 @@ pub async fn ingest(
     moekura_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
     tx.commit().await?;
 
-    tracing::info!(post_id, %media_type, size = file.size, ?status, "post uploaded");
+    tracing::info!(
+        post_id,
+        media_type = prepared.media_type,
+        size = prepared.file_size,
+        ?status,
+        "post uploaded"
+    );
     Ok(post_id)
 }
 

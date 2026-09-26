@@ -29,6 +29,7 @@ pub mod seed;
 pub mod sessions;
 pub mod settings;
 pub mod site_cache;
+pub mod staged_uploads;
 pub mod stats;
 pub mod tag_relations;
 pub mod tags;

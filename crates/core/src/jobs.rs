@@ -88,3 +88,12 @@ impl Job for ApplyBulkUpdate {
     /// reported rather than retried endlessly.
     const MAX_ATTEMPTS: i32 = 2;
 }
+
+/// Remove staged uploads nobody made into a post; scheduled hourly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpireStagedUploads {}
+
+impl Job for ExpireStagedUploads {
+    const KIND: &'static str = "uploads.expire_staged";
+    const MAX_ATTEMPTS: i32 = 3;
+}

@@ -1,0 +1,18 @@
+[package]
+name = "moekura-net"
+description = "Outbound HTTP for Moekura that can't reach the server's own network"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+moekura-storage.workspace = true
+reqwest.workspace = true
+url.workspace = true
+tokio = { workspace = true, features = ["net"] }
+
+[lints]
+workspace = true

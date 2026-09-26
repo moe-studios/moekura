@@ -186,6 +186,7 @@ pub(crate) async fn create(
     let user = commenter(&state, &current, &post).await?;
     let db = state.db.primary();
     let comment_id = comments::create(db, id, user, &body).await?;
+    crate::webhooks::emit_comment(&state, comment_id).await;
     let comment = comments::by_id(db, comment_id)
         .await?
         .ok_or(AppError::NotFound)?;

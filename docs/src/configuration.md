@@ -185,3 +185,10 @@ if they aren't on `PATH`.
 |---|---|---|
 | `log_format` | `"text"` | `"text"` or `"json"` |
 | `log_filter` | `"info,sqlx::postgres::notice=warn"` | a `tracing` filter; `RUST_LOG` overrides it (`"info,tower_http=debug"` logs every request) |
+
+## `[webhooks]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `allow_private_addresses` | `false` | let [webhooks](admin/webhooks.md) go to private, loopback and link-local addresses (a service on the same machine or network) |
+| `timeout_secs` | `10` | how long a delivery may take |

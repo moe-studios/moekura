@@ -33,6 +33,34 @@ they're applied to existing posts in the background, and to every edit
 after. Each post's history shows which changes came from an alias or
 implication.
 
+### Voting and discussion
+
+Each request has its own page (click its status or score in the list):
+members vote for or against it while it's pending, and discuss it
+underneath. Votes help staff decide; they don't decide by themselves.
+
+## Bulk update requests
+
+**Tags → Requests** holds requests for several changes at once, decided
+together. A request has a title, a reason, and a script with one change
+a line:
+
+| Line | Does |
+|---|---|
+| `alias kitty -> cat` | aliases `kitty` to `cat` |
+| `imply cat -> animal` | makes `cat` imply `animal` |
+| `unalias kitty -> cat`, `unimply cat -> animal` | ends an alias or implication |
+| `update cat_ears solo -> animal_ears -cat_ears` | a mass edit: the posts a search finds get the tags after the arrow, and lose those with `-` |
+| `category someone -> artist` | moves a tag to a category |
+
+Lines starting with `#` are ignored. Mistakes are pointed out, by line,
+when you send the request. Members vote and discuss as for single
+requests; staff who manage tags approve (which applies the lines in
+order, in the background) or reject it, and you can withdraw your own
+while it's pending. If a line can't be applied (say, it would make an
+implication loop), the request stops there, marked failed with the
+reason; the lines before it stay applied.
+
 ## Deprecated tags
 
 A deprecated tag can't be added to posts any more, but stays on the posts

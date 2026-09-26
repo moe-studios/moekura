@@ -1,0 +1,29 @@
+{# Votes and discussion of a request; `discussion` and `score` are set by the including page. #}
+<section class="request-votes" aria-label="Votes">
+  {% if discussion.can_vote %}
+  <form class="vote" method="post" action="{{ discussion.vote_url }}">
+    <button type="submit" name="score" value="{{ 0 if discussion.vote == 1 else 1 }}" class="icon" aria-pressed="{{ 'true' if discussion.vote == 1 else 'false' }}" aria-label="Vote for" title="Vote for">▲</button>
+    <span class="score">{{ score }}</span>
+    <button type="submit" name="score" value="{{ 0 if discussion.vote == -1 else -1 }}" class="icon" aria-pressed="{{ 'true' if discussion.vote == -1 else 'false' }}" aria-label="Vote against" title="Vote against">▼</button>
+  </form>
+  {% else %}<p>Score <span class="score">{{ score }}</span></p>{% endif %}
+  <p class="hint">Votes help staff decide; they don't decide by themselves.</p>
+</section>
+<section class="comments" aria-labelledby="discussion-heading">
+  <h2 id="discussion-heading">Discussion</h2>
+  {% for c in discussion.comments %}
+  <article class="comment">
+    <header class="comment-head"><span class="comment-author">{{ c.author or "Deleted user" }}</span> <span class="hint">{{ c.date }}</span></header>
+    <div class="markup">{{ c.html }}</div>
+    {% if c.can_delete %}<footer class="comment-actions"><form method="post" action="/tags/request-comments/{{ c.id }}/delete"><button type="submit" class="link">Delete</button></form></footer>{% endif %}
+  </article>
+  {% else %}<p class="empty">No comments yet.</p>{% endfor %}
+  {% if discussion.can_comment %}
+  <form class="comment-form" method="post" action="{{ discussion.comment_url }}">
+    <label for="request-comment">Add a comment</label>
+    <textarea id="request-comment" name="body" rows="4" maxlength="{{ discussion.max_len }}" required></textarea>
+    {% include "comment_help.html" %}
+    <button type="submit">Post comment</button>
+  </form>
+  {% endif %}
+</section>

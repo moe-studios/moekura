@@ -150,6 +150,8 @@ fn row_context(relation: &Relation, manage: bool, me: Option<i64>) -> Value {
     let own = me.is_some() && relation.creator_id == me;
     context! {
         id => relation.id,
+        url => url_value(&crate::requests::relation_url(relation.kind, relation.id)),
+        score => relation.score,
         antecedent => relation.antecedent,
         antecedent_url => Value::from_safe_string(search_url(&relation.antecedent)),
         consequent => relation.consequent,

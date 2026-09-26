@@ -88,6 +88,8 @@ pub struct Relation {
     pub creator_id: Option<i64>,
     pub creator_name: Option<String>,
     pub approver_name: Option<String>,
+    /// Votes for, less votes against.
+    pub score: i32,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
@@ -103,6 +105,7 @@ struct RelationRow {
     creator_id: Option<i64>,
     creator_name: Option<String>,
     approver_name: Option<String>,
+    score: i32,
     created_at: OffsetDateTime,
     updated_at: OffsetDateTime,
 }
@@ -127,6 +130,7 @@ impl TryFrom<RelationRow> for Relation {
             creator_id: row.creator_id,
             creator_name: row.creator_name,
             approver_name: row.approver_name,
+            score: row.score,
             created_at: row.created_at,
             updated_at: row.updated_at,
         })
@@ -140,7 +144,7 @@ macro_rules! select_relations {
         concat!(
             "SELECT r.id, r.kind, r.antecedent_name, r.consequent_name, r.status, r.reason,
                     r.creator_id, c.name::text AS creator_name, a.name::text AS approver_name,
-                    r.created_at, r.updated_at
+                    r.score, r.created_at, r.updated_at
              FROM tag_relations r
              LEFT JOIN users c ON c.id = r.creator_id
              LEFT JOIN users a ON a.id = r.approver_id ",

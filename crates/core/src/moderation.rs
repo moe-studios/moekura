@@ -35,10 +35,12 @@ pub enum ActionKind {
     PoolUndelete,
     UserPromote,
     MassUpdate,
+    BulkUpdateApprove,
+    BulkUpdateReject,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 28] = [
+    pub const ALL: [ActionKind; 30] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -67,6 +69,8 @@ impl ActionKind {
         ActionKind::PoolUndelete,
         ActionKind::UserPromote,
         ActionKind::MassUpdate,
+        ActionKind::BulkUpdateApprove,
+        ActionKind::BulkUpdateReject,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -99,6 +103,8 @@ impl ActionKind {
             ActionKind::PoolUndelete => "pool.undelete",
             ActionKind::UserPromote => "user.promote",
             ActionKind::MassUpdate => "tags.mass_update",
+            ActionKind::BulkUpdateApprove => "bulk_update.approve",
+            ActionKind::BulkUpdateReject => "bulk_update.reject",
         }
     }
 
@@ -133,6 +139,8 @@ impl ActionKind {
             ActionKind::PoolUndelete => "restored a pool",
             ActionKind::UserPromote => "promoted",
             ActionKind::MassUpdate => "started a mass tag edit",
+            ActionKind::BulkUpdateApprove => "approved a bulk update request",
+            ActionKind::BulkUpdateReject => "rejected a bulk update request",
         }
     }
 

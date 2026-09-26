@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{{ relation.kind|capitalize }} {{ relation.antecedent }} → {{ relation.consequent }} · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "tag_nav.html" %}
+<p class="back"><a href="{{ list_url }}">« {% if relation.kind == "alias" %}Aliases{% else %}Implications{% endif %}</a></p>
+<h1>{{ relation.kind|capitalize }}: <a class="tag" href="{{ relation.antecedent_url }}">{{ relation.antecedent }}</a> → <a class="tag" href="{{ relation.consequent_url }}">{{ relation.consequent }}</a></h1>
+<p><span class="status status-{{ relation.status }}">{{ relation.status }}</span>
+  <span class="hint">requested {{ relation.created }}{% if relation.creator %} by {{ relation.creator }}{% endif %}{% if relation.approver and relation.status != "pending" %} · decided by {{ relation.approver }}{% endif %}</span></p>
+{% if relation.reason %}<p>{{ relation.reason }}</p>{% endif %}
+{% if can_approve or can_remove %}
+<div class="actions">
+  {% if can_approve %}
+  <form method="post" action="{{ list_url }}/{{ relation.id }}/approve"><button type="submit">Approve</button></form>
+  <form method="post" action="{{ list_url }}/{{ relation.id }}/reject"><button type="submit" class="secondary">Reject</button></form>
+  {% endif %}
+  {% if can_remove %}
+  <form method="post" action="{{ list_url }}/{{ relation.id }}/remove"><button type="submit" class="secondary">{% if relation.status == "pending" %}Withdraw{% else %}Remove{% endif %}</button></form>
+  {% endif %}
+</div>
+{% endif %}
+{% with score = relation.score %}{% include "request_discussion.html" %}{% endwith %}
+{% endblock %}

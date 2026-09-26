@@ -32,6 +32,7 @@ pub mod pages;
 mod pools;
 mod posts;
 pub mod rate_limit;
+mod requests;
 mod saved_searches;
 pub mod shared;
 mod tag_relations;
@@ -230,6 +231,7 @@ pub fn router(state: AppState) -> Router {
         .merge(notes::routes())
         .merge(oidc::routes())
         .merge(pools::routes())
+        .merge(requests::routes())
         .merge(saved_searches::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())

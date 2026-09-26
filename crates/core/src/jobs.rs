@@ -75,3 +75,16 @@ impl Job for MassUpdate {
     const KIND: &'static str = "tags.mass_update";
     const MAX_ATTEMPTS: i32 = 3;
 }
+
+/// Apply an approved bulk update request's commands, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyBulkUpdate {
+    pub request_id: i32,
+}
+
+impl Job for ApplyBulkUpdate {
+    const KIND: &'static str = "tags.bulk_update";
+    /// Commands already applied are safe to repeat, but a failure is
+    /// reported rather than retried endlessly.
+    const MAX_ATTEMPTS: i32 = 2;
+}

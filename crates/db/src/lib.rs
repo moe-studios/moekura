@@ -20,6 +20,7 @@ pub mod pools;
 pub mod post_versions;
 pub mod posts;
 pub mod promotion;
+pub mod requests;
 pub mod roles;
 pub mod saved_searches;
 pub mod search;

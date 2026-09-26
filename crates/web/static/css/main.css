@@ -546,6 +546,8 @@ tr.is-deleted td { opacity: 0.6; }
 .post-grid a.card.script-ok { outline: 3px solid var(--tag-character, #2b8a3e); outline-offset: 2px; }
 .post-grid a.card.script-failed { outline: 3px solid var(--danger); outline-offset: 2px; }
 .mass-preview { margin: 16px 0; }
+.bulk-script { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
+.request-votes { margin: 16px 0; }
 .added { color: var(--tag-character); }
 .removed { color: var(--danger); }
 

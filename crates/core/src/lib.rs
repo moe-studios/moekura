@@ -5,6 +5,7 @@
 
 pub mod accounts;
 pub mod blacklist;
+pub mod bulk;
 pub mod config;
 pub mod import;
 pub mod jobs;

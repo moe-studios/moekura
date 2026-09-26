@@ -60,6 +60,11 @@ post's history, credited to whoever started the edit, and added tags
 bring the tags they imply. Deleted posts are only changed if the search
 asks for them (`status:deleted` or `status:any`).
 
+Bulk update requests (**Tags → Requests**) bundle several alias,
+implication, category and mass edit changes; approving one applies them
+in order, and approving or rejecting it is logged. See
+[Tags](../using/tags.md#bulk-update-requests).
+
 ## The moderation log
 
 **Moderation → Log** lists every staff action: approvals, deletions,

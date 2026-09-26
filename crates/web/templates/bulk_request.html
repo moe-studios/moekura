@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ request.title }} · Bulk update requests · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "tag_nav.html" %}
+<p class="back"><a href="/tags/requests">« Bulk update requests</a></p>
+<h1>{{ request.title }}</h1>
+<p><span class="status status-{{ request.status }}">{{ request.status }}</span>
+  <span class="hint">requested {{ request.created }}{% if request.creator %} by {{ request.creator }}{% endif %}{% if request.approver %} · decided by {{ request.approver }}{% endif %}</span></p>
+{% if error %}<p class="form-error" role="alert">Applying it stopped at {{ error }}</p>{% endif %}
+<pre class="bulk-script">{% for line in commands %}{{ line }}
+{% endfor %}</pre>
+{% if reason %}<div class="markup">{{ reason }}</div>{% endif %}
+{% if can_decide or can_withdraw %}
+<div class="actions">
+  {% if can_decide %}
+  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="approve">Approve and apply</button></form>
+  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="reject" class="secondary">Reject</button></form>
+  {% endif %}
+  {% if can_withdraw %}
+  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="withdraw" class="secondary">Withdraw</button></form>
+  {% endif %}
+</div>
+{% endif %}
+{% with score = request.score %}{% include "request_discussion.html" %}{% endwith %}
+{% endblock %}

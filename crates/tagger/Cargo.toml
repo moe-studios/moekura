@@ -1,0 +1,32 @@
+[package]
+name = "moekura-tagger"
+description = "Tag suggestions for Moekura from a WD-tagger ONNX model"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+moekura-core.workspace = true
+moekura-db.workspace = true
+moekura-jobs.workspace = true
+moekura-media.workspace = true
+moekura-storage.workspace = true
+futures-util.workspace = true
+hex.workspace = true
+ort.workspace = true
+reqwest.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util"] }
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["io-util", "net", "macros"] }
+
+[lints]
+workspace = true

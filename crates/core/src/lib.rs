@@ -19,6 +19,7 @@ pub mod promotion;
 pub mod remote;
 pub mod search;
 pub mod settings;
+pub mod tagger;
 pub mod tags;
 pub mod tokens;
 pub mod totp;

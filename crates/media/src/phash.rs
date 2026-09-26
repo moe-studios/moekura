@@ -62,35 +62,9 @@ pub fn dct_hash(pixels: &[u8; SIDE * SIDE]) -> u64 {
 
 /// Pixels from a binary PGM (`P5`, 8-bit) as written by vips.
 fn parse_pgm(data: &[u8]) -> Option<Vec<u8>> {
-    let mut fields = Vec::new();
-    let mut pos = 0;
-    // Magic, width, height, maxval; `#` comments run to end of line.
-    while fields.len() < 4 {
-        while data.get(pos)?.is_ascii_whitespace() {
-            pos += 1;
-        }
-        if data[pos] == b'#' {
-            while *data.get(pos)? != b'\n' {
-                pos += 1;
-            }
-            continue;
-        }
-        let start = pos;
-        while !data.get(pos)?.is_ascii_whitespace() {
-            pos += 1;
-        }
-        fields.push(std::str::from_utf8(&data[start..pos]).ok()?);
-    }
-    let [magic, width, height, maxval] = fields[..] else {
-        return None;
-    };
-    let (width, height): (usize, usize) = (width.parse().ok()?, height.parse().ok()?);
-    if magic != "P5" || maxval != "255" {
-        return None;
-    }
-    // Exactly one whitespace byte separates the header from the pixels.
-    let pixels = data.get(pos + 1..pos + 1 + width * height)?;
-    Some(pixels.to_vec())
+    crate::pixels::parse_netpbm(data)
+        .filter(|image| image.channels == 1)
+        .map(|image| image.pixels)
 }
 
 impl Media {

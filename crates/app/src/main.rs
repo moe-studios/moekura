@@ -2,6 +2,7 @@ mod admin;
 mod config;
 mod import;
 mod import_remote;
+mod tagger;
 mod telemetry;
 
 use std::path::PathBuf;
@@ -49,6 +50,9 @@ enum Command {
     Serve,
     /// Run job workers only
     Worker,
+    /// Suggest tags for posts with a machine learning model (see [tagger]
+    /// in the configuration; needs the `tagger` build feature)
+    Tagger(tagger::TaggerArgs),
     /// Apply pending database migrations, then exit
     Migrate,
     /// Validate the configuration and print the effective settings, with secrets redacted
@@ -115,6 +119,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Worker => {
             telemetry::init(&config.telemetry)?;
             worker(config).await
+        }
+        Command::Tagger(args) => {
+            telemetry::init(&config.telemetry)?;
+            tagger::run(config, args).await
         }
     }
 }
@@ -216,6 +224,7 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
         storage: Storage::from_config(&config.storage).context("could not open file storage")?,
         media: Media::new(config.media.clone()),
         work_dir,
+        tag_posts: config.tagger.enabled,
     }
     .register(&mut registry);
     TagJobs {

@@ -4,7 +4,9 @@
 //! millions of posts take minutes. Tags follow a Zipf distribution: a tag's
 //! rank is drawn log-uniformly, so the probability of rank `r` falls as
 //! `1/r`, like real boorus where a handful of tags are on most posts and
-//! most tags are on a few. Seeded posts point at a placeholder file that
+//! most tags are on a few. Posts come with what people add to them:
+//! comments and votes, notes, pools, favorite groups, saved searches and
+//! tagger suggestions. Seeded posts point at a placeholder file that
 //! doesn't exist; they're for measuring the database, not for looking at.
 
 use sqlx::{PgPool, Postgres, Transaction};
@@ -256,6 +258,26 @@ pub async fn prepare(db: &PgPool, options: &Options, force: bool) -> Result<Plan
     .fetch_all(db)
     .await?;
 
+    // Saved searches for one in five users, up to 20 each, of the more
+    // common tags.
+    sqlx::query(
+        "INSERT INTO saved_searches (user_id, query, labels)
+         SELECT u.id, t.name, CASE WHEN random() < 0.5 THEN ARRAY['daily'] ELSE '{}' END
+         FROM unnest($1::bigint[]) WITH ORDINALITY AS u (id, n)
+         CROSS JOIN LATERAL (
+             SELECT ($2::int[])[least(cardinality($2::int[]),
+                        floor(exp(random() * ln(least(cardinality($2::int[]), 2000) + 1)))::int)] AS tag_id
+             FROM generate_series(1, 1 + (u.n % 20)::int)
+         ) d
+         JOIN tags t ON t.id = d.tag_id
+         WHERE u.n % 5 = 0
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(&user_ids)
+    .bind(&tag_ids)
+    .execute(db)
+    .await?;
+
     Ok(Plan {
         user_ids,
         tag_ids,
@@ -283,14 +305,20 @@ pub async fn batch(
     sqlx::query("SET LOCAL max_parallel_workers_per_gather = 0")
         .execute(&mut *tx)
         .await?;
-    sqlx::query(
+    let mut post_ids: Vec<i64> = sqlx::query_scalar(
         r#"
         WITH drawn AS (
             SELECT g, random() AS status_roll, random() AS type_roll, random() AS size_roll,
-                   random() AS score_roll, random() AS fav_roll
+                   random() AS score_roll, random() AS fav_roll,
+                   -- Comments on 8% of posts and notes on 3%, added by
+                   -- `community` to match.
+                   CASE WHEN random() < 0.08 THEN 1 + floor(-ln(1 - random()) * 4)::int ELSE 0 END AS comments,
+                   CASE WHEN random() < 0.03 THEN 1 + floor(-ln(1 - random()) * 3)::int ELSE 0 END AS notes,
+                   now() - (($6::bigint - $5::bigint - g) * interval '1 minute') AS at
             FROM generate_series($3::bigint, $4::bigint - 1) g
         ), made AS (
-            INSERT INTO posts (uploader_id, rating, status, score, fav_count, tag_ids, created_at, updated_at)
+            INSERT INTO posts (uploader_id, rating, status, score, fav_count, tag_ids, created_at, updated_at,
+                               comment_count, last_commented_at, note_count, last_noted_at)
             SELECT
                 -- A few prolific uploaders, like real sites.
                 ($1::bigint[])[least(cardinality($1::bigint[]),
@@ -309,8 +337,9 @@ pub async fn batch(
                     FROM generate_series(1, 8 + (g % 30)::int)
                     ORDER BY 1
                 ),
-                now() - (($6::bigint - $5::bigint - g) * interval '1 minute'),
-                now() - (($6::bigint - $5::bigint - g) * interval '1 minute')
+                at, at,
+                comments, CASE WHEN comments > 0 THEN least(now(), at + comments * interval '47 minutes') END,
+                notes, CASE WHEN notes > 0 THEN least(now(), at + notes * interval '3 hours') END
             FROM drawn
             ORDER BY g
             RETURNING id
@@ -340,6 +369,7 @@ pub async fn batch(
                greatest(1, (width::bigint * height * (0.1 + random() * 0.4))::bigint),
                $7, now()
         FROM media
+        RETURNING post_id
         "#,
     )
     .bind(&plan.user_ids)
@@ -349,13 +379,249 @@ pub async fn batch(
     .bind(plan.first as i64)
     .bind(plan.total as i64)
     .bind(PLACEHOLDER_KEY)
-    .execute(&mut *tx)
+    .fetch_all(&mut *tx)
     .await?;
+    post_ids.sort_unstable();
+    community(&mut tx, plan, &post_ids, plan.first + from).await?;
     tx.commit().await
 }
 
+/// Seeded posts per pool, and per favorite group.
+const POSTS_PER_POOL: usize = 400;
+const POSTS_PER_FAVORITE_GROUP: usize = 1000;
+
+/// What people add to posts, for a batch's `post_ids` (oldest first):
+/// as many comments (with votes) and notes as the posts count, pools of
+/// consecutive posts, favorite groups, and tagger suggestions on half of
+/// them. `number` numbers the batch's pools and groups, keeping their
+/// names unique across runs.
+async fn community(
+    tx: &mut Transaction<'_, Postgres>,
+    plan: &Plan,
+    post_ids: &[i64],
+    number: u64,
+) -> sqlx::Result<()> {
+    if post_ids.is_empty() {
+        return Ok(());
+    }
+    // The posts already count their comments and notes, and updating
+    // them would scatter them across the table, so the count triggers are
+    // off meanwhile. DDL is transactional, so no one else sees them off.
+    sqlx::raw_sql(
+        "ALTER TABLE comments DISABLE TRIGGER comments_count;
+         ALTER TABLE comment_votes DISABLE TRIGGER comment_votes_score;
+         ALTER TABLE notes DISABLE TRIGGER notes_count;",
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    // The batch's posts are one range of ids, from $1[1] to its last.
+    // Words in comments and notes follow a Zipf distribution too, so
+    // some are common and most are rare.
+    sqlx::query(
+        "INSERT INTO comments (post_id, creator_id, body, created_at)
+         SELECT p.id,
+                ($2::bigint[])[1 + floor(random() * cardinality($2::bigint[]))::int],
+                (SELECT string_agg(($3::text[])[least(cardinality($3::text[]),
+                            floor(exp(random() * ln(cardinality($3::text[]) + 1)))::int)], ' ')
+                 -- Correlated with the comment, so it's drawn per comment.
+                 FROM generate_series(1, 2 + ((p.id + k) % 25)::int)),
+                least(now(), p.created_at + k * interval '47 minutes')
+         FROM posts p CROSS JOIN LATERAL generate_series(1, p.comment_count) k
+         WHERE p.id BETWEEN $1[1] AND $1[cardinality($1)] AND p.comment_count > 0
+         ORDER BY p.id, k",
+    )
+    .bind(post_ids)
+    .bind(&plan.user_ids)
+    .bind(WORDS)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO comment_votes (comment_id, user_id, score)
+         SELECT c.id, ($2::bigint[])[1 + floor(random() * cardinality($2::bigint[]))::int],
+                CASE WHEN random() < 0.8 THEN 1 ELSE -1 END
+         FROM comments c CROSS JOIN LATERAL generate_series(1, (c.id % 4)::int)
+         WHERE c.post_id BETWEEN $1[1] AND $1[cardinality($1)]
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(post_ids)
+    .bind(&plan.user_ids)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "UPDATE comments c SET score = v.score
+         FROM (SELECT comment_id, sum(score)::int AS score FROM comment_votes
+               WHERE comment_id IN (SELECT id FROM comments WHERE post_id BETWEEN $1[1] AND $1[cardinality($1)])
+               GROUP BY comment_id) v
+         WHERE c.id = v.comment_id",
+    )
+    .bind(post_ids)
+    .execute(&mut **tx)
+    .await?;
+
+    // Notes inside the image, each with its first version.
+    sqlx::query(
+        "WITH noted AS (
+             SELECT p.id, p.created_at, a.width, a.height, p.note_count AS n
+             FROM posts p JOIN media_assets a ON a.post_id = p.id
+             WHERE p.id BETWEEN $1[1] AND $1[cardinality($1)] AND p.note_count > 0
+         ), boxes AS (
+             SELECT b.*,
+                    20 + floor(random() * least(400, b.w - b.x - 20))::int AS bw,
+                    20 + floor(random() * least(300, b.h - b.y - 20))::int AS bh
+             FROM (SELECT n.id, k, n.width AS w, n.height AS h,
+                          floor(random() * (n.width - 60))::int AS x,
+                          floor(random() * (n.height - 60))::int AS y,
+                          ($2::bigint[])[1 + floor(random() * cardinality($2::bigint[]))::int] AS author,
+                          least(now(), n.created_at + k * interval '3 hours') AS at
+                   FROM noted n CROSS JOIN LATERAL generate_series(1, n.n) k) b
+         ), made AS (
+             INSERT INTO notes (post_id, x, y, width, height, body, creator_id, updater_id,
+                                created_at, updated_at)
+             SELECT b.id, b.x, b.y, b.bw, b.bh,
+                    (SELECT string_agg(($3::text[])[least(cardinality($3::text[]),
+                                floor(exp(random() * ln(cardinality($3::text[]) + 1)))::int)], ' ')
+                     FROM generate_series(1, 1 + ((b.id + b.k) % 12)::int)),
+                    b.author, b.author, b.at, b.at
+             FROM boxes b
+             ORDER BY b.id, b.k
+             RETURNING id, post_id, x, y, width, height, body, updater_id, created_at
+         )
+         INSERT INTO note_versions (note_id, post_id, version, updater_id, x, y, width, height,
+                                    body, is_active, created_at)
+         SELECT id, post_id, 1, updater_id, x, y, width, height, body, true, created_at FROM made",
+    )
+    .bind(post_ids)
+    .bind(&plan.user_ids)
+    .bind(WORDS)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::raw_sql(
+        "ALTER TABLE comments ENABLE TRIGGER comments_count;
+         ALTER TABLE comment_votes ENABLE TRIGGER comment_votes_score;
+         ALTER TABLE notes ENABLE TRIGGER notes_count;",
+    )
+    .execute(&mut **tx)
+    .await?;
+    // Pools of consecutive posts, mostly series, each with its first
+    // version.
+    sqlx::query(
+        "WITH drawn AS (
+             SELECT k,
+                    1 + floor(random() * cardinality($1::bigint[]))::int AS start,
+                    3 + least(60, floor(-ln(1 - random()) * 12)::int) AS len,
+                    random() < 0.8 AS series,
+                    ($2::bigint[])[1 + floor(random() * cardinality($2::bigint[]))::int] AS updater,
+                    ($3::text[])[1 + floor(random() * cardinality($3::text[]))::int] AS w1,
+                    ($3::text[])[1 + floor(random() * cardinality($3::text[]))::int] AS w2
+             FROM generate_series(1, $4::int) k
+         ), members AS (
+             SELECT d.*,
+                    ARRAY(SELECT ($1::bigint[])[i]
+                          FROM generate_series(d.start, least(d.start + d.len - 1, cardinality($1::bigint[]))) i
+                          ORDER BY i) AS post_ids
+             FROM drawn d
+         ), made AS (
+             INSERT INTO pools (name, description, category, updater_id)
+             SELECT w1 || '_' || w2 || '_' || ($5::bigint + k),
+                    'A ' || w1 || ' ' || w2 || ' series.',
+                    CASE WHEN series THEN 'series' ELSE 'collection' END,
+                    updater
+             FROM members
+             ORDER BY k
+             RETURNING id, name, description, category, updater_id
+         ), numbered AS (
+             SELECT made.*, row_number() OVER (ORDER BY id) AS k FROM made
+         ), linked AS (
+             INSERT INTO pool_posts (pool_id, post_id, position)
+             SELECT n.id, m.post_id, (m.i - 1)::int
+             FROM numbered n
+             JOIN members d ON d.k = n.k
+             CROSS JOIN LATERAL unnest(d.post_ids) WITH ORDINALITY AS m (post_id, i)
+         )
+         INSERT INTO pool_versions (pool_id, version, updater_id, name, description, category,
+                                    is_deleted, post_ids)
+         SELECT n.id, 1, n.updater_id, n.name, n.description, n.category, false, d.post_ids
+         FROM numbered n JOIN members d ON d.k = n.k",
+    )
+    .bind(post_ids)
+    .bind(&plan.user_ids)
+    .bind(WORDS)
+    .bind(post_ids.len().div_ceil(POSTS_PER_POOL) as i32)
+    .bind(number as i64)
+    .execute(&mut **tx)
+    .await?;
+
+    // Favorite groups of posts from anywhere in the batch, mostly public.
+    sqlx::query(
+        "WITH drawn AS (
+             SELECT k,
+                    ($2::bigint[])[1 + floor(random() * cardinality($2::bigint[]))::int] AS creator,
+                    random() < 0.7 AS public,
+                    5 + least(300, floor(-ln(1 - random()) * 40)::int) AS len
+             FROM generate_series(1, $3::int) k
+         ), members AS (
+             SELECT d.*,
+                    ARRAY(SELECT DISTINCT ($1::bigint[])[1 + floor(random() * cardinality($1::bigint[]))::int]
+                          FROM generate_series(1, d.len)
+                          ORDER BY 1) AS post_ids
+             FROM drawn d
+         ), made AS (
+             INSERT INTO favorite_groups (creator_id, name, is_public)
+             SELECT creator, 'favorites_' || ($4::bigint + k), public FROM members ORDER BY k
+             RETURNING id
+         ), numbered AS (
+             SELECT id, row_number() OVER (ORDER BY id) AS k FROM made
+         )
+         INSERT INTO favorite_group_posts (group_id, post_id, position)
+         SELECT n.id, m.post_id, (m.i - 1)::int
+         FROM numbered n
+         JOIN members d ON d.k = n.k
+         CROSS JOIN LATERAL unnest(d.post_ids) WITH ORDINALITY AS m (post_id, i)",
+    )
+    .bind(post_ids)
+    .bind(&plan.user_ids)
+    .bind(post_ids.len().div_ceil(POSTS_PER_FAVORITE_GROUP) as i32)
+    .bind(number as i64)
+    .execute(&mut **tx)
+    .await?;
+
+    // The tagger's view of half the posts: a couple of common tags they
+    // lack, and some of theirs. (Real taggers suggest more of a post's own
+    // tags, but every row costs two foreign key checks.)
+    sqlx::query(
+        "WITH tagged AS (
+             SELECT p.id, p.rating, p.tag_ids FROM posts p WHERE p.id BETWEEN $1[1] AND $1[cardinality($1)] AND random() < 0.5
+         ), results AS (
+             INSERT INTO tagger_results (post_id, model, rating, rating_confidence)
+             SELECT id, $3,
+                    CASE WHEN random() < 0.9 THEN rating
+                         ELSE (ARRAY['g', 's', 'q', 'e'])[1 + floor(random() * 4)::int] END,
+                    (0.5 + random() * 0.5)::real
+             FROM tagged
+         )
+         INSERT INTO tag_suggestions (post_id, tag_id, confidence, model)
+         SELECT t.id, s.tag_id, (0.35 + random() * 0.65)::real, $3
+         FROM tagged t CROSS JOIN LATERAL (
+             SELECT tag_id FROM unnest(t.tag_ids) tag_id WHERE random() < 0.15
+             UNION
+             SELECT ($2::int[])[least(cardinality($2::int[]),
+                        floor(exp(random() * ln(least(cardinality($2::int[]), 3000) + 1)))::int)]
+             FROM generate_series(1, 2 + (t.id % 2)::int)
+         ) s
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(post_ids)
+    .bind(&plan.tag_ids)
+    .bind(moekura_core::tagger::DEFAULT_MODEL)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
 /// Adds aliases and implications among the seeded tags, applies the
-/// implications, and refreshes planner statistics.
+/// implications, and vacuums and refreshes planner statistics.
 pub async fn finish(db: &PgPool, plan: &Plan) -> sqlx::Result<()> {
     let creator = plan.user_ids.first().copied();
     // Aliases: an old spelling for one in 50 of the 5,000 most used tags.
@@ -413,9 +679,13 @@ pub async fn finish(db: &PgPool, plan: &Plan) -> sqlx::Result<()> {
         .execute(db)
         .await?;
     }
-    sqlx::query("ANALYZE posts, tags, media_assets, users, tag_relations")
-        .execute(db)
-        .await?;
+    sqlx::query(
+        "VACUUM (ANALYZE) posts, tags, media_assets, users, tag_relations, comments,
+             comment_votes, notes, note_versions, pools, pool_posts, favorite_groups,
+             favorite_group_posts, saved_searches, tagger_results, tag_suggestions",
+    )
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -501,6 +771,73 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(implied, 0, "implications are applied");
+
+        // What people add, with the counts the triggers would keep.
+        let (comments, notes, pools, groups, saved, suggested): (i64, i64, i64, i64, i64, i64) =
+            sqlx::query_as(
+                "SELECT (SELECT count(*) FROM comments), (SELECT count(*) FROM notes),
+                        (SELECT count(*) FROM pools), (SELECT count(*) FROM favorite_groups),
+                        (SELECT count(*) FROM saved_searches),
+                        (SELECT count(DISTINCT post_id) FROM tag_suggestions)",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(comments > 200, "{comments} comments");
+        assert!(notes > 50, "{notes} notes");
+        assert_eq!((pools, groups), (9, 3));
+        assert!(saved > 0);
+        assert!(
+            (1000..2000).contains(&suggested),
+            "{suggested} posts tagged"
+        );
+        let wrong: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM posts p
+             WHERE (p.comment_count, p.last_commented_at, p.note_count, p.last_noted_at)
+                   IS DISTINCT FROM
+                   ((SELECT count(*) FROM comments c WHERE c.post_id = p.id AND NOT c.is_deleted),
+                    (SELECT max(created_at) FROM comments c WHERE c.post_id = p.id AND NOT c.is_deleted),
+                    (SELECT count(*) FROM notes n WHERE n.post_id = p.id AND n.is_active),
+                    (SELECT max(updated_at) FROM notes n WHERE n.post_id = p.id))",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(wrong, 0, "post counts follow comments and notes");
+        let wrong: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM comments c
+             WHERE score <> (SELECT coalesce(sum(score), 0) FROM comment_votes v WHERE v.comment_id = c.id)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(wrong, 0, "comment scores follow votes");
+        let wrong: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pools pl JOIN pool_versions v ON v.pool_id = pl.id
+             WHERE v.post_ids IS DISTINCT FROM
+                   ARRAY(SELECT post_id FROM pool_posts pp WHERE pp.pool_id = pl.id ORDER BY position)
+                OR (SELECT max(position) + 1 FROM pool_posts pp WHERE pp.pool_id = pl.id)
+                   <> cardinality(v.post_ids)",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(wrong, 0, "pools match their versions");
+        let queries: Vec<String> = sqlx::query_scalar("SELECT query FROM saved_searches")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        for query in queries {
+            let parsed = moekura_core::search::Query::parse(&query).unwrap();
+            assert_eq!(parsed.to_string(), query, "saved searches are normalised");
+        }
+        let disabled: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal AND tgenabled <> 'O'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(disabled, 0, "triggers are back on");
 
         // Seeding more is fine; real posts stop it.
         let again = prepare(&pool, &options, false).await.unwrap();

@@ -182,6 +182,12 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         context! {
             search => context! { tags => normalized },
             save_search => crate::saved_searches::save_form(&page.current, &normalized),
+            feed_url => url_value(&format!(
+                "/posts.atom?{}",
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("tags", &normalized)
+                    .finish()
+            )),
             can_tag_script => page.current.is_logged_in() && page.current.can(Permission::EditPosts),
             cards => card_values,
             blacklisted => blacklisted,

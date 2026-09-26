@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Your feed token · {{ site.name }}{% endblock %}
+{% block content %}
+<section class="card medium">
+  <h1>Your feed token</h1>
+  <p>Copy it now: it isn't shown again. Making a new one stops the old one working.</p>
+  <p><code class="token">{{ token }}</code></p>
+  <p class="hint">Add <code>&amp;token=…</code> to a feed's address to read it as you, for example:</p>
+  <p><code class="token">{{ example }}</code></p>
+  <p><a href="/settings">Back to settings</a></p>
+</section>
+{% endblock %}

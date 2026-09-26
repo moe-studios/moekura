@@ -280,6 +280,7 @@ pub(super) async fn create_post(
             source: upload.source.clone(),
             description: upload.description.clone(),
             parent,
+            ..Default::default()
         };
         if let Err(crate::edit::Refused::Invalid(message)) =
             crate::edit::apply(&state, &current, post_id, &form).await

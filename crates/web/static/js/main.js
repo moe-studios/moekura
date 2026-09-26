@@ -53,7 +53,8 @@ var METATAGS = {
   ordpool: [],
   search: ["all"],
   favgroup: [],
-  ordfavgroup: []
+  ordfavgroup: [],
+  ai: []
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 
@@ -832,6 +833,36 @@ function enableReader(root = document) {
   }
 }
 
+// src/suggestions.ts
+function withTag(tags, tag) {
+  const words = tags.split(/\s+/).filter((word) => word !== "");
+  if (words.includes(tag)) return tags;
+  const kept = tags.trimEnd();
+  return kept === "" ? `${tag} ` : `${kept} ${tag} `;
+}
+function enableSuggestions(root = document) {
+  const box = root.querySelector("[data-suggestions]");
+  const form = box?.closest("form");
+  const field = form?.querySelector("textarea[name=tags]");
+  if (!box || !form || !field) return;
+  const hint = box.querySelector("[data-suggestions-hint]");
+  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button[name]");
+    if (!button) return;
+    event.preventDefault();
+    if (button.name === "add") {
+      field.value = withTag(field.value, button.value);
+    } else if (button.name === "suggested_rating") {
+      for (const radio of form.querySelectorAll("input[name=rating]")) {
+        radio.checked = radio.value === button.value;
+      }
+    }
+    button.classList.add("chosen");
+    button.disabled = true;
+  });
+}
+
 // src/tag-script.ts
 var RATINGS = {
   g: "g",
@@ -933,3 +964,4 @@ enableReader();
 enableNotes();
 enableNoteEditor();
 enableTagScript();
+enableSuggestions();

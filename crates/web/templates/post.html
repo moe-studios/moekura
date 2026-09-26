@@ -131,6 +131,27 @@
         <label for="edit-description">Description</label>
         <textarea id="edit-description" name="description" rows="3" maxlength="20000">{{ edit.description }}</textarea>
         <button type="submit">Save</button>
+        {# After Save, which Enter in a field must keep pressing. #}
+        {% if suggestions %}
+        <div class="suggestions" data-suggestions>
+          <h3>Suggested by the tagger</h3>
+          {% if suggestions.pending %}
+          <p class="hint">The tagger hasn't looked at this post yet. Its suggestions show here once it has, usually within a minute.</p>
+          {% else %}
+          {% if suggestions.tags %}
+          <ul class="suggested-tags">
+            {% for tag in suggestions.tags %}
+            <li><button type="submit" name="add" value="{{ tag.name }}" title="Add {{ tag.name }} ({{ tag.confidence }}% sure)"><span class="tag-{{ tag.category }}">{{ tag.name }}</span> <span class="confidence">{{ tag.confidence }}%</span></button></li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+          {% if suggestions.rating %}
+          <p class="suggested-rating">Rating: <button type="submit" name="suggested_rating" value="{{ suggestions.rating.code }}" title="Rate it {{ suggestions.rating.label }}">{{ suggestions.rating.label }} <span class="confidence">{{ suggestions.rating.confidence }}%</span></button></p>
+          {% endif %}
+          <p class="hint" data-suggestions-hint>Clicking one adds it and saves the form.</p>
+          {% endif %}
+        </div>
+        {% endif %}
       </form>
     </details>
     {% endif %}

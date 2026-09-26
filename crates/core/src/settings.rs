@@ -30,6 +30,9 @@ pub struct SiteSettings {
     /// Blacklist for visitors and for users who never saved their own
     /// (see [`crate::blacklist`]); e.g. `rating:e` to hide explicit posts.
     pub default_blacklist: String,
+    /// What the tagger's suggestions are used for (see
+    /// [`crate::tagger::TaggerSettings`]).
+    pub tagger: crate::tagger::TaggerSettings,
 }
 
 impl Default for SiteSettings {
@@ -49,6 +52,7 @@ impl Default for SiteSettings {
             },
             preview_all_ratings: false,
             default_blacklist: String::new(),
+            tagger: crate::tagger::TaggerSettings::default(),
         }
     }
 }
@@ -136,6 +140,7 @@ impl SiteSettings {
             return Err(format!("must be at most {SITE_NAME_MAX_LEN} characters"));
         }
         crate::blacklist::Blacklist::parse(&self.default_blacklist).map_err(|e| e.to_string())?;
+        self.tagger.validate()?;
         Ok(())
     }
 }
@@ -158,6 +163,7 @@ mod tests {
                 "promotion_rules",
                 "registration_mode",
                 "site_name",
+                "tagger",
                 "upload_approval",
                 "upload_limit_scaling"
             ]
@@ -185,6 +191,11 @@ mod tests {
         ));
         assert!(matches!(
             defaults.with_value("site_name", json!("   ")),
+            Err(SettingError::InvalidValue { .. })
+        ));
+        let thresholds = json!({ "thresholds": { "general": 0 } });
+        assert!(matches!(
+            defaults.with_value("tagger", thresholds),
             Err(SettingError::InvalidValue { .. })
         ));
     }

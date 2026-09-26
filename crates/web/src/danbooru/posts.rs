@@ -397,6 +397,7 @@ async fn update(
         description: field("description").unwrap_or(post.description),
         parent: field("parent_id")
             .unwrap_or_else(|| post.parent_id.map(|p| p.to_string()).unwrap_or_default()),
+        ..Default::default()
     };
     match crate::edit::apply(&state, &current, id, &form).await {
         Ok(()) => {}

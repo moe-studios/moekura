@@ -179,12 +179,28 @@ if they aren't on `PATH`.
 | `templates_override` | a directory whose files replace built-in templates with the same path, e.g. `base.html` |
 | `static_override` | the same for static files, e.g. `css/main.css` |
 
+## `[tagger]`
+
+The optional [tagger](admin/tagger.md), which suggests tags for new uploads.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | queue new uploads for `moekura tagger`; set it for every process |
+| `model` | `"wd-vit-tagger-v3"` | `wd-vit-tagger-v3`, `wd-convnext-tagger-v3`, `wd-swinv2-tagger-v3`, `wd-eva02-large-tagger-v3`, or `"custom"` |
+| `model_url`, `tags_url` | unset | for `custom`: the ONNX model and its `selected_tags.csv` |
+| `model_sha256`, `tags_sha256` | unset | for `custom`: their SHA-256 checksums |
+| `model_dir` | `"data/models"` | where models are downloaded to, one directory each |
+| `runtime` | `ORT_DYLIB_PATH`, or the system's | the ONNX Runtime library, `libonnxruntime.so` |
+| `threads` | `0` | threads one image uses; `0` means one per core |
+| `workers` | `1` | posts tagged at once |
+| `account` | `"tagger"` | who automatically applied tags are credited to; created without a password on first use |
+
 ## `[telemetry]`
 
 | Key | Default | Meaning |
 |---|---|---|
 | `log_format` | `"text"` | `"text"` or `"json"` |
-| `log_filter` | `"info,sqlx::postgres::notice=warn"` | a `tracing` filter; `RUST_LOG` overrides it (`"info,tower_http=debug"` logs every request) |
+| `log_filter` | `"info,sqlx::postgres::notice=warn,ort=warn"` | a `tracing` filter; `RUST_LOG` overrides it (`"info,tower_http=debug"` logs every request) |
 
 ## `[webhooks]`
 

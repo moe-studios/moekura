@@ -2,7 +2,9 @@
 //!
 //! [`run`] starts a pool of workers that claim jobs from the Postgres queue
 //! ([`moekura_db::jobs`]) and hand them to the handler registered for their
-//! kind in a [`Registry`]. Idle workers wake on `NOTIFY` rather than
+//! kind in a [`Registry`]. Workers only claim kinds they have a handler
+//! for, so processes with different registries (`moekura tagger`) share
+//! the queue. Idle workers wake on `NOTIFY` rather than
 //! polling hard, a reaper requeues jobs whose worker vanished, and shutdown
 //! stops claiming but lets running jobs finish. Jobs registered with
 //! [`Registry::every`] are enqueued on a schedule, once across all nodes.
@@ -104,6 +106,13 @@ impl Registry {
         self
     }
 
+    /// The job kinds this registry handles.
+    pub fn kinds(&self) -> Vec<&'static str> {
+        let mut kinds: Vec<&'static str> = self.handlers.keys().copied().collect();
+        kinds.sort_unstable();
+        kinds
+    }
+
     /// Enqueues a `J` every `every` (and shortly after start), unless one
     /// is already waiting or running on any node.
     pub fn every<J: Job + Default + Sync>(&mut self, every: Duration) -> &mut Self {
@@ -145,6 +154,7 @@ impl PoolConfig {
 /// progress to finish.
 pub async fn run(db: PgPool, registry: Registry, config: PoolConfig, shutdown: CancellationToken) {
     let wake = Arc::new(Notify::new());
+    let kinds = Arc::new(registry.kinds());
     let registry = Arc::new(registry);
     let prefix = worker_prefix();
     tracing::info!(workers = config.workers, "job workers started");
@@ -163,6 +173,7 @@ pub async fn run(db: PgPool, registry: Registry, config: PoolConfig, shutdown: C
             id: format!("{prefix}-{n}"),
             db: db.clone(),
             registry: registry.clone(),
+            kinds: kinds.clone(),
             wake: wake.clone(),
             config: config.clone(),
         };
@@ -181,6 +192,7 @@ struct Worker {
     id: String,
     db: PgPool,
     registry: Arc<Registry>,
+    kinds: Arc<Vec<&'static str>>,
     wake: Arc<Notify>,
     config: PoolConfig,
 }
@@ -194,7 +206,7 @@ impl Worker {
             tokio::pin!(notified);
             notified.as_mut().enable();
 
-            match jobs::claim(&self.db, &self.id, self.config.lock).await {
+            match jobs::claim(&self.db, &self.id, self.config.lock, &self.kinds).await {
                 Ok(Some(job)) => {
                     let span = tracing::info_span!(
                         "job",
@@ -467,7 +479,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
-    async fn panics_and_unknown_kinds_fail_the_job_not_the_worker(pool: PgPool) {
+    async fn panics_fail_the_job_not_the_worker(pool: PgPool) {
         let mut registry = Registry::new();
         registry.register(|_: Panic| async { panic!("handler exploded") });
         registry.register(|_: Count| async { Ok(()) });
@@ -481,24 +493,29 @@ mod tests {
         ));
 
         push(&pool, &Panic).await;
-        push(&pool, &Slow).await; // no handler registered
+        // No handler here: left for a process that has one.
+        push(&pool, &Slow).await;
         push(&pool, &Count { fail_times: 0 }).await;
 
-        wait_until("two dead jobs and the good one done", async || {
+        wait_until("a dead job and the good one done", async || {
             jobs::counts(&pool).await.unwrap()
                 == jobs::JobCounts {
-                    queued: 0,
+                    queued: 1,
                     running: 0,
-                    dead: 2,
+                    dead: 1,
                 }
         })
         .await;
-        let errors: Vec<String> = sqlx::query_scalar("SELECT last_error FROM jobs ORDER BY id")
-            .fetch_all(&pool)
+        let error: String = sqlx::query_scalar("SELECT last_error FROM jobs WHERE status = 'dead'")
+            .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(errors[0].contains("panicked"), "{errors:?}");
-        assert!(errors[1].contains("no handler"), "{errors:?}");
+        assert!(error.contains("panicked"), "{error}");
+        let waiting: String = sqlx::query_scalar("SELECT kind FROM jobs WHERE status = 'queued'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(waiting, "test.slow");
 
         shutdown.cancel();
         pool_task.await.unwrap();

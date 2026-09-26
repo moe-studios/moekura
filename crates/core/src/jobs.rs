@@ -119,3 +119,15 @@ impl Job for PruneWebhookDeliveries {
     const KIND: &'static str = "webhooks.prune";
     const MAX_ATTEMPTS: i32 = 3;
 }
+
+/// Suggest tags for a post with the tagger, once its thumbnails exist.
+/// Only `moekura tagger` takes these.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TagPost {
+    pub post_id: i64,
+}
+
+impl Job for TagPost {
+    const KIND: &'static str = "ml.tag_post";
+    const MAX_ATTEMPTS: i32 = 3;
+}

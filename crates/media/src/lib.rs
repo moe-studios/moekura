@@ -3,6 +3,7 @@
 
 mod kind;
 pub mod phash;
+mod pixels;
 mod probe;
 mod render;
 pub mod tool;
@@ -13,6 +14,7 @@ use moekura_core::config::MediaConfig;
 use tokio::io::AsyncReadExt;
 
 pub use crate::kind::{MediaType, SNIFF_LEN};
+pub use crate::pixels::RgbImage;
 pub use crate::probe::Probe;
 pub use crate::render::Rendition;
 pub use crate::tool::ToolError;

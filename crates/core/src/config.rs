@@ -25,6 +25,7 @@ pub struct Config {
     pub paths: PathsConfig,
     pub search: SearchConfig,
     pub storage: StorageConfig,
+    pub tagger: TaggerConfig,
     pub telemetry: TelemetryConfig,
     pub webhooks: WebhooksConfig,
 }
@@ -219,6 +220,91 @@ impl Default for WebhooksConfig {
             allow_private_addresses: false,
             timeout_secs: 10,
         }
+    }
+}
+
+/// The optional tagger (`moekura tagger`), which suggests tags for new
+/// uploads with a machine learning model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TaggerConfig {
+    /// Queue new uploads for the tagger. Set it for every process: those
+    /// processing uploads queue the work, and `moekura tagger` does it.
+    pub enabled: bool,
+    /// A model Moekura knows by name (see the book), or `custom` for one
+    /// given by the four settings below.
+    pub model: String,
+    /// For `custom`: an ONNX WD-tagger-style model and its
+    /// `selected_tags.csv`, with their SHA-256 checksums.
+    pub model_url: Option<Url>,
+    pub model_sha256: String,
+    pub tags_url: Option<Url>,
+    pub tags_sha256: String,
+    /// Where models are downloaded to, one directory each.
+    pub model_dir: PathBuf,
+    /// The ONNX Runtime library (`libonnxruntime.so`). When unset,
+    /// `ORT_DYLIB_PATH`, or the system's library path.
+    pub runtime: Option<PathBuf>,
+    /// Threads one image uses; `0` means one per core.
+    pub threads: usize,
+    /// Posts tagged at once. Each runs the whole model, so one is usually
+    /// best: raise `threads` instead.
+    pub workers: usize,
+    /// The account tags applied automatically are credited to. Created on
+    /// first use, without a password; an existing account that has one
+    /// isn't used.
+    pub account: String,
+}
+
+impl Default for TaggerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: crate::tagger::DEFAULT_MODEL.to_owned(),
+            model_url: None,
+            model_sha256: String::new(),
+            tags_url: None,
+            tags_sha256: String::new(),
+            model_dir: PathBuf::from("data/models"),
+            runtime: None,
+            threads: 0,
+            workers: 1,
+            account: "tagger".to_owned(),
+        }
+    }
+}
+
+/// Where a model's files come from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSource {
+    pub name: String,
+    pub model_url: Url,
+    pub model_sha256: String,
+    pub tags_url: Url,
+    pub tags_sha256: String,
+}
+
+impl TaggerConfig {
+    /// The configured model's files; `None` when the configuration is
+    /// incomplete (which [`Config::validate`] reports).
+    pub fn source(&self) -> Option<ModelSource> {
+        if self.model == "custom" {
+            return Some(ModelSource {
+                name: self.model.clone(),
+                model_url: self.model_url.clone()?,
+                model_sha256: self.model_sha256.to_ascii_lowercase(),
+                tags_url: self.tags_url.clone()?,
+                tags_sha256: self.tags_sha256.to_ascii_lowercase(),
+            });
+        }
+        let preset = crate::tagger::preset(&self.model)?;
+        Some(ModelSource {
+            name: preset.name.to_owned(),
+            model_url: Url::parse(preset.model_url).ok()?,
+            model_sha256: preset.model_sha256.to_owned(),
+            tags_url: Url::parse(preset.tags_url).ok()?,
+            tags_sha256: preset.tags_sha256.to_owned(),
+        })
     }
 }
 
@@ -478,8 +564,9 @@ impl Default for TelemetryConfig {
     fn default() -> Self {
         Self {
             log_format: LogFormat::Text,
-            // Postgres notices like "relation already exists, skipping" are noise.
-            log_filter: "info,sqlx::postgres::notice=warn".to_owned(),
+            // Postgres notices like "relation already exists, skipping" are
+            // noise, as is ONNX Runtime narrating the tagger's model setup.
+            log_filter: "info,sqlx::postgres::notice=warn,ort=warn".to_owned(),
         }
     }
 }
@@ -727,6 +814,60 @@ impl Config {
                 });
             }
         }
+        let tagger = &self.tagger;
+        if tagger.model == "custom" {
+            for (key, url) in [
+                ("tagger.model_url", &tagger.model_url),
+                ("tagger.tags_url", &tagger.tags_url),
+            ] {
+                match url {
+                    None => problems.push(ConfigProblem {
+                        key,
+                        message: "is required when tagger.model is custom".into(),
+                    }),
+                    Some(url) if !matches!(url.scheme(), "http" | "https") => {
+                        problems.push(ConfigProblem {
+                            key,
+                            message: "must be an http:// or https:// URL".into(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+            }
+            for (key, sum) in [
+                ("tagger.model_sha256", &tagger.model_sha256),
+                ("tagger.tags_sha256", &tagger.tags_sha256),
+            ] {
+                if sum.len() != 64 || !sum.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    problems.push(ConfigProblem {
+                        key,
+                        message: "must be a SHA-256 checksum (64 hexadecimal digits)".into(),
+                    });
+                }
+            }
+        } else if crate::tagger::preset(&tagger.model).is_none() {
+            let known: Vec<&str> = crate::tagger::PRESETS.iter().map(|p| p.name).collect();
+            problems.push(ConfigProblem {
+                key: "tagger.model",
+                message: format!(
+                    "unknown model `{}` (known: {}, or custom)",
+                    tagger.model,
+                    known.join(", ")
+                ),
+            });
+        }
+        if tagger.workers == 0 {
+            problems.push(ConfigProblem {
+                key: "tagger.workers",
+                message: "must be at least 1".into(),
+            });
+        }
+        if crate::accounts::UserName::parse(&tagger.account).is_err() {
+            problems.push(ConfigProblem {
+                key: "tagger.account",
+                message: "must be a valid user name".into(),
+            });
+        }
         if self.server.request_timeout_secs == 0 {
             problems.push(ConfigProblem {
                 key: "server.request_timeout_secs",
@@ -869,6 +1010,53 @@ mod tests {
             .map(|p| p.key)
             .collect();
         assert_eq!(keys, ["server.public_url", "auth.session_max_days"]);
+    }
+
+    #[test]
+    fn checks_the_tagger_model() {
+        let mut config = valid();
+        let preset = config.tagger.source().unwrap();
+        assert_eq!(preset.name, "wd-vit-tagger-v3");
+        assert!(preset.model_url.as_str().ends_with("/model.onnx"));
+
+        config.tagger.model = "wd-nonexistent".into();
+        config.tagger.account = "no spaces allowed".into();
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(keys, ["tagger.model", "tagger.account"]);
+
+        let mut config = valid();
+        config.tagger.model = "custom".into();
+        config.tagger.model_url = Some(Url::parse("ftp://example.com/m.onnx").unwrap());
+        config.tagger.model_sha256 = "abc".into();
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "tagger.model_url",
+                "tagger.tags_url",
+                "tagger.model_sha256",
+                "tagger.tags_sha256"
+            ]
+        );
+        assert!(config.tagger.source().is_none());
+
+        config.tagger.model_url = Some(Url::parse("https://example.com/m.onnx").unwrap());
+        config.tagger.tags_url = Some(Url::parse("https://example.com/t.csv").unwrap());
+        config.tagger.model_sha256 = "AB".repeat(32);
+        config.tagger.tags_sha256 = "cd".repeat(32);
+        config.validate().unwrap();
+        let custom = config.tagger.source().unwrap();
+        assert_eq!(custom.model_sha256, "ab".repeat(32));
     }
 
     #[test]

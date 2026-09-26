@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use moekura_core::jobs::{ExpireStagedUploads, ProcessMedia, PurgePost};
+use moekura_core::jobs::{ExpireStagedUploads, ProcessMedia, PurgePost, TagPost};
 use moekura_core::posts::PostStatus;
 use moekura_db::media::{self, Asset, Variant};
 use moekura_media::{Media, MediaError, MediaType};
@@ -25,6 +25,8 @@ pub struct MediaJobs {
     pub media: Media,
     /// Scratch space; each job works in its own subdirectory.
     pub work_dir: PathBuf,
+    /// Queue processed posts for the tagger (`tagger.enabled`).
+    pub tag_posts: bool,
 }
 
 impl MediaJobs {
@@ -99,7 +101,8 @@ impl MediaJobs {
 
     /// Generates thumbnails at every configured size, plus a `sample` for
     /// large still images or a `poster` frame for videos, then marks the
-    /// asset processed. Safe to repeat: every write replaces the last.
+    /// asset processed and, with the tagger on, queues the post for it.
+    /// Safe to repeat: every write replaces the last.
     pub async fn process(&self, asset_id: i64) -> Result<(), JobError> {
         let Some(asset) = media::by_id(&self.db, asset_id).await? else {
             // The post was deleted in the meantime.
@@ -159,7 +162,18 @@ impl MediaJobs {
             .perceptual_hash(&source, source_type, work.path())
             .await
             .map_err(media_error)?;
-        media::mark_processed(&self.db, asset_id, Some(phash)).await?;
+        let mut tx = self.db.begin().await?;
+        media::mark_processed(&mut *tx, asset_id, Some(phash)).await?;
+        if self.tag_posts {
+            moekura_db::jobs::enqueue(
+                &mut tx,
+                &TagPost {
+                    post_id: asset.post_id,
+                },
+            )
+            .await?;
+        }
+        tx.commit().await?;
         tracing::info!(asset_id, post_id = asset.post_id, "media processed");
         Ok(())
     }
@@ -277,6 +291,7 @@ mod tests {
             storage: Storage::local(dir.join("storage")).unwrap(),
             media: Media::new(MediaConfig::default()),
             work_dir: dir.join("work"),
+            tag_posts: false,
         };
         let extension = file.extension().unwrap().to_str().unwrap();
         let key = Key::original(HASH, extension);
@@ -361,6 +376,34 @@ mod tests {
         // Running again is harmless.
         jobs.process(asset_id).await.unwrap();
         assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 3);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn processed_posts_are_queued_for_the_tagger(pool: PgPool) {
+        let dir = scratch("tagger");
+        let png = dir.join("p.png");
+        ffmpeg(
+            &png,
+            &["-f", "lavfi", "-i", "testsrc2=size=64x48", "-frames:v", "1"],
+        );
+        let (mut jobs, asset_id) = stored_asset(&pool, &dir, &png, "png", (64, 48)).await;
+        let queued = async || -> Vec<serde_json::Value> {
+            sqlx::query_scalar("SELECT payload FROM jobs WHERE kind = 'ml.tag_post'")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+        jobs.process(asset_id).await.unwrap();
+        assert!(queued().await.is_empty());
+
+        jobs.tag_posts = true;
+        jobs.process(asset_id).await.unwrap();
+        let post_id = media::by_id(&pool, asset_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .post_id;
+        assert_eq!(queued().await, [serde_json::json!({ "post_id": post_id })]);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

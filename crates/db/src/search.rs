@@ -15,6 +15,7 @@
 
 use std::str::FromStr;
 
+use futures_util::{StreamExt, TryStreamExt, stream};
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
@@ -34,6 +35,10 @@ const SAVED_SEARCH_LIMIT: usize = 20;
 
 /// Newest posts of each saved search a `search:` term includes.
 const SAVED_SEARCH_POSTS: u32 = 500;
+
+/// Saved searches a `search:` term runs at once, so it's quicker without
+/// taking most of the pool.
+const SAVED_SEARCH_CONCURRENCY: usize = 4;
 
 /// Which page of results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -975,31 +980,39 @@ async fn saved_search_posts(
         max_per_page: SAVED_SEARCH_POSTS,
         ..config.clone()
     };
-    let mut ids = Vec::new();
-    for text in queries.iter().take(SAVED_SEARCH_LIMIT) {
-        let Ok(mut query) = Query::parse(text) else {
-            continue;
-        };
-        if query
-            .conditions
-            .iter()
-            .any(|c| matches!(c.filter, Filter::Search(_)))
-        {
-            continue;
-        }
-        // The newest posts, whatever order the search was saved with.
-        query.order = None;
-        query.ordfav = None;
-        query.ordpool = None;
-        query.ordfavgroup = None;
-        query.limit = None;
-        let plan = match Box::pin(Plan::resolve(db, &query, visibility, &config)).await {
-            Ok(plan) => plan,
-            Err(SearchError::Invalid(_)) => continue,
-            Err(e) => return Err(e),
-        };
-        ids.extend(plan.ids(db, PageRef::Number(1)).await?);
-    }
+    let runnable = queries
+        .iter()
+        .take(SAVED_SEARCH_LIMIT)
+        .filter_map(|text| Query::parse(text).ok())
+        .filter(|query| {
+            !query
+                .conditions
+                .iter()
+                .any(|c| matches!(c.filter, Filter::Search(_)))
+        })
+        .map(|mut query| {
+            // The newest posts, whatever order the search was saved with.
+            query.order = None;
+            query.ordfav = None;
+            query.ordpool = None;
+            query.ordfavgroup = None;
+            query.limit = None;
+            query
+        })
+        .collect::<Vec<_>>();
+    let config = &config;
+    let found: Vec<Vec<i64>> = stream::iter(runnable)
+        .map(|query| async move {
+            match Box::pin(Plan::resolve(db, &query, visibility, config)).await {
+                Ok(plan) => plan.ids(db, PageRef::Number(1)).await,
+                Err(SearchError::Invalid(_)) => Ok(Vec::new()),
+                Err(e) => Err(e),
+            }
+        })
+        .buffer_unordered(SAVED_SEARCH_CONCURRENCY)
+        .try_collect()
+        .await?;
+    let mut ids = found.concat();
     ids.sort_unstable();
     ids.dedup();
     Ok(ids)

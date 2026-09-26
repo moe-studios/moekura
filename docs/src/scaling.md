@@ -39,27 +39,36 @@ what they just did. Other people may see it a moment later.
 
 ## How fast is search?
 
-Measured with 5,000,000 synthetic posts (240,000 tags, 6.9 GB database) on
-a 16-core machine with 32 GB of memory, PostgreSQL 18 given
-`shared_buffers = 4GB`. Each search is what a results page runs: looking up
-the tags, fetching the page, and counting. Times are the 95th percentile of
-20 runs, in milliseconds:
+Measured with 5,000,000 synthetic posts (250,000 tags, with 1.8 million
+comments, 530,000 notes, 12,500 pools and 14 million tagger suggestions;
+an 11 GB database) on a 16-core machine with 32 GB of memory, PostgreSQL 18
+given `shared_buffers = 4GB`. Each search is what a results page runs:
+looking up the tags, fetching the page, and counting. Times are the 95th
+percentile of 20 runs, in milliseconds:
 
 | Search | Example | ms |
 |---|---|---|
 | front page | | 0.3 |
-| a tag on 70% of posts | `red_red` | 0.6 |
-| two / three common tags | `red_red blue_red` | 5 / 8 |
-| a common tag without another | `blue_red -red_red` | 17 |
-| a rare tag (200 posts) | `eyes_fish_3` | 1.7 |
-| a common and a rare tag | `red_red eyes_fish_3` | 9.5 |
-| either of two tags | `~old_red ~new_red` | 31 |
-| wildcards | `old_*`, `*_red` | 27, 6 |
-| file type and a tag | `filetype:mp4 blue_red` | 48 |
-| rating and score | `rating:e score:>20` | 1.5 |
-| a year, with a tag | `date:2021`, `blue_red date:2021` | 2, 5.5 |
-| page 500 of a common tag | | 6 |
-| a cursor deep into a common tag | `page=b2500000` | 0.7 |
+| a tag on 70% of posts | `red_red` | 0.7 |
+| two / three common tags | `red_red blue_red` | 8 / 15 |
+| a common tag without another | `blue_red -red_red` | 19 |
+| a rare tag (200 posts) | `detailed_back_3` | 1.2 |
+| a common and a rare tag | `red_red detailed_back_3` | 8.7 |
+| either of two tags | `~wet_red ~dry_red` | 30 |
+| wildcards | `wet_*`, `*_red` | 38, 6 |
+| file type and a tag | `filetype:mp4 blue_red` | 53 |
+| rating and score | `rating:e score:>20` | 1.6 |
+| a year, with a tag | `date:2021`, `blue_red date:2021` | 2.4, 5.4 |
+| page 500 of a common tag | | 6.5 |
+| a cursor deep into a common tag | `page=b2500000` | 0.6 |
+| a pool, in its own order | `pool:23`, `ordpool:23` | 1.8, 1.6 |
+| posts in any pool | `pool:any` | 41 |
+| a favorite group (300 posts) | `favgroup:1235` | 2 |
+| a word in notes, common / rare | `note:red`, `note:new` | 74 / 23 |
+| recently commented / noted | `order:comment`, `order:note` | 12, 3.5 |
+| comment count | `commentcount:>3` | 28 |
+| suggested by the tagger, alone / with a common tag | `ai:long_red` | 32 / 49 |
+| a user's 16 saved searches | `search:all` | 82 |
 
 What keeps it fast:
 
@@ -72,6 +81,8 @@ What keeps it fast:
   estimate (`search.count_cost_limit`), are shown as estimates instead.
 - **"Next" links use cursors**, which cost the same however deep they go;
   numbered pages stop at `search.max_page`.
+- **Saved searches run four at a time** for `search:`, each contributing
+  its newest 500 posts.
 
 ## Measuring your own
 
@@ -82,8 +93,9 @@ MOEKURA_DATABASE__URL=postgres://…/moekura_bench moekura admin seed --posts 50
 MOEKURA_DATABASE__URL=postgres://…/moekura_bench moekura admin bench
 ```
 
-Seeding generates everything in PostgreSQL, about 7,000–10,000 posts a
-second. `admin bench --explain NAME` prints the query plans of the matching
+Seeding generates everything in PostgreSQL, about 2,000 posts a second
+(40 minutes for 5,000,000): posts with their comments and votes, notes,
+pools, favorite groups, saved searches and tagger suggestions. `admin bench --explain NAME` prints the query plans of the matching
 searches, and `--check` fails if a search that should be selective reads
 more than half as many pages as the posts table has (CI runs that check on
 200,000 posts).

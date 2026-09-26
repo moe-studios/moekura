@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 moekura-core.workspace = true
+futures-util.workspace = true
 hex.workspace = true
 ipnet.workspace = true
 serde.workspace = true

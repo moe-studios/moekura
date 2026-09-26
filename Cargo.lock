@@ -1715,6 +1715,7 @@ name = "moekura-db"
 version = "0.4.0"
 dependencies = [
  "argon2",
+ "futures-util",
  "hex",
  "ipnet",
  "moekura-core",

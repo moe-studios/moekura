@@ -28,6 +28,9 @@ pub struct Case {
     /// Reading much of the posts table is expected: nothing indexes what
     /// it filters on, or it's a deep numbered page.
     pub may_scan: bool,
+    /// Who searches, for searches of their own things (`search:`);
+    /// otherwise an anonymous visitor.
+    pub viewer: Option<i64>,
 }
 
 /// The tags and values the suite is built from.
@@ -67,11 +70,48 @@ pub async fn suite(db: &PgPool, config: &SearchConfig) -> sqlx::Result<Vec<Case>
     .fetch_optional(db)
     .await?;
 
+    let pool: Option<i32> = sqlx::query_scalar(
+        "SELECT pool_id FROM pool_posts GROUP BY pool_id ORDER BY count(*) DESC, pool_id LIMIT 1",
+    )
+    .fetch_optional(db)
+    .await?;
+    let group: Option<i32> = sqlx::query_scalar(
+        "SELECT gp.group_id FROM favorite_group_posts gp
+         JOIN favorite_groups g ON g.id = gp.group_id AND g.is_public
+         GROUP BY gp.group_id ORDER BY count(*) DESC, gp.group_id LIMIT 1",
+    )
+    .fetch_optional(db)
+    .await?;
+    let saver: Option<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM saved_searches GROUP BY user_id ORDER BY count(*) DESC, user_id LIMIT 1",
+    )
+    .fetch_optional(db)
+    .await?;
+    let note_words: Vec<String> = sqlx::query_scalar(
+        "(SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', body) FROM notes WHERE is_active')
+          ORDER BY ndoc DESC, word LIMIT 1)
+         UNION ALL
+         (SELECT word FROM ts_stat('SELECT to_tsvector(''simple'', body) FROM notes WHERE is_active')
+          ORDER BY ndoc, word LIMIT 1)",
+    )
+    .fetch_all(db)
+    .await?;
+    // A tag the tagger suggests for a recent post that lacks it.
+    let suggested = pick(
+        db,
+        "SELECT t.name FROM tag_suggestions ts
+         JOIN posts p ON p.id = ts.post_id JOIN tags t ON t.id = ts.tag_id
+         WHERE NOT p.tag_ids @> ARRAY[ts.tag_id]
+         ORDER BY ts.post_id DESC, t.post_count DESC LIMIT 1",
+    )
+    .await?;
+
     let mut cases = vec![Case {
         name: "front page",
         query: String::new(),
         page: PageRef::default(),
         may_scan: false,
+        viewer: None,
     }];
     let mut add = |name, query: String, page, may_scan| {
         cases.push(Case {
@@ -79,6 +119,7 @@ pub async fn suite(db: &PgPool, config: &SearchConfig) -> sqlx::Result<Vec<Case>
             query,
             page,
             may_scan,
+            viewer: None,
         });
     };
     let first_word = |tag: &str| tag.split('_').next().unwrap_or(tag).to_owned();
@@ -208,6 +249,85 @@ pub async fn suite(db: &PgPool, config: &SearchConfig) -> sqlx::Result<Vec<Case>
     }
     // Nothing indexes tag counts.
     add("tag count", "tagcount:>35".into(), PageRef::default(), true);
+
+    if let Some(pool) = pool {
+        add("pool", format!("pool:{pool}"), PageRef::default(), false);
+        add(
+            "pool, in order",
+            format!("ordpool:{pool}"),
+            PageRef::default(),
+            false,
+        );
+    }
+    add("any pool", "pool:any".into(), PageRef::default(), false);
+    if let Some(group) = group {
+        add(
+            "favorite group",
+            format!("favgroup:{group}"),
+            PageRef::default(),
+            false,
+        );
+        add(
+            "fav group, in order",
+            format!("ordfavgroup:{group}"),
+            PageRef::default(),
+            false,
+        );
+    }
+    if let [common, rare] = note_words.as_slice() {
+        // On a few percent of posts, each looked up in turn.
+        add(
+            "common note word",
+            format!("note:{common}"),
+            PageRef::default(),
+            true,
+        );
+        add(
+            "rare note word",
+            format!("note:{rare}"),
+            PageRef::default(),
+            false,
+        );
+    }
+    add(
+        "recently commented",
+        "order:comment".into(),
+        PageRef::default(),
+        false,
+    );
+    add(
+        "recently noted",
+        "order:note".into(),
+        PageRef::default(),
+        false,
+    );
+    // Nothing indexes comment counts either.
+    add(
+        "comment count",
+        "commentcount:>3".into(),
+        PageRef::default(),
+        true,
+    );
+    if let Some(tag) = suggested {
+        add("suggested", format!("ai:{tag}"), PageRef::default(), false);
+        if let Some(t1) = top.first() {
+            add(
+                "common and suggested",
+                format!("{t1} ai:{tag}"),
+                PageRef::default(),
+                false,
+            );
+        }
+    }
+    if let Some(user) = saver {
+        cases.push(Case {
+            name: "saved searches",
+            query: "search:all".into(),
+            page: PageRef::default(),
+            may_scan: false,
+            viewer: Some(user),
+        });
+    }
     Ok(cases)
 }
 
@@ -227,11 +347,11 @@ pub struct Measured {
     pub seq_scan: bool,
 }
 
-/// Anonymous visitors: what a public front page runs as.
-fn visitor() -> Visibility {
+/// A member, or an anonymous visitor: what a public site shows them.
+fn visibility(viewer: Option<i64>) -> Visibility {
     Visibility {
         statuses: vec![PostStatus::Active, PostStatus::Flagged],
-        viewer: None,
+        viewer,
     }
 }
 
@@ -269,7 +389,7 @@ pub async fn measure(
         // Everything a search page does: look up the tags, then fetch the
         // page and the count.
         let started = Instant::now();
-        let plan = Plan::resolve(db, &query, &visitor(), config).await?;
+        let plan = Plan::resolve(db, &query, &visibility(case.viewer), config).await?;
         plan.ids(db, case.page).await?;
         let count = plan.count(db).await?;
         if run > 0 {
@@ -359,7 +479,7 @@ mod tests {
         };
         let table = posts_pages(&pool).await.unwrap();
         let cases = suite(&pool, &config).await.unwrap();
-        assert!(cases.len() >= 18, "{cases:?}");
+        assert!(cases.len() >= 32, "{cases:?}");
         let mut problems = Vec::new();
         for case in &cases {
             let measured = measure(&pool, &config, case, 1).await.unwrap();

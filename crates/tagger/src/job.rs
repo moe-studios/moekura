@@ -8,19 +8,13 @@ use moekura_core::jobs::TagPost;
 use moekura_core::posts::PostStatus;
 use moekura_core::tags::TagName;
 use moekura_db::media::{self, Variant};
-use moekura_db::tag_suggestions::{self, NewResult};
+use moekura_db::tag_suggestions::{self, AccountError, NewResult};
 use moekura_jobs::{JobError, Registry};
 use moekura_media::{Media, MediaType};
 use moekura_storage::{Key, Storage};
 use sqlx::PgPool;
 
 use crate::model::Predict;
-
-/// Tag category ids with thresholds of their own.
-const CHARACTER: i16 = 4;
-/// Suggestions below these confidences aren't kept.
-const GENERAL_THRESHOLD: f32 = 0.35;
-const CHARACTER_THRESHOLD: f32 = 0.85;
 
 /// What tagging needs.
 #[derive(Clone)]
@@ -31,6 +25,8 @@ pub struct TaggerJobs {
     /// Scratch space; each job works in its own subdirectory.
     pub work_dir: PathBuf,
     pub model: Arc<dyn Predict>,
+    /// Who tags applied automatically are credited to (`tagger.account`).
+    pub account: String,
 }
 
 impl TaggerJobs {
@@ -42,7 +38,8 @@ impl TaggerJobs {
     }
 
     /// Runs the model on the post's image and saves its suggestions,
-    /// replacing earlier ones. Safe to repeat.
+    /// replacing earlier ones, then applies the most confident ones if the
+    /// site settings say so. Safe to repeat.
     pub async fn tag(&self, post_id: i64) -> Result<(), JobError> {
         let Some(post) = moekura_db::posts::by_id(&self.db, post_id).await? else {
             return Ok(());
@@ -87,8 +84,29 @@ impl TaggerJobs {
             })?;
         drop(work);
 
+        let settings = moekura_db::settings::load(&self.db).await?.tagger;
+        let categories = moekura_db::tags::categories(&self.db).await?;
+        let threshold = |category_id: i16| {
+            let name = categories
+                .iter()
+                .find(|c| c.id == category_id)
+                .map_or("general", |c| c.name.as_str());
+            settings.threshold(name)
+        };
+        let tagger = if settings.auto_apply {
+            let account = tag_suggestions::tagger_account(&self.db, &self.account)
+                .await
+                .map_err(|e| match e {
+                    AccountError::HasPassword(_) => JobError::permanent(e),
+                    AccountError::Db(e) => e.into(),
+                })?;
+            Some(account)
+        } else {
+            None
+        };
+
         let model = self.model.clone();
-        let floor = GENERAL_THRESHOLD.min(CHARACTER_THRESHOLD);
+        let floor = settings.lowest_threshold();
         let prediction = tokio::task::spawn_blocking(move || model.predict(&image, floor))
             .await
             .map_err(|e| JobError::retry(format!("the model crashed: {e}")))?
@@ -118,6 +136,7 @@ impl TaggerJobs {
             .filter(|(tag, confidence)| *confidence >= threshold(tag.category_id))
             .map(|(tag, confidence)| (tag.id, confidence))
             .collect();
+
         let saved = tag_suggestions::save(
             &mut tx,
             &NewResult {
@@ -129,24 +148,30 @@ impl TaggerJobs {
             },
         )
         .await?;
+        let mut applied = false;
+        if let Some(tagger) = tagger.filter(|_| saved) {
+            let sure = settings.auto_threshold();
+            let tags: Vec<i32> = suggestions
+                .iter()
+                .filter(|(_, confidence)| *confidence >= sure)
+                .map(|(id, _)| *id)
+                .collect();
+            let rating = (settings.auto_rating && rating_confidence >= sure).then_some(rating);
+            if !tags.is_empty() || rating.is_some() {
+                applied = tag_suggestions::apply(&mut tx, post_id, tagger, &tags, rating).await?;
+            }
+        }
         tx.commit().await?;
         if saved {
             tracing::info!(
                 post_id,
                 suggestions = suggestions.len(),
                 rating = rating.code(),
+                applied,
                 "post tagged"
             );
         }
         Ok(())
-    }
-}
-
-fn threshold(category_id: i16) -> f32 {
-    if category_id == CHARACTER {
-        CHARACTER_THRESHOLD
-    } else {
-        GENERAL_THRESHOLD
     }
 }
 
@@ -337,6 +362,7 @@ pub(crate) mod tests {
             media: Media::new(MediaConfig::default()),
             work_dir: dir.join("work"),
             model,
+            account: "tagger".into(),
         };
         (jobs, post_id)
     }
@@ -408,5 +434,64 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert!(matches!(jobs.tag(post_id).await, Err(JobError::Retry(_))));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn follows_the_site_settings(pool: PgPool) {
+        let dir = scratch("settings");
+        let fixed = Arc::new(Fixed {
+            seen: Default::default(),
+        });
+        let (jobs, post_id) = processed_post(&pool, &dir, fixed).await;
+        moekura_db::settings::set(
+            &pool,
+            "tagger",
+            serde_json::json!({
+                "thresholds": { "general": 60, "character": 50 },
+                "auto_apply": true,
+                "auto_threshold": 90,
+                "auto_rating": true,
+            }),
+        )
+        .await
+        .unwrap();
+        jobs.tag(post_id).await.unwrap();
+
+        let suggestions: Vec<String> = tag_suggestions::for_post(&pool, post_id)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(suggestions, ["1girl", "hatsune_miku", "kagamine_rin"]);
+        // At least 90% sure: applied by the tagger. The rating, 80% sure,
+        // stays.
+        let post = moekura_db::posts::by_id(&pool, post_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let names: Vec<String> = moekura_db::tags::by_ids(&pool, &post.tag_ids)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"1girl".to_owned()) && names.contains(&"hatsune_miku".to_owned()));
+        assert_eq!(post.rating, Rating::General);
+        let versions = moekura_db::post_versions::list(&pool, post_id)
+            .await
+            .unwrap();
+        assert_eq!(versions[0].updater_name.as_deref(), Some("tagger"));
+
+        // An account someone can log in to isn't used.
+        sqlx::query("UPDATE users SET password_hash = 'x' WHERE name = 'tagger'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(matches!(
+            jobs.tag(post_id).await,
+            Err(JobError::Permanent(_))
+        ));
     }
 }

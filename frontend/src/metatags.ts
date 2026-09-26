@@ -55,6 +55,7 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
   search: ["all"],
   favgroup: [],
   ordfavgroup: [],
+  ai: [],
 };
 
 /// Prefixes that set a new tag's category when tagging.

@@ -6,6 +6,10 @@
 //! Their tag categories are Danbooru's, which Moekura's default ones
 //! share, plus category 9 for the four ratings.
 
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
 use crate::posts::Rating;
 
 /// A model's files, pinned to one revision so their checksums hold.
@@ -163,6 +167,81 @@ fn split_csv(line: &str) -> Result<Vec<String>, String> {
     Ok(fields)
 }
 
+/// Site settings for the tagger's suggestions. Confidences are percents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TaggerSettings {
+    /// The confidence a suggestion needs, by tag category name. Categories
+    /// not listed use `general`'s.
+    pub thresholds: BTreeMap<String, u8>,
+    /// Apply suggestions at least `auto_threshold` sure to the post, as
+    /// the tagger's account (`tagger.account`).
+    pub auto_apply: bool,
+    pub auto_threshold: u8,
+    /// With `auto_apply`, also change the rating when the tagger is at
+    /// least `auto_threshold` sure of another.
+    pub auto_rating: bool,
+}
+
+impl Default for TaggerSettings {
+    fn default() -> Self {
+        Self {
+            thresholds: [("general".to_owned(), 35), ("character".to_owned(), 85)].into(),
+            auto_apply: false,
+            auto_threshold: 95,
+            auto_rating: false,
+        }
+    }
+}
+
+/// The threshold of categories without one of their own.
+const FALLBACK_CATEGORY: &str = "general";
+
+impl TaggerSettings {
+    /// The confidence (0 to 1) a suggestion in `category` needs.
+    pub fn threshold(&self, category: &str) -> f32 {
+        let percent = self
+            .thresholds
+            .get(category)
+            .or_else(|| self.thresholds.get(FALLBACK_CATEGORY))
+            .copied()
+            .unwrap_or(35);
+        f32::from(percent) / 100.0
+    }
+
+    /// The lowest threshold of any category.
+    pub fn lowest_threshold(&self) -> f32 {
+        let lowest = self.thresholds.values().copied().min().unwrap_or(35);
+        f32::from(
+            lowest.min(
+                self.thresholds
+                    .get(FALLBACK_CATEGORY)
+                    .copied()
+                    .unwrap_or(35),
+            ),
+        ) / 100.0
+    }
+
+    /// The confidence (0 to 1) automatic changes need.
+    pub fn auto_threshold(&self) -> f32 {
+        f32::from(self.auto_threshold) / 100.0
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        for (category, &percent) in &self.thresholds {
+            if !(1..=100).contains(&percent) {
+                return Err(format!(
+                    "the threshold for {category} must be from 1 to 100 (percent)"
+                ));
+            }
+        }
+        if !(1..=100).contains(&self.auto_threshold) {
+            return Err("the threshold for applying tags must be from 1 to 100 (percent)".into());
+        }
+        Ok(())
+    }
+}
+
 /// What the model made of an image.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prediction {
@@ -256,6 +335,21 @@ mod tests {
                 ("hatsune_miku".to_owned(), 4, 0.6)
             ]
         );
+    }
+
+    #[test]
+    fn thresholds_by_category() {
+        let mut settings = TaggerSettings::default();
+        assert_eq!(settings.threshold("character"), 0.85);
+        assert_eq!(settings.threshold("general"), 0.35);
+        // Categories without one use general's.
+        assert_eq!(settings.threshold("meta"), 0.35);
+        assert_eq!(settings.lowest_threshold(), 0.35);
+        settings.thresholds.insert("meta".into(), 20);
+        assert_eq!(settings.lowest_threshold(), 0.2);
+        assert!(settings.validate().is_ok());
+        settings.thresholds.insert("meta".into(), 101);
+        assert!(settings.validate().is_err());
     }
 
     #[test]

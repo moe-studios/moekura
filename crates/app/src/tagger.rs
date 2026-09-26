@@ -74,6 +74,7 @@ pub async fn run(config: Config, args: TaggerArgs) -> anyhow::Result<()> {
         media: Media::new(config.media.clone()),
         work_dir,
         model: Arc::new(model),
+        account: tagger.account.clone(),
     }
     .register(&mut registry);
 

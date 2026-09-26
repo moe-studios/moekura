@@ -39,6 +39,14 @@ pub(crate) struct EditForm {
     pub description: String,
     #[serde(default)]
     pub parent: String,
+    /// A suggested tag clicked on (without scripts, which add it to
+    /// `tags` instead).
+    #[serde(default)]
+    pub add: String,
+    /// The suggested rating, clicked on (without scripts, which pick it
+    /// among `rating` instead).
+    #[serde(default)]
+    pub suggested_rating: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -114,7 +122,12 @@ pub(crate) async fn apply(
 ) -> Result<(), Refused> {
     let invalid = |message: &str| Err(Refused::Invalid(message.to_owned()));
     let db = state.db.primary();
-    let Ok(rating) = form.rating.parse::<Rating>() else {
+    let rating = if form.suggested_rating.is_empty() {
+        &form.rating
+    } else {
+        &form.suggested_rating
+    };
+    let Ok(rating) = rating.parse::<Rating>() else {
         return invalid("Choose a rating.");
     };
     let source = form.source.trim();
@@ -137,7 +150,12 @@ pub(crate) async fn apply(
             Err(_) => return invalid("The parent must be a post number."),
         },
     };
-    let changes = parse_edit(db, &form.old_tags, &form.tags).await?;
+    let tags = if form.add.trim().is_empty() {
+        std::borrow::Cow::Borrowed(&form.tags)
+    } else {
+        std::borrow::Cow::Owned(format!("{} {}", form.tags, form.add))
+    };
+    let changes = parse_edit(db, &form.old_tags, &tags).await?;
 
     let mut tx = db.begin().await?;
     let post = posts::lock(&mut *tx, id)

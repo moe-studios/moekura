@@ -119,9 +119,20 @@ fn mode_name(mode: RegistrationMode) -> &'static str {
 fn render_settings(
     page: &Page,
     current: &SiteSettings,
+    categories: &[moekura_db::tags::Category],
     error: Option<String>,
     status: StatusCode,
 ) -> Response {
+    let thresholds: Vec<Value> = categories
+        .iter()
+        .map(|c| {
+            context! {
+                name => c.name,
+                label => c.label,
+                value => current.tagger.thresholds.get(&c.name),
+            }
+        })
+        .collect();
     page.render_with_status(
         status,
         "admin_settings.html",
@@ -141,8 +152,16 @@ fn render_settings(
                     max_recent_deletions => current.promotion_rules.max_recent_deletions,
                 },
                 default_blacklist => current.default_blacklist,
+                tagger => context! {
+                    thresholds => thresholds,
+                    auto_apply => current.tagger.auto_apply,
+                    auto_threshold => current.tagger.auto_threshold,
+                    auto_rating => current.tagger.auto_rating,
+                },
             },
             mail_enabled => page.state().config.mail.is_enabled(),
+            tagger_enabled => page.state().config.tagger.enabled,
+            tagger_account => page.state().config.tagger.account,
             modes => ["open", "invite", "approval", "closed"],
             error => error,
         },
@@ -152,7 +171,14 @@ fn render_settings(
 async fn settings_form(page: Page) -> Result<Response, AppError> {
     page.current.require(Permission::ManageSettings)?;
     let current = page.state().site.get().settings.clone();
-    Ok(render_settings(&page, &current, None, StatusCode::OK))
+    let categories = moekura_db::tags::categories(page.state().db.primary()).await?;
+    Ok(render_settings(
+        &page,
+        &current,
+        &categories,
+        None,
+        StatusCode::OK,
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -181,6 +207,14 @@ struct SettingsForm {
     promotion_max_recent_deletions: String,
     #[serde(default)]
     default_blacklist: String,
+    /// Present when ticked.
+    tagger_auto_apply: Option<String>,
+    tagger_auto_threshold: Option<String>,
+    /// Present when ticked.
+    tagger_auto_rating: Option<String>,
+    /// `tagger_threshold_<category>` fields.
+    #[serde(flatten)]
+    rest: std::collections::HashMap<String, String>,
 }
 
 /// A number field as JSON: the number, or the text as typed so the
@@ -200,6 +234,32 @@ async fn save_settings(
     let state = page.state();
     let db = state.db.primary();
     let before = settings::load(db).await?;
+    let categories = moekura_db::tags::categories(db).await?;
+    // Thresholds for the categories on the form; a blank one falls back
+    // to general's.
+    let mut thresholds: serde_json::Map<String, serde_json::Value> = before
+        .tagger
+        .thresholds
+        .iter()
+        .map(|(category, percent)| (category.clone(), json!(percent)))
+        .collect();
+    for category in &categories {
+        let Some(text) = form
+            .rest
+            .get(&format!("tagger_threshold_{}", category.name))
+        else {
+            continue;
+        };
+        if text.trim().is_empty() {
+            thresholds.remove(&category.name);
+        } else {
+            thresholds.insert(category.name.clone(), number(text));
+        }
+    }
+    let auto_threshold = form
+        .tagger_auto_threshold
+        .as_deref()
+        .map_or_else(|| json!(before.tagger.auto_threshold), number);
     let wanted = [
         ("site_name", json!(form.site_name.trim())),
         ("registration_mode", json!(form.registration_mode)),
@@ -230,6 +290,15 @@ async fn save_settings(
             "default_blacklist",
             json!(form.default_blacklist.replace("\r\n", "\n").trim()),
         ),
+        (
+            "tagger",
+            json!({
+                "thresholds": thresholds,
+                "auto_apply": form.tagger_auto_apply.is_some(),
+                "auto_threshold": auto_threshold,
+                "auto_rating": form.tagger_auto_rating.is_some(),
+            }),
+        ),
     ];
     let current = before.to_map();
     // Validate everything first, so a bad field changes nothing.
@@ -244,6 +313,7 @@ async fn save_settings(
                 return Ok(render_settings(
                     &page,
                     &shown,
+                    &categories,
                     Some(error.to_string()),
                     StatusCode::UNPROCESSABLE_ENTITY,
                 ));
@@ -618,6 +688,48 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(logged, 6);
+
+        // The tagger: thresholds by category, a blank one falling back to
+        // general's.
+        let response = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                "site_name=Tiny+Booru&registration_mode=invite&promotion_uploads=20\
+                 &promotion_edits=5&promotion_account_days=14&promotion_max_recent_deletions=1\
+                 &tagger_threshold_general=40&tagger_threshold_character=\
+                 &tagger_threshold_meta=70&tagger_auto_apply=on&tagger_auto_threshold=92",
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let tagger = moekura_db::settings::load(&pool).await.unwrap().tagger;
+        assert_eq!(
+            tagger.thresholds,
+            [("general".to_owned(), 40), ("meta".to_owned(), 70)].into()
+        );
+        assert!(tagger.auto_apply && !tagger.auto_rating);
+        assert_eq!(tagger.auto_threshold, 92);
+        let page = app.get("/admin/settings", Some(&admin)).await;
+        assert!(
+            page.body.contains(
+                "name=\"tagger_threshold_meta\" type=\"number\" min=\"1\" max=\"100\" value=\"70\""
+            ),
+            "{}",
+            page.body
+        );
+        let bad = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                "site_name=Tiny+Booru&registration_mode=invite&promotion_uploads=20\
+                 &promotion_edits=5&promotion_account_days=14&promotion_max_recent_deletions=1\
+                 &tagger_threshold_general=0",
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(bad.body.contains("from 1 to 100"), "{}", bad.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

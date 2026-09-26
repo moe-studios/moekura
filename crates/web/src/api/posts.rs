@@ -683,6 +683,7 @@ pub(crate) async fn update(
             None => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
             Some(parent) => parent.map(|p| p.to_string()).unwrap_or_default(),
         },
+        ..EditForm::default()
     };
     match crate::edit::apply(&state, &current, id, &form).await {
         Ok(()) => Ok(Json(one(&state, &current, id).await?)),

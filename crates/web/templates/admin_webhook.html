@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Webhook · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "admin_nav.html" %}
+<p class="back"><a href="/admin/webhooks">« Webhooks</a></p>
+<h1>{{ hook.url }}</h1>
+<section class="card medium">
+  <h2>Secret</h2>
+  <p><code class="token">{{ secret }}</code></p>
+  <p class="hint">Each delivery has <code>X-Moekura-Signature: sha256=…</code>, the HMAC-SHA256 of <code>{timestamp}.{body}</code> with this secret, and the timestamp in <code>X-Moekura-Timestamp</code>. Check both.</p>
+  <form class="inline" method="post" action="/admin/webhooks/{{ hook.id }}/secret"><button type="submit" class="secondary">Make a new secret</button></form>
+</section>
+<section class="card medium">
+  <h2>Settings</h2>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/admin/webhooks/{{ hook.id }}">
+    <label for="hook-url">URL</label>
+    <input id="hook-url" name="url" type="url" value="{{ hook.url }}" required>
+    <label for="hook-description">Description <span class="optional">(optional)</span></label>
+    <input id="hook-description" name="description" value="{{ hook.description }}" maxlength="200">
+    <fieldset class="permissions">
+      <legend>Send</legend>
+      {% for e in events %}<label class="choice"><input type="checkbox" name="{{ e.name }}"{% if e.chosen %} checked{% endif %}> {{ e.label }} <code>{{ e.name }}</code></label>{% endfor %}
+    </fieldset>
+    <label class="choice"><input type="checkbox" name="enabled"{% if hook.enabled %} checked{% endif %}> On</label>
+    <button type="submit">Save</button>
+  </form>
+  <div class="actions">
+    <form method="post" action="/admin/webhooks/{{ hook.id }}/test"><button type="submit" class="secondary">Send a test</button></form>
+    <form method="post" action="/admin/webhooks/{{ hook.id }}/delete"><button type="submit" class="danger">Delete webhook</button></form>
+  </div>
+</section>
+<h2>Deliveries</h2>
+{% if deliveries %}
+<table class="tag-table">
+  <thead><tr><th scope="col">Event</th><th scope="col">Result</th><th scope="col">Sent</th></tr></thead>
+  <tbody>
+    {% for d in deliveries %}
+    <tr>
+      <td><code>{{ d.event }}</code> <span class="hint">#{{ d.id }}</span></td>
+      <td><span class="status status-{{ 'dismissed' if d.status == 'failed' else ('upheld' if d.status == 'delivered' else 'open') }}">{{ d.status }}</span>
+        {% if d.response_status %}{{ d.response_status }}{% endif %}{% if d.attempts > 1 %} <span class="hint">after {{ d.attempts }} tries</span>{% endif %}
+        {% if d.response %}<div class="hint">{{ d.response|truncate(200) }}</div>{% endif %}</td>
+      <td><time datetime="{{ d.when }}">{{ d.when[:16]|replace("T", " ") }}</time></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Nothing sent yet.</p>
+{% endif %}
+{% endblock %}

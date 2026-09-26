@@ -493,6 +493,7 @@ async fn create_account(state: &AppState, claims: &Claims) -> Result<User, AppEr
     identities::link(&mut *tx, user.id, &claims.iss, &claims.sub).await?;
     tx.commit().await?;
     tracing::info!(user_id = user.id, name = %user.name, ?status, "account created through single sign-on");
+    crate::webhooks::emit_user(state, &user).await;
     Ok(user)
 }
 

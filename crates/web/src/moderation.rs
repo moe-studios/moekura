@@ -11,6 +11,7 @@ use moekura_core::moderation::ActionKind;
 use moekura_core::moderation::REASON_MAX_LEN;
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
+use moekura_core::webhooks::Event;
 use moekura_db::flags::{self, FlagError};
 use moekura_db::mod_actions::NewAction;
 use moekura_db::mod_actions::{self, Entry, Filter};
@@ -170,6 +171,14 @@ pub(crate) async fn moderate(
         // Deleting settles any open flags.
         flags::resolve(db, id, true, actor).await?;
     }
+    let event = match action {
+        PostAction::Approve => Some(Event::PostApproved),
+        PostAction::Reject | PostAction::Delete => Some(Event::PostDeleted),
+        _ => None,
+    };
+    if let Some(event) = event {
+        crate::webhooks::emit_post(state, event, id, serde_json::json!({ "reason": reason })).await;
+    }
     Ok(())
 }
 
@@ -221,6 +230,13 @@ pub(crate) async fn flag_post(
     }
     tx.commit().await?;
     tracing::info!(post_id = id, user = user.name, "post flagged");
+    crate::webhooks::emit_post(
+        state,
+        Event::PostFlagged,
+        id,
+        serde_json::json!({ "reason": reason }),
+    )
+    .await;
     Ok(())
 }
 

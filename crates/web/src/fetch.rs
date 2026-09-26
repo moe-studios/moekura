@@ -1,77 +1,19 @@
 //! Downloading uploads from a URL without letting the server be used to
-//! reach its own network (SSRF).
-//!
-//! Every connection goes through [`PublicResolver`], which refuses names
-//! resolving to loopback, private, link-local and other non-public
-//! addresses. Because the check happens when connecting, a name cannot pass
-//! validation and then resolve elsewhere. IP-literal hosts skip DNS, so they
-//! are checked in [`check_url`], for the first request and every redirect.
+//! reach its own network (SSRF), through [`moekura_net`]. IP-literal hosts
+//! skip DNS, so they are checked in [`check_url`], for the first request
+//! and every redirect.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
+use std::net::IpAddr;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+pub use moekura_net::is_public;
 use reqwest::redirect;
 use url::{Host, Url};
 
 use crate::upload::{TempUpload, TempWriter, UploadError};
 
 const MAX_REDIRECTS: usize = 5;
-
-/// Whether `ip` is an ordinary address on the public internet.
-pub fn is_public(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => is_public_v4(v4),
-        IpAddr::V6(v6) => is_public_v6(v6),
-    }
-}
-
-fn is_public_v4(ip: Ipv4Addr) -> bool {
-    let [a, b, c, _] = ip.octets();
-    !(ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_private()
-        || ip.is_link_local()
-        || ip.is_broadcast()
-        || ip.is_multicast()
-        || ip.is_documentation()
-        || a == 0
-        // Shared address space (carrier-grade NAT).
-        || (a == 100 && (64..128).contains(&b))
-        // IETF protocol assignments.
-        || (a == 192 && b == 0 && c == 0)
-        // Benchmarking.
-        || (a == 198 && (18..20).contains(&b))
-        // Reserved.
-        || a >= 240)
-}
-
-fn is_public_v6(ip: Ipv6Addr) -> bool {
-    if let Some(v4) = ip.to_ipv4_mapped() {
-        return is_public_v4(v4);
-    }
-    let segments = ip.segments();
-    // Translation prefixes carry an IPv4 address; judge that instead.
-    let embedded = |high: u16, low: u16| Ipv4Addr::from((u32::from(high) << 16) | u32::from(low));
-    match segments {
-        // NAT64 (64:ff9b::/96).
-        [0x64, 0xff9b, 0, 0, 0, 0, high, low] => return is_public_v4(embedded(high, low)),
-        // 6to4 (2002::/16).
-        [0x2002, high, low, ..] => return is_public_v4(embedded(high, low)),
-        _ => {}
-    }
-    !(ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
-        || ip.is_unique_local()
-        || ip.is_unicast_link_local()
-        // Documentation (2001:db8::/32) and Teredo (2001::/32).
-        || (segments[0] == 0x2001 && (segments[1] == 0x0db8 || segments[1] == 0))
-        // Deprecated IPv4-compatible addresses (::a.b.c.d).
-        || segments[..6] == [0; 6])
-}
 
 /// Refuses URLs we won't fetch: non-web schemes, credentials, and hosts
 /// that are non-public IP literals.
@@ -94,28 +36,6 @@ pub fn check_url(url: &Url, allow_private: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// DNS that only returns public addresses.
-struct PublicResolver {
-    allow_private: bool,
-}
-
-impl Resolve for PublicResolver {
-    fn resolve(&self, name: Name) -> Resolving {
-        let allow_private = self.allow_private;
-        Box::pin(async move {
-            let host = name.as_str().to_owned();
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
-                .await?
-                .filter(|addr| allow_private || is_public(addr.ip()))
-                .collect();
-            if addrs.is_empty() {
-                return Err(format!("{host} does not resolve to a public address").into());
-            }
-            Ok(Box::new(addrs.into_iter()) as Addrs)
-        })
-    }
-}
-
 #[derive(Clone)]
 pub struct Fetcher {
     client: reqwest::Client,
@@ -126,7 +46,6 @@ impl Fetcher {
     /// `allow_private` exists for tests against a local server; the app
     /// always passes false.
     pub fn new(timeout: Duration, allow_private: bool) -> Self {
-        moekura_storage::install_crypto_provider();
         let policy = redirect::Policy::custom(move |attempt| {
             if attempt.previous().len() >= MAX_REDIRECTS {
                 return attempt.error("too many redirects");
@@ -136,16 +55,7 @@ impl Fetcher {
                 Err(reason) => attempt.error(reason),
             }
         });
-        let client = reqwest::Client::builder()
-            .dns_resolver(Arc::new(PublicResolver { allow_private }))
-            .redirect(policy)
-            // A proxy would do the resolving and connecting for us.
-            .no_proxy()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(timeout)
-            .user_agent(concat!("moekura/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .expect("the HTTP client configuration is valid");
+        let client = moekura_net::client(timeout, allow_private, policy);
         Self {
             client,
             allow_private,
@@ -215,6 +125,8 @@ fn short_reason(error: &reqwest::Error) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+
     use axum::Router;
     use axum::response::Redirect;
     use axum::routing::get;

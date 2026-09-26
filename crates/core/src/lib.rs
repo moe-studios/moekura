@@ -23,3 +23,4 @@ pub mod tokens;
 pub mod totp;
 pub mod uploads;
 pub mod user_settings;
+pub mod webhooks;

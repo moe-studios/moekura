@@ -34,6 +34,7 @@ mod pools;
 mod posts;
 mod previews;
 pub mod rate_limit;
+pub mod remote_import;
 mod requests;
 mod saved_searches;
 pub mod shared;

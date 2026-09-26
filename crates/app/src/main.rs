@@ -1,6 +1,7 @@
 mod admin;
 mod config;
 mod import;
+mod import_remote;
 mod telemetry;
 
 use std::path::PathBuf;
@@ -96,6 +97,10 @@ async fn main() -> anyhow::Result<()> {
             let result = match command {
                 admin::AdminCommand::Import(args) => match check_media_tools(&config).await {
                     Ok(()) => import::run(config, &db, args).await,
+                    Err(error) => Err(error),
+                },
+                admin::AdminCommand::ImportRemote(args) => match check_media_tools(&config).await {
+                    Ok(()) => import_remote::run(config, &db, args).await,
                     Err(error) => Err(error),
                 },
                 command => admin::run(db.primary(), &config, command).await,

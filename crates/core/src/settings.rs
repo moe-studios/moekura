@@ -24,6 +24,9 @@ pub struct SiteSettings {
     /// checked hourly (see [`crate::promotion`]).
     pub auto_promotion: bool,
     pub promotion_rules: crate::promotion::Rules,
+    /// Link previews (OpenGraph, oEmbed) show questionable and explicit
+    /// posts' images too. Off: only general and sensitive ones.
+    pub preview_all_ratings: bool,
     /// Blacklist for visitors and for users who never saved their own
     /// (see [`crate::blacklist`]); e.g. `rating:e` to hide explicit posts.
     pub default_blacklist: String,
@@ -44,6 +47,7 @@ impl Default for SiteSettings {
                 account_days: 30,
                 max_recent_deletions: 0,
             },
+            preview_all_ratings: false,
             default_blacklist: String::new(),
         }
     }
@@ -150,6 +154,7 @@ mod tests {
                 "auto_promotion",
                 "default_blacklist",
                 "email_verification",
+                "preview_all_ratings",
                 "promotion_rules",
                 "registration_mode",
                 "site_name",

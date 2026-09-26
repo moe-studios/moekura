@@ -30,6 +30,7 @@
       <input id="promotion_max_recent_deletions" name="promotion_max_recent_deletions" type="number" min="0" value="{{ settings.promotion.max_recent_deletions }}">
       <p class="hint">Banned members, and those staff keep from promotion on their profile, aren't promoted.</p>
     </fieldset>
+    <label class="choice"><input type="checkbox" name="preview_all_ratings"{% if settings.preview_all_ratings %} checked{% endif %}> Link previews (in chat apps and social networks) show questionable and explicit posts' images too</label>
     <label for="default_blacklist">Default blacklist</label>
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>
     <p class="hint">For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.</p>

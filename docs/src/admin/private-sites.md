@@ -20,3 +20,6 @@ can stay private.
 
 A CDN or public bucket address would hand files to anyone who has the
 link, so the server warns about this combination at startup.
+
+Feeds need a user's feed token on a private site; see
+[Feeds](../using/search.md#feeds).

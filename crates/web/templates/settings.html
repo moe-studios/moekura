@@ -25,6 +25,12 @@
   </form>
   <p><a href="/settings/account">Your email address and password</a></p>
   <p><a href="/settings/api-keys">API keys</a> let scripts and apps use the site as you.</p>
+  <h2>Feeds</h2>
+  <p class="hint">Search results and comments have Atom feeds (the <em>Feed</em> link beside results). On a private site, feed readers need your feed token: it lets them read feeds as you, and nothing else.</p>
+  <form class="inline" method="post" action="/settings/feed-token">
+    <button type="submit" name="action" value="new" class="secondary">{% if has_feed_token %}Make a new feed token{% else %}Make a feed token{% endif %}</button>
+    {% if has_feed_token %}<button type="submit" name="action" value="revoke" class="secondary">Revoke it</button>{% endif %}
+  </form>
   <p><a href="/saved_searches">Saved searches</a>, to see the newest posts of several searches together.</p>
 </section>
 {% endblock %}

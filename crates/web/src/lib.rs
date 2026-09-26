@@ -18,6 +18,7 @@ mod email;
 pub mod error;
 mod favorite_groups;
 mod favorites;
+mod feeds;
 mod fetch;
 mod files;
 pub mod flash;
@@ -225,6 +226,7 @@ pub fn router(state: AppState) -> Router {
         .merge(email::routes())
         .merge(favorite_groups::routes())
         .merge(favorites::routes())
+        .merge(feeds::routes())
         .merge(history::routes())
         .merge(mass_edit::routes())
         .merge(moderation::routes())

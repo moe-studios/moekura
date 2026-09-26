@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if search.tags %}{{ search.tags }} · {% endif %}{{ site.name }}{% endblock %}
+{% block head %}{% if feed_url %}<link rel="alternate" type="application/atom+xml" title="{{ search.tags or 'Newest posts' }}" href="{{ feed_url }}">{% endif %}{% endblock %}
 {% block content %}
 {% if search.error %}
 <p class="form-error" role="alert">{{ search.error }}</p>
@@ -50,7 +51,7 @@
       <p class="hint"><a href="{{ wiki.url }}">Read the wiki page for {{ wiki.title }}</a></p>
     </aside>
     {% endif %}
-    {% if count %}<p class="result-count">{{ count }}
+    {% if count %}<p class="result-count">{{ count }}{% if feed_url %} · <a href="{{ feed_url }}">Feed</a>{% endif %}
       {% if blacklisted.show_url %}· {{ blacklisted.hidden }} hidden by your blacklist (<a href="{{ blacklisted.show_url }}">show</a>){% endif %}
       {% if blacklisted.hide_url %}· showing blacklisted posts (<a href="{{ blacklisted.hide_url }}">hide</a>){% endif %}
     </p>{% endif %}

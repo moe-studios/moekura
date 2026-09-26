@@ -106,3 +106,16 @@ page 2.
 
 Counts are exact up to 10,000 posts. Above that, a single tag shows its
 known post count, and other searches show "10,000+".
+
+## Feeds
+
+Every search has an Atom feed of its newest posts: the **Feed** link
+beside the results, or `/posts.atom?tags=cat+-dog`. Add it to a feed
+reader to follow new posts of a tag, an artist (`user:alice` for a
+user's uploads), or anything else you can search for. `/comments.atom`
+follows the newest comments.
+
+On a private site, feed readers can't log in; make a feed token under
+**Settings → Feeds** and add `&token=…` to the feed's address. The token
+reads feeds as you (with your blacklist) and does nothing else; making a
+new one or revoking it stops the old one working.

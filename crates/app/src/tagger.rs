@@ -88,9 +88,9 @@ pub async fn run(config: Config, args: TaggerArgs) -> anyhow::Result<()> {
         db.primary().clone(),
         registry,
         pool_config,
-        shutdown,
+        shutdown.clone(),
     ));
-    crate::wait_for_workers(workers).await;
+    crate::wait_for_workers(workers, &shutdown).await;
     db.close().await;
     tracing::info!("shut down");
     Ok(())

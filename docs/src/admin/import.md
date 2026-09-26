@@ -61,3 +61,44 @@ stay part of the tag's name.
 Tags that aren't valid here (with `*`, or starting with a search prefix
 like `user:`) are left out with a note; the rest of the file is still
 imported.
+
+## From other boorus
+
+`moekura admin import-remote` copies posts from another booru through its
+public API, with their tags, rating and source, to move a collection
+here or keep a copy of a tag:
+
+```sh
+moekura admin import-remote https://danbooru.donmai.us "some_artist" --uploader boss
+moekura admin import-remote https://yande.re "rating:s cat" --uploader boss --limit 500
+```
+
+| Site | `--kind` |
+|---|---|
+| Danbooru, and other Moekura sites | `danbooru` |
+| e621, e926 | `e621` |
+| Gelbooru, Safebooru, Rule34 and other Gelbooru 0.2 sites | `gelbooru` |
+| Moebooru: Konachan, yande.re | `moebooru` |
+
+The kind is guessed for the sites named; give `--kind` for others. The
+search is in the other site's syntax. Posts are imported newest first:
+
+- Tags keep their categories where the site has them (Danbooru and
+  e621); from other sites, new tags are general. Tags that aren't valid
+  here are left out.
+- The source is the post's own source, or its page on the other site.
+- Files already here (by MD5, or the same file) aren't downloaded again;
+  parents and children are linked as both arrive.
+- `--notes` and `--pools` also bring notes and pools from Danbooru-style
+  sites. Pools are matched by name.
+
+It waits a second between requests (`--delay-ms`); please don't set it
+much lower on other people's sites. Some sites want an account for their
+API or to show some files: give `--login` and `--api-key` (Gelbooru:
+your user id and API key). Posts whose file the site hides are skipped.
+
+Progress is saved as it goes. Running the same site and search again
+carries on where it stopped (after `--limit`, a failure or Ctrl-C), and
+once it's finished there's nothing to do; `--restart` starts from the
+newest posts again, which also picks up posts added since. To import from
+a site on your own network, add `--allow-private-addresses`.

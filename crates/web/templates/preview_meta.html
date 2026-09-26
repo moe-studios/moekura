@@ -1,0 +1,16 @@
+{# OpenGraph and Twitter card tags; `preview` is set by the page. #}
+{% if preview %}
+<meta property="og:site_name" content="{{ preview.site }}">
+<meta property="og:type" content="website">
+<meta property="og:url" content="{{ preview.url }}">
+<meta property="og:title" content="{{ preview.title }}">
+{% if preview.description %}<meta property="og:description" content="{{ preview.description }}">
+<meta name="description" content="{{ preview.description }}">{% endif %}
+{% if preview.image %}<meta property="og:image" content="{{ preview.image.url }}">
+<meta property="og:image:width" content="{{ preview.image.width }}">
+<meta property="og:image:height" content="{{ preview.image.height }}">
+<meta name="twitter:card" content="summary_large_image">
+{% else %}<meta name="twitter:card" content="summary">{% endif %}
+<meta name="twitter:title" content="{{ preview.title }}">
+{% if preview.oembed_url %}<link rel="alternate" type="application/json+oembed" href="{{ preview.oembed_url }}" title="{{ preview.title }}">{% endif %}
+{% endif %}

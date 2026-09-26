@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ title }} · Wiki · {{ site.name }}{% endblock %}
+{% block head %}{% include "preview_meta.html" %}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
 <article class="wiki">

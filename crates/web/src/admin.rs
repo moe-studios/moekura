@@ -133,6 +133,7 @@ fn render_settings(
                 upload_approval => current.upload_approval,
                 upload_limit_scaling => current.upload_limit_scaling,
                 auto_promotion => current.auto_promotion,
+                preview_all_ratings => current.preview_all_ratings,
                 promotion => context! {
                     uploads => current.promotion_rules.uploads,
                     edits => current.promotion_rules.edits,
@@ -168,6 +169,8 @@ struct SettingsForm {
     upload_limit_scaling: Option<String>,
     /// Present when ticked.
     auto_promotion: Option<String>,
+    /// Present when ticked.
+    preview_all_ratings: Option<String>,
     #[serde(default)]
     promotion_uploads: String,
     #[serde(default)]
@@ -210,6 +213,10 @@ async fn save_settings(
             json!(form.upload_limit_scaling.is_some()),
         ),
         ("auto_promotion", json!(form.auto_promotion.is_some())),
+        (
+            "preview_all_ratings",
+            json!(form.preview_all_ratings.is_some()),
+        ),
         (
             "promotion_rules",
             json!({

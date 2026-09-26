@@ -235,6 +235,43 @@ async fn show(
         .map(|(_, card)| card)
         .collect();
     let page_url = |n: i64| url_value(&format!("/pools/{id}?page={n}"));
+    // The first post visitors may see, for link previews.
+    let preview = if pool.is_deleted {
+        None
+    } else {
+        let public = moekura_db::posts::Visibility {
+            statuses: vec![PostStatus::Active, PostStatus::Flagged],
+            viewer: None,
+        };
+        let image = match pools::visible_post_ids(db, id, &public, 0, 1)
+            .await?
+            .first()
+        {
+            Some(&first) => match posts::by_id(db, first).await? {
+                Some(post) => crate::previews::post_image(state, db, first, post.rating).await?,
+                None => None,
+            },
+            None => None,
+        };
+        let description = if pool.description.is_empty() {
+            format!(
+                "{} {}, {} posts",
+                pool.category,
+                PoolName::display(&pool.name),
+                pool.post_count
+            )
+        } else {
+            markup::excerpt(&pool.description)
+        };
+        crate::previews::meta(
+            state,
+            &pool_url(id),
+            &PoolName::display(&pool.name),
+            &description,
+            image,
+            false,
+        )
+    };
     let staff = page.current.can(Permission::DeletePosts);
     Ok(page.render(
         "pool.html",
@@ -243,6 +280,7 @@ async fn show(
             html => (!pool.description.is_empty())
                 .then(|| Value::from_safe_string(markup::render(&pool.description))),
             version => pool.version,
+            preview => preview,
             cards => cards,
             search_url => Value::from_safe_string(search_url(&format!("pool:{id}"))),
             can_edit => page.current.is_logged_in() && page.current.can(Permission::EditPools) && !pool.is_deleted,

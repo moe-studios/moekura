@@ -788,6 +788,26 @@ pub(crate) async fn render_post(
     )
     .await?;
     let favorite_groups = crate::favorite_groups::for_post(state, &page.current, post.id).await?;
+    // Link previews only for posts visitors may see.
+    let preview = if matches!(post.status, PostStatus::Active | PostStatus::Flagged) {
+        let names: Vec<String> = tag_names.iter().map(|n| (*n).to_owned()).collect();
+        let description = if post.description.is_empty() {
+            tag_string.replace('_', " ")
+        } else {
+            post.description.clone()
+        };
+        let image = crate::previews::post_image(state, db, id, post.rating).await?;
+        crate::previews::meta(
+            state,
+            &format!("/posts/{id}"),
+            &crate::previews::post_title(id, &names),
+            &description,
+            image,
+            true,
+        )
+    } else {
+        None
+    };
     let comment_refused = extra.comment.as_ref().is_some_and(|c| c.error.is_some());
     let status = if failed.is_some() || comment_refused {
         StatusCode::UNPROCESSABLE_ENTITY
@@ -810,6 +830,7 @@ pub(crate) async fn render_post(
             reactions => reactions,
             comments => comments,
             notes => notes,
+            preview => preview,
             can_edit_notes => !video
                 && page.current.is_logged_in()
                 && page.current.can(Permission::EditNotes)

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ pool.name }} · Pools · {{ site.name }}{% endblock %}
+{% block head %}{% include "preview_meta.html" %}{% endblock %}
 {% block content %}
 <p class="back"><a href="/pools">« Pools</a></p>
 <header class="wiki-head">

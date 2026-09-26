@@ -233,6 +233,14 @@ async fn show(
         alias_of => alias_of,
         search_url => Value::from_safe_string(search_url(title.as_str())),
         can_edit => page.current.can(Permission::EditWiki),
+        preview => wiki_page.as_ref().and_then(|p| crate::previews::meta(
+            page.state(),
+            &markup::wiki_url(&p.title),
+            &format!("{} · Wiki", display_title(&p.title)),
+            &markup::excerpt(&p.body),
+            None,
+            false,
+        )),
     };
     let status = if wiki_page.is_some() {
         StatusCode::OK

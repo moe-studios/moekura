@@ -62,6 +62,16 @@ moekura admin settings set default_blacklist "rating:e"
 To show nothing at all without logging in, make the site
 [private](../admin/private-sites.md).
 
+## Link previews
+
+Links to posts, pools and wiki pages unfurl in chat apps and social
+networks (OpenGraph and Twitter card tags), and posts have
+[oEmbed](https://oembed.com/) at `/oembed?url=…`. Previews show a
+post's image only for general and sensitive posts, unless you tick
+**Link previews … show questionable and explicit posts' images too** in
+the site settings (or `moekura admin settings set preview_all_ratings
+true`). Private sites show no previews at all.
+
 ## Reviewing uploads
 
 When **New uploads wait for approval** is ticked under **Admin → Settings**, uploads by users without the *Upload without approval*

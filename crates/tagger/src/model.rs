@@ -20,7 +20,12 @@ pub fn load_runtime(library: Option<&Path>) -> Result<PathBuf, TaggerError> {
             .filter(|p| !p.is_empty())
             .map_or_else(|| PathBuf::from("libonnxruntime.so"), PathBuf::from)
     });
-    let environment = ort::init_from(&path).map_err(|e| TaggerError::Runtime(e.to_string()))?;
+    let environment = ort::init_from(&path).map_err(|e| {
+        TaggerError::Runtime(format!(
+            "{e}. The -tagger image includes it; elsewhere, install ONNX Runtime \
+             and point tagger.runtime or ORT_DYLIB_PATH at libonnxruntime.so"
+        ))
+    })?;
     environment.with_name("moekura").commit();
     Ok(path)
 }

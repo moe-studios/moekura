@@ -51,6 +51,17 @@ pub enum AdminCommand {
     },
     /// Recompute every tag's post count. Post edits wait while it runs.
     RecountTags,
+    /// Queue existing posts for the tagger (`moekura tagger`): those it
+    /// hasn't seen, oldest first
+    TagBacklog {
+        /// Every post, including those it has seen (e.g. after changing
+        /// the model or lowering thresholds)
+        #[arg(long)]
+        all: bool,
+        /// Queue at most this many
+        #[arg(long)]
+        limit: Option<i64>,
+    },
     /// Import a folder of images and videos as posts, with tags from the
     /// sidecar files next to them (pic.png.txt, pic.json, …). Files already
     /// here are skipped, so an interrupted import can be run again.
@@ -258,6 +269,26 @@ pub async fn run(
                 batch_size: batch.max(1),
             };
             seed_posts(db, &options, force).await?;
+        }
+        AdminCommand::TagBacklog { all, limit } => {
+            let posts =
+                moekura_db::tag_suggestions::backlog(db, all, limit.unwrap_or(i64::MAX)).await?;
+            // Batches keep each transaction short on large sites.
+            for batch in posts.chunks(1000) {
+                let mut tx = db.begin().await?;
+                for &post_id in batch {
+                    moekura_db::jobs::enqueue(&mut tx, &moekura_core::jobs::TagPost { post_id })
+                        .await?;
+                }
+                tx.commit().await?;
+            }
+            println!("queued {} post(s) for the tagger", posts.len());
+            if !config.tagger.enabled {
+                println!(
+                    "note: tagger.enabled is off here, so new uploads won't be queued; \
+                     run `moekura tagger` to work through these"
+                );
+            }
         }
         AdminCommand::RecountTags => {
             let fixed = moekura_db::tags::recount(db).await?;

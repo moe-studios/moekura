@@ -1,0 +1,31 @@
+# The tagger, which suggests tags for new uploads, added to the tiny setup:
+#
+#   docker compose -f deploy/compose.tiny.yml -f deploy/compose.tagger.yml up -d
+#
+# It downloads its model (about 380 MB) on first start, and needs about
+# 1 GB of memory more. See docs/src/admin/tagger.md.
+
+services:
+  app:
+    environment:
+      # Queues new uploads for the tagger.
+      MOEKURA_TAGGER__ENABLED: "true"
+
+  tagger:
+    build:
+      context: ..
+      target: tagger
+    restart: unless-stopped
+    environment:
+      MOEKURA_DATABASE__URL: postgres://moekura:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@db/moekura
+      MOEKURA_TAGGER__ENABLED: "true"
+    volumes:
+      # The app's files, to read thumbnails from.
+      - files:/var/lib/moekura/data
+      - models:/var/lib/moekura/models
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  models:

@@ -56,6 +56,7 @@ pub const METATAGS: &[&str] = &[
     "ordfavgroup",
     "note",
     "notecount",
+    "ai",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -217,6 +218,8 @@ pub enum Filter {
     /// Among the viewer's saved searches with this label (`all` for all
     /// of them).
     Search(String),
+    /// The tagger suggests this tag, and the post doesn't have it yet.
+    Ai(TagName),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -460,6 +463,9 @@ impl Query {
                 self.ordfavgroup = Some(pool_ref(value));
                 self.order = Some(Order::FavGroup);
                 return Ok(());
+            }
+            "ai" => {
+                Filter::Ai(TagName::parse(value).map_err(|e| invalid(&format!("the tag {e}")))?)
             }
             "note" => {
                 let words = value.replace('_', " ");
@@ -774,6 +780,7 @@ impl fmt::Display for Condition {
             Filter::FavGroup(group) => write!(f, "favgroup:{group}"),
             Filter::Note(words) => write!(f, "note:{}", words.replace(' ', "_")),
             Filter::NoteCount(b) => write!(f, "notecount:{b}"),
+            Filter::Ai(tag) => write!(f, "ai:{tag}"),
             Filter::Width(b) => write!(f, "width:{b}"),
             Filter::Height(b) => write!(f, "height:{b}"),
             Filter::Mpixels(b) => write!(f, "mpixels:{b}"),
@@ -1051,6 +1058,16 @@ mod tests {
         assert_eq!(filter("notecount:>2"), Filter::NoteCount(Bound::Gt(2)));
         assert_eq!(parse("order:note").order, Some(Order::NoteDesc));
         assert_eq!(parse("note:good_morning").to_string(), "note:good_morning");
+        assert_eq!(
+            filter("ai:Long_Hair"),
+            Filter::Ai(TagName::parse("long_hair").unwrap())
+        );
+        assert_eq!(parse("-ai:cat").to_string(), "-ai:cat");
+        assert!(
+            error("ai:").contains("the tag is empty"),
+            "{}",
+            error("ai:")
+        );
         let query = parse("ordfavgroup:Best");
         assert_eq!(
             (query.order, &query.ordfavgroup),

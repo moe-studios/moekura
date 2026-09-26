@@ -774,6 +774,11 @@ pub(crate) async fn render_post(
                 parent => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
             },
         });
+    let suggestions = if edit.is_some() {
+        crate::suggestions::for_edit_form(state, db, &post, &categories).await?
+    } else {
+        None
+    };
     let ratings: Vec<Value> = Rating::ALL
         .iter()
         .map(|r| context! { code => r.code(), label => r.label() })
@@ -838,6 +843,7 @@ pub(crate) async fn render_post(
             pools => pools,
             favorite_groups => favorite_groups,
             edit => edit,
+            suggestions => suggestions,
             ratings => ratings,
             search => context! {
                 tags => search,

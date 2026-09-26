@@ -428,6 +428,13 @@ button.secondary, .button.secondary { background: var(--border); color: var(--te
 .family-cards .current img { outline: 2px solid var(--accent); outline-offset: 2px; }
 .edit { margin-top: 16px; max-width: 640px; }
 .edit summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.suggestions { margin-top: 20px; }
+.suggestions h3 { margin: 0 0 6px; font-size: 0.95rem; }
+.suggested-tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.suggestions p { margin: 6px 0 0; }
+form .suggestions button[type="submit"] { margin: 0; padding: 3px 10px; font-size: 0.875rem; background: var(--border); color: var(--text); }
+.suggestions .confidence { color: var(--muted); font-size: 0.8em; }
+.suggestions button.chosen { opacity: 0.5; }
 
 /* History */
 

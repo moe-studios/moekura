@@ -53,6 +53,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `similar:` | `similar:123` | looks like post 123 (the post included); found once files are processed |
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
 | `tagcount:` | `tagcount:<5` | number of tags |
+| `ai:` | `ai:long_hair` | the [tagger](tags.md#suggestions-from-the-tagger) suggests this tag, and the post doesn't have it yet |
 | `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted` or `any` (see below) |
 
 Numbers (and sizes and dates) can be compared:

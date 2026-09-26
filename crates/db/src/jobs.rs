@@ -85,12 +85,14 @@ pub struct ClaimedJob {
     pub max_attempts: i32,
 }
 
-/// Takes the next runnable job, locking it for `lock` (extend with
-/// [`heartbeat`] for longer work). Concurrent workers never get the same job.
+/// Takes the next runnable job of one of `kinds`, locking it for `lock`
+/// (extend with [`heartbeat`] for longer work). Concurrent workers never
+/// get the same job.
 pub async fn claim(
     db: impl PgExecutor<'_>,
     worker: &str,
     lock: Duration,
+    kinds: &[&str],
 ) -> sqlx::Result<Option<ClaimedJob>> {
     sqlx::query_as(
         "UPDATE jobs
@@ -98,7 +100,7 @@ pub async fn claim(
              locked_until = now() + make_interval(secs => $2)
          WHERE id = (
              SELECT id FROM jobs
-             WHERE status = 'queued' AND run_at <= now()
+             WHERE status = 'queued' AND run_at <= now() AND kind = ANY($3)
              ORDER BY run_at, id
              FOR UPDATE SKIP LOCKED
              LIMIT 1
@@ -107,6 +109,7 @@ pub async fn claim(
     )
     .bind(worker)
     .bind(lock.as_secs_f64())
+    .bind(kinds)
     .fetch_optional(db)
     .await
 }
@@ -290,6 +293,7 @@ mod tests {
     }
 
     const LOCK: Duration = Duration::from_secs(60);
+    const KINDS: &[&str] = &["test.ping"];
 
     async fn push(pool: &PgPool, n: i32) -> i64 {
         let mut conn = pool.acquire().await.unwrap();
@@ -301,16 +305,16 @@ mod tests {
         let first = push(&pool, 1).await;
         let second = push(&pool, 2).await;
 
-        let job = claim(&pool, "w1", LOCK).await.unwrap().unwrap();
+        let job = claim(&pool, "w1", LOCK, KINDS).await.unwrap().unwrap();
         assert_eq!(
             (job.id, job.kind.as_str(), job.attempts),
             (first, "test.ping", 1)
         );
         assert_eq!(job.payload["n"], 1);
         // A second worker gets the next job, not the claimed one.
-        let other = claim(&pool, "w2", LOCK).await.unwrap().unwrap();
+        let other = claim(&pool, "w2", LOCK, KINDS).await.unwrap().unwrap();
         assert_eq!(other.id, second);
-        assert!(claim(&pool, "w3", LOCK).await.unwrap().is_none());
+        assert!(claim(&pool, "w3", LOCK, KINDS).await.unwrap().is_none());
 
         complete(&pool, first, "w1").await.unwrap();
         assert_eq!(
@@ -332,7 +336,7 @@ mod tests {
             let pool = pool.clone();
             tokio::spawn(async move {
                 let mut ids = Vec::new();
-                while let Some(job) = claim(&pool, &format!("w{w}"), LOCK).await.unwrap() {
+                while let Some(job) = claim(&pool, &format!("w{w}"), LOCK, KINDS).await.unwrap() {
                     ids.push(job.id);
                 }
                 ids
@@ -349,18 +353,34 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn workers_only_claim_their_kinds(pool: PgPool) {
+        let id = push(&pool, 1).await;
+        assert!(
+            claim(&pool, "w1", LOCK, &["test.other"])
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let job = claim(&pool, "w2", LOCK, &["test.other", "test.ping"])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.id, id);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn enqueue_follows_the_transaction(pool: PgPool) {
         let mut tx = pool.begin().await.unwrap();
         enqueue(&mut tx, &Ping { n: 1 }).await.unwrap();
         tx.rollback().await.unwrap();
-        assert!(claim(&pool, "w1", LOCK).await.unwrap().is_none());
+        assert!(claim(&pool, "w1", LOCK, KINDS).await.unwrap().is_none());
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn failures_retry_later_then_die(pool: PgPool) {
         let id = push(&pool, 1).await;
 
-        let job = claim(&pool, "w1", LOCK).await.unwrap().unwrap();
+        let job = claim(&pool, "w1", LOCK, KINDS).await.unwrap().unwrap();
         fail(
             &pool,
             job.id,
@@ -372,20 +392,20 @@ mod tests {
         .await
         .unwrap();
         // Not runnable until the backoff passes.
-        assert!(claim(&pool, "w1", LOCK).await.unwrap().is_none());
+        assert!(claim(&pool, "w1", LOCK, KINDS).await.unwrap().is_none());
 
         sqlx::query("UPDATE jobs SET run_at = now()")
             .execute(&pool)
             .await
             .unwrap();
-        let job = claim(&pool, "w1", LOCK).await.unwrap().unwrap();
+        let job = claim(&pool, "w1", LOCK, KINDS).await.unwrap().unwrap();
         assert_eq!(job.attempts, 2);
         fail(&pool, job.id, "w1", "boom again", Duration::ZERO, false)
             .await
             .unwrap();
 
         // MAX_ATTEMPTS = 2, so it is dead now and keeps its error.
-        assert!(claim(&pool, "w1", LOCK).await.unwrap().is_none());
+        assert!(claim(&pool, "w1", LOCK, KINDS).await.unwrap().is_none());
         let (status, error): (String, String) =
             sqlx::query_as("SELECT status, last_error FROM jobs WHERE id = $1")
                 .bind(id)
@@ -398,7 +418,7 @@ mod tests {
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn permanent_failures_die_immediately(pool: PgPool) {
         push(&pool, 1).await;
-        let job = claim(&pool, "w1", LOCK).await.unwrap().unwrap();
+        let job = claim(&pool, "w1", LOCK, KINDS).await.unwrap().unwrap();
         fail(&pool, job.id, "w1", "unsupported", Duration::ZERO, true)
             .await
             .unwrap();
@@ -408,7 +428,7 @@ mod tests {
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn abandoned_jobs_are_recovered(pool: PgPool) {
         push(&pool, 1).await;
-        let job = claim(&pool, "crashed", LOCK).await.unwrap().unwrap();
+        let job = claim(&pool, "crashed", LOCK, KINDS).await.unwrap().unwrap();
         assert_eq!(recover_abandoned(&pool).await.unwrap(), 0);
 
         sqlx::query("UPDATE jobs SET locked_until = now() - interval '1 second'")
@@ -419,7 +439,7 @@ mod tests {
         // The crashed worker can no longer touch it...
         assert!(!heartbeat(&pool, job.id, "crashed", LOCK).await.unwrap());
         // ...and another worker picks it up.
-        let again = claim(&pool, "w2", LOCK).await.unwrap().unwrap();
+        let again = claim(&pool, "w2", LOCK, KINDS).await.unwrap().unwrap();
         assert_eq!((again.id, again.attempts), (job.id, 2));
         assert!(heartbeat(&pool, job.id, "w2", LOCK).await.unwrap());
     }

@@ -135,6 +135,8 @@ pub struct Plan {
     favgroups: Vec<(bool, i32)>,
     /// `ordfavgroup:`'s group.
     ordfavgroup: Option<i32>,
+    /// `ai:` filters resolved to tag ids.
+    suggested: Vec<(bool, i32)>,
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
@@ -184,6 +186,7 @@ impl Plan {
             ordpool: None,
             favgroups: Vec::new(),
             ordfavgroup: None,
+            suggested: Vec::new(),
             statuses,
             own_pending,
             order: query.order.unwrap_or_default(),
@@ -288,6 +291,17 @@ impl Plan {
                     }
                     plan.post_sets.push((condition.negated, ids));
                 }
+                Filter::Ai(name) => {
+                    let name = crate::tag_relations::aliases_of(db, &[name.as_str()])
+                        .await?
+                        .pop()
+                        .map_or_else(|| name.as_str().to_owned(), |(_, consequent)| consequent);
+                    match crate::tags::by_name(db, &name).await? {
+                        Some(tag) => plan.suggested.push((condition.negated, tag.id)),
+                        None if !condition.negated => plan.nothing = true,
+                        None => {}
+                    }
+                }
                 Filter::Pool(PoolFilter::Any) => plan.pools.push((condition.negated, None)),
                 Filter::Pool(PoolFilter::None) => plan.pools.push((!condition.negated, None)),
                 Filter::Pool(PoolFilter::In(pool)) => {
@@ -386,7 +400,7 @@ impl Plan {
                 &self.favorited_by,
                 self.ordfav,
                 (&self.post_sets, &self.pools, self.ordpool),
-                (&self.favgroups, self.ordfavgroup),
+                (&self.favgroups, self.ordfavgroup, &self.suggested),
             )
         )
     }
@@ -799,6 +813,15 @@ impl Plan {
                 }
             }
         }
+        // Suggested, and not on the post yet.
+        for (negated, tag) in &self.suggested {
+            sql.push(if *negated { " AND NOT (" } else { " AND (" })
+                .push("EXISTS (SELECT 1 FROM tag_suggestions ts WHERE ts.post_id = p.id AND ts.tag_id = ")
+                .push_bind(*tag)
+                .push(") AND NOT p.tag_ids @> ARRAY[")
+                .push_bind(*tag)
+                .push("]::int4[])");
+        }
         for (negated, user) in &self.favorited_by {
             sql.push(if *negated { " AND NOT" } else { " AND" })
                 .push(" EXISTS (SELECT 1 FROM favorites f WHERE f.post_id = p.id AND f.user_id = ")
@@ -855,6 +878,7 @@ impl Plan {
             && self.ordpool.is_none()
             && self.favgroups.is_empty()
             && self.ordfavgroup.is_none()
+            && self.suggested.is_empty()
             && !self.only_commented()
             && !self.only_noted()
             && self.excluded.is_empty()
@@ -1118,6 +1142,7 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         | Filter::Similar(_)
         | Filter::Search(_)
         | Filter::FavGroup(_)
+        | Filter::Ai(_)
         | Filter::Pool(_) => {
             unreachable!("resolved in Plan::resolve")
         }
@@ -1899,6 +1924,50 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn tagger_suggestions(pool: PgPool) {
+        let tagged = seed(
+            &pool,
+            Seed {
+                tags: &["cat"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let untagged = seed(&pool, Seed::default()).await;
+        let plain = seed(&pool, Seed::default()).await;
+        let cat = crate::tags::by_name(&pool, "cat").await.unwrap().unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        for post_id in [tagged, untagged] {
+            crate::tag_suggestions::save(
+                &mut conn,
+                &crate::tag_suggestions::NewResult {
+                    post_id,
+                    model: "m",
+                    rating: moekura_core::posts::Rating::General,
+                    rating_confidence: 0.9,
+                    suggestions: &[(cat.id, 0.8)],
+                },
+            )
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO tag_relations (kind, antecedent_name, consequent_name, status)
+             VALUES ('alias', 'kitty', 'cat', 'active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Suggested but not applied.
+        assert_eq!(search(&pool, "ai:cat").await, [untagged]);
+        assert_eq!(search(&pool, "ai:kitty").await, [untagged]);
+        assert_eq!(search(&pool, "-ai:cat").await, [plain, tagged]);
+        assert!(search(&pool, "ai:dog").await.is_empty());
+        assert_eq!(search(&pool, "-ai:dog").await.len(), 3);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn orders_and_pages(pool: PgPool) {
         let mut ids = Vec::new();
         for (i, score) in [3, 1, 2, 5, 4].into_iter().enumerate() {
@@ -2122,6 +2191,7 @@ mod tests {
             ordpool: None,
             favgroups: Vec::new(),
             ordfavgroup: None,
+            suggested: Vec::new(),
             statuses: vec!["active"],
             own_pending: None,
             order,

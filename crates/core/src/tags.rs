@@ -15,6 +15,7 @@ pub const POST_MAX_TAGS: usize = 1000;
 /// renames existing tags starting with it.
 pub const RESERVED_PREFIXES: &[&str] = &[
     // Metatags.
+    "ai",
     "approver",
     "comment",
     "commentcount",

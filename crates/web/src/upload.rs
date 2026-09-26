@@ -758,10 +758,15 @@ mod tests {
                 .unwrap()
         );
 
-        let job = jobs::claim(&pool, "test", std::time::Duration::from_secs(60))
-            .await
-            .unwrap()
-            .unwrap();
+        let job = jobs::claim(
+            &pool,
+            "test",
+            std::time::Duration::from_secs(60),
+            &["media.process"],
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(
             (job.kind.as_str(), job.payload["asset_id"].as_i64()),
             ("media.process", Some(asset.id))

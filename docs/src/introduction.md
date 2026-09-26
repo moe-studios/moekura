@@ -13,7 +13,9 @@ What it does:
   refused; similar images are found by their perceptual hash.
 - **Tags**: categories (general, artist, copyright, character, meta),
   aliases and implications, autocomplete, and a [search
-  syntax](using/search.md) with tags, wildcards and filters.
+  syntax](using/search.md) with tags, wildcards and filters. An optional
+  [tagger](admin/tagger.md) suggests tags for new uploads with a machine
+  learning model, on the CPU.
 - **People**: accounts with roles, favorites, votes, blacklists and
   per-user settings; registration can be open, invite-only, approved by
   staff, or closed.

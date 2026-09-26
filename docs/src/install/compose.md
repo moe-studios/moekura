@@ -21,6 +21,13 @@ Two volumes hold everything worth keeping: `db` (PostgreSQL) and `files`
 The image (about 170 MB) includes its own builds of libvips and ffmpeg with
 only the formats Moekura accepts.
 
+To suggest tags for uploads with the [tagger](../admin/tagger.md), add
+its compose file:
+
+```sh
+docker compose -f deploy/compose.tiny.yml -f deploy/compose.tagger.yml up -d
+```
+
 ## Settings
 
 Configure the app with `MOEKURA_*` environment variables in the compose file,

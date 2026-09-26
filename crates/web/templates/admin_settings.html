@@ -34,6 +34,19 @@
     <label for="default_blacklist">Default blacklist</label>
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>
     <p class="hint">For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.</p>
+    <fieldset class="limits">
+      <legend>Tagger</legend>
+      {% if not tagger_enabled %}<p class="hint">The tagger isn't set up (<code>[tagger]</code> in the server configuration), so these only matter once it is.</p>{% endif %}
+      <p class="hint">How sure the tagger must be, in percent, to suggest a tag of each category. Categories left blank use General's.</p>
+      {% for category in settings.tagger.thresholds %}
+      <label for="tagger_threshold_{{ category.name }}">{{ category.label }}</label>
+      <input id="tagger_threshold_{{ category.name }}" name="tagger_threshold_{{ category.name }}" type="number" min="1" max="100" value="{{ category.value if category.value is not none else "" }}">
+      {% endfor %}
+      <label class="choice"><input type="checkbox" name="tagger_auto_apply"{% if settings.tagger.auto_apply %} checked{% endif %}> Add suggested tags to posts when the tagger is at least this sure, as the <code>{{ tagger_account }}</code> account</label>
+      <label for="tagger_auto_threshold">Percent sure</label>
+      <input id="tagger_auto_threshold" name="tagger_auto_threshold" type="number" min="1" max="100" value="{{ settings.tagger.auto_threshold }}">
+      <label class="choice"><input type="checkbox" name="tagger_auto_rating"{% if settings.tagger.auto_rating %} checked{% endif %}> Change the rating too, when it is that sure of another</label>
+    </fieldset>
     <p class="hint">To make the site private, take “View posts” away from the Anonymous role under <a href="/admin/roles">Roles</a>.</p>
     <button type="submit">Save</button>
   </form>

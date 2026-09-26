@@ -17,6 +17,13 @@ pub struct SiteSettings {
     /// New uploads wait in the approval queue unless the uploader's role
     /// has `UploadWithoutApproval`.
     pub upload_approval: bool,
+    /// Pending upload limits grow with a user's approved uploads and
+    /// shrink with their deleted ones (see [`crate::uploads`]).
+    pub upload_limit_scaling: bool,
+    /// Members whose record meets `promotion_rules` become contributors,
+    /// checked hourly (see [`crate::promotion`]).
+    pub auto_promotion: bool,
+    pub promotion_rules: crate::promotion::Rules,
     /// Blacklist for visitors and for users who never saved their own
     /// (see [`crate::blacklist`]); e.g. `rating:e` to hide explicit posts.
     pub default_blacklist: String,
@@ -29,6 +36,14 @@ impl Default for SiteSettings {
             registration_mode: RegistrationMode::Open,
             email_verification: false,
             upload_approval: false,
+            upload_limit_scaling: false,
+            auto_promotion: false,
+            promotion_rules: crate::promotion::Rules {
+                uploads: 50,
+                edits: 0,
+                account_days: 30,
+                max_recent_deletions: 0,
+            },
             default_blacklist: String::new(),
         }
     }
@@ -132,11 +147,14 @@ mod tests {
         assert_eq!(
             SiteSettings::keys(),
             [
+                "auto_promotion",
                 "default_blacklist",
                 "email_verification",
+                "promotion_rules",
                 "registration_mode",
                 "site_name",
-                "upload_approval"
+                "upload_approval",
+                "upload_limit_scaling"
             ]
         );
     }

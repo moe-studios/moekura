@@ -13,6 +13,7 @@ rename them, and choose their permissions.
 | Favorite, Vote | favoriting posts; voting on posts and comments |
 | Comment | posting comments, and editing and deleting your own |
 | Edit the wiki | |
+| Mass edit tags | adding and removing tags on every post a search finds (Moderation → Mass edit) |
 | Edit notes | adding, moving, changing and deleting notes on posts |
 | Create and edit pools | making pools, and changing their posts, names and descriptions (deleting a pool takes *Delete and restore posts*) |
 | Flag posts | asking moderators to delete a post |
@@ -35,8 +36,42 @@ The built-in roles and what they start with:
 | Member | 10 | Anonymous, plus Upload, Edit posts and tags, Comment, Favorite, Vote, Flag posts, Edit the wiki, Create and edit pools, Edit notes |
 | Contributor | 20 | Member, plus Upload without approval |
 | Janitor | 30 | Contributor, plus Approve posts, Delete and restore posts, Manage tags, See deleted posts, Hide comments |
-| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log |
+| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags |
 | Admin | 50 | everything |
+
+## Upload limits
+
+Each role can limit uploads, under **Admin → Roles** (empty means no
+limit):
+
+- **Waiting for approval at once**: when the approval queue is on, how
+  many of a user's uploads may wait in it. Members start at 10. Roles
+  with *Upload without approval* skip the queue, so this doesn't apply
+  to them.
+- **Per day**: uploads in the last 24 hours, queued or not.
+
+With **Limits on uploads waiting for approval grow…** ticked in the site
+settings, the queue limit follows each user's record, as on Danbooru:
+one more for every 10 of their uploads that were approved, one fewer for
+every 5 that were deleted, from 1 up to four times the role's limit.
+
+The upload page tells users how many uploads they have left, and why an
+upload was refused; the API's `/users/me` says the same under `uploads`.
+
+## Automatic promotion
+
+With **Automatic promotion** ticked in the site settings, members become
+contributors (who upload without approval) once their record is good
+enough. Every hour, members are promoted who have at least the set
+number of approved uploads and post edits, have been registered for the
+set number of days, and have had at most the set number of uploads
+deleted in the last 30 days. Defaults: 50 uploads, no edits needed, 30
+days, no recent deletions.
+
+Banned members aren't promoted. Staff who manage users can keep someone
+from automatic promotion with **Never promote automatically** on their
+profile. Promotions are in the moderation log, and profiles say when
+someone was promoted.
 
 ## Rank
 

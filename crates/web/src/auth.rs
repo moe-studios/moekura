@@ -107,6 +107,7 @@ fn anonymous_role(site: &SiteSnapshot) -> Role {
             permissions: Permissions::NONE,
             rank: 0,
             system: Some(SystemRole::Anonymous),
+            upload_limits: Default::default(),
         })
 }
 

@@ -5,6 +5,7 @@
 
 pub mod accounts;
 pub mod blacklist;
+pub mod bulk;
 pub mod config;
 pub mod import;
 pub mod jobs;
@@ -14,9 +15,11 @@ pub mod notes;
 pub mod permissions;
 pub mod pools;
 pub mod posts;
+pub mod promotion;
 pub mod search;
 pub mod settings;
 pub mod tags;
 pub mod tokens;
 pub mod totp;
+pub mod uploads;
 pub mod user_settings;

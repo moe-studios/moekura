@@ -71,6 +71,19 @@ pub struct ApiMe {
     pub settings: ApiSettings,
     /// Set while banned.
     pub ban: Option<ApiActiveBan>,
+    pub uploads: ApiUploadAllowance,
+}
+
+/// How many more posts the account may upload now.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ApiUploadAllowance {
+    /// Why uploading is refused now, if it is.
+    pub refused: Option<String>,
+    /// Uploads left before the approval queue's limit; `null` if none
+    /// applies.
+    pub pending_left: Option<i64>,
+    /// Uploads left today; `null` if there's no daily limit.
+    pub today_left: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -120,6 +133,14 @@ pub(crate) async fn me(
             per_page: settings.per_page,
             theme: settings.theme.as_str().to_owned(),
             blacklist: crate::blacklist::text_for(&state, &current),
+        },
+        uploads: {
+            let allowance = crate::upload::allowance(&state, &current).await?;
+            ApiUploadAllowance {
+                refused: allowance.refusal,
+                pending_left: allowance.pending_left,
+                today_left: allowance.today_left,
+            }
         },
         ban: current.ban.as_ref().map(|ban| ApiActiveBan {
             reason: ban.reason.clone(),

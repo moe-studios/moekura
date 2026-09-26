@@ -46,13 +46,14 @@
 
 {% if relations %}
 <table class="tag-table relations">
-  <thead><tr><th scope="col">From</th><th scope="col">To</th><th scope="col">Status</th><th scope="col">Requested</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <thead><tr><th scope="col">From</th><th scope="col">To</th><th scope="col">Status</th><th scope="col" class="num">Score</th><th scope="col">Requested</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
   <tbody>
     {% for r in relations %}
     <tr>
       <td><a class="tag" href="{{ r.antecedent_url }}">{{ r.antecedent }}</a></td>
       <td><a class="tag" href="{{ r.consequent_url }}">{{ r.consequent }}</a></td>
-      <td><span class="status status-{{ r.status }}">{{ r.status }}</span>{% if r.approver and r.status != "pending" %} <span class="hint">by {{ r.approver }}</span>{% endif %}</td>
+      <td><a href="{{ r.url }}"><span class="status status-{{ r.status }}">{{ r.status }}</span></a>{% if r.approver and r.status != "pending" %} <span class="hint">by {{ r.approver }}</span>{% endif %}</td>
+      <td class="num"><a href="{{ r.url }}">{{ r.score }}</a></td>
       <td>{{ r.created }}{% if r.creator %} by {{ r.creator }}{% endif %}{% if r.reason %}<div class="hint">{{ r.reason }}</div>{% endif %}</td>
       <td><div class="actions">
         {% if r.can_approve %}

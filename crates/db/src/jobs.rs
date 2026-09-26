@@ -16,6 +16,39 @@ pub async fn enqueue<J: Job>(conn: &mut PgConnection, job: &J) -> sqlx::Result<i
     enqueue_at(conn, job, Duration::ZERO).await
 }
 
+/// Enqueues `job` unless a job of its kind is already waiting or running;
+/// returns whether it did. For scheduled jobs, where several nodes may try
+/// at once and one run is enough.
+pub async fn enqueue_unique<J: Job>(db: &sqlx::PgPool, job: &J) -> sqlx::Result<bool> {
+    let payload = serde_json::to_value(job).map_err(|e| sqlx::Error::Encode(Box::new(e)))?;
+    let mut tx = db.begin().await?;
+    // Serialises nodes scheduling the same kind.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(J::KIND)
+        .execute(&mut *tx)
+        .await?;
+    let inserted = sqlx::query(
+        "INSERT INTO jobs (kind, payload, max_attempts)
+         SELECT $1, $2, $3
+         WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE kind = $1 AND status IN ('queued', 'running'))",
+    )
+    .bind(J::KIND)
+    .bind(payload)
+    .bind(J::MAX_ATTEMPTS)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    if inserted {
+        sqlx::query("SELECT pg_notify($1, '')")
+            .bind(CHANNEL)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(inserted)
+}
+
 /// Like [`enqueue`], but the job becomes runnable after `delay`.
 pub async fn enqueue_at<J: Job>(
     conn: &mut PgConnection,

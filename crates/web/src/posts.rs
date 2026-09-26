@@ -182,6 +182,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         context! {
             search => context! { tags => normalized },
             save_search => crate::saved_searches::save_form(&page.current, &normalized),
+            can_tag_script => page.current.is_logged_in() && page.current.can(Permission::EditPosts),
             cards => card_values,
             blacklisted => blacklisted,
             count => count_text(count),
@@ -228,7 +229,7 @@ async fn sidebar_tags(
         .collect())
 }
 
-fn count_text(count: Count) -> String {
+pub(crate) fn count_text(count: Count) -> String {
     let posts = |n: i64| if n == 1 { "post" } else { "posts" };
     match count {
         Count::Exact(n) => format!("{} {}", thousands(n), posts(n)),

@@ -46,10 +46,12 @@ pub enum Permission {
     EditPools = 19,
     /// Add, change and delete notes on posts.
     EditNotes = 20,
+    /// Add and remove tags on every post matching a search at once.
+    MassEditTags = 21,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 21] = [
+    pub const ALL: [Permission; 22] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -71,6 +73,7 @@ impl Permission {
         Permission::ModerateComments,
         Permission::EditPools,
         Permission::EditNotes,
+        Permission::MassEditTags,
     ];
 
     const fn bit(self) -> u64 {
@@ -101,6 +104,7 @@ impl Permission {
             Permission::ModerateComments => "moderate_comments",
             Permission::EditPools => "edit_pools",
             Permission::EditNotes => "edit_notes",
+            Permission::MassEditTags => "mass_edit_tags",
         }
     }
 
@@ -128,6 +132,7 @@ impl Permission {
             Permission::ModerateComments => "Hide comments and handle reports about them",
             Permission::EditPools => "Create and edit pools",
             Permission::EditNotes => "Edit notes",
+            Permission::MassEditTags => "Mass edit tags",
         }
     }
 }
@@ -261,7 +266,8 @@ impl SystemRole {
             ViewDeleted,
             ModerateComments,
         ]));
-        const MODERATOR: Permissions = JANITOR.with(Permissions::of(&[BanUsers, ViewAuditLog]));
+        const MODERATOR: Permissions =
+            JANITOR.with(Permissions::of(&[BanUsers, ViewAuditLog, MassEditTags]));
         match self {
             SystemRole::Anonymous => ANONYMOUS,
             SystemRole::Member => MEMBER,
@@ -282,6 +288,7 @@ pub struct Role {
     pub permissions: Permissions,
     pub rank: i16,
     pub system: Option<SystemRole>,
+    pub upload_limits: crate::uploads::UploadLimits,
 }
 
 impl Role {

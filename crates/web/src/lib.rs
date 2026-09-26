@@ -24,6 +24,7 @@ pub mod flash;
 mod health;
 mod history;
 pub mod import;
+mod mass_edit;
 mod moderation;
 mod notes;
 pub mod oidc;
@@ -31,6 +32,7 @@ pub mod pages;
 mod pools;
 mod posts;
 pub mod rate_limit;
+mod requests;
 mod saved_searches;
 pub mod shared;
 mod tag_relations;
@@ -224,10 +226,12 @@ pub fn router(state: AppState) -> Router {
         .merge(favorite_groups::routes())
         .merge(favorites::routes())
         .merge(history::routes())
+        .merge(mass_edit::routes())
         .merge(moderation::routes())
         .merge(notes::routes())
         .merge(oidc::routes())
         .merge(pools::routes())
+        .merge(requests::routes())
         .merge(saved_searches::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())

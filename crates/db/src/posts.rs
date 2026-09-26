@@ -281,6 +281,29 @@ pub async fn count_by_uploader(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::R
         .await
 }
 
+/// A user's uploads as upload limits count them.
+pub async fn upload_counts(
+    db: impl PgExecutor<'_>,
+    user_id: i64,
+) -> sqlx::Result<moekura_core::uploads::UploadCounts> {
+    let (pending, today, approved, deleted): (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*) FILTER (WHERE status = 'pending'),
+                count(*) FILTER (WHERE created_at > now() - interval '1 day'),
+                count(*) FILTER (WHERE status IN ('active', 'flagged')),
+                count(*) FILTER (WHERE status = 'deleted')
+         FROM posts WHERE uploader_id = $1",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await?;
+    Ok(moekura_core::uploads::UploadCounts {
+        pending,
+        today,
+        approved,
+        deleted,
+    })
+}
+
 /// Like [`by_id`], locking the row until the transaction ends so edits
 /// don't overwrite each other.
 pub async fn lock(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post>> {

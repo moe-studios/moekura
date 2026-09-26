@@ -12,6 +12,14 @@
     <dt>Favorite groups</dt><dd><a href="{{ favorite_groups_url }}">{{ favorite_groups }}</a></dd>
     <dt>Comments</dt><dd><a href="{{ comments_url }}">{{ comments }}</a></dd>
   </dl>
+  {% if promotion.promoted %}<p class="hint">Promoted automatically on {{ promotion.promoted }}.</p>{% endif %}
+  {% if promotion.can_change %}
+  <form class="inline" method="post" action="/users/{{ user.name }}/auto-promotion">
+    {% if not promotion.blocked %}<input type="hidden" name="blocked" value="1">{% endif %}
+    <button type="submit" class="secondary">{% if promotion.blocked %}Allow automatic promotion{% else %}Never promote automatically{% endif %}</button>
+    {% if promotion.blocked %}<span class="hint">Kept from automatic promotion.</span>{% endif %}
+  </form>
+  {% endif %}
   {% if bans %}
   <h2>Bans</h2>
   <ul class="plain">

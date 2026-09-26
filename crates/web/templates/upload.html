@@ -3,6 +3,9 @@
 {% block content %}
 <section class="card medium">
   <h1>Upload</h1>
+  {% if allowance and allowance.refusal %}<p class="notice" role="status">{{ allowance.refusal }}</p>
+  {% elif allowance and (allowance.pending_left is not none or allowance.today_left is not none) %}<p class="hint">You can upload
+    {% if allowance.pending_left is not none %}{{ allowance.pending_left }} more before some are approved{% endif %}{% if allowance.pending_left is not none and allowance.today_left is not none %}, and {% endif %}{% if allowance.today_left is not none %}{{ allowance.today_left }} more today{% endif %}.</p>{% endif %}
   {% if duplicate_of %}
   <p class="form-error" role="alert">This file was already uploaded as <a href="/posts/{{ duplicate_of }}">post #{{ duplicate_of }}</a>.</p>
   {% elif error %}

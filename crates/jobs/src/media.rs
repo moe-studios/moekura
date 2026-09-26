@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use moekura_core::jobs::{ProcessMedia, PurgePost};
+use moekura_core::jobs::{ExpireStagedUploads, ProcessMedia, PurgePost};
 use moekura_core::posts::PostStatus;
 use moekura_db::media::{self, Asset, Variant};
 use moekura_media::{Media, MediaError, MediaType};
@@ -10,6 +10,12 @@ use moekura_storage::{Key, Storage};
 use sqlx::PgPool;
 
 use crate::{JobError, Registry};
+
+/// How long a staged upload waits to be made into a post.
+pub const STAGED_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// How often unused staged uploads are looked for.
+const STAGED_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 /// What media jobs need.
 #[derive(Clone)]
@@ -28,10 +34,36 @@ impl MediaJobs {
             let jobs = self.clone();
             async move { jobs.process(job.asset_id).await }
         });
+        let expirer = purger.clone();
         registry.register(move |job: PurgePost| {
             let jobs = purger.clone();
             async move { jobs.purge(job.post_id).await }
         });
+        registry
+            .register(move |_: ExpireStagedUploads| {
+                let jobs = expirer.clone();
+                async move { jobs.expire_staged().await.map(|_| ()) }
+            })
+            .every::<ExpireStagedUploads>(STAGED_EVERY);
+    }
+
+    /// Removes staged uploads nobody made into a post within
+    /// [`STAGED_MAX_AGE`], with their stored files when nothing else
+    /// uses them. Returns how many files were removed.
+    pub async fn expire_staged(&self) -> Result<usize, JobError> {
+        let keys = moekura_db::staged_uploads::expire(&self.db, STAGED_MAX_AGE).await?;
+        for key in &keys {
+            if let Some(key) = Key::parse(key) {
+                self.storage
+                    .delete(&key)
+                    .await
+                    .map_err(|e| JobError::retry(format!("deleting {}: {e}", key.as_str())))?;
+            }
+        }
+        if !keys.is_empty() {
+            tracing::info!(files = keys.len(), "removed unused staged uploads");
+        }
+        Ok(keys.len())
     }
 
     /// Removes a deleted post's files, then the post. Safe to repeat:

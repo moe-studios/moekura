@@ -54,3 +54,46 @@ pub struct SendMail {
 impl Job for SendMail {
     const KIND: &'static str = "mail.send";
 }
+
+/// Promote members whose record meets the site's rules; scheduled hourly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromoteUsers {}
+
+impl Job for PromoteUsers {
+    const KIND: &'static str = "users.promote";
+    const MAX_ATTEMPTS: i32 = 3;
+}
+
+/// Apply a mass tag edit (`mass_updates` row `id`) to every post matching
+/// its search.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MassUpdate {
+    pub id: i64,
+}
+
+impl Job for MassUpdate {
+    const KIND: &'static str = "tags.mass_update";
+    const MAX_ATTEMPTS: i32 = 3;
+}
+
+/// Apply an approved bulk update request's commands, in order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyBulkUpdate {
+    pub request_id: i32,
+}
+
+impl Job for ApplyBulkUpdate {
+    const KIND: &'static str = "tags.bulk_update";
+    /// Commands already applied are safe to repeat, but a failure is
+    /// reported rather than retried endlessly.
+    const MAX_ATTEMPTS: i32 = 2;
+}
+
+/// Remove staged uploads nobody made into a post; scheduled hourly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpireStagedUploads {}
+
+impl Job for ExpireStagedUploads {
+    const KIND: &'static str = "uploads.expire_staged";
+    const MAX_ATTEMPTS: i32 = 3;
+}

@@ -16,11 +16,19 @@
       <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.granted %} checked{% endif %}> {{ p.label }}</label>
       {% endfor %}
     </fieldset>
+    <fieldset class="limits">
+      <legend>Upload limits <span class="optional">(empty for none)</span></legend>
+      <label for="pending-{{ role.id }}">Waiting for approval at once</label>
+      <input id="pending-{{ role.id }}" name="pending_upload_limit" type="number" min="0" value="{{ role.pending_limit if role.pending_limit is not none else '' }}">
+      <label for="daily-{{ role.id }}">Per day</label>
+      <input id="daily-{{ role.id }}" name="daily_upload_limit" type="number" min="0" value="{{ role.daily_limit if role.daily_limit is not none else '' }}">
+    </fieldset>
     <button type="submit">Save {{ role.name }}</button>
   </form>
   {% else %}
   <h2>{{ role.name }} <span class="optional">(rank {{ role.rank }})</span></h2>
   <p class="hint">{% for p in role.permissions if p.granted %}{{ p.label }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% if role.pending_limit is not none or role.daily_limit is not none %}<p class="hint">Upload limits: {% if role.pending_limit is not none %}{{ role.pending_limit }} waiting for approval{% endif %}{% if role.pending_limit is not none and role.daily_limit is not none %}, {% endif %}{% if role.daily_limit is not none %}{{ role.daily_limit }} a day{% endif %}</p>{% endif %}
   {% endif %}
 </section>
 {% endfor %}

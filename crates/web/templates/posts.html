@@ -7,6 +7,15 @@
 {% else %}
 <div class="results-layout">
   <aside class="results-sidebar">
+    {% if can_tag_script %}
+    <section class="tag-script" data-tag-script hidden>
+      <h2>Tag script</h2>
+      <label for="tag-script">Script</label>
+      <input id="tag-script" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="tag -tag rating:s">
+      <label class="choice"><input type="checkbox"> Apply by clicking posts</label>
+      <p class="hint" data-tag-script-status aria-live="polite"></p>
+    </section>
+    {% endif %}
     {% if save_search %}
     <details class="edit save-search">
       <summary>Save this search</summary>

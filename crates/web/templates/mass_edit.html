@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Mass edit tags · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Mass edit tags</h1>
+<p class="hint">Add and remove tags on every post a search finds, in the background. Changes show in each post's history, and new tags bring what they imply. Preview first.</p>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<form class="wiki-form" method="post" action="/moderation/mass-edit">
+  <label for="mass-query">Search</label>
+  <input id="mass-query" name="query" value="{{ form.query }}" required autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+  <label for="mass-add">Add tags</label>
+  <input id="mass-add" name="add" value="{{ form.add }}" autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  <label for="mass-remove">Remove tags</label>
+  <input id="mass-remove" name="remove" value="{{ form.remove }}" autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  <div class="actions">
+    <button type="submit" name="step" value="preview" class="secondary">Preview</button>
+    {% if preview %}<button type="submit" name="step" value="run">Change {{ preview.count }}</button>{% endif %}
+  </div>
+</form>
+{% if preview %}
+<section class="mass-preview">
+  <h2>{{ preview.count }}</h2>
+  <p class="hint">{% if preview.add %}Adding {{ preview.add|join(", ") }}.{% endif %} {% if preview.remove %}Removing {{ preview.remove|join(", ") }}.{% endif %}</p>
+  <ul class="post-grid">{% for card in preview.cards %}<li>{% include "card.html" %}</li>{% endfor %}</ul>
+</section>
+{% endif %}
+<h2>Recent mass edits</h2>
+{% if recent %}
+<table class="tag-table">
+  <thead><tr><th scope="col">Search</th><th scope="col">Changes</th><th scope="col">Progress</th><th scope="col">Started</th></tr></thead>
+  <tbody>
+    {% for u in recent %}
+    <tr>
+      <td><a href="{{ u.search_url }}">{{ u.query }}</a></td>
+      <td>{% for t in u.add %}<span class="added">+{{ t }}</span> {% endfor %}{% for t in u.remove %}<span class="removed">−{{ t }}</span> {% endfor %}</td>
+      <td><span class="status status-{{ u.status }}">{{ u.status }}</span> {{ u.changed }} changed of {{ u.seen }}{% if u.error %}<div class="hint">{{ u.error }}</div>{% endif %}</td>
+      <td>{{ u.when }}{% if u.by %} by {{ u.by }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No mass edits yet.</p>
+{% endif %}
+{% endblock %}

@@ -12,6 +12,7 @@ publish.workspace = true
 moekura-core.workspace = true
 moekura-db.workspace = true
 moekura-media.workspace = true
+moekura-net.workspace = true
 moekura-storage.workspace = true
 axum.workspace = true
 axum-extra.workspace = true

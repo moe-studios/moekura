@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Webhooks · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "admin_nav.html" %}
+<h1>Webhooks</h1>
+<p class="hint">Webhooks tell other services (a Discord bot, a mirror, your own scripts) about events here, as signed JSON POSTs.</p>
+{% if hooks %}
+<table class="tag-table">
+  <thead><tr><th scope="col">URL</th><th scope="col">Events</th><th scope="col">State</th></tr></thead>
+  <tbody>
+    {% for h in hooks %}
+    <tr>
+      <td><a href="/admin/webhooks/{{ h.id }}">{{ h.url }}</a>{% if h.description %}<div class="hint">{{ h.description }}</div>{% endif %}</td>
+      <td>{{ h.events|join(", ") }}</td>
+      <td>{% if h.enabled %}on{% else %}<span class="hint">off</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No webhooks yet.</p>
+{% endif %}
+<section class="card medium">
+  <h2>Add a webhook</h2>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/admin/webhooks">
+    <label for="hook-url">URL</label>
+    <input id="hook-url" name="url" type="url" value="{{ form.url }}" required>
+    <label for="hook-description">Description <span class="optional">(optional)</span></label>
+    <input id="hook-description" name="description" value="{{ form.description }}" maxlength="200">
+    <fieldset class="permissions">
+      <legend>Send</legend>
+      {% for e in form.events %}<label class="choice"><input type="checkbox" name="{{ e.name }}"{% if e.chosen %} checked{% endif %}> {{ e.label }} <code>{{ e.name }}</code></label>{% endfor %}
+    </fieldset>
+    <input type="hidden" name="enabled" value="on">
+    <button type="submit">Add webhook</button>
+  </form>
+</section>
+{% endblock %}

@@ -15,6 +15,7 @@ moekura-core = { path = "crates/core" }
 moekura-db = { path = "crates/db" }
 moekura-jobs = { path = "crates/jobs" }
 moekura-media = { path = "crates/media" }
+moekura-net = { path = "crates/net" }
 moekura-storage = { path = "crates/storage" }
 moekura-web = { path = "crates/web" }
 

@@ -97,3 +97,25 @@ impl Job for ExpireStagedUploads {
     const KIND: &'static str = "uploads.expire_staged";
     const MAX_ATTEMPTS: i32 = 3;
 }
+
+/// Send webhook delivery `delivery_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliverWebhook {
+    pub delivery_id: i64,
+}
+
+impl Job for DeliverWebhook {
+    const KIND: &'static str = "webhooks.deliver";
+    /// With the queue's backoff (10 s doubling to an hour), about five
+    /// hours of retries.
+    const MAX_ATTEMPTS: i32 = 12;
+}
+
+/// Remove webhook deliveries older than a month; scheduled daily.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PruneWebhookDeliveries {}
+
+impl Job for PruneWebhookDeliveries {
+    const KIND: &'static str = "webhooks.prune";
+    const MAX_ATTEMPTS: i32 = 3;
+}

@@ -220,6 +220,7 @@ async fn register(
     }
     tx.commit().await?;
     tracing::info!(user_id = user.id, name = %user.name, ?status, "account registered");
+    crate::webhooks::emit_user(&state, &user).await;
 
     if status == UserStatus::Unverified {
         let jar = flash::set(jar, Flash::CheckEmail);

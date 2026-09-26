@@ -18,6 +18,7 @@
 - [Private sites](admin/private-sites.md)
 - [File storage](admin/storage.md)
 - [Background jobs](admin/jobs.md)
+- [Webhooks](admin/webhooks.md)
 - [Backups](admin/backups.md)
 - [Bulk import](admin/import.md)
 - [Commands](admin/commands.md)

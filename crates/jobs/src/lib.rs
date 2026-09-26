@@ -28,6 +28,7 @@ pub mod mail;
 pub mod media;
 pub mod tags;
 pub mod users;
+pub mod webhooks;
 
 /// Why a job failed.
 #[derive(Debug, thiserror::Error)]

@@ -1714,14 +1714,18 @@ dependencies = [
  "moekura-core",
  "moekura-db",
  "moekura-media",
+ "moekura-net",
  "moekura-storage",
+ "reqwest",
  "serde",
  "serde_json",
  "sqlx",
  "thiserror",
+ "time",
  "tokio",
  "tokio-util",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -1734,6 +1738,16 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "moekura-net"
+version = "0.3.0"
+dependencies = [
+ "moekura-storage",
+ "reqwest",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -1771,6 +1785,7 @@ dependencies = [
  "moekura-core",
  "moekura-db",
  "moekura-media",
+ "moekura-net",
  "moekura-storage",
  "qrcode",
  "redis",

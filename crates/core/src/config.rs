@@ -26,6 +26,7 @@ pub struct Config {
     pub search: SearchConfig,
     pub storage: StorageConfig,
     pub telemetry: TelemetryConfig,
+    pub webhooks: WebhooksConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -199,6 +200,26 @@ pub enum MailTls {
     Tls,
     /// No encryption: only for a relay on the same machine or network.
     None,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct WebhooksConfig {
+    /// Let webhooks go to private, loopback and link-local addresses (a
+    /// service on the same machine or network). Off, so a webhook can't
+    /// be used to reach the server's own network.
+    pub allow_private_addresses: bool,
+    /// Seconds a delivery may take before it counts as failed.
+    pub timeout_secs: u64,
+}
+
+impl Default for WebhooksConfig {
+    fn default() -> Self {
+        Self {
+            allow_private_addresses: false,
+            timeout_secs: 10,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

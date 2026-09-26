@@ -44,6 +44,7 @@ mod test_support;
 mod two_factor;
 mod upload;
 mod users;
+mod webhooks;
 mod wiki;
 
 use std::future::Future;
@@ -239,6 +240,7 @@ pub fn router(state: AppState) -> Router {
         .merge(tag_relations::routes())
         .merge(two_factor::routes())
         .merge(users::routes())
+        .merge(webhooks::routes())
         .merge(wiki::routes())
         .merge(upload::routes(max_upload_bytes));
     with_middleware(routes, state)

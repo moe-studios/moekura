@@ -36,6 +36,7 @@ pub mod tag_relations;
 pub mod tags;
 pub mod two_factor;
 pub mod users;
+pub mod webhooks;
 pub mod wiki;
 
 #[cfg(test)]

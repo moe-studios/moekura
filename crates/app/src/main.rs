@@ -16,6 +16,7 @@ use moekura_jobs::mail::{MailJobs, Mailer};
 use moekura_jobs::media::MediaJobs;
 use moekura_jobs::tags::TagJobs;
 use moekura_jobs::users::UserJobs;
+use moekura_jobs::webhooks::WebhookJobs;
 use moekura_jobs::{PoolConfig, Registry};
 use moekura_media::Media;
 use moekura_storage::Storage;
@@ -219,6 +220,12 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
     UserJobs {
         db: db.primary().clone(),
     }
+    .register(&mut registry);
+    WebhookJobs::new(
+        db.primary().clone(),
+        Duration::from_secs(config.webhooks.timeout_secs),
+        config.webhooks.allow_private_addresses,
+    )
     .register(&mut registry);
     let mailer = if config.mail.is_enabled() {
         let mailer = Mailer::new(&config.mail).context("mail")?;

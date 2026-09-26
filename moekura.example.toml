@@ -173,3 +173,11 @@ log_format = "text"
 # tracing filter directive. RUST_LOG overrides it.
 # "info,tower_http=debug" also logs every request.
 log_filter = "info,sqlx::postgres::notice=warn"
+
+[webhooks]
+# Let webhooks go to private, loopback and link-local addresses, e.g. a
+# bot on the same machine. Off, so a webhook can't reach this server's own
+# network.
+allow_private_addresses = false
+# Seconds a delivery may take.
+timeout_secs = 10

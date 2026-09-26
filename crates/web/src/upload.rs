@@ -606,6 +606,13 @@ pub async fn create_post(
         ?status,
         "post uploaded"
     );
+    crate::webhooks::emit_post(
+        state,
+        moekura_core::webhooks::Event::PostCreated,
+        post_id,
+        serde_json::json!({}),
+    )
+    .await;
     Ok(post_id)
 }
 

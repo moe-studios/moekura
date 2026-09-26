@@ -177,6 +177,7 @@ async fn create_comment(
     let body = crate::comments::clean_body(fields.get("comment[body]").unwrap_or_default())?;
     let user = crate::comments::commenter(&state, &current, &post).await?;
     let id = comments::create(db, post_id, user, &body).await?;
+    crate::webhooks::emit_comment(&state, id).await;
     let comment = comments::by_id(db, id).await?.ok_or(AppError::NotFound)?;
     Ok((
         StatusCode::CREATED,

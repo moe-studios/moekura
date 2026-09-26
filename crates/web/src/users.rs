@@ -152,13 +152,21 @@ async fn settings_form(page: Page) -> Result<Response, AppError> {
     let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
     let settings = UserSettings::from_json(&user.settings);
     let blacklist = crate::blacklist::text_for(page.state(), &page.current);
-    Ok(render_settings(&page, &settings, &blacklist, None))
+    let has_feed_token = moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
+    Ok(render_settings(
+        &page,
+        &settings,
+        &blacklist,
+        has_feed_token,
+        None,
+    ))
 }
 
 fn render_settings(
     page: &Page,
     settings: &UserSettings,
     blacklist: &str,
+    has_feed_token: bool,
     error: Option<String>,
 ) -> Response {
     let max = page.state().config.search.max_per_page;
@@ -173,6 +181,7 @@ fn render_settings(
         context! {
             error => error,
             blacklist => blacklist,
+            has_feed_token => has_feed_token,
             per_page => settings.per_page,
             default_per_page => page.state().config.search.per_page,
             per_page_choices => PER_PAGE_CHOICES.iter().filter(|&&n| n <= max).collect::<Vec<_>>(),
@@ -218,10 +227,13 @@ async fn save_settings(
         blacklist: Some(blacklist.trim().to_owned()),
     };
     if let Err(error) = Blacklist::parse(&blacklist) {
+        let has_feed_token =
+            moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
         return Ok(render_settings(
             &page,
             &settings,
             &blacklist,
+            has_feed_token,
             Some(error.to_string()),
         ));
     }

@@ -231,7 +231,7 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
 
 /// `url` as an absolute URL: stored files are usually served from a path
 /// on this site, which API clients can't resolve on their own.
-fn absolute_url(state: &AppState, url: &str) -> String {
+pub(crate) fn absolute_url(state: &AppState, url: &str) -> String {
     if url.starts_with('/') {
         state
             .config

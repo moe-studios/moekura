@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{% if post_id %}Comments on post #{{ post_id }}{% elif user %}Comments by {{ user }}{% else %}Comments{% endif %} · {{ site.name }}{% endblock %}
+{% block head %}<link rel="alternate" type="application/atom+xml" title="Comments" href="/comments.atom">{% endblock %}
 {% block content %}
 {% if post_id %}<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>{% endif %}
 <h1>{% if post_id %}Comments on post #{{ post_id }}{% elif user %}Comments by {{ user }}{% else %}Comments{% endif %}</h1>

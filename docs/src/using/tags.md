@@ -18,6 +18,24 @@ list.
 
 Each tag can have a [wiki page](wiki.md) describing it.
 
+## Suggestions from the tagger
+
+On sites that run the [tagger](../admin/tagger.md), a model looks at each
+new upload, usually within a minute, and suggests tags and a rating. They
+show under **Edit** on the post, most confident first, with how sure the
+model is: click one to add it to the tags box (or, without scripts, to add
+it and save), then save. Tags the post already has aren't suggested, nor
+tags below the confidence the site asks for in their category.
+
+The model is often right about what's in a picture and sometimes
+confidently wrong, so check before saving. Search for `ai:tag` to find
+posts where a tag is suggested but not yet applied, for tidying up many
+posts at once.
+
+Sites can also have the tagger apply the suggestions it is surest of by
+itself. Those edits appear in the post's history as the tagger's account
+(normally `tagger`), and are undone like anyone's.
+
 ## Aliases and implications
 
 An **alias** makes one tag stand for another: with `kitty` aliased to

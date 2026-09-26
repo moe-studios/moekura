@@ -8,6 +8,7 @@ import { enableNotes } from "./notes.ts";
 import { enablePoolOrder } from "./pool-order.ts";
 import { enhanceReactions } from "./reactions.ts";
 import { enableReader } from "./reader.ts";
+import { enableSuggestions } from "./suggestions.ts";
 import { enableTagScript } from "./tag-script.ts";
 
 // Lets styles tell whether scripts run.
@@ -21,3 +22,4 @@ enableReader();
 enableNotes();
 enableNoteEditor();
 enableTagScript();
+enableSuggestions();

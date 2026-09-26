@@ -16,9 +16,11 @@ RUN cargo chef prepare --recipe-path recipe.json
 # the layers.
 FROM chef AS build
 COPY --from=plan /src/recipe.json recipe.json
-RUN cargo chef cook --release --locked -p moekura --recipe-path recipe.json
+RUN cargo chef cook --release --locked -p moekura --features tagger --recipe-path recipe.json
 COPY . .
-RUN cargo build --release --locked -p moekura \
+# With the tagger built in: it loads ONNX Runtime only when it runs,
+# which only the tagger image below has.
+RUN cargo build --release --locked -p moekura --features tagger \
     && cp target/release/moekura /usr/local/bin/moekura
 
 # ffmpeg and libvips, built with only what Moekura uses. Debian's packages
@@ -88,7 +90,7 @@ RUN curl -fsSLo vips.tar.xz "https://github.com/libvips/libvips/releases/downloa
     && rm -rf /opt/media/include /opt/media/share /opt/media/lib/pkgconfig \
         /opt/media/bin/vipsprofile /opt/media/bin/vips-*
 
-FROM docker.io/library/debian:trixie-slim
+FROM docker.io/library/debian:trixie-slim AS base
 # The libraries the media tools above link to.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -112,3 +114,40 @@ VOLUME /var/lib/moekura/data
 EXPOSE 8080
 ENTRYPOINT ["moekura"]
 CMD ["serve"]
+
+# ONNX Runtime for the tagger, Microsoft's CPU build for each architecture.
+FROM docker.io/library/debian:trixie-slim AS onnxruntime
+ARG TARGETARCH
+ARG ORT_VERSION=1.28.2
+ARG ORT_SHA256_AMD64=d7209b8751b27b862b0c76332c2e20e203396edb5dab700ecf4bb485cf147415
+ARG ORT_SHA256_ARM64=f020b3d31106cc7db03889b4a5c21e7c38ce4a09ad26119c11d1ad6d3fa0ec04
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && case "${TARGETARCH}" in \
+        amd64) arch=x64; sum="${ORT_SHA256_AMD64}" ;; \
+        arm64) arch=aarch64; sum="${ORT_SHA256_ARM64}" ;; \
+        *) echo "no ONNX Runtime build for ${TARGETARCH}"; exit 1 ;; \
+    esac \
+    && curl -fsSLo ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-${arch}-${ORT_VERSION}.tgz" \
+    && echo "${sum}  ort.tgz" | sha256sum -c - \
+    && tar xzf ort.tgz \
+    && mkdir /opt/onnxruntime \
+    && cp -d onnxruntime-linux-*/lib/libonnxruntime.so* /opt/onnxruntime/
+
+# The tagger image (`--target tagger`, published as <version>-tagger):
+# the app plus ONNX Runtime, running `moekura tagger`.
+FROM base AS tagger
+USER root
+COPY --from=onnxruntime /opt/onnxruntime/ /usr/local/lib/
+RUN ldconfig \
+    && ! ldd /usr/local/lib/libonnxruntime.so | grep "not found" \
+    && install -d -o moekura -g moekura /var/lib/moekura/models
+USER moekura
+ENV ORT_DYLIB_PATH=/usr/local/lib/libonnxruntime.so \
+    MOEKURA_TAGGER__MODEL_DIR=/var/lib/moekura/models
+# Downloaded models; mount a volume here so they're fetched once.
+VOLUME /var/lib/moekura/models
+CMD ["tagger"]
+
+# The default image.
+FROM base AS app

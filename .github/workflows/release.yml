@@ -1,8 +1,8 @@
 name: Release
 
-# Pushing a tag like v0.1.0 publishes the container image (amd64 and arm64)
-# to GHCR and a GitHub release with Linux binaries, its notes taken from
-# CHANGELOG.md.
+# Pushing a tag like v0.1.0 publishes the container images (amd64 and
+# arm64) to GHCR, the app's and the tagger's (0.1.0-tagger), and a GitHub
+# release with Linux binaries, its notes taken from CHANGELOG.md.
 
 on:
   push:
@@ -56,19 +56,30 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          target: app
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.runner }}
           cache-to: type=gha,mode=max,scope=${{ matrix.runner }}
-      - name: Keep the digest for the manifest
+      # The same layers plus ONNX Runtime.
+      - id: build-tagger
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: tagger
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.runner }}
+      - name: Keep the digests for the manifests
         run: |
-          mkdir -p "$RUNNER_TEMP/digests"
-          digest="${{ steps.build.outputs.digest }}"
-          touch "$RUNNER_TEMP/digests/${digest#sha256:}"
+          mkdir -p "$RUNNER_TEMP/digests/app" "$RUNNER_TEMP/digests/tagger"
+          app="${{ steps.build.outputs.digest }}"
+          tagger="${{ steps.build-tagger.outputs.digest }}"
+          touch "$RUNNER_TEMP/digests/app/${app#sha256:}" "$RUNNER_TEMP/digests/tagger/${tagger#sha256:}"
       - uses: actions/upload-artifact@v7
         with:
           name: digest-${{ matrix.runner }}
-          path: ${{ runner.temp }}/digests/*
+          path: ${{ runner.temp }}/digests/
           retention-days: 1
 
   manifest:
@@ -88,20 +99,37 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # 0.1.0, 0.1 and latest (not for pre-releases like 0.2.0-rc.1).
-      - uses: docker/metadata-action@v6
+      # 0.1.0, 0.1 and latest (not for pre-releases like 0.2.0-rc.1), and
+      # the same with -tagger for the tagger's image.
+      - id: app
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-      - name: Publish one tag for both architectures
+      - id: tagger
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: suffix=-tagger,onlatest=true
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+      - name: Publish one tag for both architectures, for each image
         working-directory: ${{ runner.temp }}/digests
+        env:
+          APP_TAGS: ${{ steps.app.outputs.json }}
+          TAGGER_TAGS: ${{ steps.tagger.outputs.json }}
         run: |
-          docker buildx imagetools create \
-            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf "$IMAGE@sha256:%s " *)
+          for image in app tagger; do
+            if [ "$image" = app ]; then tags="$APP_TAGS"; else tags="$TAGGER_TAGS"; fi
+            docker buildx imagetools create \
+              $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$tags") \
+              $(cd "$image" && printf "$IMAGE@sha256:%s " *)
+          done
           docker buildx imagetools inspect "$IMAGE:${GITHUB_REF_NAME#v}"
+          docker buildx imagetools inspect "$IMAGE:${GITHUB_REF_NAME#v}-tagger"
 
   binaries:
     needs: check
@@ -116,7 +144,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release --locked -p moekura
+      # With the tagger; it needs ONNX Runtime installed to run.
+      - run: cargo build --release --locked -p moekura --features tagger
       - name: Package
         run: |
           name="moekura-$GITHUB_REF_NAME-${{ matrix.target }}"
@@ -149,7 +178,8 @@ jobs:
             found && /^## \[/ { exit }
             found { print }
           ' CHANGELOG.md > notes.md
-          printf '\nImage: `ghcr.io/%s:%s`\n' "$GITHUB_REPOSITORY" "$version" >> notes.md
+          printf '\nImages: `ghcr.io/%s:%s`, and `ghcr.io/%s:%s-tagger` with the tagger\n' \
+            "$GITHUB_REPOSITORY" "$version" "$GITHUB_REPOSITORY" "$version" >> notes.md
           test -s notes.md
       - uses: softprops/action-gh-release@v3
         with:

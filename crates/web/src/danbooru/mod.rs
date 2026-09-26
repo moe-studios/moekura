@@ -8,6 +8,7 @@
 //! `api_key` parameters (see [`credentials`]), and errors are answered in
 //! Danbooru's shape ([`error_response`]).
 
+mod ai_tags;
 mod community;
 mod missing;
 mod notes;
@@ -41,6 +42,7 @@ pub fn routes() -> Router<AppState> {
     Router::new().nest(
         PREFIX,
         posts::routes()
+            .merge(ai_tags::routes())
             .merge(community::routes())
             .merge(missing::routes())
             .merge(notes::routes())

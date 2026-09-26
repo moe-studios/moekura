@@ -21,6 +21,7 @@
 - [Webhooks](admin/webhooks.md)
 - [Backups](admin/backups.md)
 - [Bulk import](admin/import.md)
+- [The tagger](admin/tagger.md)
 - [Commands](admin/commands.md)
 - [Scaling](scaling.md)
 

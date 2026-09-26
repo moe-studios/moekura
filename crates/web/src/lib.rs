@@ -38,6 +38,7 @@ pub mod remote_import;
 mod requests;
 mod saved_searches;
 pub mod shared;
+mod suggestions;
 mod tag_relations;
 mod tags;
 mod templates;

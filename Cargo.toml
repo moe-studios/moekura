@@ -17,6 +17,7 @@ moekura-jobs = { path = "crates/jobs" }
 moekura-media = { path = "crates/media" }
 moekura-net = { path = "crates/net" }
 moekura-storage = { path = "crates/storage" }
+moekura-tagger = { path = "crates/tagger" }
 moekura-web = { path = "crates/web" }
 
 anyhow = "1.0.104"
@@ -36,6 +37,9 @@ http-body-util = "0.1.5"
 # SMTP over rustls/ring, like the other TLS clients.
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
 md-5 = "0.11.0"
+# ONNX Runtime for the tagger, loaded at run time (libonnxruntime.so), so
+# building needs no download and other builds don't carry it.
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "tracing"] }
 # Two-factor enrolment QR codes, as inline SVG.
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 mime_guess = "2.0.5"

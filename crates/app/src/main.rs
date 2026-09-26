@@ -2,6 +2,7 @@ mod admin;
 mod config;
 mod import;
 mod import_remote;
+mod tagger;
 mod telemetry;
 
 use std::path::PathBuf;
@@ -49,6 +50,9 @@ enum Command {
     Serve,
     /// Run job workers only
     Worker,
+    /// Suggest tags for posts with a machine learning model (see [tagger]
+    /// in the configuration; needs the `tagger` build feature)
+    Tagger(tagger::TaggerArgs),
     /// Apply pending database migrations, then exit
     Migrate,
     /// Validate the configuration and print the effective settings, with secrets redacted
@@ -116,6 +120,10 @@ async fn main() -> anyhow::Result<()> {
             telemetry::init(&config.telemetry)?;
             worker(config).await
         }
+        Command::Tagger(args) => {
+            telemetry::init(&config.telemetry)?;
+            tagger::run(config, args).await
+        }
     }
 }
 
@@ -169,7 +177,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     moekura_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
 
     if let Some(workers) = workers {
-        wait_for_workers(workers).await;
+        wait_for_workers(workers, &shutdown).await;
     }
     for task in background {
         task.abort();
@@ -188,7 +196,7 @@ async fn worker(config: Config) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
     tokio::spawn(cancel_on_signal(shutdown.clone()));
     let run = run_workers(&db, &config)?;
-    wait_for_workers(tokio::spawn(run(shutdown))).await;
+    wait_for_workers(tokio::spawn(run(shutdown.clone())), &shutdown).await;
     db.close().await;
     tracing::info!("shut down");
     Ok(())
@@ -216,6 +224,7 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
         storage: Storage::from_config(&config.storage).context("could not open file storage")?,
         media: Media::new(config.media.clone()),
         work_dir,
+        tag_posts: config.tagger.enabled,
     }
     .register(&mut registry);
     TagJobs {
@@ -260,9 +269,13 @@ fn run_workers(
 
 type BoxFuture = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// Waits for running jobs after shutdown was requested, within reason; any
-/// cut short are retried elsewhere once their lock expires.
-async fn wait_for_workers(workers: tokio::task::JoinHandle<()>) {
+/// Waits for shutdown to be requested, then for running jobs, within
+/// reason; any cut short are retried elsewhere once their lock expires.
+async fn wait_for_workers(mut workers: tokio::task::JoinHandle<()>, shutdown: &CancellationToken) {
+    tokio::select! {
+        _ = &mut workers => return,
+        () = shutdown.cancelled() => {}
+    }
     if tokio::time::timeout(WORKER_SHUTDOWN_GRACE, workers)
         .await
         .is_err()

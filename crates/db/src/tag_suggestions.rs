@@ -264,6 +264,93 @@ pub async fn apply(
     Ok(true)
 }
 
+/// Posts to queue for the tagger, oldest first: those it hasn't seen (or,
+/// with `all`, every post), leaving out deleted posts, posts whose files
+/// aren't processed yet (they're queued once they are) and posts already
+/// waiting for it.
+pub async fn backlog(db: impl PgExecutor<'_>, all: bool, limit: i64) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT p.id FROM posts p
+         JOIN media_assets a ON a.post_id = p.id AND a.processed_at IS NOT NULL
+         WHERE p.status <> 'deleted'
+           AND ($1 OR NOT EXISTS (SELECT 1 FROM tagger_results r WHERE r.post_id = p.id))
+           AND NOT EXISTS (
+               SELECT 1 FROM jobs j
+               WHERE j.kind = 'ml.tag_post' AND j.status IN ('queued', 'running')
+                 AND j.payload ->> 'post_id' = p.id::text
+           )
+         ORDER BY p.id LIMIT $2",
+    )
+    .bind(all)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// Which suggestions [`list`] finds; every condition given must hold.
+#[derive(Debug, Clone, Default)]
+pub struct SuggestionFilter<'a> {
+    pub post_ids: &'a [i64],
+    pub tag_ids: &'a [i32],
+    pub tag_names: &'a [String],
+    /// Whether the post has the tag by now.
+    pub posted: Option<bool>,
+    /// Confidence in percent, inclusive.
+    pub score: (i32, i32),
+    /// Posts with these statuses, or pending ones uploaded by `viewer`.
+    pub statuses: &'a [&'a str],
+    pub viewer: Option<i64>,
+}
+
+/// A suggestion on some post.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct Listed {
+    pub post_id: i64,
+    pub tag_id: i32,
+    pub name: String,
+    pub category_id: i16,
+    pub post_count: i32,
+    pub confidence: f32,
+    pub posted: bool,
+}
+
+/// Suggestions matching `filter`, newest posts first, then the most
+/// confident.
+pub async fn list(
+    db: impl PgExecutor<'_>,
+    filter: &SuggestionFilter<'_>,
+    offset: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<Listed>> {
+    sqlx::query_as(
+        "SELECT s.post_id, s.tag_id, t.name, t.category_id, t.post_count, s.confidence,
+                p.tag_ids @> ARRAY[s.tag_id] AS posted
+         FROM tag_suggestions s
+         JOIN tags t ON t.id = s.tag_id
+         JOIN posts p ON p.id = s.post_id
+         WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
+           AND (cardinality($3::int8[]) = 0 OR s.post_id = ANY($3))
+           AND (cardinality($4::int4[]) = 0 OR s.tag_id = ANY($4))
+           AND (cardinality($5::text[]) = 0 OR t.name = ANY($5))
+           AND ($6::bool IS NULL OR (p.tag_ids @> ARRAY[s.tag_id]) = $6)
+           AND round(s.confidence * 100) BETWEEN $7 AND $8
+         ORDER BY s.post_id DESC, s.confidence DESC, t.name
+         OFFSET $9 LIMIT $10",
+    )
+    .bind(filter.statuses)
+    .bind(filter.viewer)
+    .bind(filter.post_ids)
+    .bind(filter.tag_ids)
+    .bind(filter.tag_names)
+    .bind(filter.posted)
+    .bind(filter.score.0)
+    .bind(filter.score.1)
+    .bind(offset)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// A suggested tag.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct Suggestion {
@@ -466,5 +553,62 @@ mod tests {
         // Nothing new: nothing changes.
         let mut tx = pool.begin().await.unwrap();
         assert!(!apply(&mut tx, id, tagger, &[cat.id], None).await.unwrap());
+    }
+
+    async fn post_with_asset(pool: &PgPool) -> i64 {
+        let post_id = post(pool).await;
+        let sha256 = [post_id as u8; 32];
+        crate::media::insert(
+            pool,
+            crate::media::NewAsset {
+                post_id,
+                sha256: &sha256,
+                md5: &[post_id as u8; 16],
+                media_type: "png",
+                width: 10,
+                height: 10,
+                duration_ms: None,
+                frames: 1,
+                has_audio: false,
+                file_size: 1,
+                storage_key: &format!("original/{post_id}.png"),
+            },
+        )
+        .await
+        .unwrap();
+        post_id
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn finds_the_backlog(pool: PgPool) {
+        let seen = post_with_asset(&pool).await;
+        let unseen = post_with_asset(&pool).await;
+        let queued = post_with_asset(&pool).await;
+        let deleted = post_with_asset(&pool).await;
+        sqlx::query("UPDATE media_assets SET processed_at = now()")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(deleted)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let result = NewResult {
+            post_id: seen,
+            model: "m",
+            rating: Rating::General,
+            rating_confidence: 0.9,
+            suggestions: &[],
+        };
+        save(&mut conn, &result).await.unwrap();
+        crate::jobs::enqueue(&mut conn, &moekura_core::jobs::TagPost { post_id: queued })
+            .await
+            .unwrap();
+
+        assert_eq!(backlog(&pool, false, 100).await.unwrap(), [unseen]);
+        assert_eq!(backlog(&pool, true, 100).await.unwrap(), [seen, unseen]);
+        assert_eq!(backlog(&pool, true, 1).await.unwrap(), [seen]);
     }
 }

@@ -19,6 +19,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --all-targets --locked --features moekura/tagger -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -51,14 +52,21 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             libvips-tools libheif-plugin-dav1d libheif-plugin-aomenc ffmpeg
+      - name: Install ONNX Runtime
+        # The tagger's tests run a tiny model through it.
+        run: |
+          curl -fsSLo /tmp/ort.tgz https://github.com/microsoft/onnxruntime/releases/download/v1.28.2/onnxruntime-linux-x64-1.28.2.tgz
+          echo "d7209b8751b27b862b0c76332c2e20e203396edb5dab700ecf4bb485cf147415  /tmp/ort.tgz" | sha256sum -c -
+          tar xzf /tmp/ort.tgz -C /opt
+          echo "ORT_DYLIB_PATH=/opt/onnxruntime-linux-x64-1.28.2/lib/libonnxruntime.so" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --features moekura/tagger
       - name: Search plans at scale
         # Seeds 200,000 posts and fails if a search that should be
         # selective reads most of the table. A minute, so only on main.
         # --workspace, like the step above, so nothing builds again.
         if: github.event_name == 'push'
-        run: cargo test --workspace --locked -- --ignored
+        run: cargo test --workspace --locked --features moekura/tagger -- --ignored
 
   s3:
     # The S3 backend against a real S3-compatible server. (Service
@@ -126,6 +134,12 @@ jobs:
           tags: moekura:ci
           cache-from: type=gha,scope=ci
           cache-to: type=gha,mode=max,scope=ci
+      - name: The tagger image loads ONNX Runtime
+        # Its layers are the app's plus the library.
+        run: |
+          docker buildx build --target tagger --load -t moekura:ci-tagger \
+            --cache-from type=gha,scope=ci .
+          docker run --rm -e MOEKURA_DATABASE__URL=postgres://unused/unused moekura:ci-tagger tagger --check
       - name: Media tools work in the image
         # The image builds its own ffmpeg and libvips; run them on one file
         # of every accepted type, the way the app does.

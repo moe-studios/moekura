@@ -66,6 +66,7 @@ engine, then log in with your name and your API key.
 | `/notes.json`, `/notes/{id}.json`, `/note_versions.json` | notes by `search[post_id]` (one or more posts); versions by `search[post_id]` or `search[note_id]`; read-only |
 | `POST /uploads.json`, `/uploads/{id}.json` | the first step of an upload: a file as `upload[files][0]`, or a link as `upload[source]`; its upload, upload media asset and media asset share one id |
 | `POST /posts.json` | the second step: `upload_media_asset_id` with `post[tag_string]`, `post[rating]`, `post[source]` and optionally `post[parent_id]`; upload limits apply. Uploads not made into posts within a day are removed |
+| `/ai_tags.json` | the [tagger's](../admin/tagger.md) suggestions, newest posts first, by `search[post_id]` (or `search[media_asset_id]`, the same number), `search[tag_name]`, `search[tag_id]`, `search[is_posted]` and `search[score]` (`>=50`, `50..90`); `score` is 0 to 100 |
 | `/saved_searches.json` | yours; add with `saved_search[query]` and `saved_search[label_string]`, and delete |
 
 ## What doesn't

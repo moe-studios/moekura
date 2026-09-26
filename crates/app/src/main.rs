@@ -177,7 +177,7 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     moekura_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
 
     if let Some(workers) = workers {
-        wait_for_workers(workers).await;
+        wait_for_workers(workers, &shutdown).await;
     }
     for task in background {
         task.abort();
@@ -196,7 +196,7 @@ async fn worker(config: Config) -> anyhow::Result<()> {
     let shutdown = CancellationToken::new();
     tokio::spawn(cancel_on_signal(shutdown.clone()));
     let run = run_workers(&db, &config)?;
-    wait_for_workers(tokio::spawn(run(shutdown))).await;
+    wait_for_workers(tokio::spawn(run(shutdown.clone())), &shutdown).await;
     db.close().await;
     tracing::info!("shut down");
     Ok(())
@@ -269,9 +269,13 @@ fn run_workers(
 
 type BoxFuture = std::pin::Pin<Box<dyn Future<Output = ()> + Send>>;
 
-/// Waits for running jobs after shutdown was requested, within reason; any
-/// cut short are retried elsewhere once their lock expires.
-async fn wait_for_workers(workers: tokio::task::JoinHandle<()>) {
+/// Waits for shutdown to be requested, then for running jobs, within
+/// reason; any cut short are retried elsewhere once their lock expires.
+async fn wait_for_workers(mut workers: tokio::task::JoinHandle<()>, shutdown: &CancellationToken) {
+    tokio::select! {
+        _ = &mut workers => return,
+        () = shutdown.cancelled() => {}
+    }
     if tokio::time::timeout(WORKER_SHUTDOWN_GRACE, workers)
         .await
         .is_err()

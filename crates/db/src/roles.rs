@@ -52,15 +52,14 @@ pub async fn list(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<Role>> {
 }
 
 /// Renames a role and sets its permissions and upload limits, telling
-/// every node's site cache.
+/// every node's site cache once the caller's transaction commits.
 pub async fn update(
-    db: &sqlx::PgPool,
+    conn: &mut sqlx::PgConnection,
     id: i32,
     name: &str,
     permissions: Permissions,
     limits: UploadLimits,
 ) -> sqlx::Result<()> {
-    let mut tx = db.begin().await?;
     sqlx::query(
         "UPDATE roles SET name = $2, permissions = $3, pending_upload_limit = $4,
                           daily_upload_limit = $5
@@ -71,13 +70,13 @@ pub async fn update(
     .bind(permissions.to_db())
     .bind(limits.pending)
     .bind(limits.daily)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     sqlx::query("SELECT pg_notify($1, 'roles')")
         .bind(crate::site_cache::CHANNEL)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
-    tx.commit().await
+    Ok(())
 }
 
 pub async fn by_system(db: impl PgExecutor<'_>, role: SystemRole) -> sqlx::Result<Role> {

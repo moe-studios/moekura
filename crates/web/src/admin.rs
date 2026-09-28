@@ -88,20 +88,21 @@ async fn job_action(
     Path((id, action)): Path<(i64, String)>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ManageSettings)?;
-    let db = page.state().db.primary();
+    let mut tx = page.state().db.primary().begin().await?;
     let (done, kind) = match action.as_str() {
-        "retry" => (jobs::retry(db, id).await?, ActionKind::JobRetry),
-        "discard" => (jobs::discard(db, id).await?, ActionKind::JobDiscard),
+        "retry" => (jobs::retry(&mut *tx, id).await?, ActionKind::JobRetry),
+        "discard" => (jobs::discard(&mut *tx, id).await?, ActionKind::JobDiscard),
         _ => return Err(AppError::NotFound),
     };
     if !done {
         return Err(AppError::BadRequest("That job isn't dead any more".into()));
     }
     mod_actions::record(
-        db,
+        &mut *tx,
         NewAction::new(actor(&page), kind).details(json!({ "job": id })),
     )
     .await?;
+    tx.commit().await?;
     Ok(saved(jar, "/admin"))
 }
 
@@ -320,20 +321,23 @@ async fn save_settings(
             }
         }
     }
+    // All or nothing, each change with its log entry.
+    let mut tx = db.begin().await?;
     for (key, value) in wanted {
         if current.get(key) == Some(&value) {
             continue;
         }
-        settings::set(db, key, value.clone())
+        settings::set_in(&mut tx, key, value.clone())
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
         mod_actions::record(
-            db,
+            &mut *tx,
             NewAction::new(actor(&page), ActionKind::SettingUpdate)
                 .details(json!({ "key": key, "value": value })),
         )
         .await?;
     }
+    tx.commit().await?;
     state.site.reload(db).await?;
     Ok(saved(jar, "/admin/settings"))
 }
@@ -546,7 +550,8 @@ async fn update_role(
         pending: limit("pending_upload_limit")?,
         daily: limit("daily_upload_limit")?,
     };
-    roles::update(db, id, name, permissions, limits)
+    let mut tx = db.begin().await?;
+    roles::update(&mut tx, id, name, permissions, limits)
         .await
         .map_err(|e| match &e {
             sqlx::Error::Database(d) if d.is_unique_violation() => {
@@ -555,7 +560,7 @@ async fn update_role(
             _ => AppError::from(e),
         })?;
     mod_actions::record(
-        db,
+        &mut *tx,
         NewAction::new(actor(&page), ActionKind::RoleUpdate).details(json!({
             "role": name,
             "permissions": granted.iter().map(|p| p.key()).collect::<Vec<_>>(),
@@ -564,6 +569,7 @@ async fn update_role(
         })),
     )
     .await?;
+    tx.commit().await?;
     state.site.reload(db).await?;
     Ok(saved(jar, "/admin/roles"))
 }

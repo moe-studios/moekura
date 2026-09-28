@@ -315,13 +315,15 @@ pub async fn run(
             action: Some(SettingsAction::Set { key, value }),
         } => {
             let value = parse_setting_value(&value);
-            settings::set(db, &key, value.clone()).await?;
+            let mut tx = db.begin().await?;
+            settings::set_in(&mut tx, &key, value.clone()).await?;
             mod_actions::record(
-                db,
+                &mut *tx,
                 NewAction::new(None, ActionKind::SettingUpdate)
                     .details(serde_json::json!({ "key": key, "value": value, "via": "cli" })),
             )
             .await?;
+            tx.commit().await?;
             println!("{key} = {value}");
         }
     }

@@ -7,7 +7,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use ipnet::IpNet;
 use minijinja::{Value, context};
-use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
+use moekura_core::moderation::{ActionKind, MAX_BAN_DAYS, REASON_MAX_LEN};
 use moekura_core::permissions::Permission;
 use moekura_db::bans::{self, Ban};
 use moekura_db::mod_actions::{self, NewAction};
@@ -49,18 +49,28 @@ struct BanForm {
     days: String,
 }
 
-fn expiry(days: &str) -> Result<Option<OffsetDateTime>, AppError> {
-    match days.trim() {
-        "" => Ok(None),
-        text => {
-            let days: i64 = text
-                .parse()
-                .ok()
-                .filter(|d| DURATIONS.iter().any(|(_, v)| *v == Some(*d)))
-                .ok_or_else(|| AppError::BadRequest("Unknown ban length".into()))?;
-            Ok(Some(OffsetDateTime::now_utc() + Duration::days(days)))
-        }
+/// When a ban of `days` days made now ends; `None` days is until lifted.
+/// The web and the API share it; the error says what's wrong.
+pub(crate) fn expiry(days: Option<i64>) -> Result<Option<OffsetDateTime>, String> {
+    match days {
+        None => Ok(None),
+        Some(days @ 1..=MAX_BAN_DAYS) => Ok(Some(OffsetDateTime::now_utc() + Duration::days(days))),
+        Some(_) => Err(format!(
+            "A ban lasts from 1 to {MAX_BAN_DAYS} days, or until lifted"
+        )),
     }
+}
+
+/// [`expiry`] for a form field: days, or empty for until lifted.
+fn form_expiry(days: &str) -> Result<Option<OffsetDateTime>, AppError> {
+    let days = match days.trim() {
+        "" => None,
+        text => Some(
+            text.parse()
+                .map_err(|_| AppError::BadRequest("Unknown ban length".into()))?,
+        ),
+    };
+    expiry(days).map_err(AppError::BadRequest)
 }
 
 fn reason(text: &str) -> Result<&str, AppError> {
@@ -115,12 +125,13 @@ async fn ban_user(
     Path(name): Path<String>,
     Form(form): Form<BanForm>,
 ) -> Result<Response, AppError> {
-    let expires_at = expiry(&form.days)?;
+    let expires_at = form_expiry(&form.days)?;
     let user = ban(page.state(), &page.current, &name, &form.reason, expires_at).await?;
     Ok(saved(jar, &format!("/users/{}", user.name)))
 }
 
-/// Bans the user called `name` until `expires_at` (or until lifted).
+/// Bans the user called `name` until `expires_at` (or until lifted),
+/// replacing any ban they're under.
 pub(crate) async fn ban(
     state: &AppState,
     current: &CurrentUser,
@@ -132,15 +143,19 @@ pub(crate) async fn ban(
     let reason = reason(reason_text)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
-    bans::ban(&mut *tx, user.id, reason, expires_at, actor).await?;
+    let replaced = bans::ban(&mut tx, user.id, reason, expires_at, actor).await?;
+    let mut details = serde_json::json!({
+        "until": expires_at.map(|t| t.date().to_string()),
+    });
+    if let Some(replaced) = replaced {
+        details["replaced_until"] = replaced.expires_at.map(|t| t.date().to_string()).into();
+    }
     mod_actions::record(
         &mut *tx,
         NewAction::new(actor, ActionKind::UserBan)
             .user(user.id)
             .reason(reason)
-            .details(serde_json::json!({
-                "until": expires_at.map(|t| t.date().to_string()),
-            })),
+            .details(details),
     )
     .await?;
     tx.commit().await?;
@@ -196,7 +211,7 @@ async fn ban_network_form(
     Form(form): Form<NetworkForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::BanUsers)?;
-    let expires_at = expiry(&form.days)?;
+    let expires_at = form_expiry(&form.days)?;
     ban_network(
         page.state(),
         &page.current,

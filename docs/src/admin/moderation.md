@@ -36,7 +36,8 @@ removes it, its files and its history for good, in the background.
 Ban a user from their profile, for a set time or until lifted, with a
 reason. Banned users can still log in and look around as visitors do, see
 why they're banned, and can't change anything; their API keys are limited
-the same way.
+the same way. Banning someone who's already banned replaces their ban
+with the new reason and length. Timed bans last up to 3650 days.
 
 Networks (an address or a CIDR range such as `203.0.113.0/24`) are banned
 under **Moderation → Bans**. Requests from them can read, but not

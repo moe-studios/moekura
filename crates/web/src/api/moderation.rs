@@ -9,7 +9,7 @@ use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Entry, Filter};
 use moekura_db::{bans, flags, users};
 use serde::{Deserialize, Serialize};
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
 
 use super::posts::{ApiPost, one};
@@ -405,17 +405,8 @@ pub(crate) async fn list_bans(
     }))
 }
 
-/// The longest ban length the API takes, in days.
-const MAX_BAN_DAYS: i64 = 3650;
-
 fn expiry(days: Option<i64>) -> Result<Option<OffsetDateTime>, AppError> {
-    match days {
-        None => Ok(None),
-        Some(days @ 1..=MAX_BAN_DAYS) => Ok(Some(OffsetDateTime::now_utc() + Duration::days(days))),
-        Some(_) => Err(AppError::Unprocessable(format!(
-            "`days` must be between 1 and {MAX_BAN_DAYS}"
-        ))),
-    }
+    crate::bans::expiry(days).map_err(AppError::Unprocessable)
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -870,6 +861,20 @@ mod tests {
         let list = json(&app.get("/api/v1/bans", Some(&moderator)).await.body);
         assert_eq!(list["users"][0]["user"], json!("alice"));
         assert!(list["users"][0]["expires_at"].is_string());
+        // Banning again replaces the ban rather than stacking another.
+        let longer = app
+            .json(
+                "POST",
+                "/api/v1/users/alice/ban",
+                Some(&moderator),
+                Some(json!({"reason": "more spam"})),
+            )
+            .await;
+        assert_eq!(longer.status, StatusCode::NO_CONTENT, "{}", longer.body);
+        let list = json(&app.get("/api/v1/bans", Some(&moderator)).await.body);
+        assert_eq!(list["users"].as_array().unwrap().len(), 1);
+        assert_eq!(list["users"][0]["reason"], json!("more spam"));
+        assert!(list["users"][0]["expires_at"].is_null());
 
         // Only lower ranks, and within limits.
         let admin = app

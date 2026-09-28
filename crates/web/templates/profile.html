@@ -31,7 +31,8 @@
   {% endif %}
   {% if can_ban %}
   <details class="edit">
-    <summary>Ban</summary>
+    <summary>{% if banned %}Change the ban{% else %}Ban{% endif %}</summary>
+    {% if banned %}<p class="hint">The new ban replaces the one in force.</p>{% endif %}
     <form method="post" action="/users/{{ user.name }}/ban">
       <label for="ban-reason">Reason</label>
       <input id="ban-reason" name="reason" maxlength="2000" required>

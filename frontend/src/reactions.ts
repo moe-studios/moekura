@@ -1,6 +1,8 @@
 // Sends the vote and favorite forms in the background and updates the
 // counts in place. Without scripts, the forms submit and reload the page.
 
+import { toast } from "./toast.ts";
+
 // A post's reactions, or a comment's (score and vote only).
 interface Reactions {
   fav_count?: number;
@@ -46,6 +48,11 @@ export function enhanceReactions(root: Document = document): void {
         headers: { Accept: "application/json" },
       })
         .then(async (response) => {
+          // Nothing to show on a page of its own: say so and stay.
+          if (response.status === 429) {
+            toast("That was too quick. Wait a moment, then try again.");
+            return;
+          }
           if (!response.ok) throw new Error(String(response.status));
           // Only the post's or comment's own counts: a post page has both.
           const scope = form.closest(".comment") ?? form.closest(".post-info") ?? root;

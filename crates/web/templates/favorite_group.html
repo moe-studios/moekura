@@ -25,6 +25,6 @@
 </nav>
 {% endif %}
 {% if can_edit %}
-<form method="post" action="{{ group.url }}/delete"><button type="submit" class="danger">Delete group</button></form>
+<form method="post" action="{{ group.url }}/delete" data-confirm="Delete this favorite group? The posts stay, but the group and its order are gone."><button type="submit" class="danger">Delete group</button></form>
 {% endif %}
 {% endblock %}

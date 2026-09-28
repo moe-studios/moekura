@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% block title %}Post #{{ post.id }} · {{ site.name }}{% endblock %}
+{# The first few names that say what the post is, so tabs and history can be told apart. #}
+{% block title %}{% for group in tag_groups if group.name in ("character", "copyright", "artist") %}{% for tag in group.tags[:2] %}{{ tag.name }} · {% endfor %}{% endfor %}Post #{{ post.id }} · {{ site.name }}{% endblock %}
 {% block head %}{% include "preview_meta.html" %}{% endblock %}
 {% block content %}
 <div class="post-layout">
@@ -105,7 +106,7 @@
       {% if moderate.can_purge %}
       <form method="post" action="/posts/{{ post.id }}/purge">
         <p class="hint">Purging removes the post and its files for good.</p>
-        <button type="submit" class="danger">Purge</button>
+        <button type="submit" class="danger" data-confirm="Purge post #{{ post.id }}? It and its files are removed for good; this can't be undone.">Purge</button>
       </form>
       {% endif %}
     </details>
@@ -158,7 +159,7 @@
     <section id="comments" class="comments" aria-labelledby="comments-heading">
       <h2 id="comments-heading">Comments{% if comments.count %} <span class="count">{{ comments.count }}</span>{% endif %}</h2>
       {% if comments.older %}<p><a href="{{ comments.all_url }}">{{ comments.older }} older comment{% if comments.older != 1 %}s{% endif %}</a></p>{% endif %}
-      {% for comment in comments.comments %}{% include "comment.html" %}{% else %}<p class="empty">No comments yet.</p>{% endfor %}
+      {% for comment in comments.comments %}{% include "comment.html" %}{% else %}<p class="hint">No comments yet.</p>{% endfor %}
       {% if comments.error %}<p class="form-error" role="alert">{{ comments.error }}</p>{% endif %}
       {% if comments.can_comment %}
       <form id="new-comment" class="comment-form" method="post" action="/posts/{{ post.id }}/comments">
@@ -210,7 +211,7 @@
       <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
-    <p class="post-links"><a href="{{ file.original }}" download>Download original</a> · <a href="/posts/{{ post.id }}/history">History</a>{% if post.has_notes %} · <a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
+    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>Edit</a>{% endif %}<a href="{{ file.original }}" download>Download original</a><a href="/posts/{{ post.id }}/history">History</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
     {% if favorite_groups %}
     <section class="tag-group post-favorite-groups">
       <h2>Your favorite groups</h2>

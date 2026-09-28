@@ -15,7 +15,7 @@
   <article class="comment">
     <header class="comment-head"><span class="comment-author">{{ c.author or "Deleted user" }}</span> <span class="hint">{{ c.date }}</span></header>
     <div class="markup">{{ c.html }}</div>
-    {% if c.can_delete %}<footer class="comment-actions"><form method="post" action="/tags/request-comments/{{ c.id }}/delete"><button type="submit" class="link">Delete</button></form></footer>{% endif %}
+    {% if c.can_delete %}<footer class="comment-actions"><form method="post" action="/tags/request-comments/{{ c.id }}/delete"><button type="submit" class="link" data-confirm="Delete this comment?">Delete</button></form></footer>{% endif %}
   </article>
   {% else %}<p class="empty">No comments yet.</p>{% endfor %}
   {% if discussion.can_comment %}

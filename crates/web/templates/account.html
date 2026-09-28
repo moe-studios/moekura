@@ -40,7 +40,7 @@
   <ul class="plain-list">
     {% for i in sso.linked %}
     <li>Linked to your account at <strong>{{ i.provider }}</strong> on {{ i.date }}
-      {% if i.removable %}<form class="inline" method="post" action="/settings/oidc/unlink/{{ i.id }}"><button type="submit" class="secondary">Unlink</button></form>{% endif %}
+      {% if i.removable %}<form class="inline" method="post" action="/settings/oidc/unlink/{{ i.id }}"><button type="submit" class="secondary" data-confirm="Unlink this login?">Unlink</button></form>{% endif %}
     </li>
     {% endfor %}
   </ul>

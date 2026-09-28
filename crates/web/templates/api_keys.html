@@ -23,7 +23,7 @@
         <td>{% if k.expired %}expired {{ k.expires }}{% else %}{{ k.expires or "never" }}{% endif %}</td>
         <td>
           <form method="post" action="/settings/api-keys/{{ k.id }}/revoke">
-            <button type="submit" class="link">Revoke</button>
+            <button type="submit" class="link" data-confirm="Revoke this key? Scripts using it stop working.">Revoke</button>
           </form>
         </td>
       </tr>

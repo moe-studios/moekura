@@ -28,6 +28,7 @@ pub fn routes() -> Router<AppState> {
             axum::routing::post(set_auto_promotion),
         )
         .route("/settings", get(settings_form).post(save_settings))
+        .route("/settings/theme", axum::routing::post(set_theme))
 }
 
 async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppError> {
@@ -247,6 +248,31 @@ async fn save_settings(
     Ok((flash::set(jar, Flash::Saved), Redirect::to("/settings")).into_response())
 }
 
+#[derive(Debug, Deserialize)]
+struct ThemeForm {
+    theme: String,
+    /// The page to go back to.
+    back: Option<String>,
+}
+
+/// Changes only the theme, from the switcher in every page's footer.
+async fn set_theme(page: Page, Form(form): Form<ThemeForm>) -> Result<Response, AppError> {
+    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let theme =
+        Theme::parse(&form.theme).ok_or_else(|| AppError::BadRequest("Unknown theme".into()))?;
+    let settings = UserSettings {
+        theme,
+        ..UserSettings::from_json(&user.settings)
+    };
+    users::set_settings(
+        page.state().db.primary(),
+        user.id,
+        &settings.to_json(&user.settings),
+    )
+    .await?;
+    Ok(Redirect::to(crate::account::safe_next(form.back.as_deref())).into_response())
+}
+
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
@@ -318,6 +344,34 @@ mod tests {
             .post_form("/settings", Some(&alice), &[], "per_page=7&theme=dark")
             .await;
         assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+
+        // The footer switcher changes the theme alone and goes back.
+        let switched = app
+            .post_form(
+                "/settings/theme",
+                Some(&alice),
+                &[],
+                "theme=light&back=%2Ftags%3Fname%3Dx",
+            )
+            .await;
+        assert_eq!(switched.status, StatusCode::SEE_OTHER);
+        assert_eq!(switched.location.as_deref(), Some("/tags?name=x"));
+        let page = app.get("/settings", Some(&alice)).await;
+        assert!(page.body.contains("data-theme=\"light\""), "{}", page.body);
+        assert!(
+            page.body.contains("value=\"100\" selected"),
+            "{}",
+            page.body
+        );
+        let offsite = app
+            .post_form(
+                "/settings/theme",
+                Some(&alice),
+                &[],
+                "theme=dark&back=%2F%2Fevil.example",
+            )
+            .await;
+        assert_eq!(offsite.location.as_deref(), Some("/"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

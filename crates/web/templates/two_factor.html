@@ -30,7 +30,7 @@
   <form method="post" action="/settings/two-factor/disable">
     <label for="off-password">Your password</label>
     <input id="off-password" name="password" type="password" autocomplete="current-password" required>
-    <button type="submit" class="danger">Turn off</button>
+    <button type="submit" class="danger" data-confirm="Turn off two-factor login?">Turn off</button>
   </form>
   {% else %}
   <p>Two-factor login is <strong>off</strong>. Turn it on to need a code from an authenticator app, as well as your password, to log in.</p>

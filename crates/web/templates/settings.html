@@ -29,7 +29,7 @@
   <p class="hint">Search results and comments have Atom feeds (the <em>Feed</em> link beside results). On a private site, feed readers need your feed token: it lets them read feeds as you, and nothing else.</p>
   <form class="inline" method="post" action="/settings/feed-token">
     <button type="submit" name="action" value="new" class="secondary">{% if has_feed_token %}Make a new feed token{% else %}Make a feed token{% endif %}</button>
-    {% if has_feed_token %}<button type="submit" name="action" value="revoke" class="secondary">Revoke it</button>{% endif %}
+    {% if has_feed_token %}<button type="submit" name="action" value="revoke" class="secondary" data-confirm="Revoke your feed token? Feed readers using it stop working.">Revoke it</button>{% endif %}
   </form>
   <p><a href="/saved_searches">Saved searches</a>, to see the newest posts of several searches together.</p>
 </section>

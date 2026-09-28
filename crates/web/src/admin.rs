@@ -32,7 +32,9 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/users", get(user_list))
         .route("/admin/users/{name}", post(update_user))
         .route("/admin/roles", get(role_list))
+        .route("/admin/roles/new", post(create_role))
         .route("/admin/roles/{id}", post(update_role))
+        .route("/admin/roles/{id}/delete", post(delete_role))
 }
 
 fn saved(jar: CookieJar, to: &str) -> Response {
@@ -526,10 +528,47 @@ fn may_assign(mine: &Role, role: &Role) -> bool {
 
 // ---- roles ----------------------------------------------------------------
 
+/// A role name as typed, checked.
+fn role_name(text: &str) -> Result<&str, AppError> {
+    let name = text.trim();
+    if name.is_empty() || name.chars().count() > 32 {
+        return Err(AppError::BadRequest(
+            "A role name is 1 to 32 characters".into(),
+        ));
+    }
+    Ok(name)
+}
+
+/// A rank as typed for a custom role: above the visitors' (0) and below
+/// `mine`, so its holders stay within your reach.
+fn role_rank(text: &str, mine: i16) -> Result<i16, AppError> {
+    text.trim()
+        .parse::<i16>()
+        .ok()
+        .filter(|rank| (1..mine).contains(rank))
+        .ok_or_else(|| AppError::BadRequest(format!("A rank is a number from 1 to {}", mine - 1)))
+}
+
+fn name_taken(e: sqlx::Error) -> AppError {
+    match &e {
+        sqlx::Error::Database(d) if d.is_unique_violation() => {
+            AppError::BadRequest("Another role has that name".into())
+        }
+        _ => AppError::from(e),
+    }
+}
+
 async fn role_list(page: Page) -> Result<Response, AppError> {
     page.current.require(Permission::ManageSettings)?;
     let site = page.state().site.get();
     let my_rank = page.current.role.rank;
+    // Where a deleted role's users can go.
+    let targets: Vec<(i32, &str)> = site
+        .roles()
+        .iter()
+        .filter(|r| may_assign(&page.current.role, r))
+        .map(|r| (r.id, r.name.as_str()))
+        .collect();
     let rows: Vec<Value> = site
         .roles()
         .iter()
@@ -539,6 +578,12 @@ async fn role_list(page: Page) -> Result<Response, AppError> {
                 name => role.name,
                 rank => role.rank,
                 editable => role.rank < my_rank,
+                custom => role.system.is_none(),
+                move_targets => targets
+                    .iter()
+                    .filter(|(id, _)| *id != role.id)
+                    .map(|(id, name)| context! { id => id, name => name })
+                    .collect::<Vec<_>>(),
                 pending_limit => role.upload_limits.pending,
                 daily_limit => role.upload_limits.daily,
                 permissions => Permission::ALL.iter().map(|p| context! {
@@ -551,7 +596,113 @@ async fn role_list(page: Page) -> Result<Response, AppError> {
             }
         })
         .collect();
-    Ok(page.render("admin_roles.html", context! { roles => rows }))
+    Ok(page.render(
+        "admin_roles.html",
+        context! {
+            roles => rows,
+            max_rank => my_rank - 1,
+            templates => site.roles().iter().map(|r| context! { id => r.id, name => r.name }).collect::<Vec<_>>(),
+        },
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+struct NewRoleForm {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    rank: String,
+    /// The id of a role whose permissions to start from, those you hold;
+    /// empty for none.
+    #[serde(default)]
+    copy_from: String,
+}
+
+async fn create_role(
+    page: Page,
+    jar: CookieJar,
+    Form(form): Form<NewRoleForm>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ManageSettings)?;
+    let state = page.state();
+    let db = state.db.primary();
+    let site = state.site.get();
+    let name = role_name(&form.name)?;
+    let rank = role_rank(&form.rank, page.current.role.rank)?;
+    let permissions = match form.copy_from.trim() {
+        "" => Permissions::NONE,
+        id => id
+            .parse()
+            .ok()
+            .and_then(|id| site.role(id))
+            .ok_or_else(|| AppError::BadRequest("There's no such role to copy".into()))?
+            .permissions
+            .and(page.current.role.permissions)
+            .and(Permissions::of(&Permission::ALL)),
+    };
+    let mut tx = db.begin().await?;
+    let id = roles::create(&mut tx, name, rank, permissions)
+        .await
+        .map_err(name_taken)?;
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor(&page), ActionKind::RoleCreate).details(json!({
+            "role": name,
+            "rank": rank,
+            "permissions": permissions.iter().map(|p| p.key()).collect::<Vec<_>>(),
+        })),
+    )
+    .await?;
+    tx.commit().await?;
+    state.site.reload(db).await?;
+    Ok(saved(jar, &format!("/admin/roles#role-{id}")))
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteRoleForm {
+    /// The role its users move to.
+    move_to: i32,
+}
+
+async fn delete_role(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i32>,
+    Form(form): Form<DeleteRoleForm>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ManageSettings)?;
+    let state = page.state();
+    let db = state.db.primary();
+    let site = state.site.get();
+    let role = site.role(id).ok_or(AppError::NotFound)?;
+    if !page.current.role.outranks(role) {
+        return Err(AppError::Forbidden);
+    }
+    if role.system.is_some() {
+        return Err(AppError::BadRequest(
+            "Built-in roles can't be deleted".into(),
+        ));
+    }
+    let target = site
+        .role(form.move_to)
+        .filter(|r| r.id != id && may_assign(&page.current.role, r))
+        .ok_or_else(|| AppError::BadRequest("You can't move its users to that role".into()))?;
+    let mut tx = db.begin().await?;
+    let moved = roles::delete(&mut tx, id, target.id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor(&page), ActionKind::RoleDelete).details(json!({
+            "role": role.name,
+            "moved_to": target.name,
+            "users": moved,
+        })),
+    )
+    .await?;
+    tx.commit().await?;
+    state.site.reload(db).await?;
+    Ok(saved(jar, "/admin/roles"))
 }
 
 async fn update_role(
@@ -570,15 +721,13 @@ async fn update_role(
     if role.rank >= page.current.role.rank {
         return Err(AppError::Forbidden);
     }
-    let name = form
-        .iter()
-        .find(|(k, _)| k == "name")
-        .map_or("", |(_, v)| v.trim());
-    if name.is_empty() || name.chars().count() > 32 {
-        return Err(AppError::BadRequest(
-            "A role name is 1 to 32 characters".into(),
-        ));
-    }
+    let field = |key: &str| form.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str());
+    let name = role_name(field("name").unwrap_or(""))?;
+    // Built-in roles keep their ranks; custom ones may move below yours.
+    let rank = match field("rank") {
+        Some(text) if role.system.is_none() => Some(role_rank(text, page.current.role.rank)?),
+        _ => None,
+    };
     // Permissions the editor holds are set from the form; the rest (ones
     // they lack, and bits this version doesn't know) stay as they were.
     let mine = page
@@ -615,17 +764,16 @@ async fn update_role(
     let mut tx = db.begin().await?;
     roles::update(&mut tx, id, name, permissions, limits)
         .await
-        .map_err(|e| match &e {
-            sqlx::Error::Database(d) if d.is_unique_violation() => {
-                AppError::BadRequest("Another role has that name".into())
-            }
-            _ => AppError::from(e),
-        })?;
+        .map_err(name_taken)?;
+    if let Some(rank) = rank {
+        roles::set_rank(&mut tx, id, rank).await?;
+    }
     mod_actions::record(
         &mut *tx,
         NewAction::new(actor(&page), ActionKind::RoleUpdate).details(json!({
             "role": name,
             "permissions": granted.iter().map(|p| p.key()).collect::<Vec<_>>(),
+            "rank": rank.unwrap_or(role.rank),
             "pending_upload_limit": limits.pending,
             "daily_upload_limit": limits.daily,
         })),
@@ -1066,6 +1214,113 @@ mod tests {
         assert!(
             !picker.contains(&format!("<option value=\"{}\">", contributor.id)),
             "{picker}"
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn custom_roles(pool: PgPool) {
+        let app = app(&pool).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let site = moekura_db::site_cache::SiteCache::load(&pool)
+            .await
+            .unwrap()
+            .get();
+        let member = site.system_role(SystemRole::Member).unwrap().clone();
+        let role = |name: &'static str| {
+            let pool = pool.clone();
+            async move { moekura_db::roles::by_name(&pool, name).await.unwrap() }
+        };
+
+        // Out of reach: rank 50 is the admin's own.
+        let too_high = app
+            .post_form(
+                "/admin/roles/new",
+                Some(&admin),
+                &[],
+                "name=Trusted&rank=50&copy_from=",
+            )
+            .await;
+        assert_eq!(too_high.status, StatusCode::BAD_REQUEST);
+        let created = app
+            .post_form(
+                "/admin/roles/new",
+                Some(&admin),
+                &[],
+                &format!("name=Trusted&rank=15&copy_from={}", member.id),
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.body);
+        let trusted = role("Trusted").await.unwrap();
+        assert_eq!(trusted.rank, 15);
+        assert_eq!(trusted.permissions, member.permissions);
+        let taken = app
+            .post_form(
+                "/admin/roles/new",
+                Some(&admin),
+                &[],
+                "name=trusted&rank=15&copy_from=",
+            )
+            .await;
+        assert_eq!(taken.status, StatusCode::BAD_REQUEST);
+
+        // Re-ranked with the rest of the form; built-in ranks stay.
+        let saved = app
+            .post_form(
+                &format!("/admin/roles/{}", trusted.id),
+                Some(&admin),
+                &[],
+                "name=Trusted&rank=25&upload=on",
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        assert_eq!(role("Trusted").await.unwrap().rank, 25);
+        app.post_form(
+            &format!("/admin/roles/{}", member.id),
+            Some(&admin),
+            &[],
+            "name=Member&rank=5&upload=on",
+        )
+        .await;
+        assert_eq!(role("Member").await.unwrap().rank, 10);
+
+        // Deleting moves its users; built-in roles can't go.
+        let form = format!("role={}&status=active", trusted.id);
+        app.post_form("/admin/users/alice", Some(&admin), &[], &form)
+            .await;
+        let refused = app
+            .post_form(
+                &format!("/admin/roles/{}/delete", member.id),
+                Some(&admin),
+                &[],
+                &format!("move_to={}", trusted.id),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+        let deleted = app
+            .post_form(
+                &format!("/admin/roles/{}/delete", trusted.id),
+                Some(&admin),
+                &[],
+                &format!("move_to={}", member.id),
+            )
+            .await;
+        assert_eq!(deleted.status, StatusCode::SEE_OTHER, "{}", deleted.body);
+        assert!(role("Trusted").await.is_none());
+        let alice = moekura_db::users::by_name(&pool, "alice")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(alice.role_id, member.id);
+        let logged: Vec<String> = sqlx::query_scalar(
+            "SELECT action FROM mod_actions WHERE action LIKE 'role.%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            logged,
+            ["role.create", "role.update", "role.update", "role.delete"]
         );
     }
 }

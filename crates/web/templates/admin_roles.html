@@ -5,11 +5,15 @@
 <h1>Roles</h1>
 <p class="hint">You can change roles ranked below your own, and hand on only permissions you have yourself. Anonymous is what logged-out visitors (and banned users) get.</p>
 {% for role in roles %}
-<section class="card role">
+<section class="card role" id="role-{{ role.id }}">
   {% if role.editable %}
   <form method="post" action="/admin/roles/{{ role.id }}">
-    <label for="role-{{ role.id }}">Name <span class="optional">(rank {{ role.rank }})</span></label>
-    <input id="role-{{ role.id }}" name="name" value="{{ role.name }}" maxlength="32" required>
+    <label for="role-name-{{ role.id }}">Name{% if not role.custom %} <span class="optional">(built in, rank {{ role.rank }})</span>{% endif %}</label>
+    <input id="role-name-{{ role.id }}" name="name" value="{{ role.name }}" maxlength="32" required>
+    {% if role.custom %}
+    <label for="role-rank-{{ role.id }}">Rank <span class="optional">(1 to {{ max_rank }}; higher ranks act on lower ones)</span></label>
+    <input id="role-rank-{{ role.id }}" name="rank" type="number" min="1" max="{{ max_rank }}" value="{{ role.rank }}" required>
+    {% endif %}
     <fieldset class="permissions">
       <legend>Can</legend>
       {% for p in role.permissions %}
@@ -25,6 +29,18 @@
     </fieldset>
     <button type="submit">Save {{ role.name }}</button>
   </form>
+  {% if role.custom and role.move_targets %}
+  <details class="edit">
+    <summary>Delete {{ role.name }}</summary>
+    <form method="post" action="/admin/roles/{{ role.id }}/delete">
+      <label for="role-move-{{ role.id }}">Move its users to</label>
+      <select id="role-move-{{ role.id }}" name="move_to">
+        {% for t in role.move_targets %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="danger">Delete {{ role.name }}</button>
+    </form>
+  </details>
+  {% endif %}
   {% else %}
   <h2>{{ role.name }} <span class="optional">(rank {{ role.rank }})</span></h2>
   <p class="hint">{% for p in role.permissions if p.granted %}{{ p.label }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
@@ -32,4 +48,21 @@
   {% endif %}
 </section>
 {% endfor %}
+{% if max_rank >= 1 %}
+<section class="card role">
+  <h2>New role</h2>
+  <form method="post" action="/admin/roles/new">
+    <label for="new-role-name">Name</label>
+    <input id="new-role-name" name="name" maxlength="32" required>
+    <label for="new-role-rank">Rank <span class="optional">(1 to {{ max_rank }})</span></label>
+    <input id="new-role-rank" name="rank" type="number" min="1" max="{{ max_rank }}" required>
+    <label for="new-role-copy">Start with the permissions of</label>
+    <select id="new-role-copy" name="copy_from">
+      <option value="">No role (nothing allowed)</option>
+      {% for t in templates %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+    </select>
+    <button type="submit">Add role</button>
+  </form>
+</section>
+{% endif %}
 {% endblock %}

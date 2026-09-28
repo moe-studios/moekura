@@ -2,7 +2,16 @@
 
 Everyone has a role, and a role is a set of permissions. Logged-out
 visitors have the **Anonymous** role. Edit roles under **Admin → Roles**:
-rename them, and choose their permissions.
+rename them, and choose their permissions. You can only hand on
+permissions you have yourself; ones you lack stay as they are.
+
+## Adding roles
+
+Add a role at the bottom of **Admin → Roles** with a name, a rank below
+your own, and optionally the permissions of an existing role to start
+from. The ranks of added roles can be changed later, and they can be
+deleted, which moves their users to a role you choose. The built-in
+roles can't be deleted and keep their ranks.
 
 | Permission | Allows |
 |---|---|
@@ -77,8 +86,8 @@ someone was promoted.
 
 Staff act only on people below them: a moderator can ban members and
 janitors, but not other moderators or admins. The same goes for changing
-roles: you can give or take away only roles ranked below your own, and
-never change your own role or status. That keeps a mistake, or a
+roles: you can give or take away only roles ranked below your own that
+grant nothing you lack, and never change your own role or status. That keeps a mistake, or a
 compromised account, from locking out the people above it.
 
 From the shell, `moekura admin set-role NAME ROLE` changes anyone's role,

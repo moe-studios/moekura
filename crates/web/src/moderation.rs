@@ -170,6 +170,12 @@ pub(crate) async fn moderate(
     };
     current.require(permission)?;
     let reason = check_reason(reason)?;
+    // The reason is what the post shows in its place.
+    if action == PostAction::Delete && reason.is_empty() {
+        return Err(AppError::BadRequest(
+            "Say why the post is being deleted".into(),
+        ));
+    }
     change_status(state, current, id, from, to, kind, reason).await?;
     let event = match action {
         PostAction::Approve => Some(Event::PostApproved),
@@ -630,6 +636,15 @@ mod tests {
             .status,
             StatusCode::FORBIDDEN
         );
+        let unexplained = app
+            .post_form(
+                &format!("/posts/{id}/delete"),
+                Some(&moderator),
+                &[],
+                "reason=+",
+            )
+            .await;
+        assert_eq!(unexplained.status, StatusCode::BAD_REQUEST);
         let response = app
             .post_form(
                 &format!("/posts/{id}/delete"),

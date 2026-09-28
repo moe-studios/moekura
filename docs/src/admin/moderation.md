@@ -29,7 +29,7 @@ are collapsed for everyone.
 
 ## Deleting, restoring, purging
 
-Deleting a post (with a reason, shown on the post) hides it from everyone
+Deleting a post (with a reason, which is required and shown on the post) hides it from everyone
 without *See deleted posts*. It can be restored. Purging a deleted post
 removes it, its files and its history for good, in the background.
 

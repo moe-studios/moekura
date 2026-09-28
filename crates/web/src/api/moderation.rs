@@ -86,8 +86,9 @@ pub(crate) async fn reject(
 
 /// Delete a post.
 ///
-/// Needs `delete_posts`. Deleted posts stay visible to moderators and can
-/// be restored; open flags on the post are upheld.
+/// Needs `delete_posts`, and a reason, which the post shows in its place.
+/// Deleted posts stay visible to moderators and can be restored; open
+/// flags on the post are upheld.
 #[utoipa::path(
     post,
     path = "/posts/{id}/delete",
@@ -97,7 +98,7 @@ pub(crate) async fn reject(
     request_body = Reason,
     responses(
         (status = 200, body = ApiPost),
-        (status = 400, body = ErrorBody, description = "The post is already deleted"),
+        (status = 400, body = ErrorBody, description = "The post is already deleted, or no reason was given"),
     ),
 )]
 pub(crate) async fn delete(

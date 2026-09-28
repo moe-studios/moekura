@@ -293,6 +293,24 @@ function attachAll(root = document) {
   }
 }
 
+// src/confirm.ts
+function questionFor(form, submitter) {
+  return submitter?.getAttribute("data-confirm") ?? form.getAttribute("data-confirm");
+}
+function enableConfirm() {
+  document.addEventListener(
+    "submit",
+    (event) => {
+      const question = questionFor(event.target, event.submitter);
+      if (question !== null && !window.confirm(question)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }
+    },
+    true
+  );
+}
+
 // src/keyboard.ts
 var SHORTCUTS = [
   ["a, \u2190", "Previous post or page"],
@@ -405,6 +423,50 @@ function enableShortcuts() {
     const action = actionFor(event.key);
     if (action && run(action)) event.preventDefault();
   });
+}
+
+// src/layout.ts
+function reveal(target2) {
+  if (!(target2 instanceof HTMLElement)) return;
+  const details = target2.closest("details");
+  if (details) details.open = true;
+  target2.focus();
+}
+function enableLayout() {
+  for (const link of document.querySelectorAll("a[data-open-edit]")) {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      reveal(document.querySelector(link.hash));
+    });
+  }
+  if (window.location.hash === "#edit-tags") reveal(document.getElementById("edit-tags"));
+  const shortcuts = document.querySelector("[data-shortcuts-link]");
+  if (shortcuts) {
+    shortcuts.hidden = false;
+    shortcuts.querySelector("button")?.addEventListener("click", showHelp);
+  }
+}
+
+// src/toast.ts
+var SHOW_FOR_MS = 6e3;
+function enableToasts() {
+  const list = document.createElement("ul");
+  list.id = "toasts";
+  list.className = "toasts";
+  list.setAttribute("role", "status");
+  document.body.append(list);
+}
+function toast(message) {
+  const region = document.getElementById("toasts");
+  if (!region) {
+    window.alert(message);
+    return;
+  }
+  const item = document.createElement("li");
+  item.className = "toast";
+  item.textContent = message;
+  region.append(item);
+  window.setTimeout(() => item.remove(), SHOW_FOR_MS);
 }
 
 // src/note-editor.ts
@@ -592,7 +654,7 @@ function enableNoteEditor(root = document) {
           window.location.reload();
         } else {
           draw(rect, original);
-          window.alert(message);
+          toast(message);
         }
       });
     };
@@ -773,6 +835,10 @@ function enhanceReactions(root = document) {
         body,
         headers: { Accept: "application/json" }
       }).then(async (response) => {
+        if (response.status === 429) {
+          toast("That was too quick. Wait a moment, then try again.");
+          return;
+        }
         if (!response.ok) throw new Error(String(response.status));
         const scope = form.closest(".comment") ?? form.closest(".post-info") ?? root;
         update(scope, await response.json());
@@ -956,6 +1022,9 @@ function enableTagScript(root = document) {
 
 // src/main.ts
 document.documentElement.classList.add("js");
+enableToasts();
+enableConfirm();
+enableLayout();
 attachAll();
 enhanceReactions();
 enableShortcuts();

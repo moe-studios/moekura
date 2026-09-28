@@ -45,7 +45,7 @@ function busy(target: EventTarget | null): boolean {
   );
 }
 
-function showHelp(): void {
+export function showHelp(): void {
   const existing = document.getElementById("shortcuts");
   const dialog = existing instanceof HTMLDialogElement ? existing : document.createElement("dialog");
   if (!existing) {

@@ -1,9 +1,9 @@
 <nav class="subnav" aria-label="Moderation">
-  <a href="/moderation/queue">Approval queue</a>
-  <a href="/moderation/flags">Flags</a>
-  <a href="/moderation/comments">Reported comments</a>
+  <a href="/moderation/queue"{% if path == "/moderation/queue" or path is startingwith("/moderation/queue/") %} aria-current="page"{% endif %}>Approval queue</a>
+  <a href="/moderation/flags"{% if path == "/moderation/flags" or path is startingwith("/moderation/flags/") %} aria-current="page"{% endif %}>Flags</a>
+  <a href="/moderation/comments"{% if path == "/moderation/comments" or path is startingwith("/moderation/comments/") %} aria-current="page"{% endif %}>Reported comments</a>
   <a href="/posts?tags=status%3Adeleted">Deleted posts</a>
-  <a href="/moderation/mass-edit">Mass edit</a>
-  <a href="/moderation/bans">Bans</a>
-  <a href="/moderation/log">Log</a>
+  <a href="/moderation/mass-edit"{% if path == "/moderation/mass-edit" or path is startingwith("/moderation/mass-edit/") %} aria-current="page"{% endif %}>Mass edit</a>
+  <a href="/moderation/bans"{% if path == "/moderation/bans" or path is startingwith("/moderation/bans/") %} aria-current="page"{% endif %}>Bans</a>
+  <a href="/moderation/log"{% if path == "/moderation/log" or path is startingwith("/moderation/log/") %} aria-current="page"{% endif %}>Log</a>
 </nav>

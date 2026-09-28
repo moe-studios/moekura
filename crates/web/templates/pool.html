@@ -31,7 +31,7 @@
 </nav>
 {% endif %}
 {% if can_delete %}
-<form method="post" action="{{ pool.url }}/delete"><button type="submit" class="danger">Delete pool</button></form>
+<form method="post" action="{{ pool.url }}/delete"><button type="submit" class="danger" data-confirm="Delete this pool?">Delete pool</button></form>
 {% elif can_undelete %}
 <form method="post" action="{{ pool.url }}/undelete"><button type="submit">Restore pool</button></form>
 {% endif %}

@@ -23,7 +23,7 @@
     {% if comment.can_reply %}<a href="/posts/{{ comment.post_id }}?reply={{ comment.id }}#new-comment">Reply</a>{% endif %}
     {% if comment.can_edit %}
     <a href="/comments/{{ comment.id }}/edit">Edit</a>
-    <form method="post" action="/comments/{{ comment.id }}/delete"><button type="submit" class="link">Delete</button></form>
+    <form method="post" action="/comments/{{ comment.id }}/delete"><button type="submit" class="link" data-confirm="Delete this comment?">Delete</button></form>
     {% endif %}
     {% if comment.can_report %}
     <details class="inline">

@@ -2,7 +2,7 @@
 
 use moekura_core::settings::{SettingError, SiteSettings};
 use serde_json::Value;
-use sqlx::{PgExecutor, PgPool};
+use sqlx::{PgConnection, PgExecutor, PgPool};
 
 use crate::site_cache::CHANNEL;
 
@@ -28,21 +28,32 @@ pub enum SetError {
 /// Validates and stores one setting, then tells every node to reload.
 pub async fn set(db: &PgPool, key: &str, value: Value) -> Result<SiteSettings, SetError> {
     let mut tx = db.begin().await?;
-    let updated = load(&mut *tx).await?.with_value(key, value.clone())?;
+    let updated = set_in(&mut tx, key, value).await?;
+    tx.commit().await?;
+    Ok(updated)
+}
+
+/// [`set`] inside the caller's transaction, so several settings (and
+/// their log entries) change together. Nodes reload when it commits.
+pub async fn set_in(
+    conn: &mut PgConnection,
+    key: &str,
+    value: Value,
+) -> Result<SiteSettings, SetError> {
+    let updated = load(&mut *conn).await?.with_value(key, value.clone())?;
     sqlx::query(
         "INSERT INTO site_settings (key, value) VALUES ($1, $2)
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
     )
     .bind(key)
     .bind(value)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
     // Delivered only if the transaction commits.
     sqlx::query("SELECT pg_notify($1, 'settings')")
         .bind(CHANNEL)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
-    tx.commit().await?;
     Ok(updated)
 }
 

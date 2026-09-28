@@ -315,13 +315,17 @@ pub async fn run(
             action: Some(SettingsAction::Set { key, value }),
         } => {
             let value = parse_setting_value(&value);
-            settings::set(db, &key, value.clone()).await?;
+            let mut tx = db.begin().await?;
+            let from = settings::load(&mut *tx).await?.to_map().remove(&key);
+            settings::set_in(&mut tx, &key, value.clone()).await?;
             mod_actions::record(
-                db,
-                NewAction::new(None, ActionKind::SettingUpdate)
-                    .details(serde_json::json!({ "key": key, "value": value, "via": "cli" })),
+                &mut *tx,
+                NewAction::new(None, ActionKind::SettingUpdate).details(serde_json::json!({
+                    "key": key, "from": from, "value": value, "via": "cli",
+                })),
             )
             .await?;
+            tx.commit().await?;
             println!("{key} = {value}");
         }
     }
@@ -351,14 +355,21 @@ pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Rol
     let Some(user) = users::by_name(db, name).await? else {
         bail!("no user named {name}");
     };
-    users::set_role(db, user.id, role.id).await?;
+    let from = roles::list(db)
+        .await?
+        .into_iter()
+        .find(|r| r.id == user.role_id)
+        .map(|r| r.name);
+    let mut tx = db.begin().await?;
+    users::set_role(&mut *tx, user.id, role.id).await?;
     mod_actions::record(
-        db,
+        &mut *tx,
         NewAction::new(None, ActionKind::UserRole)
             .user(user.id)
-            .details(serde_json::json!({ "role": role.name, "via": "cli" })),
+            .details(serde_json::json!({ "from": from, "role": role.name, "via": "cli" })),
     )
     .await?;
+    tx.commit().await?;
     Ok(role)
 }
 

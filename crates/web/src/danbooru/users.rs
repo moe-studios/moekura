@@ -186,7 +186,12 @@ async fn index(
     } else {
         let prefix = params.name_matches.trim().trim_end_matches('*');
         let status = (!current.can(Permission::ManageUsers)).then_some(UserStatus::Active);
-        users::list(db, prefix, status, (page - 1) * limit, limit).await?
+        let filter = users::UserFilter {
+            name_prefix: prefix,
+            status,
+            ..Default::default()
+        };
+        users::list(db, &filter, (page - 1) * limit, limit).await?
     };
     let mut result = Vec::new();
     for user in found

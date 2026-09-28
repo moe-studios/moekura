@@ -9,7 +9,7 @@ use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Entry, Filter};
 use moekura_db::{bans, flags, users};
 use serde::{Deserialize, Serialize};
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
 
 use super::posts::{ApiPost, one};
@@ -86,8 +86,9 @@ pub(crate) async fn reject(
 
 /// Delete a post.
 ///
-/// Needs `delete_posts`. Deleted posts stay visible to moderators and can
-/// be restored; open flags on the post are upheld.
+/// Needs `delete_posts`, and a reason, which the post shows in its place.
+/// Deleted posts stay visible to moderators and can be restored; open
+/// flags on the post are upheld.
 #[utoipa::path(
     post,
     path = "/posts/{id}/delete",
@@ -97,7 +98,7 @@ pub(crate) async fn reject(
     request_body = Reason,
     responses(
         (status = 200, body = ApiPost),
-        (status = 400, body = ErrorBody, description = "The post is already deleted"),
+        (status = 400, body = ErrorBody, description = "The post is already deleted, or no reason was given"),
     ),
 )]
 pub(crate) async fn delete(
@@ -192,6 +193,7 @@ pub struct FlaggedPost {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiFlag {
+    pub id: i64,
     pub creator: Option<String>,
     pub reason: String,
     #[serde(with = "time::serde::rfc3339")]
@@ -203,12 +205,15 @@ pub struct ApiFlag {
 pub struct FlagParams {
     /// Posts to return, up to 100.
     limit: Option<i64>,
+    /// For the next page: the id of the last post's first flag.
+    after: Option<i64>,
 }
 
 /// List open flags.
 ///
-/// Needs `approve_posts`. The posts whose flags have waited longest, by
-/// post number, each with its open flags.
+/// Needs `approve_posts`. The posts whose flags have waited longest
+/// first, each with its open flags, oldest first. For the next page, pass
+/// the id of the last post's first flag as `after`.
 #[utoipa::path(
     get,
     path = "/flags",
@@ -228,8 +233,10 @@ pub(crate) async fn open_flags(
     current.require(Permission::ApprovePosts)?;
     let limit = params.limit.unwrap_or(30).clamp(1, 100);
     let mut posts: Vec<FlaggedPost> = Vec::new();
-    for flag in flags::open(state.db.primary(), limit).await? {
+    let after = params.after.unwrap_or(0);
+    for flag in flags::open(state.db.primary(), after, limit).await? {
         let entry = ApiFlag {
+            id: flag.id,
             creator: flag.creator_name,
             reason: flag.reason,
             created_at: flag.created_at,
@@ -405,17 +412,8 @@ pub(crate) async fn list_bans(
     }))
 }
 
-/// The longest ban length the API takes, in days.
-const MAX_BAN_DAYS: i64 = 3650;
-
 fn expiry(days: Option<i64>) -> Result<Option<OffsetDateTime>, AppError> {
-    match days {
-        None => Ok(None),
-        Some(days @ 1..=MAX_BAN_DAYS) => Ok(Some(OffsetDateTime::now_utc() + Duration::days(days))),
-        Some(_) => Err(AppError::Unprocessable(format!(
-            "`days` must be between 1 and {MAX_BAN_DAYS}"
-        ))),
-    }
+    crate::bans::expiry(days).map_err(AppError::Unprocessable)
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -570,6 +568,10 @@ pub struct LogParams {
     user: Option<String>,
     /// Entries older than this id: a previous page's `next_before`.
     before: Option<i64>,
+    /// Entries from this day on (`YYYY-MM-DD`, UTC).
+    since: Option<String>,
+    /// Entries up to and including this day (`YYYY-MM-DD`, UTC).
+    until: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -610,7 +612,11 @@ const LOG_PAGE: i64 = 50;
     operation_id = "list_mod_actions",
     tag = "moderation",
     params(LogParams),
-    responses((status = 200, body = LogPage), (status = 400, body = ErrorBody)),
+    responses(
+        (status = 200, body = LogPage),
+        (status = 400, body = ErrorBody, description = "Unknown action"),
+        (status = 422, body = ErrorBody, description = "A date isn't `YYYY-MM-DD`"),
+    ),
 )]
 pub(crate) async fn log(
     State(state): State<AppState>,
@@ -633,12 +639,21 @@ pub(crate) async fn log(
                 .ok_or_else(|| AppError::BadRequest(format!("Unknown action `{name}`")))?,
         ),
     };
+    let day = |text: &Option<String>| {
+        crate::moderation::parse_day(text.as_deref().unwrap_or("")).map_err(|e| match e {
+            AppError::BadRequest(message) => AppError::Unprocessable(message),
+            other => other,
+        })
+    };
+    let (since, until) = crate::moderation::day_span(day(&params.since)?, day(&params.until)?);
     let filter = Filter {
         action,
         actor_id: user_id(params.actor.as_deref()).await?,
         post_id: params.post_id,
         user_id: user_id(params.user.as_deref()).await?,
         before: params.before,
+        since,
+        until,
     };
     let entries = mod_actions::list(db, &filter, LOG_PAGE).await?;
     let next_before = (entries.len() == LOG_PAGE as usize)
@@ -870,6 +885,20 @@ mod tests {
         let list = json(&app.get("/api/v1/bans", Some(&moderator)).await.body);
         assert_eq!(list["users"][0]["user"], json!("alice"));
         assert!(list["users"][0]["expires_at"].is_string());
+        // Banning again replaces the ban rather than stacking another.
+        let longer = app
+            .json(
+                "POST",
+                "/api/v1/users/alice/ban",
+                Some(&moderator),
+                Some(json!({"reason": "more spam"})),
+            )
+            .await;
+        assert_eq!(longer.status, StatusCode::NO_CONTENT, "{}", longer.body);
+        let list = json(&app.get("/api/v1/bans", Some(&moderator)).await.body);
+        assert_eq!(list["users"].as_array().unwrap().len(), 1);
+        assert_eq!(list["users"][0]["reason"], json!("more spam"));
+        assert!(list["users"][0]["expires_at"].is_null());
 
         // Only lower ranks, and within limits.
         let admin = app

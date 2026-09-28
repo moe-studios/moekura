@@ -3,7 +3,7 @@
 use std::net::IpAddr;
 
 use ipnet::IpNet;
-use sqlx::PgExecutor;
+use sqlx::{PgConnection, PgExecutor};
 use time::OffsetDateTime;
 
 /// A ban in force.
@@ -41,23 +41,43 @@ macro_rules! select_bans {
     };
 }
 
+/// Bans a user, replacing any ban in force (it's lifted by `banner_id`).
+/// Returns the ban it replaced. The user is locked, so bans made at the
+/// same moment don't both stand.
 pub async fn ban(
-    db: impl PgExecutor<'_>,
+    conn: &mut PgConnection,
     user_id: i64,
     reason: &str,
     expires_at: Option<OffsetDateTime>,
     banner_id: Option<i64>,
-) -> sqlx::Result<i64> {
-    sqlx::query_scalar(
-        "INSERT INTO bans (user_id, reason, expires_at, banner_id) VALUES ($1, $2, $3, $4)
-         RETURNING id",
+) -> sqlx::Result<Option<ActiveBan>> {
+    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE")
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    // Newest last; before bans were replaced, several could be in force.
+    let replaced: Vec<ActiveBan> = sqlx::query_as(
+        "WITH lifted AS (
+             UPDATE bans SET lifted_at = now(), lifter_id = $2
+             WHERE user_id = $1 AND lifted_at IS NULL
+               AND (expires_at IS NULL OR expires_at > now())
+             RETURNING id, reason, expires_at)
+         SELECT reason, expires_at FROM lifted ORDER BY id",
+    )
+    .bind(user_id)
+    .bind(banner_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO bans (user_id, reason, expires_at, banner_id) VALUES ($1, $2, $3, $4)",
     )
     .bind(user_id)
     .bind(reason)
     .bind(expires_at)
     .bind(banner_id)
-    .fetch_one(db)
-    .await
+    .execute(&mut *conn)
+    .await?;
+    Ok(replaced.into_iter().last())
 }
 
 /// Lifts a user's active bans; returns how many.
@@ -83,6 +103,18 @@ pub async fn for_user(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<Vec
         .bind(user_id)
         .fetch_all(db)
         .await
+}
+
+/// Which of `user_ids` are under a ban.
+pub async fn banned_among(db: impl PgExecutor<'_>, user_ids: &[i64]) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT user_id FROM bans
+         WHERE user_id = ANY($1) AND lifted_at IS NULL
+           AND (expires_at IS NULL OR expires_at > now())",
+    )
+    .bind(user_ids)
+    .fetch_all(db)
+    .await
 }
 
 /// Bans in force, newest first.
@@ -125,11 +157,19 @@ pub async fn ban_network(
     .await
 }
 
-pub async fn lift_network(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<IpNet>> {
+/// Lifts network ban `id`, returning its network; `None` if it was lifted
+/// already.
+pub async fn lift_network(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    lifter_id: Option<i64>,
+) -> sqlx::Result<Option<IpNet>> {
     sqlx::query_scalar(
-        "UPDATE ip_bans SET lifted_at = now() WHERE id = $1 AND lifted_at IS NULL RETURNING network",
+        "UPDATE ip_bans SET lifted_at = now(), lifter_id = $2
+         WHERE id = $1 AND lifted_at IS NULL RETURNING network",
     )
     .bind(id)
+    .bind(lifter_id)
     .fetch_optional(db)
     .await
 }
@@ -177,10 +217,14 @@ mod tests {
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn user_bans(pool: PgPool) {
         let alice = user(&pool, "alice").await;
+        let mut conn = pool.acquire().await.unwrap();
         let past = OffsetDateTime::now_utc() - time::Duration::days(1);
-        ban(&pool, alice, "old", Some(past), None).await.unwrap();
+        ban(&mut conn, alice, "old", Some(past), None)
+            .await
+            .unwrap();
         assert!(active(&pool, 10).await.unwrap().is_empty(), "expired");
-        ban(&pool, alice, "spam", None, None).await.unwrap();
+        let replaced = ban(&mut conn, alice, "spam", None, None).await.unwrap();
+        assert_eq!(replaced, None, "the expired ban wasn't in force");
         let bans = for_user(&pool, alice).await.unwrap();
         assert_eq!(
             bans.iter()
@@ -188,6 +232,21 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("spam", true), ("old", false)]
         );
+        // A new ban replaces the one in force.
+        let week = OffsetDateTime::now_utc() + time::Duration::days(7);
+        let replaced = ban(&mut conn, alice, "spam, a week", Some(week), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            replaced,
+            Some(ActiveBan {
+                reason: "spam".into(),
+                expires_at: None
+            })
+        );
+        let active_now = active(&pool, 10).await.unwrap();
+        assert_eq!(active_now.len(), 1);
+        assert_eq!(active_now[0].reason, "spam, a week");
         assert_eq!(lift(&pool, alice, None).await.unwrap(), 1);
         assert!(active(&pool, 10).await.unwrap().is_empty());
     }
@@ -222,7 +281,21 @@ mod tests {
             active_networks(&pool).await.unwrap()[0].network.to_string(),
             "203.0.113.0/24"
         );
-        assert!(lift_network(&pool, id).await.unwrap().is_some());
+        let lifter = user(&pool, "mod").await;
+        assert!(
+            lift_network(&pool, id, Some(lifter))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let lifted_by: Option<i64> =
+            sqlx::query_scalar("SELECT lifter_id FROM ip_bans WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(lifted_by, Some(lifter));
+        assert!(lift_network(&pool, id, None).await.unwrap().is_none());
         assert!(
             network_ban(&pool, "203.0.113.200".parse().unwrap())
                 .await

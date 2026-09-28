@@ -198,26 +198,47 @@ pub async fn set_settings(
     Ok(())
 }
 
-/// Users whose names start with `prefix`, optionally only with `status`,
-/// by name.
+/// Which users [`list`] finds. Empty text and `None` match anyone.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UserFilter<'a> {
+    /// The start of the name, case-insensitively.
+    pub name_prefix: &'a str,
+    pub status: Option<UserStatus>,
+    pub role_id: Option<i32>,
+    /// Part of the email address, case-insensitively.
+    pub email: &'a str,
+    /// Whether they're under a ban.
+    pub banned: Option<bool>,
+}
+
+/// `text` for `LIKE`, with its wildcards escaped.
+fn like_escape(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// Users matching `filter`, by name.
 pub async fn list(
     db: impl PgExecutor<'_>,
-    prefix: &str,
-    status: Option<UserStatus>,
+    filter: &UserFilter<'_>,
     offset: i64,
     limit: i64,
 ) -> sqlx::Result<Vec<User>> {
     sqlx::query_as(select_users!(
         "WHERE name ILIKE $1 || '%' AND ($2::text IS NULL OR status = $2)
-         ORDER BY name OFFSET $3 LIMIT $4"
+           AND ($3::integer IS NULL OR role_id = $3)
+           AND ($4 = '' OR email ILIKE '%' || $4 || '%')
+           AND ($5::boolean IS NULL OR $5 = EXISTS (
+               SELECT 1 FROM bans b WHERE b.user_id = users.id AND b.lifted_at IS NULL
+                 AND (b.expires_at IS NULL OR b.expires_at > now())))
+         ORDER BY name OFFSET $6 LIMIT $7"
     ))
-    .bind(
-        prefix
-            .replace('\\', "\\\\")
-            .replace('%', "\\%")
-            .replace('_', "\\_"),
-    )
-    .bind(status)
+    .bind(like_escape(filter.name_prefix))
+    .bind(filter.status)
+    .bind(filter.role_id)
+    .bind(like_escape(filter.email))
+    .bind(filter.banned)
     .bind(offset)
     .bind(limit)
     .fetch_all(db)

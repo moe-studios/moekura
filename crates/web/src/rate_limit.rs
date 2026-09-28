@@ -78,6 +78,14 @@ const COMMENT_BY_USER: Limit = Limit {
     period: Duration::from_secs(20),
 };
 
+// Flagging posts and reporting comments (one allowance for both): each
+// lands in a staff queue, and a flag marks the post flagged.
+const REPORT_BY_USER: Limit = Limit {
+    name: "report_user",
+    burst: 10,
+    period: Duration::from_secs(60),
+};
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -93,6 +101,7 @@ pub struct RateLimits {
     code_by_user: DefaultKeyedRateLimiter<i64>,
     confirm_by_user: DefaultKeyedRateLimiter<i64>,
     comment_by_user: DefaultKeyedRateLimiter<i64>,
+    report_by_user: DefaultKeyedRateLimiter<i64>,
     valkey: Option<Valkey>,
 }
 
@@ -114,6 +123,7 @@ impl RateLimits {
             code_by_user: RateLimiter::keyed(quota(CODE_BY_USER)),
             confirm_by_user: RateLimiter::keyed(quota(CONFIRM_BY_USER)),
             comment_by_user: RateLimiter::keyed(quota(COMMENT_BY_USER)),
+            report_by_user: RateLimiter::keyed(quota(REPORT_BY_USER)),
             valkey,
         }
     }
@@ -186,6 +196,17 @@ impl RateLimits {
         .await
     }
 
+    /// Counts a flag or comment report by user `user_id`.
+    pub async fn check_report(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            REPORT_BY_USER,
+            &self.report_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
     /// Forgets keys that are back at full allowance, bounding memory use.
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
@@ -197,6 +218,7 @@ impl RateLimits {
         self.code_by_user.retain_recent();
         self.confirm_by_user.retain_recent();
         self.comment_by_user.retain_recent();
+        self.report_by_user.retain_recent();
     }
 
     async fn check<K: std::hash::Hash + Eq + Clone>(
@@ -304,6 +326,20 @@ mod tests {
             }
             assert!(limits.check_register(Some(address)).await.is_err());
             limits.check_register(None).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn limits_flags_and_reports_per_user() {
+        for limits in backends().await {
+            // Ids no other run has used, since Valkey keeps counts.
+            let id = || crate::shared::tests::fresh() as i64 & i64::MAX;
+            let user = id();
+            for _ in 0..10 {
+                limits.check_report(user).await.unwrap();
+            }
+            assert!(limits.check_report(user).await.is_err());
+            limits.check_report(id()).await.unwrap();
         }
     }
 

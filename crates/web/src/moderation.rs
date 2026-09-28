@@ -61,6 +61,7 @@ fn check_reason(reason: &str) -> Result<&str, AppError> {
 }
 
 /// Moves post `id` between statuses and logs it, in one transaction.
+/// Moving a post to deleted settles its open flags as upheld.
 async fn change_status(
     state: &AppState,
     current: &CurrentUser,
@@ -77,6 +78,9 @@ async fn change_status(
             "The post isn't in a state where that applies (someone may have got there first)"
                 .into(),
         ));
+    }
+    if to == PostStatus::Deleted {
+        flags::resolve(&mut *tx, id, true, actor).await?;
     }
     mod_actions::record(
         &mut *tx,
@@ -166,11 +170,13 @@ pub(crate) async fn moderate(
     };
     current.require(permission)?;
     let reason = check_reason(reason)?;
-    change_status(state, current, id, from, to, kind, reason).await?;
-    if action == PostAction::Delete {
-        // Deleting settles any open flags.
-        flags::resolve(db, id, true, actor).await?;
+    // The reason is what the post shows in its place.
+    if action == PostAction::Delete && reason.is_empty() {
+        return Err(AppError::BadRequest(
+            "Say why the post is being deleted".into(),
+        ));
     }
+    change_status(state, current, id, from, to, kind, reason).await?;
     let event = match action {
         PostAction::Approve => Some(Event::PostApproved),
         PostAction::Reject | PostAction::Delete => Some(Event::PostDeleted),
@@ -222,6 +228,7 @@ pub(crate) async fn flag_post(
     if reason.is_empty() {
         return Err(AppError::BadRequest("Say why the post should go".into()));
     }
+    state.rate_limits.check_report(user.id).await?;
     let mut tx = state.db.primary().begin().await?;
     match flags::create(&mut tx, id, user.id, reason).await {
         Ok(()) => {}
@@ -243,26 +250,36 @@ pub(crate) async fn flag_post(
 /// Posts with open flags per page of the flag queue.
 const FLAG_PAGE: i64 = 30;
 
-async fn flag_queue(page: Page) -> Result<Response, AppError> {
+async fn flag_queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ApprovePosts)?;
     let state = page.state();
-    let open = flags::open(state.db.primary(), FLAG_PAGE).await?;
+    let open = flags::open(state.db.primary(), query.after.unwrap_or(0), FLAG_PAGE).await?;
+    // Each post's flags come together, oldest first.
     let mut ids: Vec<i64> = open.iter().map(|f| f.post_id).collect();
     ids.dedup();
+    let more = (ids.len() == FLAG_PAGE as usize)
+        .then(|| open.iter().find(|f| Some(&f.post_id) == ids.last()))
+        .flatten()
+        .map(|f| url_value(&format!("/moderation/flags?after={}", f.id)));
     let cards = review_cards(state, &ids, &[]).await?;
     let posts: Vec<Value> = cards
         .into_iter()
-        .zip(&ids)
-        .map(|(card, id)| {
+        .map(|card| {
+            // Cards can be fewer than ids (a post without media), so
+            // match flags up by post rather than by position.
+            let id = card.get_attr("id").ok().and_then(|v| i64::try_from(v).ok());
             let reasons: Vec<Value> = open
                 .iter()
-                .filter(|f| f.post_id == *id)
+                .filter(|f| Some(f.post_id) == id)
                 .map(|f| context! { by => f.creator_name, reason => f.reason })
                 .collect();
             context! { ..card, ..context! { flags => reasons } }
         })
         .collect();
-    Ok(page.render("moderation_flags.html", context! { posts => posts }))
+    Ok(page.render(
+        "moderation_flags.html",
+        context! { posts => posts, more_url => more },
+    ))
 }
 
 async fn dismiss_flags(
@@ -314,9 +331,10 @@ async fn purge(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Respon
 /// Posts per page of the approval queue.
 const QUEUE_PAGE: i64 = 30;
 
+/// Where a moderation queue's page starts.
 #[derive(Debug, Default, Deserialize)]
-struct QueueQuery {
-    after: Option<i64>,
+pub(crate) struct QueueQuery {
+    pub after: Option<i64>,
 }
 
 /// Grid-like cards for `ids` with their tag names, for queues.
@@ -433,7 +451,52 @@ struct LogQuery {
     by: String,
     #[serde(default)]
     post: String,
+    /// The user acted on.
+    #[serde(default)]
+    user: String,
+    /// `YYYY-MM-DD`, UTC, inclusive.
+    #[serde(default)]
+    since: String,
+    /// `YYYY-MM-DD`, UTC, inclusive.
+    #[serde(default)]
+    until: String,
     before: Option<i64>,
+}
+
+/// Parses a `YYYY-MM-DD` day; empty is none.
+pub(crate) fn parse_day(text: &str) -> Result<Option<time::Date>, AppError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let bad = || AppError::BadRequest(format!("`{text}` isn't a date like 2026-09-28"));
+    let mut parts = text.splitn(3, '-');
+    let mut next = || {
+        parts
+            .next()
+            .and_then(|p| p.parse::<i32>().ok())
+            .ok_or_else(bad)
+    };
+    let (year, month, day) = (next()?, next()?, next()?);
+    let month = u8::try_from(month)
+        .ok()
+        .and_then(|m| time::Month::try_from(m).ok())
+        .ok_or_else(bad)?;
+    let day = u8::try_from(day).map_err(|_| bad())?;
+    time::Date::from_calendar_date(year, month, day)
+        .map(Some)
+        .map_err(|_| bad())
+}
+
+/// The span of log entries from day `since` through day `until`, UTC.
+pub(crate) fn day_span(
+    since: Option<time::Date>,
+    until: Option<time::Date>,
+) -> (Option<time::OffsetDateTime>, Option<time::OffsetDateTime>) {
+    (
+        since.map(|d| d.midnight().assume_utc()),
+        until.map(|d| d.midnight().assume_utc() + time::Duration::days(1)),
+    )
 }
 
 fn entry_context(entry: &Entry) -> Value {
@@ -469,16 +532,22 @@ fn entry_context(entry: &Entry) -> Value {
 async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewAuditLog)?;
     let db = page.state().reader(&page.current);
-    let actor_id = match query.by.trim() {
-        "" => None,
-        name => Some(users::by_name(db, name).await?.map_or(-1, |user| user.id)),
+    // Nobody by that name: match nothing.
+    let user_id = async |name: &str| -> Result<Option<i64>, AppError> {
+        match name.trim() {
+            "" => Ok(None),
+            name => Ok(Some(users::by_name(db, name).await?.map_or(-1, |u| u.id))),
+        }
     };
+    let (since, until) = day_span(parse_day(&query.since)?, parse_day(&query.until)?);
     let filter = Filter {
         action: ActionKind::parse(&query.action),
-        actor_id,
+        actor_id: user_id(&query.by).await?,
         post_id: query.post.trim().trim_start_matches('#').parse().ok(),
-        user_id: None,
+        user_id: user_id(&query.user).await?,
         before: query.before,
+        since,
+        until,
     };
     let entries = mod_actions::list(db, &filter, LOG_PAGE).await?;
     let older = (entries.len() == LOG_PAGE as usize)
@@ -489,6 +558,9 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
                 .append_pair("action", &query.action)
                 .append_pair("by", &query.by)
                 .append_pair("post", &query.post)
+                .append_pair("user", &query.user)
+                .append_pair("since", &query.since)
+                .append_pair("until", &query.until)
                 .append_pair("before", &id.to_string())
                 .finish();
             url_value(&format!("/moderation/log?{q}"))
@@ -498,7 +570,14 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
         context! {
             entries => entries.iter().map(entry_context).collect::<Vec<_>>(),
             actions => ActionKind::ALL.iter().map(|k| context! { name => k.as_str(), label => k.label() }).collect::<Vec<_>>(),
-            query => context! { action => query.action, by => query.by, post => query.post },
+            query => context! {
+                action => query.action,
+                by => query.by,
+                post => query.post,
+                user => query.user,
+                since => query.since,
+                until => query.until,
+            },
             older_url => older,
         },
     ))
@@ -557,6 +636,15 @@ mod tests {
             .status,
             StatusCode::FORBIDDEN
         );
+        let unexplained = app
+            .post_form(
+                &format!("/posts/{id}/delete"),
+                Some(&moderator),
+                &[],
+                "reason=+",
+            )
+            .await;
+        assert_eq!(unexplained.status, StatusCode::BAD_REQUEST);
         let response = app
             .post_form(
                 &format!("/posts/{id}/delete"),
@@ -795,6 +883,29 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_flag_queue_pages(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        sqlx::query(
+            "WITH p AS (INSERT INTO posts (rating, status)
+                        SELECT 'g', 'flagged' FROM generate_series(1, 31) RETURNING id)
+             INSERT INTO post_flags (post_id, reason) SELECT id, 'flag ' || id FROM p",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let first = app.get("/moderation/flags", Some(&moderator)).await.body;
+        let at = first.find("/moderation/flags?after=").expect("a next page");
+        let next: String = first[at..].split('"').next().unwrap().to_owned();
+        let second = app.get(&next, Some(&moderator)).await;
+        assert_eq!(second.status, StatusCode::OK);
+        assert!(
+            !second.body.contains("/moderation/flags?after="),
+            "last page"
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn the_log_is_for_moderators(pool: PgPool) {
         let app = TestApp::new(test_state(&pool).await, super::routes());
         let member = session_for(&pool, "alice", SystemRole::Member).await;
@@ -824,5 +935,29 @@ mod tests {
         assert!(!filtered.body.contains("off-topic"));
         let by_nobody = app.get("/moderation/log?by=nobody", Some(&moderator)).await;
         assert!(!by_nobody.body.contains("off-topic"));
+        let on_nobody = app
+            .get("/moderation/log?user=nobody", Some(&moderator))
+            .await;
+        assert!(!on_nobody.body.contains("off-topic"));
+        let today = time::OffsetDateTime::now_utc().date();
+        let span = format!("/moderation/log?since={today}&until={today}",);
+        assert!(
+            app.get(&span, Some(&moderator))
+                .await
+                .body
+                .contains("off-topic")
+        );
+        let tomorrow = today.next_day().unwrap();
+        let later = app
+            .get(
+                &format!("/moderation/log?since={tomorrow}"),
+                Some(&moderator),
+            )
+            .await;
+        assert!(!later.body.contains("off-topic"));
+        let bad = app
+            .get("/moderation/log?since=yesterday", Some(&moderator))
+            .await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST);
     }
 }

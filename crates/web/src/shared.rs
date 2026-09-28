@@ -175,7 +175,7 @@ pub(crate) mod tests {
 
     /// A number no other call, in this run or another, gets: Valkey keeps
     /// state across runs.
-    fn fresh() -> u128 {
+    pub fn fresh() -> u128 {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

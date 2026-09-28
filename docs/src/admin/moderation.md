@@ -15,6 +15,8 @@ them with a reason, from **Moderation → Approval queue**.
 Members flag posts that should go, with a reason. Flagged posts stay
 visible, marked *flagged*, and appear under **Moderation → Flags**.
 Dismiss the flags to keep the post, or delete it, which upholds them.
+Each person can flag posts and report comments about ten times at once,
+then once a minute.
 
 ## Comments
 
@@ -27,7 +29,7 @@ are collapsed for everyone.
 
 ## Deleting, restoring, purging
 
-Deleting a post (with a reason, shown on the post) hides it from everyone
+Deleting a post (with a reason, which is required and shown on the post) hides it from everyone
 without *See deleted posts*. It can be restored. Purging a deleted post
 removes it, its files and its history for good, in the background.
 
@@ -36,7 +38,8 @@ removes it, its files and its history for good, in the background.
 Ban a user from their profile, for a set time or until lifted, with a
 reason. Banned users can still log in and look around as visitors do, see
 why they're banned, and can't change anything; their API keys are limited
-the same way.
+the same way. Banning someone who's already banned replaces their ban
+with the new reason and length. Timed bans last up to 3650 days.
 
 Networks (an address or a CIDR range such as `203.0.113.0/24`) are banned
 under **Moderation → Bans**. Requests from them can read, but not
@@ -70,4 +73,5 @@ in order, and approving or rejecting it is logged. See
 **Moderation → Log** lists every staff action: approvals, deletions,
 purges, flag decisions, bans, tag and relation changes, role and setting
 changes (including those made from the shell). Filter it by action,
-moderator or post.
+moderator, post, the user acted on, or a range of days. Role, status and
+setting changes show what they changed from.

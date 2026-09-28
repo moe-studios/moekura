@@ -455,6 +455,7 @@ pub(crate) async fn report_comment(
     if comment.is_deleted {
         return Err(AppError::NotFound);
     }
+    state.rate_limits.check_report(user.id).await?;
     match comments::report(state.db.primary(), id, user.id, reason).await {
         Ok(()) => {}
         Err(ReportError::Db(e)) => return Err(e.into()),
@@ -594,23 +595,22 @@ async fn dismiss_reports(
 }
 
 /// Comments with open reports, oldest report first.
-async fn report_queue(page: Page) -> Result<Response, AppError> {
+async fn report_queue(
+    page: Page,
+    Query(query): Query<crate::moderation::QueueQuery>,
+) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
     let state = page.state();
     let db = state.db.primary();
-    let reports = comments::open_reports(db, REPORT_PAGE).await?;
-    let mut ids: Vec<i64> = Vec::new();
-    for report in &reports {
-        if !ids.contains(&report.comment_id) {
-            ids.push(report.comment_id);
-        }
-    }
-    let mut found = Vec::with_capacity(ids.len());
-    for id in &ids {
-        if let Some(comment) = comments::by_id(db, *id).await? {
-            found.push(comment);
-        }
-    }
+    let reports = comments::open_reports(db, query.after.unwrap_or(0), REPORT_PAGE).await?;
+    // Each comment's reports come together, oldest first.
+    let mut ids: Vec<i64> = reports.iter().map(|r| r.comment_id).collect();
+    ids.dedup();
+    let more = (ids.len() == REPORT_PAGE as usize)
+        .then(|| reports.iter().find(|r| Some(&r.comment_id) == ids.last()))
+        .flatten()
+        .map(|r| url_value(&format!("/moderation/comments?after={}", r.id)));
+    let found = comments::by_ids(db, &ids).await?;
     let contexts = comment_contexts(state, &page.current, &found).await?;
     let rows: Vec<Value> = found
         .iter()
@@ -624,7 +624,10 @@ async fn report_queue(page: Page) -> Result<Response, AppError> {
             context! { comment => comment, reports => reasons }
         })
         .collect();
-    Ok(page.render("moderation_comments.html", context! { rows => rows }))
+    Ok(page.render(
+        "moderation_comments.html",
+        context! { rows => rows, more_url => more },
+    ))
 }
 
 #[derive(Debug, Default, Deserialize)]

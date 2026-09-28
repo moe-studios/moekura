@@ -333,7 +333,7 @@ async fn save_settings(
         mod_actions::record(
             &mut *tx,
             NewAction::new(actor(&page), ActionKind::SettingUpdate)
-                .details(json!({ "key": key, "value": value })),
+                .details(json!({ "key": key, "from": current.get(key), "value": value })),
         )
         .await?;
     }
@@ -452,7 +452,10 @@ async fn update_user(
             &mut *tx,
             NewAction::new(actor(&page), ActionKind::UserRole)
                 .user(user.id)
-                .details(json!({ "role": role.name })),
+                .details(json!({
+                    "from": site.role(user.role_id).map(|r| r.name.as_str()),
+                    "role": role.name,
+                })),
         )
         .await?;
     }
@@ -462,7 +465,7 @@ async fn update_user(
             &mut *tx,
             NewAction::new(actor(&page), ActionKind::UserStatus)
                 .user(user.id)
-                .details(json!({ "status": status.as_str() })),
+                .details(json!({ "from": user.status.as_str(), "status": status.as_str() })),
         )
         .await?;
     }
@@ -808,6 +811,19 @@ mod tests {
             .unwrap();
         assert_eq!(alice.role_id, role_id(SystemRole::Contributor));
         assert_eq!(alice.status, moekura_db::users::UserStatus::Deactivated);
+        let details: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT details FROM mod_actions WHERE user_id = $1 ORDER BY id")
+                .bind(alice.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            details,
+            [
+                serde_json::json!({ "from": "Member", "role": "Contributor" }),
+                serde_json::json!({ "from": "active", "status": "deactivated" }),
+            ]
+        );
 
         // Roles: admins edit lower roles, not their own.
         let roles = app.get("/admin/roles", Some(&admin)).await.body;

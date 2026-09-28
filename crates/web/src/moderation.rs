@@ -445,7 +445,52 @@ struct LogQuery {
     by: String,
     #[serde(default)]
     post: String,
+    /// The user acted on.
+    #[serde(default)]
+    user: String,
+    /// `YYYY-MM-DD`, UTC, inclusive.
+    #[serde(default)]
+    since: String,
+    /// `YYYY-MM-DD`, UTC, inclusive.
+    #[serde(default)]
+    until: String,
     before: Option<i64>,
+}
+
+/// Parses a `YYYY-MM-DD` day; empty is none.
+pub(crate) fn parse_day(text: &str) -> Result<Option<time::Date>, AppError> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    let bad = || AppError::BadRequest(format!("`{text}` isn't a date like 2026-09-28"));
+    let mut parts = text.splitn(3, '-');
+    let mut next = || {
+        parts
+            .next()
+            .and_then(|p| p.parse::<i32>().ok())
+            .ok_or_else(bad)
+    };
+    let (year, month, day) = (next()?, next()?, next()?);
+    let month = u8::try_from(month)
+        .ok()
+        .and_then(|m| time::Month::try_from(m).ok())
+        .ok_or_else(bad)?;
+    let day = u8::try_from(day).map_err(|_| bad())?;
+    time::Date::from_calendar_date(year, month, day)
+        .map(Some)
+        .map_err(|_| bad())
+}
+
+/// The span of log entries from day `since` through day `until`, UTC.
+pub(crate) fn day_span(
+    since: Option<time::Date>,
+    until: Option<time::Date>,
+) -> (Option<time::OffsetDateTime>, Option<time::OffsetDateTime>) {
+    (
+        since.map(|d| d.midnight().assume_utc()),
+        until.map(|d| d.midnight().assume_utc() + time::Duration::days(1)),
+    )
 }
 
 fn entry_context(entry: &Entry) -> Value {
@@ -481,16 +526,22 @@ fn entry_context(entry: &Entry) -> Value {
 async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewAuditLog)?;
     let db = page.state().reader(&page.current);
-    let actor_id = match query.by.trim() {
-        "" => None,
-        name => Some(users::by_name(db, name).await?.map_or(-1, |user| user.id)),
+    // Nobody by that name: match nothing.
+    let user_id = async |name: &str| -> Result<Option<i64>, AppError> {
+        match name.trim() {
+            "" => Ok(None),
+            name => Ok(Some(users::by_name(db, name).await?.map_or(-1, |u| u.id))),
+        }
     };
+    let (since, until) = day_span(parse_day(&query.since)?, parse_day(&query.until)?);
     let filter = Filter {
         action: ActionKind::parse(&query.action),
-        actor_id,
+        actor_id: user_id(&query.by).await?,
         post_id: query.post.trim().trim_start_matches('#').parse().ok(),
-        user_id: None,
+        user_id: user_id(&query.user).await?,
         before: query.before,
+        since,
+        until,
     };
     let entries = mod_actions::list(db, &filter, LOG_PAGE).await?;
     let older = (entries.len() == LOG_PAGE as usize)
@@ -501,6 +552,9 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
                 .append_pair("action", &query.action)
                 .append_pair("by", &query.by)
                 .append_pair("post", &query.post)
+                .append_pair("user", &query.user)
+                .append_pair("since", &query.since)
+                .append_pair("until", &query.until)
                 .append_pair("before", &id.to_string())
                 .finish();
             url_value(&format!("/moderation/log?{q}"))
@@ -510,7 +564,14 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
         context! {
             entries => entries.iter().map(entry_context).collect::<Vec<_>>(),
             actions => ActionKind::ALL.iter().map(|k| context! { name => k.as_str(), label => k.label() }).collect::<Vec<_>>(),
-            query => context! { action => query.action, by => query.by, post => query.post },
+            query => context! {
+                action => query.action,
+                by => query.by,
+                post => query.post,
+                user => query.user,
+                since => query.since,
+                until => query.until,
+            },
             older_url => older,
         },
     ))
@@ -859,5 +920,29 @@ mod tests {
         assert!(!filtered.body.contains("off-topic"));
         let by_nobody = app.get("/moderation/log?by=nobody", Some(&moderator)).await;
         assert!(!by_nobody.body.contains("off-topic"));
+        let on_nobody = app
+            .get("/moderation/log?user=nobody", Some(&moderator))
+            .await;
+        assert!(!on_nobody.body.contains("off-topic"));
+        let today = time::OffsetDateTime::now_utc().date();
+        let span = format!("/moderation/log?since={today}&until={today}",);
+        assert!(
+            app.get(&span, Some(&moderator))
+                .await
+                .body
+                .contains("off-topic")
+        );
+        let tomorrow = today.next_day().unwrap();
+        let later = app
+            .get(
+                &format!("/moderation/log?since={tomorrow}"),
+                Some(&moderator),
+            )
+            .await;
+        assert!(!later.body.contains("off-topic"));
+        let bad = app
+            .get("/moderation/log?since=yesterday", Some(&moderator))
+            .await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST);
     }
 }

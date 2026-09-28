@@ -73,4 +73,5 @@ in order, and approving or rejecting it is logged. See
 **Moderation → Log** lists every staff action: approvals, deletions,
 purges, flag decisions, bans, tag and relation changes, role and setting
 changes (including those made from the shell). Filter it by action,
-moderator or post.
+moderator, post, the user acted on, or a range of days. Role, status and
+setting changes show what they changed from.

@@ -13,6 +13,12 @@
   <input id="log-by" name="by" value="{{ query.by }}" size="12">
   <label for="log-post">Post</label>
   <input id="log-post" name="post" value="{{ query.post }}" size="8" inputmode="numeric">
+  <label for="log-user">User</label>
+  <input id="log-user" name="user" value="{{ query.user }}" size="12">
+  <label for="log-since">From</label>
+  <input id="log-since" name="since" value="{{ query.since }}" type="date">
+  <label for="log-until">To</label>
+  <input id="log-until" name="until" value="{{ query.until }}" type="date">
   <button type="submit">Filter</button>
 </form>
 {% if entries %}

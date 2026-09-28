@@ -89,6 +89,10 @@ pub struct Filter {
     pub user_id: Option<i64>,
     /// Entries older than this id (keyset pagination).
     pub before: Option<i64>,
+    /// Entries at or after this time.
+    pub since: Option<OffsetDateTime>,
+    /// Entries before this time.
+    pub until: Option<OffsetDateTime>,
 }
 
 /// Newest first.
@@ -108,13 +112,17 @@ pub async fn list(
            AND ($3::bigint IS NULL OR m.post_id = $3)
            AND ($4::bigint IS NULL OR m.user_id = $4)
            AND ($5::bigint IS NULL OR m.id < $5)
-         ORDER BY m.id DESC LIMIT $6",
+           AND ($6::timestamptz IS NULL OR m.created_at >= $6)
+           AND ($7::timestamptz IS NULL OR m.created_at < $7)
+         ORDER BY m.id DESC LIMIT $8",
     )
     .bind(filter.action.map(ActionKind::as_str))
     .bind(filter.actor_id)
     .bind(filter.post_id)
     .bind(filter.user_id)
     .bind(filter.before)
+    .bind(filter.since)
+    .bind(filter.until)
     .bind(limit)
     .fetch_all(db)
     .await
@@ -174,5 +182,22 @@ mod tests {
             ..Filter::default()
         };
         assert!(list(&pool, &by_post, 10).await.unwrap().is_empty());
+        let now = OffsetDateTime::now_utc();
+        let today = Filter {
+            since: Some(now - time::Duration::hours(1)),
+            until: Some(now + time::Duration::hours(1)),
+            ..Filter::default()
+        };
+        assert_eq!(list(&pool, &today, 10).await.unwrap().len(), 2);
+        let later = Filter {
+            since: Some(now + time::Duration::hours(1)),
+            ..Filter::default()
+        };
+        assert!(list(&pool, &later, 10).await.unwrap().is_empty());
+        let earlier = Filter {
+            until: Some(now - time::Duration::hours(1)),
+            ..Filter::default()
+        };
+        assert!(list(&pool, &earlier, 10).await.unwrap().is_empty());
     }
 }

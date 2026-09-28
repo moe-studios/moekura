@@ -567,6 +567,10 @@ pub struct LogParams {
     user: Option<String>,
     /// Entries older than this id: a previous page's `next_before`.
     before: Option<i64>,
+    /// Entries from this day on (`YYYY-MM-DD`, UTC).
+    since: Option<String>,
+    /// Entries up to and including this day (`YYYY-MM-DD`, UTC).
+    until: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -607,7 +611,11 @@ const LOG_PAGE: i64 = 50;
     operation_id = "list_mod_actions",
     tag = "moderation",
     params(LogParams),
-    responses((status = 200, body = LogPage), (status = 400, body = ErrorBody)),
+    responses(
+        (status = 200, body = LogPage),
+        (status = 400, body = ErrorBody, description = "Unknown action"),
+        (status = 422, body = ErrorBody, description = "A date isn't `YYYY-MM-DD`"),
+    ),
 )]
 pub(crate) async fn log(
     State(state): State<AppState>,
@@ -630,12 +638,21 @@ pub(crate) async fn log(
                 .ok_or_else(|| AppError::BadRequest(format!("Unknown action `{name}`")))?,
         ),
     };
+    let day = |text: &Option<String>| {
+        crate::moderation::parse_day(text.as_deref().unwrap_or("")).map_err(|e| match e {
+            AppError::BadRequest(message) => AppError::Unprocessable(message),
+            other => other,
+        })
+    };
+    let (since, until) = crate::moderation::day_span(day(&params.since)?, day(&params.until)?);
     let filter = Filter {
         action,
         actor_id: user_id(params.actor.as_deref()).await?,
         post_id: params.post_id,
         user_id: user_id(params.user.as_deref()).await?,
         before: params.before,
+        since,
+        until,
     };
     let entries = mod_actions::list(db, &filter, LOG_PAGE).await?;
     let next_before = (entries.len() == LOG_PAGE as usize)

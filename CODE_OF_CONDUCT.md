@@ -12,7 +12,7 @@ others' private information are not accepted.
 ## Reporting
 
 Report unacceptable behaviour to the maintainers at
-[hello@uwuu.moe](mailto:hello@uwuu.moe). Every report is reviewed and
+[hello@desuwa.moe](mailto:hello@desuwa.moe). Every report is reviewed and
 kept confidential. The maintainers decide on the consequences, following
 the Covenant's
 [enforcement guidelines](https://www.contributor-covenant.org/version/2/1/code_of_conduct/#enforcement-guidelines),

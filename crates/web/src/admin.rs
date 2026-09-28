@@ -7,7 +7,7 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
 use moekura_core::permissions::{Permission, Permissions, Role, SystemRole};
 use moekura_core::settings::{RegistrationMode, SiteSettings};
 use moekura_core::uploads::UploadLimits;
@@ -419,6 +419,9 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
 struct UserForm {
     role: i32,
     status: String,
+    /// Kept in the log.
+    #[serde(default)]
+    reason: String,
 }
 
 async fn update_user(
@@ -444,6 +447,12 @@ async fn update_user(
         .ok_or_else(|| AppError::BadRequest("You can't give that role".into()))?;
     let status = UserStatus::parse(&form.status)
         .ok_or_else(|| AppError::BadRequest("Unknown status".into()))?;
+    let reason = form.reason.trim();
+    if reason.chars().count() > REASON_MAX_LEN {
+        return Err(AppError::BadRequest(format!(
+            "The reason may be at most {REASON_MAX_LEN} characters"
+        )));
+    }
 
     let mut tx = db.begin().await?;
     if role.id != user.role_id {
@@ -452,6 +461,7 @@ async fn update_user(
             &mut *tx,
             NewAction::new(actor(&page), ActionKind::UserRole)
                 .user(user.id)
+                .reason(reason)
                 .details(json!({
                     "from": site.role(user.role_id).map(|r| r.name.as_str()),
                     "role": role.name,
@@ -465,6 +475,7 @@ async fn update_user(
             &mut *tx,
             NewAction::new(actor(&page), ActionKind::UserStatus)
                 .user(user.id)
+                .reason(reason)
                 .details(json!({ "from": user.status.as_str(), "status": status.as_str() })),
         )
         .await?;
@@ -798,7 +809,7 @@ mod tests {
             StatusCode::FORBIDDEN
         );
         let form = format!(
-            "role={}&status=deactivated",
+            "role={}&status=deactivated&reason=asked+to+leave",
             role_id(SystemRole::Contributor)
         );
         let response = app
@@ -811,6 +822,13 @@ mod tests {
             .unwrap();
         assert_eq!(alice.role_id, role_id(SystemRole::Contributor));
         assert_eq!(alice.status, moekura_db::users::UserStatus::Deactivated);
+        let reasons: Vec<String> =
+            sqlx::query_scalar("SELECT reason FROM mod_actions WHERE user_id = $1")
+                .bind(alice.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(reasons, ["asked to leave", "asked to leave"]);
         let details: Vec<serde_json::Value> =
             sqlx::query_scalar("SELECT details FROM mod_actions WHERE user_id = $1 ORDER BY id")
                 .bind(alice.id)

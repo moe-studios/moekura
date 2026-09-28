@@ -31,6 +31,7 @@
           <select name="status" aria-label="Status of {{ u.name }}">
             {% for s in ["active", "pending", "unverified", "deactivated"] %}<option value="{{ s }}"{% if u.status == s %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
           </select>
+          <input name="reason" placeholder="Reason (optional)" maxlength="2000" size="16" aria-label="Reason for changing {{ u.name }}">
           <button type="submit" class="secondary">Save</button>
         </form>
         {% if u.two_factor %}

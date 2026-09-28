@@ -61,6 +61,7 @@ fn check_reason(reason: &str) -> Result<&str, AppError> {
 }
 
 /// Moves post `id` between statuses and logs it, in one transaction.
+/// Moving a post to deleted settles its open flags as upheld.
 async fn change_status(
     state: &AppState,
     current: &CurrentUser,
@@ -77,6 +78,9 @@ async fn change_status(
             "The post isn't in a state where that applies (someone may have got there first)"
                 .into(),
         ));
+    }
+    if to == PostStatus::Deleted {
+        flags::resolve(&mut *tx, id, true, actor).await?;
     }
     mod_actions::record(
         &mut *tx,
@@ -167,10 +171,6 @@ pub(crate) async fn moderate(
     current.require(permission)?;
     let reason = check_reason(reason)?;
     change_status(state, current, id, from, to, kind, reason).await?;
-    if action == PostAction::Delete {
-        // Deleting settles any open flags.
-        flags::resolve(db, id, true, actor).await?;
-    }
     let event = match action {
         PostAction::Approve => Some(Event::PostApproved),
         PostAction::Reject | PostAction::Delete => Some(Event::PostDeleted),

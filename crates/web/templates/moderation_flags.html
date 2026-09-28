@@ -24,7 +24,8 @@
   </li>
   {% endfor %}
 </ul>
-{% else %}
+{% elif not more_url %}
 <p class="empty">No open flags.</p>
 {% endif %}
+{% if more_url %}<nav class="pager"><a class="button" href="{{ more_url }}" rel="next">More</a></nav>{% endif %}
 {% endblock %}

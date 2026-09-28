@@ -24,6 +24,7 @@
   </li>
   {% endfor %}
 </ul>
+{% if more_url %}<nav class="pager"><a class="button" href="{{ more_url }}" rel="next">More</a></nav>{% endif %}
 {% else %}
 <p class="empty">No reported comments.</p>
 {% endif %}

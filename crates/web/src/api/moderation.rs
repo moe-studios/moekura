@@ -192,6 +192,7 @@ pub struct FlaggedPost {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiFlag {
+    pub id: i64,
     pub creator: Option<String>,
     pub reason: String,
     #[serde(with = "time::serde::rfc3339")]
@@ -203,12 +204,15 @@ pub struct ApiFlag {
 pub struct FlagParams {
     /// Posts to return, up to 100.
     limit: Option<i64>,
+    /// For the next page: the id of the last post's first flag.
+    after: Option<i64>,
 }
 
 /// List open flags.
 ///
-/// Needs `approve_posts`. The posts whose flags have waited longest, by
-/// post number, each with its open flags.
+/// Needs `approve_posts`. The posts whose flags have waited longest
+/// first, each with its open flags, oldest first. For the next page, pass
+/// the id of the last post's first flag as `after`.
 #[utoipa::path(
     get,
     path = "/flags",
@@ -228,8 +232,10 @@ pub(crate) async fn open_flags(
     current.require(Permission::ApprovePosts)?;
     let limit = params.limit.unwrap_or(30).clamp(1, 100);
     let mut posts: Vec<FlaggedPost> = Vec::new();
-    for flag in flags::open(state.db.primary(), limit).await? {
+    let after = params.after.unwrap_or(0);
+    for flag in flags::open(state.db.primary(), after, limit).await? {
         let entry = ApiFlag {
+            id: flag.id,
             creator: flag.creator_name,
             reason: flag.reason,
             created_at: flag.created_at,

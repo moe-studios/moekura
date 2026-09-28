@@ -243,26 +243,36 @@ pub(crate) async fn flag_post(
 /// Posts with open flags per page of the flag queue.
 const FLAG_PAGE: i64 = 30;
 
-async fn flag_queue(page: Page) -> Result<Response, AppError> {
+async fn flag_queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ApprovePosts)?;
     let state = page.state();
-    let open = flags::open(state.db.primary(), FLAG_PAGE).await?;
+    let open = flags::open(state.db.primary(), query.after.unwrap_or(0), FLAG_PAGE).await?;
+    // Each post's flags come together, oldest first.
     let mut ids: Vec<i64> = open.iter().map(|f| f.post_id).collect();
     ids.dedup();
+    let more = (ids.len() == FLAG_PAGE as usize)
+        .then(|| open.iter().find(|f| Some(&f.post_id) == ids.last()))
+        .flatten()
+        .map(|f| url_value(&format!("/moderation/flags?after={}", f.id)));
     let cards = review_cards(state, &ids, &[]).await?;
     let posts: Vec<Value> = cards
         .into_iter()
-        .zip(&ids)
-        .map(|(card, id)| {
+        .map(|card| {
+            // Cards can be fewer than ids (a post without media), so
+            // match flags up by post rather than by position.
+            let id = card.get_attr("id").ok().and_then(|v| i64::try_from(v).ok());
             let reasons: Vec<Value> = open
                 .iter()
-                .filter(|f| f.post_id == *id)
+                .filter(|f| Some(f.post_id) == id)
                 .map(|f| context! { by => f.creator_name, reason => f.reason })
                 .collect();
             context! { ..card, ..context! { flags => reasons } }
         })
         .collect();
-    Ok(page.render("moderation_flags.html", context! { posts => posts }))
+    Ok(page.render(
+        "moderation_flags.html",
+        context! { posts => posts, more_url => more },
+    ))
 }
 
 async fn dismiss_flags(
@@ -314,9 +324,10 @@ async fn purge(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Respon
 /// Posts per page of the approval queue.
 const QUEUE_PAGE: i64 = 30;
 
+/// Where a moderation queue's page starts.
 #[derive(Debug, Default, Deserialize)]
-struct QueueQuery {
-    after: Option<i64>,
+pub(crate) struct QueueQuery {
+    pub after: Option<i64>,
 }
 
 /// Grid-like cards for `ids` with their tag names, for queues.
@@ -791,6 +802,29 @@ mod tests {
         assert!(
             page.contains("off-topic") && page.contains("dismissed"),
             "{page}"
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_flag_queue_pages(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        sqlx::query(
+            "WITH p AS (INSERT INTO posts (rating, status)
+                        SELECT 'g', 'flagged' FROM generate_series(1, 31) RETURNING id)
+             INSERT INTO post_flags (post_id, reason) SELECT id, 'flag ' || id FROM p",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let first = app.get("/moderation/flags", Some(&moderator)).await.body;
+        let at = first.find("/moderation/flags?after=").expect("a next page");
+        let next: String = first[at..].split('"').next().unwrap().to_owned();
+        let second = app.get(&next, Some(&moderator)).await;
+        assert_eq!(second.status, StatusCode::OK);
+        assert!(
+            !second.body.contains("/moderation/flags?after="),
+            "last page"
         );
     }
 

@@ -237,25 +237,45 @@ pub async fn resolve_reports(
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Report {
+    pub id: i64,
     pub comment_id: i64,
     pub creator_name: Option<String>,
     pub reason: String,
     pub created_at: OffsetDateTime,
 }
 
-/// Open reports, oldest first, for at most `limit` comments.
-pub async fn open_reports(db: impl PgExecutor<'_>, limit: i64) -> sqlx::Result<Vec<Report>> {
+/// Open reports on up to `limit` comments, the comment reported longest
+/// ago first, each comment's reports together and oldest first. Pages go
+/// by the id of a comment's oldest open report, as [`crate::flags::open`].
+pub async fn open_reports(
+    db: impl PgExecutor<'_>,
+    after: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<Report>> {
     sqlx::query_as(
-        "SELECT r.comment_id, u.name::text AS creator_name, r.reason, r.created_at
-         FROM comment_reports r LEFT JOIN users u ON u.id = r.creator_id
-         WHERE r.status = 'open' AND r.comment_id IN (
-             SELECT comment_id FROM comment_reports WHERE status = 'open'
-             GROUP BY comment_id ORDER BY min(id) LIMIT $1)
-         ORDER BY r.id",
+        "WITH queued AS (
+             SELECT comment_id, min(id) AS first FROM comment_reports WHERE status = 'open'
+             GROUP BY comment_id HAVING min(id) > $1 ORDER BY first LIMIT $2)
+         SELECT r.id, r.comment_id, u.name::text AS creator_name, r.reason, r.created_at
+         FROM queued q
+         JOIN comment_reports r ON r.comment_id = q.comment_id AND r.status = 'open'
+         LEFT JOIN users u ON u.id = r.creator_id
+         ORDER BY q.first, r.id",
     )
+    .bind(after)
     .bind(limit)
     .fetch_all(db)
     .await
+}
+
+/// Comments by id, in the order of `ids`; missing ones are left out.
+pub async fn by_ids(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result<Vec<Comment>> {
+    let mut comments: Vec<Comment> = sqlx::query_as(select_comments!("WHERE c.id = ANY($1)"))
+        .bind(ids)
+        .fetch_all(db)
+        .await?;
+    comments.sort_by_key(|c| ids.iter().position(|&id| id == c.id));
+    Ok(comments)
 }
 
 #[cfg(test)]
@@ -343,7 +363,7 @@ mod tests {
             Err(ReportError::AlreadyReported)
         ));
         report(&pool, id, alice, "mine").await.unwrap();
-        let open = open_reports(&pool, 10).await.unwrap();
+        let open = open_reports(&pool, 0, 10).await.unwrap();
         assert_eq!(
             open.iter().map(|r| r.reason.as_str()).collect::<Vec<_>>(),
             ["rude", "mine"]
@@ -354,7 +374,7 @@ mod tests {
                 .unwrap(),
             2
         );
-        assert!(open_reports(&pool, 10).await.unwrap().is_empty());
+        assert!(open_reports(&pool, 0, 10).await.unwrap().is_empty());
         // Settled reports don't stop a new one.
         report(&pool, id, bob, "still rude").await.unwrap();
         assert_eq!(count_by_user(&pool, alice).await.unwrap(), 1);

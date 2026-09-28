@@ -350,6 +350,15 @@ struct UserQuery {
     name: String,
     #[serde(default)]
     status: String,
+    /// A role id.
+    #[serde(default)]
+    role: String,
+    /// Part of the email address.
+    #[serde(default)]
+    email: String,
+    /// `yes` or `no`.
+    #[serde(default)]
+    banned: String,
     page: Option<i64>,
 }
 
@@ -358,10 +367,20 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
     let state = page.state();
     let site = state.site.get();
     let number = query.page.unwrap_or(1).clamp(1, 1000);
+    let filter = users::UserFilter {
+        name_prefix: query.name.trim(),
+        status: UserStatus::parse(&query.status),
+        role_id: query.role.trim().parse().ok(),
+        email: query.email.trim(),
+        banned: match query.banned.as_str() {
+            "yes" => Some(true),
+            "no" => Some(false),
+            _ => None,
+        },
+    };
     let found = users::list(
         state.db.primary(),
-        query.name.trim(),
-        UserStatus::parse(&query.status),
+        &filter,
         (number - 1) * USERS_PAGE,
         USERS_PAGE + 1,
     )
@@ -377,6 +396,7 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
         .collect();
     let ids: Vec<i64> = found.iter().map(|u| u.id).collect();
     let two_factor = moekura_db::two_factor::enabled_among(state.db.primary(), &ids).await?;
+    let banned = moekura_db::bans::banned_among(state.db.primary(), &ids).await?;
     let rows: Vec<Value> = found
         .iter()
         .take(USERS_PAGE as usize)
@@ -392,6 +412,8 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
                 joined => user.created_at.date().to_string(),
                 editable => editable,
                 two_factor => two_factor.contains(&user.id),
+                banned => banned.contains(&user.id),
+                email => user.email,
             }
         })
         .collect();
@@ -399,6 +421,9 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
         let q = url::form_urlencoded::Serializer::new(String::new())
             .append_pair("name", &query.name)
             .append_pair("status", &query.status)
+            .append_pair("role", &query.role)
+            .append_pair("email", &query.email)
+            .append_pair("banned", &query.banned)
             .append_pair("page", &n.to_string())
             .finish();
         crate::templates::url_value(&format!("/admin/users?{q}"))
@@ -408,7 +433,14 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
         context! {
             users => rows,
             roles => assignable,
-            query => context! { name => query.name, status => query.status },
+            all_roles => site.roles().iter().map(|r| context! { id => r.id.to_string(), name => r.name }).collect::<Vec<_>>(),
+            query => context! {
+                name => query.name,
+                status => query.status,
+                role => query.role,
+                email => query.email,
+                banned => query.banned,
+            },
             previous_url => (number > 1).then(|| url(number - 1)),
             next_url => more.then(|| url(number + 1)),
         },
@@ -793,6 +825,43 @@ mod tests {
             !list.contains("<td><a href=\"/users/root\">"),
             "filtered by name"
         );
+        let staff = app
+            .get(
+                &format!("/admin/users?role={}", role_id(SystemRole::Moderator)),
+                Some(&admin),
+            )
+            .await
+            .body;
+        assert!(staff.contains("href=\"/users/mod\""), "{staff}");
+        assert!(!staff.contains("href=\"/users/alice\""), "filtered by role");
+        let alice_id = moekura_db::users::by_name(&pool, "alice")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+        let mut tx = pool.begin().await.unwrap();
+        moekura_db::bans::ban(&mut tx, alice_id, "spam", None, None)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let banned = app.get("/admin/users?banned=yes", Some(&admin)).await.body;
+        assert!(banned.contains("href=\"/users/alice\""), "{banned}");
+        assert!(banned.contains("banned"), "{banned}");
+        assert!(!banned.contains("href=\"/users/mod\""));
+        let not_banned = app.get("/admin/users?banned=no", Some(&admin)).await.body;
+        assert!(!not_banned.contains("href=\"/users/alice\""));
+        moekura_db::bans::lift(&pool, alice_id, None).await.unwrap();
+        sqlx::query("UPDATE users SET email = 'Alice@Example.org' WHERE id = $1")
+            .bind(alice_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let by_email = app
+            .get("/admin/users?email=example.ORG", Some(&admin))
+            .await
+            .body;
+        assert!(by_email.contains("href=\"/users/alice\""), "{by_email}");
+        assert!(!by_email.contains("href=\"/users/mod\""));
         // Nobody hands out their own rank or edits themselves.
         let form = format!("role={}&status=active", role_id(SystemRole::Admin));
         assert_eq!(
@@ -989,9 +1058,14 @@ mod tests {
             StatusCode::BAD_REQUEST
         );
         let list = app.get("/admin/users", Some(&moderator)).await.body;
+        let picker = list
+            .split("aria-label=\"Role of alice\"")
+            .nth(1)
+            .and_then(|rest| rest.split("</select>").next())
+            .expect("a role picker for alice");
         assert!(
-            !list.contains(&format!("<option value=\"{}\">", contributor.id)),
-            "{list}"
+            !picker.contains(&format!("<option value=\"{}\">", contributor.id)),
+            "{picker}"
         );
     }
 }

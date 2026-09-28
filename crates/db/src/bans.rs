@@ -105,6 +105,18 @@ pub async fn for_user(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<Vec
         .await
 }
 
+/// Which of `user_ids` are under a ban.
+pub async fn banned_among(db: impl PgExecutor<'_>, user_ids: &[i64]) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT user_id FROM bans
+         WHERE user_id = ANY($1) AND lifted_at IS NULL
+           AND (expires_at IS NULL OR expires_at > now())",
+    )
+    .bind(user_ids)
+    .fetch_all(db)
+    .await
+}
+
 /// Bans in force, newest first.
 pub async fn active(db: impl PgExecutor<'_>, limit: i64) -> sqlx::Result<Vec<Ban>> {
     sqlx::query_as(select_bans!(

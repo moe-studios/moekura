@@ -25,6 +25,7 @@
         {% if u.editable %}
         <form class="inline" method="post" action="/admin/users/{{ u.name }}">
           <select name="role" aria-label="Role of {{ u.name }}">
+            {% if not u.role_assignable %}<option value="{{ u.role_id }}" selected>{{ u.role or "—" }}</option>{% endif %}
             {% for r in roles %}<option value="{{ r.id }}"{% if r.id == u.role_id %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
           </select>
           <select name="status" aria-label="Status of {{ u.name }}">

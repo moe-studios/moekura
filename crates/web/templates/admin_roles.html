@@ -3,7 +3,7 @@
 {% block content %}
 {% include "admin_nav.html" %}
 <h1>Roles</h1>
-<p class="hint">You can change roles ranked below your own. Anonymous is what logged-out visitors (and banned users) get.</p>
+<p class="hint">You can change roles ranked below your own, and hand on only permissions you have yourself. Anonymous is what logged-out visitors (and banned users) get.</p>
 {% for role in roles %}
 <section class="card role">
   {% if role.editable %}
@@ -13,7 +13,7 @@
     <fieldset class="permissions">
       <legend>Can</legend>
       {% for p in role.permissions %}
-      <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.granted %} checked{% endif %}> {{ p.label }}</label>
+      <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.granted %} checked{% endif %}{% if not p.grantable %} disabled title="You don't have this permission yourself"{% endif %}> {{ p.label }}</label>
       {% endfor %}
     </fieldset>
     <fieldset class="limits">

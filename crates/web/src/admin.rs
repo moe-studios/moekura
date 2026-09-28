@@ -8,7 +8,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::moderation::ActionKind;
-use moekura_core::permissions::{Permission, Permissions};
+use moekura_core::permissions::{Permission, Permissions, Role, SystemRole};
 use moekura_core::settings::{RegistrationMode, SiteSettings};
 use moekura_core::uploads::UploadLimits;
 use moekura_db::mod_actions::{self, NewAction};
@@ -372,9 +372,7 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
     let assignable: Vec<Value> = site
         .roles()
         .iter()
-        .filter(|r| {
-            r.rank < my_rank && r.system != Some(moekura_core::permissions::SystemRole::Anonymous)
-        })
+        .filter(|r| may_assign(&page.current.role, r))
         .map(|r| context! { id => r.id, name => r.name })
         .collect();
     let ids: Vec<i64> = found.iter().map(|u| u.id).collect();
@@ -389,6 +387,7 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
                 name => user.name,
                 role_id => user.role_id,
                 role => role.map(|r| r.name.clone()),
+                role_assignable => role.is_some_and(|r| may_assign(&page.current.role, r)),
                 status => user.status.as_str(),
                 joined => user.created_at.date().to_string(),
                 editable => editable,
@@ -438,11 +437,10 @@ async fn update_user(
     if Some(user.id) == actor(&page) || current_rank >= my_rank {
         return Err(AppError::Forbidden);
     }
+    // Keeping a user's role needs no say over it; changing it does.
     let role = site
         .role(form.role)
-        .filter(|r| {
-            r.rank < my_rank && r.system != Some(moekura_core::permissions::SystemRole::Anonymous)
-        })
+        .filter(|r| r.id == user.role_id || may_assign(&page.current.role, r))
         .ok_or_else(|| AppError::BadRequest("You can't give that role".into()))?;
     let status = UserStatus::parse(&form.status)
         .ok_or_else(|| AppError::BadRequest("Unknown status".into()))?;
@@ -472,6 +470,14 @@ async fn update_user(
     Ok(saved(jar, "/admin/users"))
 }
 
+/// Whether holders of `mine` may give users `role`: it ranks below
+/// theirs, grants nothing they lack, and isn't the visitors' role.
+fn may_assign(mine: &Role, role: &Role) -> bool {
+    mine.outranks(role)
+        && mine.permissions.contains_all(role.permissions)
+        && role.system != Some(SystemRole::Anonymous)
+}
+
 // ---- roles ----------------------------------------------------------------
 
 async fn role_list(page: Page) -> Result<Response, AppError> {
@@ -493,6 +499,8 @@ async fn role_list(page: Page) -> Result<Response, AppError> {
                     key => p.key(),
                     label => p.label(),
                     granted => role.can(*p),
+                    // Only what you hold yourself can be handed on.
+                    grantable => page.current.can(*p),
                 }).collect::<Vec<_>>(),
             }
         })
@@ -525,14 +533,22 @@ async fn update_role(
             "A role name is 1 to 32 characters".into(),
         ));
     }
-    let granted: Vec<Permission> = Permission::ALL
+    // Permissions the editor holds are set from the form; the rest (ones
+    // they lack, and bits this version doesn't know) stay as they were.
+    let mine = page
+        .current
+        .role
+        .permissions
+        .and(Permissions::of(&Permission::ALL));
+    let ticked: Vec<Permission> = Permission::ALL
         .into_iter()
         .filter(|p| form.iter().any(|(k, _)| k == p.key()))
         .collect();
-    // Bits of permissions this version doesn't know stay as they were.
-    let known = Permissions::of(&Permission::ALL);
-    let unknown = role.permissions.bits() & !known.bits();
-    let permissions = Permissions::from_bits(unknown).with(Permissions::of(&granted));
+    let permissions = role
+        .permissions
+        .without(mine)
+        .with(Permissions::of(&ticked).and(mine));
+    let granted: Vec<Permission> = permissions.iter().collect();
     let limit = |key: &str| -> Result<Option<i32>, AppError> {
         match form.iter().find(|(k, _)| k == key).map(|(_, v)| v.trim()) {
             None | Some("") => Ok(None),
@@ -577,7 +593,7 @@ async fn update_role(
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
-    use moekura_core::permissions::SystemRole;
+    use moekura_core::permissions::{Permission, SystemRole};
     use sqlx::PgPool;
 
     use crate::test_support::{TestApp, session_for, test_state};
@@ -854,6 +870,94 @@ mod tests {
             .await
             .status,
             StatusCode::FORBIDDEN
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn staff_hand_on_only_what_they_hold(pool: PgPool) {
+        // Moderators who may manage settings and users, and contributors
+        // who may purge, which moderators may not.
+        sqlx::query(
+            "UPDATE roles SET permissions = permissions | (1::bigint << 14) | (1::bigint << 15)
+             WHERE system_key = 'moderator'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE roles SET permissions = permissions | (1::bigint << 10)
+             WHERE system_key = 'contributor'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let app = app(&pool).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let site = moekura_db::site_cache::SiteCache::load(&pool)
+            .await
+            .unwrap()
+            .get();
+        let role = |r: SystemRole| site.system_role(r).unwrap().clone();
+        let permissions = |id: i32| {
+            let pool = pool.clone();
+            async move {
+                let bits: i64 = sqlx::query_scalar("SELECT permissions FROM roles WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+                moekura_core::permissions::Permissions::from_db(bits)
+            }
+        };
+
+        // Ticking purge_posts for janitors does nothing.
+        let janitor = role(SystemRole::Janitor);
+        let mut form = String::from("name=Janitor");
+        for p in janitor.permissions.iter() {
+            form.push_str(&format!("&{}=on", p.key()));
+        }
+        form.push_str("&purge_posts=on");
+        let saved = app
+            .post_form(
+                &format!("/admin/roles/{}", janitor.id),
+                Some(&moderator),
+                &[],
+                &form,
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        assert_eq!(permissions(janitor.id).await, janitor.permissions);
+        // Unticked, contributors keep it: it isn't the moderator's to take.
+        let contributor = role(SystemRole::Contributor);
+        let saved = app
+            .post_form(
+                &format!("/admin/roles/{}", contributor.id),
+                Some(&moderator),
+                &[],
+                "name=Contributor&view_posts=on",
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        assert_eq!(
+            permissions(contributor.id).await.iter().collect::<Vec<_>>(),
+            [Permission::ViewPosts, Permission::PurgePosts]
+        );
+        let roles = app.get("/admin/roles", Some(&moderator)).await.body;
+        assert!(roles.contains("name=\"purge_posts\" disabled"), "{roles}");
+
+        // Nor can they make someone a contributor now.
+        let form = format!("role={}&status=active", contributor.id);
+        assert_eq!(
+            app.post_form("/admin/users/alice", Some(&moderator), &[], &form)
+                .await
+                .status,
+            StatusCode::BAD_REQUEST
+        );
+        let list = app.get("/admin/users", Some(&moderator)).await.body;
+        assert!(
+            !list.contains(&format!("<option value=\"{}\">", contributor.id)),
+            "{list}"
         );
     }
 }

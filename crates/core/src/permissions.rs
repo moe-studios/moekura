@@ -182,6 +182,23 @@ impl Permissions {
         Self(self.0 | other.0)
     }
 
+    /// The permissions in both sets.
+    #[must_use]
+    pub const fn and(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    /// These permissions, less `other`'s.
+    #[must_use]
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+
+    /// Whether every permission in `other` is in this set too.
+    pub const fn contains_all(self, other: Self) -> bool {
+        other.0 & !self.0 == 0
+    }
+
     pub fn iter(self) -> impl Iterator<Item = Permission> {
         Permission::ALL
             .into_iter()
@@ -333,6 +350,18 @@ mod tests {
             set.iter().collect::<Vec<_>>(),
             [Permission::Upload, Permission::Flag]
         );
+    }
+
+    #[test]
+    fn set_algebra() {
+        let a = Permissions::of(&[Permission::Upload, Permission::Flag]);
+        let b = Permissions::of(&[Permission::Flag, Permission::Vote]);
+        assert_eq!(a.and(b), Permissions::of(&[Permission::Flag]));
+        assert_eq!(a.without(b), Permissions::of(&[Permission::Upload]));
+        assert!(a.with(b).contains_all(a));
+        assert!(!a.contains_all(b));
+        assert!(a.contains_all(Permissions::NONE));
+        assert!(Permissions::ALL.contains_all(a));
     }
 
     #[test]

@@ -222,6 +222,7 @@ pub(crate) async fn flag_post(
     if reason.is_empty() {
         return Err(AppError::BadRequest("Say why the post should go".into()));
     }
+    state.rate_limits.check_report(user.id).await?;
     let mut tx = state.db.primary().begin().await?;
     match flags::create(&mut tx, id, user.id, reason).await {
         Ok(()) => {}

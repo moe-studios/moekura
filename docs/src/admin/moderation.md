@@ -15,6 +15,8 @@ them with a reason, from **Moderation → Approval queue**.
 Members flag posts that should go, with a reason. Flagged posts stay
 visible, marked *flagged*, and appear under **Moderation → Flags**.
 Dismiss the flags to keep the post, or delete it, which upholds them.
+Each person can flag posts and report comments about ten times at once,
+then once a minute.
 
 ## Comments
 

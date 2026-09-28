@@ -455,6 +455,7 @@ pub(crate) async fn report_comment(
     if comment.is_deleted {
         return Err(AppError::NotFound);
     }
+    state.rate_limits.check_report(user.id).await?;
     match comments::report(state.db.primary(), id, user.id, reason).await {
         Ok(()) => {}
         Err(ReportError::Db(e)) => return Err(e.into()),

@@ -285,7 +285,7 @@ pub(crate) async fn lift_network(
     current.require(Permission::BanUsers)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
-    let network = bans::lift_network(&mut *tx, id)
+    let network = bans::lift_network(&mut *tx, id, actor)
         .await?
         .ok_or(AppError::NotFound)?;
     mod_actions::record(

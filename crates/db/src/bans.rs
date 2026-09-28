@@ -145,11 +145,19 @@ pub async fn ban_network(
     .await
 }
 
-pub async fn lift_network(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<IpNet>> {
+/// Lifts network ban `id`, returning its network; `None` if it was lifted
+/// already.
+pub async fn lift_network(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    lifter_id: Option<i64>,
+) -> sqlx::Result<Option<IpNet>> {
     sqlx::query_scalar(
-        "UPDATE ip_bans SET lifted_at = now() WHERE id = $1 AND lifted_at IS NULL RETURNING network",
+        "UPDATE ip_bans SET lifted_at = now(), lifter_id = $2
+         WHERE id = $1 AND lifted_at IS NULL RETURNING network",
     )
     .bind(id)
+    .bind(lifter_id)
     .fetch_optional(db)
     .await
 }
@@ -261,7 +269,21 @@ mod tests {
             active_networks(&pool).await.unwrap()[0].network.to_string(),
             "203.0.113.0/24"
         );
-        assert!(lift_network(&pool, id).await.unwrap().is_some());
+        let lifter = user(&pool, "mod").await;
+        assert!(
+            lift_network(&pool, id, Some(lifter))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let lifted_by: Option<i64> =
+            sqlx::query_scalar("SELECT lifter_id FROM ip_bans WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(lifted_by, Some(lifter));
+        assert!(lift_network(&pool, id, None).await.unwrap().is_none());
         assert!(
             network_ban(&pool, "203.0.113.200".parse().unwrap())
                 .await

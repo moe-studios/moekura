@@ -5,6 +5,8 @@
 // the page reloads to show it. Without scripts, notes can't be drawn, but
 // their history can still be reverted.
 
+import { toast } from "./toast.ts";
+
 export interface Box {
   x: number;
   y: number;
@@ -237,7 +239,7 @@ export function enableNoteEditor(root: Document = document): void {
           window.location.reload();
         } else {
           draw(rect, original);
-          window.alert(message);
+          toast(message);
         }
       });
     };

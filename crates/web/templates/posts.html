@@ -78,6 +78,12 @@
     <section class="empty">
       <h1>Nothing found</h1>
       <p>No posts match <strong>{{ search.tags }}</strong>.</p>
+      {% set terms = search.tags|split %}
+      <p>
+        {% if terms|length > 1 %}Try without the last term: <a href="{{ search_url(terms[:-1]|join(' ')) }}">{{ terms[:-1]|join(' ') }}</a>.
+        {% elif terms[0] is not startingwith("-") and ":" not in terms[0] %}<a href="/tags?name={{ terms[0]|urlencode }}*">Look for tags starting with {{ terms[0] }}</a>, in case of a typo.{% endif %}
+      </p>
+      <p class="hint">See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.</p>
     </section>
     {% else %}
     <section class="empty">

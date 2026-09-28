@@ -22,6 +22,8 @@ pub struct Page {
     state: AppState,
     pub current: CurrentUser,
     flash: Option<Flash>,
+    /// The request's path and query, for the layout.
+    target: String,
 }
 
 impl FromRequestParts<AppState> for Page {
@@ -33,10 +35,15 @@ impl FromRequestParts<AppState> for Page {
     ) -> Result<Self, Self::Rejection> {
         let current = CurrentUser::from_request_parts(parts, state).await?;
         let flash = Flash::from_jar(&CookieJar::from_headers(&parts.headers));
+        let target = parts
+            .uri
+            .path_and_query()
+            .map_or_else(|| "/".to_owned(), ToString::to_string);
         Ok(Self {
             state: state.clone(),
             current,
             flash,
+            target,
         })
     }
 }
@@ -60,6 +67,7 @@ impl Page {
             &self.state,
             Some(&self.current),
             self.flash,
+            &self.target,
             status,
             template,
             context,
@@ -74,19 +82,39 @@ impl Page {
     }
 }
 
+/// Which main menu item a path belongs under, for `aria-current`.
+fn section(path: &str) -> Option<&'static str> {
+    let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
+    Some(match first {
+        "" | "posts" => "posts",
+        "tags" | "wiki" => "tags",
+        "pools" => "pools",
+        "comments" => "comments",
+        "upload" => "upload",
+        "moderation" => "moderation",
+        "admin" => "admin",
+        _ => return None,
+    })
+}
+
 /// Renders `template` with the layout variables (`site`, `me`, `flash`)
-/// merged into `context`.
+/// merged into `context`. `target` is the request's path and query.
 pub(crate) fn render(
     state: &AppState,
     current: Option<&CurrentUser>,
     flash: Option<Flash>,
+    target: &str,
     status: StatusCode,
     template: &str,
     context: Value,
 ) -> Response {
     let site = state.site.get();
     let settings = &site.settings;
+    let path = target.split('?').next().unwrap_or(target);
     let layout = context! {
+        path => path,
+        target => target,
+        section => section(path),
         site => context! {
             name => settings.site_name,
             registration_open => settings.registration_mode != RegistrationMode::Closed,
@@ -100,6 +128,11 @@ pub(crate) fn render(
             .map(|user| UserSettings::from_json(&user.settings).theme)
             .filter(|theme| *theme != Theme::System)
             .map(Theme::as_str),
+        // The user's choice, "system" included, for the footer switcher.
+        theme_choice => current
+            .and_then(|c| c.user.as_ref())
+            .map(|user| UserSettings::from_json(&user.settings).theme.as_str()),
+        themes => Theme::ALL.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
         flash => flash.map(Flash::text),
         banned => current.and_then(|c| c.ban.as_ref()).map(|ban| context! {
             reason => ban.reason,
@@ -163,6 +196,17 @@ mod tests {
                 .body
                 .contains("<script type=\"module\" src=\"/static/js/main.")
         );
+    }
+
+    #[test]
+    fn paths_map_to_menu_sections() {
+        assert_eq!(super::section("/"), Some("posts"));
+        assert_eq!(super::section("/posts/12"), Some("posts"));
+        assert_eq!(super::section("/wiki/long_hair"), Some("tags"));
+        assert_eq!(super::section("/tags/aliases"), Some("tags"));
+        assert_eq!(super::section("/moderation/queue"), Some("moderation"));
+        assert_eq!(super::section("/settings"), None);
+        assert_eq!(super::section("/postscript"), None);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -17,13 +17,14 @@
              autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
     </form>
     <nav class="primary" aria-label="Main">
-      <a href="/">Posts</a>
-      <a href="/tags">Tags</a>
-      <a href="/pools">Pools</a>
-      <a href="/comments">Comments</a>
-      {% if can_upload %}<a href="/upload">Upload</a>{% endif %}
-      {% if moderation_url %}<a href="{{ moderation_url }}">Moderation</a>{% endif %}
-      {% if can_admin %}<a href="/admin">Admin</a>{% endif %}
+      {% macro item(name, url, label) %}<a href="{{ url }}"{% if section == name %} aria-current="{{ 'page' if path == url else 'true' }}"{% endif %}>{{ label }}</a>{% endmacro %}
+      {{ item("posts", "/", "Posts") }}
+      {{ item("tags", "/tags", "Tags") }}
+      {{ item("pools", "/pools", "Pools") }}
+      {{ item("comments", "/comments", "Comments") }}
+      {% if can_upload %}{{ item("upload", "/upload", "Upload") }}{% endif %}
+      {% if moderation_url %}{{ item("moderation", moderation_url, "Moderation") }}{% endif %}
+      {% if can_admin %}{{ item("admin", "/admin", "Admin") }}{% endif %}
     </nav>
     <nav class="account" aria-label="Account">
       {% if me %}
@@ -44,7 +45,15 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
-    Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> · <a href="/api/docs">API</a>
+    <p>Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> · <a href="/api/docs">API</a>
+      <span data-shortcuts-link hidden>· <button type="button" class="link">Keyboard shortcuts</button> <kbd>?</kbd></span></p>
+    {% if theme_choice %}
+    <form method="post" action="/settings/theme" aria-label="Theme">
+      <input type="hidden" name="back" value="{{ target }}">
+      Theme:
+      {% for t in themes %}<button type="submit" class="link" name="theme" value="{{ t }}" aria-pressed="{{ 'true' if t == theme_choice else 'false' }}">{{ t|capitalize }}</button>{% endfor %}
+    </form>
+    {% endif %}
   </footer>
 </body>
 </html>

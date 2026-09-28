@@ -136,6 +136,7 @@ pub async fn render_errors(
             &state,
             current.as_ref(),
             None,
+            &target,
             page.status,
             "error.html",
             context,

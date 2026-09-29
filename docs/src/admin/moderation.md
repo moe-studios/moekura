@@ -184,8 +184,10 @@ removes tags on every post a search finds: `cat_ears` → add
 and the first of them; **Change** starts a background job. The page
 lists recent mass edits with their progress. Changes show in each
 post's history, credited to whoever started the edit, and added tags
-bring the tags they imply. Deleted posts are only changed if the search
-asks for them (`status:deleted` or `status:any`).
+bring the tags they imply. The tags to add can also take `-tag` and
+`rating:e` to set every post's rating; locked tags and ratings are left
+alone. Deleted posts are only changed if the search asks for them
+(`status:deleted` or `status:any`).
 
 Bulk update requests (**Tags → Requests**) bundle several alias,
 implication, category and mass edit changes; approving one applies them

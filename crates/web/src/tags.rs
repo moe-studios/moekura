@@ -9,7 +9,8 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::moderation::ActionKind;
 use moekura_core::permissions::Permission;
-use moekura_core::tags::{InvalidTag, POST_MAX_TAGS, TagInput, TagName, parse_input};
+use moekura_core::post_edit::{self, BadMetatag, EditInput, Metatag};
+use moekura_core::tags::{InvalidTag, POST_MAX_TAGS, TagInput, TagName};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::tags::{self, Category, ListOrder, Tag, WantedTag};
 use serde::{Deserialize, Serialize};
@@ -34,10 +35,12 @@ pub fn routes() -> Router<AppState> {
         .route("/tags/{id}/edit", get(edit_form).post(edit))
 }
 
-/// Tags from an input box, validated but not yet created.
+/// Tags from an input box, validated but not yet created, and the
+/// metatags it had.
 #[derive(Debug, Default)]
 pub struct ParsedTags {
     tags: Vec<(TagName, Option<i16>)>,
+    pub metatags: Vec<Metatag>,
 }
 
 impl ParsedTags {
@@ -62,47 +65,65 @@ pub enum TagFieldError {
 }
 
 /// Parses a tag input box: whitespace-separated names, optionally with a
-/// category prefix. Rejects invalid names, too many tags and deprecated
-/// tags.
+/// category prefix, and metatags (moekura_core::post_edit); `-tag` only
+/// leaves `tag` out. Rejects invalid names and metatags, too many tags
+/// and deprecated tags.
 pub async fn parse_field(db: &PgPool, input: &str) -> Result<ParsedTags, TagFieldError> {
     let categories = tags::categories(db).await?;
     let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
-    let (inputs, invalid) = parse_input(input, &names);
-    reject_invalid(&invalid)?;
-    if inputs.len() > POST_MAX_TAGS {
+    let parsed = post_edit::parse(input, &names, &[]);
+    reject_invalid(&parsed.invalid, &parsed.bad_metatags)?;
+    if parsed.tags.len() > POST_MAX_TAGS {
         return Err(too_many());
     }
-    checked(db, &categories, inputs).await
+    checked(db, &categories, parsed.tags, parsed.metatags).await
 }
 
 /// Tag changes from an edit form.
 #[derive(Debug, Default)]
 pub struct TagEdit {
+    /// With the form's metatags.
     pub added: ParsedTags,
     /// Names taken out.
     pub removed: Vec<String>,
 }
 
 /// Compares the tags an edit form started with (`old`) with what was
-/// submitted (`new`). Only tags added in the form are checked, so a tag
-/// deprecated since it was added doesn't block other edits.
+/// submitted (`new`): tags missing from `new` or given as `-tag` come
+/// off. Only tags added in the form are checked, so a tag deprecated
+/// since it was added doesn't block other edits.
 pub async fn parse_edit(db: &PgPool, old: &str, new: &str) -> Result<TagEdit, TagFieldError> {
     let categories = tags::categories(db).await?;
     let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
-    let (before, _) = parse_input(old, &names);
-    let (after, invalid) = parse_input(new, &names);
-    reject_invalid(&invalid)?;
+    // The form's own tags stay tags, even ones spelled like a metatag
+    // (a `fav` tag from before metatags).
+    let shown: Vec<&str> = old.split_whitespace().collect();
+    let before = post_edit::parse(old, &names, &shown).tags;
+    let EditInput {
+        tags: after,
+        removed: taken_off,
+        metatags,
+        invalid,
+        bad_metatags,
+    } = post_edit::parse(new, &names, &shown);
+    reject_invalid(&invalid, &bad_metatags)?;
     let removed = before
         .iter()
         .filter(|b| !after.iter().any(|a| a.name == b.name))
         .map(|b| b.name.to_string())
-        .collect();
+        .chain(taken_off.into_iter().map(TagName::into_string))
+        .fold(Vec::new(), |mut all: Vec<String>, name| {
+            if !all.contains(&name) {
+                all.push(name);
+            }
+            all
+        });
     let added = after
         .into_iter()
         .filter(|a| !before.iter().any(|b| b.name == a.name))
         .collect();
     Ok(TagEdit {
-        added: checked(db, &categories, added).await?,
+        added: checked(db, &categories, added, metatags).await?,
         removed,
     })
 }
@@ -111,11 +132,15 @@ pub fn too_many() -> TagFieldError {
     TagFieldError::Invalid(format!("A post can have at most {POST_MAX_TAGS} tags."))
 }
 
-fn reject_invalid(invalid: &[InvalidTag]) -> Result<(), TagFieldError> {
-    if invalid.is_empty() {
+fn reject_invalid(invalid: &[InvalidTag], bad: &[BadMetatag]) -> Result<(), TagFieldError> {
+    if invalid.is_empty() && bad.is_empty() {
         return Ok(());
     }
-    let list: Vec<String> = invalid.iter().map(ToString::to_string).collect();
+    let list: Vec<String> = invalid
+        .iter()
+        .map(ToString::to_string)
+        .chain(bad.iter().map(ToString::to_string))
+        .collect();
     Err(TagFieldError::Invalid(format!(
         "Some tags aren't valid: {}.",
         list.join("; ")
@@ -127,6 +152,7 @@ async fn checked(
     db: &PgPool,
     categories: &[Category],
     inputs: Vec<TagInput>,
+    metatags: Vec<Metatag>,
 ) -> Result<ParsedTags, TagFieldError> {
     let lookup: Vec<&str> = inputs.iter().map(|t| t.name.as_str()).collect();
     let mut deprecated: Vec<String> = tags::by_names(db, &lookup)
@@ -151,6 +177,7 @@ async fn checked(
                 (input.name, category)
             })
             .collect(),
+        metatags,
     })
 }
 
@@ -422,10 +449,18 @@ mod tests {
                 ("x:y".to_owned(), Some(3)),
             ]
         );
-        let error = parse(&pool, "ok *bad* rating:e").await.unwrap_err();
+        let error = parse(&pool, "ok *bad* order:score rating:x")
+            .await
+            .unwrap_err();
         assert_eq!(
             error,
-            "Some tags aren't valid: `*bad*` may not contain `*`; `rating:e` may not start with `rating:`."
+            "Some tags aren't valid: `*bad*` may not contain `*`; `order:score` may not start with \
+             `order:`; `rating:x` isn't a rating: use g, s, q or e."
+        );
+        // Metatags and `-tag` aren't tags.
+        assert_eq!(
+            parse(&pool, "cat rating:e -dog").await.unwrap(),
+            [("cat".to_owned(), None)]
         );
         let many: String = (0..=POST_MAX_TAGS).map(|i| format!("t{i} ")).collect();
         assert!(parse(&pool, &many).await.unwrap_err().contains("at most"));
@@ -446,6 +481,10 @@ mod tests {
         let script = include_str!("../../../frontend/src/metatags.ts");
         for name in moekura_core::search::METATAGS {
             assert!(script.contains(&format!("  {name}: [")), "{name}");
+        }
+        let edit = &script[script.find("EDIT_METATAGS").unwrap()..];
+        for name in moekura_core::post_edit::METATAGS {
+            assert!(edit.contains(&format!("  {name}: [")), "edit {name}");
         }
         for (name, order) in moekura_core::search::Order::NAMES {
             if order.name() == *name {

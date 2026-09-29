@@ -593,7 +593,8 @@ pub struct PostChanges {
     /// sets the category of a tag that's new. Can't be combined with
     /// `add_tags` or `remove_tags`.
     tags: Option<Vec<String>>,
-    /// Tags to add, keeping the others.
+    /// Tags to add, keeping the others. Metatags work here as in the tag
+    /// box: `-tag`, `rating:e`, `parent:123`, `pool:12`, `fav`, ….
     #[serde(default)]
     add_tags: Vec<String>,
     /// Tags to take off, keeping the others.
@@ -1099,6 +1100,23 @@ mod tests {
         assert_eq!(post["parent_id"], json!(null));
         assert_eq!(tags(&post), ["bird"]);
         assert_eq!(post["source"], json!("https://example.com"));
+
+        // Metatags, as tag scripts send them.
+        let post = json(
+            &app.json(
+                "PATCH",
+                &path,
+                Some(&alice),
+                Some(json!({"add_tags": ["-bird", "fish", "rating:q", "fav"]})),
+            )
+            .await
+            .body,
+        );
+        assert_eq!(tags(&post), ["fish"]);
+        assert_eq!(
+            (&post["rating"], &post["fav_count"]),
+            (&json!("q"), &json!(1))
+        );
 
         for (body, message) in [
             (json!({"tags": ["a"], "add_tags": ["b"]}), "either"),

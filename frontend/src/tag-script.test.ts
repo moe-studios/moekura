@@ -10,6 +10,12 @@ test("scripts add, remove and rate", () => {
     rating: "s",
   });
   assert.deepEqual(parseScript("rating:explicit"), { add: [], remove: [], rating: "e" });
+  // Metatags go to the server as they are.
+  assert.deepEqual(parseScript("pool:12 -pool:3 -fav -parent -favorite"), {
+    add: ["pool:12", "-pool:3", "-fav", "-parent"],
+    remove: ["favorite"],
+    rating: null,
+  });
   assert.throws(() => parseScript("rating:x"), /Unknown rating/);
 });
 

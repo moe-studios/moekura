@@ -9,6 +9,7 @@ mod assets;
 pub mod auth;
 mod bans;
 mod blacklist;
+mod captcha;
 mod client_ip;
 mod comments;
 mod counts;
@@ -31,6 +32,7 @@ mod notes;
 pub mod oidc;
 pub mod pages;
 mod pools;
+mod post_history;
 mod posts;
 mod previews;
 pub mod rate_limit;
@@ -46,6 +48,7 @@ mod templates;
 mod test_support;
 mod two_factor;
 mod upload;
+mod user_moderation;
 mod users;
 mod webhooks;
 mod wiki;
@@ -85,13 +88,20 @@ use moekura_storage::Storage;
 
 /// Scripts and styles only from our own origin, images and video also from
 /// the file storage's public origin (a CDN) if there is one; no framing, no
-/// plugins, forms only to ourselves.
-fn content_security_policy(storage_origin: Option<&str>) -> String {
+/// plugins, forms only to ourselves. A captcha service's widget may load
+/// its scripts, styles and frames from `captcha_origins`.
+fn content_security_policy(storage_origin: Option<&str>, captcha_origins: &[&str]) -> String {
     let files = storage_origin.map(|o| format!(" {o}")).unwrap_or_default();
+    let captcha: String = captcha_origins.iter().map(|o| format!(" {o}")).collect();
+    let frames = if captcha.is_empty() {
+        String::new()
+    } else {
+        format!("frame-src 'self'{captcha}; connect-src 'self'{captcha}; ")
+    };
     format!(
         "default-src 'self'; img-src 'self' data: blob:{files}; media-src 'self' blob:{files}; \
-         style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; \
-         frame-ancestors 'none'; form-action 'self'"
+         style-src 'self'{captcha}; script-src 'self'{captcha}; {frames}object-src 'none'; \
+         base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
     )
 }
 
@@ -112,6 +122,8 @@ pub struct AppState {
     pub(crate) file_signer: files::FileSigner,
     /// The single sign-on provider, if there is one.
     pub(crate) oidc: Option<Arc<oidc::Oidc>>,
+    /// The captcha service, if there is one.
+    pub(crate) captcha: Option<Arc<captcha::Captcha>>,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
 }
@@ -165,6 +177,11 @@ impl AppState {
             .oidc
             .clone()
             .map(|oidc| Arc::new(oidc::Oidc::new(oidc, &config.server.public_url)));
+        let captcha = config
+            .auth
+            .captcha
+            .clone()
+            .map(|c| Arc::new(captcha::Captcha::new(c)));
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -177,6 +194,7 @@ impl AppState {
             work_dir,
             file_signer: files::FileSigner::new(file_key),
             oidc,
+            captcha,
             templates,
             assets,
         })
@@ -237,12 +255,14 @@ pub fn router(state: AppState) -> Router {
         .merge(notes::routes())
         .merge(oidc::routes())
         .merge(pools::routes())
+        .merge(post_history::routes())
         .merge(previews::routes())
         .merge(requests::routes())
         .merge(saved_searches::routes())
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(two_factor::routes())
+        .merge(user_moderation::routes())
         .merge(users::routes())
         .merge(webhooks::routes())
         .merge(wiki::routes())
@@ -275,6 +295,12 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_str(&content_security_policy(
                 state.storage.public_origin().as_deref(),
+                state
+                    .config
+                    .auth
+                    .captcha
+                    .as_ref()
+                    .map_or(&[], |c| c.provider.origins()),
             ))
             .expect("an ASCII origin makes a valid header"),
         ))
@@ -350,9 +376,9 @@ mod tests {
 
     #[test]
     fn csp_allows_media_from_the_storage_origin() {
-        let own = content_security_policy(None);
+        let own = content_security_policy(None, &[]);
         assert!(own.contains("img-src 'self' data: blob:;"), "{own}");
-        let cdn = content_security_policy(Some("https://cdn.example.com"));
+        let cdn = content_security_policy(Some("https://cdn.example.com"), &[]);
         assert!(
             cdn.contains("img-src 'self' data: blob: https://cdn.example.com;"),
             "{cdn}"
@@ -365,5 +391,15 @@ mod tests {
             cdn.contains("script-src 'self';"),
             "scripts stay local: {cdn}"
         );
+        assert!(!cdn.contains("frame-src"), "{cdn}");
+        let captcha = content_security_policy(None, &["https://challenges.cloudflare.com"]);
+        for directive in ["script-src", "frame-src", "style-src"] {
+            assert!(
+                captcha.contains(&format!(
+                    "{directive} 'self' https://challenges.cloudflare.com;"
+                )),
+                "{captcha}"
+            );
+        }
     }
 }

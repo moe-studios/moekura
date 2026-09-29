@@ -84,6 +84,71 @@ pub(crate) async fn reject(
     act(&state, &current, id, PostAction::Reject, &body.reason).await
 }
 
+/// Appeal a deleted post.
+///
+/// Needs `flag`, and either the post is your upload or you can see
+/// deleted posts. Asks staff to restore it; a post has one open appeal at
+/// a time, and appeals are rate limited.
+#[utoipa::path(
+    post,
+    path = "/posts/{id}/appeal",
+    operation_id = "appeal_post",
+    tag = "moderation",
+    params(("id" = i64, Path, description = "Post number")),
+    request_body = Reason,
+    responses(
+        (status = 204, description = "Appealed"),
+        (status = 400, body = ErrorBody, description = "The post isn't deleted, is already appealed, or no reason was given"),
+        (status = 429, body = ErrorBody, description = "Too many appeals lately"),
+    ),
+)]
+pub(crate) async fn appeal(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+    Json(body): Json<Reason>,
+) -> Result<StatusCode, AppError> {
+    crate::moderation::appeal_post(&state, &current, id, &body.reason).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct NewDisapproval {
+    /// `breaks_rules`, `poor_quality` or `disinterest`.
+    #[schema(example = "poor_quality")]
+    reason: String,
+    /// A note for other approvers.
+    #[serde(default)]
+    message: String,
+}
+
+/// Disapprove a pending post.
+///
+/// Needs `approve_posts`. Passes on the post without rejecting it: it
+/// leaves your approval queue (`status:unmoderated`), and other approvers
+/// see why. Disapproving again replaces your earlier reason.
+#[utoipa::path(
+    post,
+    path = "/posts/{id}/disapprove",
+    operation_id = "disapprove_post",
+    tag = "moderation",
+    params(("id" = i64, Path, description = "Post number")),
+    request_body = NewDisapproval,
+    responses(
+        (status = 204, description = "Disapproved"),
+        (status = 400, body = ErrorBody, description = "The post isn't pending, or the reason is unknown"),
+    ),
+)]
+pub(crate) async fn disapprove(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+    Json(body): Json<NewDisapproval>,
+) -> Result<StatusCode, AppError> {
+    crate::moderation::disapprove_post(&state, &current, id, &body.reason, &body.message).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Delete a post.
 ///
 /// Needs `delete_posts`, and a reason, which the post shows in its place.
@@ -355,6 +420,9 @@ pub struct ApiNetworkBan {
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
     pub expires_at: Option<OffsetDateTime>,
+    /// The network can't see the site at all; otherwise it can look but
+    /// not change anything.
+    pub full: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -407,6 +475,7 @@ pub(crate) async fn list_bans(
                 banner: b.banner_name,
                 created_at: b.created_at,
                 expires_at: b.expires_at,
+                full: b.full,
             })
             .collect(),
     }))
@@ -483,12 +552,17 @@ pub struct NewNetworkBan {
     reason: String,
     /// How long, in days; leave out for until lifted.
     days: Option<i64>,
+    /// Keep the network from seeing the site at all, rather than only
+    /// from changing anything.
+    #[serde(default)]
+    full: bool,
 }
 
 /// Ban a network.
 ///
 /// Needs `ban_users`. Requests from the network can read but not change
-/// anything, and it can't register or log in.
+/// anything, and it can't register or log in; with `full`, it can't see
+/// the site at all.
 #[utoipa::path(
     post,
     path = "/network-bans",
@@ -515,6 +589,7 @@ pub(crate) async fn ban_network(
         &ban.network,
         &ban.reason,
         expires_at,
+        ban.full,
     )
     .await?;
     let created = bans::active_networks(state.db.primary())
@@ -531,6 +606,7 @@ pub(crate) async fn ban_network(
             banner: created.banner_name,
             created_at: created.created_at,
             expires_at: created.expires_at,
+            full: created.full,
         }),
     ))
 }
@@ -940,6 +1016,7 @@ mod tests {
         assert_eq!(network.status, StatusCode::CREATED, "{}", network.body);
         let network = json(&network.body);
         assert_eq!(network["network"], json!("203.0.113.0/24"));
+        assert_eq!(network["full"], json!(false));
         let too_wide = app
             .json(
                 "POST",

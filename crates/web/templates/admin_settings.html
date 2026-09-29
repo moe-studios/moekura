@@ -34,6 +34,32 @@
     <label for="default_blacklist">Default blacklist</label>
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>
     <p class="hint">For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.</p>
+    <fieldset class="group">
+      <legend>Moderation reasons</legend>
+      <p class="hint">Offered when deleting, rejecting and flagging posts, one per line; anyone can still give another reason, or add details.</p>
+      <label for="deletion_reasons">For deleting and rejecting posts</label>
+      <textarea id="deletion_reasons" name="deletion_reasons" rows="4">{{ settings.post_reasons.deletion }}</textarea>
+      <label for="flag_reasons">For flagging posts</label>
+      <textarea id="flag_reasons" name="flag_reasons" rows="4">{{ settings.post_reasons.flag }}</textarea>
+    </fieldset>
+    <fieldset class="group">
+      <legend>Spam</legend>
+      <label for="email_domain_mode">Email domains listed below are</label>
+      <select id="email_domain_mode" name="email_domain_mode">
+        <option value="block"{% if not settings.email_domains.allow %} selected{% endif %}>Refused</option>
+        <option value="allow"{% if settings.email_domains.allow %} selected{% endif %}>The only ones accepted</option>
+      </select>
+      <label for="email_domains">Email domains</label>
+      <textarea id="email_domains" name="email_domains" rows="4" spellcheck="false" placeholder="mailinator.com">{{ settings.email_domains.list }}</textarea>
+      <p class="hint">One per line; each covers its subdomains. Applies to signing up and changing addresses. An empty list accepts any domain.</p>
+      {% if not captcha_enabled %}<p class="hint">No captcha service is set up (<code>[auth.captcha]</code> in the server configuration), so these only matter once one is.</p>{% endif %}
+      <label class="choice"><input type="checkbox" name="captcha_sign_up"{% if settings.captcha.sign_up %} checked{% endif %}> Ask for a captcha when signing up</label>
+      <label for="captcha_comment_account_days">Ask for one on comments by accounts younger than this many days (0 for never)</label>
+      <input id="captcha_comment_account_days" name="captcha_comment_account_days" type="number" min="0" value="{{ settings.captcha.comment_account_days }}">
+    </fieldset>
+    <label for="ip_history_days">Keep the addresses accounts use for this many days</label>
+    <input id="ip_history_days" name="ip_history_days" type="number" min="0" max="3650" value="{{ settings.ip_history_days }}">
+    <p class="hint">Staff who can ban users see them on a user's moderation record, with other accounts seen on the same addresses. 0 keeps none.</p>
     <fieldset class="limits">
       <legend>Tagger</legend>
       {% if not tagger_enabled %}<p class="hint">The tagger isn't set up (<code>[tagger]</code> in the server configuration), so these only matter once it is.</p>{% endif %}

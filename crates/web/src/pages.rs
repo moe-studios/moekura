@@ -119,6 +119,11 @@ pub(crate) fn render(
             name => settings.site_name,
             registration_open => settings.registration_mode != RegistrationMode::Closed,
         },
+        // Preset reasons for deleting, rejecting and flagging posts.
+        reasons => context! {
+            deletion => settings.post_reasons.deletion,
+            flag => settings.post_reasons.flag,
+        },
         me => current.and_then(|c| c.user.as_ref()).map(|user| context! {
             name => user.name,
             role => current.map(|c| c.role.name.clone()),

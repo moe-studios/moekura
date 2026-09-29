@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Post changes · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>Post changes</h1>
+<form class="filters" method="get" action="/post_versions">
+  <label for="pv-user">By</label>
+  <input id="pv-user" name="user" value="{{ query.user }}" size="12">
+  <label for="pv-post">Post</label>
+  <input id="pv-post" name="post" value="{{ query.post }}" size="8" inputmode="numeric">
+  <label for="pv-added">Added</label>
+  <input id="pv-added" name="added" value="{{ query.added }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  <label for="pv-removed">Removed</label>
+  <input id="pv-removed" name="removed" value="{{ query.removed }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  <label for="pv-since">From</label>
+  <input id="pv-since" name="since" value="{{ query.since }}" type="date">
+  <label for="pv-until">To</label>
+  <input id="pv-until" name="until" value="{{ query.until }}" type="date">
+  <button type="submit">Filter</button>
+</form>
+{% if undo %}
+<section class="card request-form">
+  <h2>Undo {{ undo.user }}'s edits</h2>
+  <p class="hint">Takes back every post edit {{ undo.user }} made{% if undo.since %} from {{ undo.since }}{% endif %}{% if undo.until %} until {{ undo.until }}{% endif %}, in the background: tags they added come off and tags they removed go back, and a rating, source, description or parent they set is restored where nobody changed it since. Uploads stay. Each post's history credits you.</p>
+  <form method="post" action="/post_versions/undo">
+    <input type="hidden" name="user" value="{{ undo.user }}">
+    <input type="hidden" name="since" value="{{ undo.since }}">
+    <input type="hidden" name="until" value="{{ undo.until }}">
+    <button type="submit" class="danger" data-confirm="Undo every post edit {{ undo.user }} made in this range?">Undo their edits</button>
+  </form>
+</section>
+{% endif %}
+{% if versions %}
+<ol class="history">
+  {% for v in versions %}
+  <li>
+    <div class="history-head">
+      <a href="/posts/{{ v.post_id }}">#{{ v.post_id }}</a> <a class="hint" href="/posts/{{ v.post_id }}/history">version {{ v.version }}</a>
+      <span class="hint">
+        {{ v.date }} {{ v.time }}
+        {% if v.relation %}· {{ v.relation.kind }} {{ v.relation.antecedent }} → {{ v.relation.consequent }}
+        {% elif v.updater %}· by <a href="/post_versions?user={{ v.updater | urlencode }}">{{ v.updater }}</a>{% endif %}
+        {% if v.upload %}· upload{% endif %}
+      </span>
+    </div>
+    <ul class="changes">
+      {% for tag in v.added %}<li class="added">+<a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a></li>{% endfor %}
+      {% for tag in v.removed %}<li class="removed">−<a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a></li>{% endfor %}
+      {% if v.rating %}<li>rating: {{ v.rating }}</li>{% endif %}
+      {% if v.source is not none %}<li class="source">source: {{ v.source or "none" }}</li>{% endif %}
+      {% if v.parent %}<li>parent: {{ v.parent }}</li>{% endif %}
+      {% if v.description_changed %}<li>description changed</li>{% endif %}
+      {% if v.locks %}<li>locked: {{ v.locks }}</li>{% endif %}
+    </ul>
+  </li>
+  {% endfor %}
+</ol>
+{% if older_url %}<nav class="pager"><a class="button" href="{{ older_url }}" rel="next">Older</a></nav>{% endif %}
+{% else %}
+<p class="empty">No changes found.</p>
+{% endif %}
+{% endblock %}

@@ -155,6 +155,19 @@ fn render_settings(
                     max_recent_deletions => current.promotion_rules.max_recent_deletions,
                 },
                 default_blacklist => current.default_blacklist,
+                ip_history_days => current.ip_history_days,
+                email_domains => context! {
+                    allow => current.email_domains.mode == moekura_core::spam::DomainMode::Allow,
+                    list => current.email_domains.domains.join("\n"),
+                },
+                post_reasons => context! {
+                    deletion => current.post_reasons.deletion.join("\n"),
+                    flag => current.post_reasons.flag.join("\n"),
+                },
+                captcha => context! {
+                    sign_up => current.captcha.sign_up,
+                    comment_account_days => current.captcha.comment_account_days,
+                },
                 tagger => context! {
                     thresholds => thresholds,
                     auto_apply => current.tagger.auto_apply,
@@ -163,6 +176,7 @@ fn render_settings(
                 },
             },
             mail_enabled => page.state().config.mail.is_enabled(),
+            captcha_enabled => page.state().captcha.is_some(),
             tagger_enabled => page.state().config.tagger.enabled,
             tagger_account => page.state().config.tagger.account,
             modes => ["open", "invite", "approval", "closed"],
@@ -210,6 +224,18 @@ struct SettingsForm {
     promotion_max_recent_deletions: String,
     #[serde(default)]
     default_blacklist: String,
+    ip_history_days: Option<String>,
+    /// `block` or `allow`.
+    email_domain_mode: Option<String>,
+    /// One domain per line.
+    email_domains: Option<String>,
+    /// Present when ticked.
+    captcha_sign_up: Option<String>,
+    captcha_comment_account_days: Option<String>,
+    /// One per line.
+    deletion_reasons: Option<String>,
+    /// One per line.
+    flag_reasons: Option<String>,
     /// Present when ticked.
     tagger_auto_apply: Option<String>,
     tagger_auto_threshold: Option<String>,
@@ -292,6 +318,48 @@ async fn save_settings(
         (
             "default_blacklist",
             json!(form.default_blacklist.replace("\r\n", "\n").trim()),
+        ),
+        (
+            "ip_history_days",
+            form.ip_history_days
+                .as_deref()
+                .map_or_else(|| json!(before.ip_history_days), number),
+        ),
+        (
+            "email_domains",
+            json!({
+                "mode": form.email_domain_mode.as_deref().map_or_else(
+                    || json!(before.email_domains.mode),
+                    |mode| json!(mode),
+                ),
+                "domains": form.email_domains.as_deref().map_or_else(
+                    || before.email_domains.domains.clone(),
+                    moekura_core::spam::EmailDomains::parse_list,
+                ),
+            }),
+        ),
+        (
+            "post_reasons",
+            json!({
+                "deletion": form.deletion_reasons.as_deref().map_or_else(
+                    || before.post_reasons.deletion.clone(),
+                    moekura_core::moderation::PostReasons::parse_list,
+                ),
+                "flag": form.flag_reasons.as_deref().map_or_else(
+                    || before.post_reasons.flag.clone(),
+                    moekura_core::moderation::PostReasons::parse_list,
+                ),
+            }),
+        ),
+        (
+            "captcha",
+            json!({
+                "sign_up": form.captcha_sign_up.is_some(),
+                "comment_account_days": form.captcha_comment_account_days.as_deref().map_or_else(
+                    || json!(before.captcha.comment_account_days),
+                    number,
+                ),
+            }),
         ),
         (
             "tagger",

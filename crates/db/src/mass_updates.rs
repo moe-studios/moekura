@@ -109,7 +109,8 @@ pub async fn finish(db: impl PgExecutor<'_>, id: i64, error: Option<&str>) -> sq
 }
 
 /// Adds tags `add` and takes off `remove` on posts `ids`, credited to
-/// `updater_id` in their history. Returns how many posts changed.
+/// `updater_id` in their history, leaving posts with locked tags alone.
+/// Returns how many posts changed.
 pub async fn retag(
     db: &PgPool,
     ids: &[i64],
@@ -124,7 +125,7 @@ pub async fn retag(
          UPDATE posts SET tag_ids = uniq(sort((posts.tag_ids - $3::int4[]) | $2::int4[])),
                           updated_at = now()
          FROM batch
-         WHERE posts.id = batch.id
+         WHERE posts.id = batch.id AND NOT 'tags' = ANY(posts.locks)
            AND posts.tag_ids <> uniq(sort((posts.tag_ids - $3::int4[]) | $2::int4[]))",
     )
     .bind(ids)

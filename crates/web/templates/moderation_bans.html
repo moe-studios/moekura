@@ -19,13 +19,13 @@
 {% endif %}
 
 <h2>Networks</h2>
-<p class="hint">Addresses in a banned network can't register, log in, post or change anything.</p>
+<p class="hint">Addresses in a partly banned network can look around but can't register, log in, post or change anything; a full ban keeps them from seeing the site at all.</p>
 {% if networks %}
 <table class="tag-table">
-  <thead><tr><th scope="col">Network</th><th scope="col">Reason</th><th scope="col">Until</th><th scope="col">By</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <thead><tr><th scope="col">Network</th><th scope="col">Ban</th><th scope="col">Reason</th><th scope="col">Until</th><th scope="col">By</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
   <tbody>
     {% for n in networks %}
-    <tr><td><code>{{ n.network }}</code></td><td>{{ n.reason }}</td><td>{{ n.until or "lifted" }}</td><td>{{ n.by or "" }}</td>
+    <tr><td><code>{{ n.network }}</code></td><td>{{ "full" if n.full else "partial" }}</td><td>{{ n.reason }}</td><td>{{ n.until or "lifted" }}</td><td>{{ n.by or "" }}</td>
       <td><form method="post" action="/moderation/ip-bans/{{ n.id }}/lift"><button type="submit" class="secondary">Lift</button></form></td></tr>
     {% endfor %}
   </tbody>
@@ -35,7 +35,12 @@
   <h2>Ban a network</h2>
   <form method="post" action="/moderation/ip-bans">
     <label for="ban-network">Address or range</label>
-    <input id="ban-network" name="network" placeholder="203.0.113.7 or 203.0.113.0/24" required>
+    <input id="ban-network" name="network" value="{{ network }}" placeholder="203.0.113.7, 203.0.113.0/24 or 2001:db8::/64" required>
+    <label for="ban-network-kind">Ban</label>
+    <select id="ban-network-kind" name="kind">
+      <option value="partial">Partial: can look, can't register, log in or change anything</option>
+      <option value="full">Full: can't see the site</option>
+    </select>
     <label for="ban-network-reason">Reason</label>
     <input id="ban-network-reason" name="reason" maxlength="2000" required>
     <label for="ban-network-days">For</label>

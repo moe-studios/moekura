@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}{{ user.name }} · Moderation · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>{{ user.name }}</h1>
+<p><a href="{{ user.profile_url }}">Profile</a> · <a href="/post_versions?user={{ user.name | urlencode }}">Post changes</a></p>
+
+<section class="card">
+  <h2>Account</h2>
+  <dl class="facts">
+    <dt>Role</dt><dd>{{ user.role or "—" }}</dd>
+    <dt>Status</dt><dd>{{ user.status }}{% if banned %} · <span class="status-open">banned</span>{% endif %}</dd>
+    <dt>Joined</dt><dd>{{ user.joined }}</dd>
+    <dt>Last seen</dt><dd>{{ user.last_seen or "never" }}</dd>
+    {% if user.email %}<dt>Email</dt><dd>{{ user.email }}{% if not user.email_verified %} (unconfirmed){% endif %}</dd>{% endif %}
+    <dt>Two-factor login</dt><dd>{{ "on" if user.two_factor else "off" }}</dd>
+    <dt>Automatic promotion</dt><dd>{{ "kept from it" if user.promotion_blocked else "allowed" }}</dd>
+  </dl>
+</section>
+
+<section class="card">
+  <h2>Bans</h2>
+  {% if bans %}
+  <ul class="plain">
+    {% for b in bans %}
+    <li><span class="status status-{{ 'open' if b.active else 'dismissed' }}">{{ "active" if b.active else ("lifted" if b.lifted else "expired") }}</span>
+      {{ b.since }}{% if b.until %}–{{ b.until }}{% endif %}{% if b.by %} by {{ b.by }}{% endif %}: {{ b.reason }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="hint">Never banned.</p>
+  {% endif %}
+  {% if can_ban %}
+  <details class="edit">
+    <summary>{% if banned %}Change the ban{% else %}Ban{% endif %}</summary>
+    {% if banned %}<p class="hint">The new ban replaces the one in force.</p>{% endif %}
+    <form method="post" action="/users/{{ user.name }}/ban?back={{ path | urlencode }}">
+      <label for="ban-reason">Reason</label>
+      <input id="ban-reason" name="reason" maxlength="2000" required>
+      <label for="ban-days">For</label>
+      <select id="ban-days" name="days">
+        {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ d.label }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="danger">Ban {{ user.name }}</button>
+    </form>
+  </details>
+  {% if banned %}
+  <form method="post" action="/users/{{ user.name }}/unban?back={{ path | urlencode }}"><button type="submit">Lift the ban</button></form>
+  {% endif %}
+  {% endif %}
+</section>
+
+<section class="card">
+  {% include "user_notes.html" %}
+</section>
+
+{% if show_addresses %}
+<section class="card">
+  <h2>Addresses</h2>
+  {% if addresses %}
+  <table class="tag-table">
+    <thead><tr><th scope="col">Address</th><th scope="col">First seen</th><th scope="col">Last seen</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+      {% for a in addresses %}
+      <tr><td><code>{{ a.ip }}</code></td><td>{{ a.first }}</td><td>{{ a.last }}</td>
+        <td><a href="{{ a.ban_url }}">Ban address</a> · <a href="{{ a.ban_range_url }}">Ban {{ a.range }}</a></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">No addresses recorded.</p>
+  {% endif %}
+  {% if related %}
+  <h3>Other accounts on these addresses</h3>
+  <ul class="plain">
+    {% for r in related %}
+    <li><a href="{{ r.url }}">{{ r.name }}</a> <span class="hint">on <code>{{ r.ip }}</code>, last {{ r.last }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Uploads</h2>
+  <p><a href="{{ uploads_url }}">{{ uploads.total }} uploads</a>:
+    {% for c in uploads.counts %}{{ c.count }} {{ c.status }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% if deletions %}
+  <h3>Recently deleted</h3>
+  <ul class="plain">
+    {% for d in deletions %}
+    <li><a href="/posts/{{ d.post_id }}">#{{ d.post_id }}</a>
+      {% if d.when %}<span class="hint">{{ d.when }}</span>{% endif %}
+      {{ "rejected" if d.rejected else "deleted" }}{% if d.by %} by {{ d.by }}{% endif %}{% if d.reason %}: {{ d.reason }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Flags</h2>
+  <p>On their uploads: {{ flags_received.total }}
+    ({% for c in flags_received.counts %}{{ c.count }} {{ c.status }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+  {% if recent_flags %}
+  <ul class="plain">
+    {% for f in recent_flags %}
+    <li><a href="/posts/{{ f.post_id }}">#{{ f.post_id }}</a> <span class="status status-{{ f.status }}">{{ f.status }}</span>
+      <span class="hint">{{ f.when }}</span>{% if f.by %} by {{ f.by }}{% endif %}: {{ f.reason }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <p>Filed by them: {{ flags_filed.total }}
+    ({% for c in flags_filed.counts %}{{ c.count }} {{ c.status }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+  {% if disapprovals.total %}
+  <p>Pending posts they disapproved: {{ disapprovals.total }}
+    ({% for c in disapprovals.counts %}{{ c.count }} {{ c.status | replace("_", " ") }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Comments</h2>
+  <p>Reports about their comments: {{ reports.total }}
+    ({% for c in reports.counts %}{{ c.count }} {{ c.status }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+  {% if hidden %}
+  <h3>Hidden comments</h3>
+  <ul class="plain">
+    {% for c in hidden %}
+    <li><a href="/posts/{{ c.post_id }}#comment-{{ c.id }}">#{{ c.post_id }}</a> <span class="hint">{{ c.when }}{% if c.reports %} · {{ c.reports }} report{{ "s" if c.reports != 1 }}{% endif %}</span>
+      <div class="reason">{{ c.body | truncate(300) }}</div></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+{% if read_log %}
+<section class="card">
+  <h2>Log</h2>
+  {% if about %}
+  <ol class="log">
+    {% for e in about %}
+    <li>
+      <span class="hint"><time>{{ e.when }} {{ e.time }}</time></span>
+      <strong>{{ e.actor or "command line" }}</strong> {{ e.label }}
+      {% if e.post_id %}<a href="/posts/{{ e.post_id }}">#{{ e.post_id }}</a>{% endif %}
+      {% if e.user %}{{ e.user }}{% endif %}
+      {% if e.reason %}<div class="reason">“{{ e.reason }}”</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <p><a href="{{ about_url }}">Everything about {{ user.name }}</a></p>
+  {% else %}
+  <p class="hint">Nothing logged about {{ user.name }}.</p>
+  {% endif %}
+  {% if by %}
+  <h3>By {{ user.name }}</h3>
+  <ol class="log">
+    {% for e in by %}
+    <li>
+      <span class="hint"><time>{{ e.when }} {{ e.time }}</time></span>
+      {{ e.label }}
+      {% if e.post_id %}<a href="/posts/{{ e.post_id }}">#{{ e.post_id }}</a>{% endif %}
+      {% if e.user %}<a href="/moderation/users/{{ e.user }}">{{ e.user }}</a>{% endif %}
+      {% if e.reason %}<div class="reason">“{{ e.reason }}”</div>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <p><a href="{{ by_url }}">Everything by {{ user.name }}</a></p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

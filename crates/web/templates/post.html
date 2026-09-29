@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "reason_fields.html" import reason_fields %}
 {# The first few names that say what the post is, so tabs and history can be told apart. #}
 {% block title %}{% for group in tag_groups if group.name in ("character", "copyright", "artist") %}{% for tag in group.tags[:2] %}{{ tag.name }} · {% endfor %}{% endfor %}Post #{{ post.id }} · {{ site.name }}{% endblock %}
 {% block head %}{% include "preview_meta.html" %}{% endblock %}
@@ -7,6 +8,7 @@
   <section class="post-media">
     {% if deleted %}<p class="notice">Deleted {{ deleted.when }}{% if deleted.by %} by {{ deleted.by }}{% endif %}{% if deleted.reason %}: “{{ deleted.reason }}”{% endif %}</p>
     {% elif post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
+    {% if moderate.locked %}<p class="notice">Locked: {{ moderate.locked | join(", ") | lower }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
     {% for p in pools.pools %}
     <nav class="pool-nav{% if p.current %} current{% endif %}" aria-label="Pool {{ p.name }}">
@@ -72,6 +74,14 @@
       </ul>
     </section>
     {% endif %}
+    {% if moderate.disapprovals %}
+    <section class="family flags" aria-label="Disapprovals">
+      <p>Approvers passed on this post:</p>
+      <ul class="plain">
+        {% for d in moderate.disapprovals %}<li>{{ d.when }} {{ d.by }}: {{ d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
     {% if moderate.flags %}
     <section class="family flags" aria-label="Flags">
       <p>Flags</p>
@@ -80,23 +90,56 @@
       </ul>
     </section>
     {% endif %}
+    {% if moderate.appeal.history %}
+    <section class="family flags" aria-label="Appeals">
+      <p>Appeals</p>
+      <ul class="plain">
+        {% for a in moderate.appeal.history %}<li><span class="status status-{{ 'open' if a.status == 'open' else 'dismissed' }}">{{ a.status }}</span> {{ a.when }}{% if a.by %} by {{ a.by }}{% endif %}: {{ a.reason }}{% if a.decided_by %} <span class="hint">(decided by {{ a.decided_by }})</span>{% endif %}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if moderate.appeal.can_appeal %}
+    <details class="edit">
+      <summary>Appeal</summary>
+      <form method="post" action="/posts/{{ post.id }}/appeal">
+        <label for="appeal-reason">Why should this post come back?</label>
+        <input id="appeal-reason" name="reason" maxlength="2000" required>
+        <button type="submit">Appeal</button>
+      </form>
+    </details>
+    {% endif %}
     {% if moderate.can_flag %}
     <details class="edit">
       <summary>Flag</summary>
       <form method="post" action="/posts/{{ post.id }}/flag">
-        <label for="flag-reason">What's wrong with this post?</label>
-        <input id="flag-reason" name="reason" maxlength="2000" required>
+        {{ reason_fields("flag-reason", reasons.flag, "What's wrong with this post?") }}
         <button type="submit">Flag for review</button>
       </form>
     </details>
     {% endif %}
-    {% if moderate.can_delete or moderate.can_restore %}
-    <details class="edit moderate">
+    {% if moderate.can_review or moderate.can_delete or moderate.can_restore or moderate.can_lock %}
+    <details class="edit moderate"{% if moderate.can_review %} open{% endif %}>
       <summary>Moderate</summary>
+      {% if moderate.can_review %}
+      <p class="hint">This post is waiting for approval.</p>
+      <form method="post" action="/posts/{{ post.id }}/approve?from=post"><button type="submit">Approve</button></form>
+      <form method="post" action="/posts/{{ post.id }}/reject?from=post">
+        {{ reason_fields("reject-reason", reasons.deletion, "Reason for rejecting", required=false) }}
+        <button type="submit" class="secondary">Reject</button>
+      </form>
+      {% endif %}
+      {% if moderate.can_lock %}
+      <form method="post" action="/posts/{{ post.id }}/locks">
+        <fieldset class="locks">
+          <legend>Locked against changes</legend>
+          {% for l in moderate.locks %}<label class="choice"><input type="checkbox" name="{{ l.name }}"{% if l.on %} checked{% endif %}> {{ l.label }}</label>{% endfor %}
+        </fieldset>
+        <button type="submit" class="secondary">Save locks</button>
+      </form>
+      {% endif %}
       {% if moderate.can_delete %}
       <form method="post" action="/posts/{{ post.id }}/delete">
-        <label for="delete-reason">Reason for deleting</label>
-        <input id="delete-reason" name="reason" maxlength="2000" required>
+        {{ reason_fields("delete-reason", reasons.deletion, "Reason for deleting") }}
         <button type="submit">Delete</button>
       </form>
       {% endif %}
@@ -118,11 +161,12 @@
       <form method="post" action="/posts/{{ post.id }}/edit{% if search.tags %}?q={{ search.tags|urlencode }}{% endif %}">
         <input type="hidden" name="old_tags" value="{{ edit.old_tags }}">
         <label for="edit-tags">Tags</label>
-        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="tags">{{ edit.tags }}</textarea>
+        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="tags"{% if edit.tags_locked %} readonly{% endif %}>{{ edit.tags }}</textarea>
+        {% if edit.tags_locked %}<p class="hint">The tags are locked.</p>{% endif %}
         <fieldset class="ratings">
           <legend>Rating</legend>
           {% for rating in ratings %}
-          <label class="choice"><input type="radio" name="rating" value="{{ rating.code }}"{% if edit.rating == rating.code %} checked{% endif %}> {{ rating.label }}</label>
+          <label class="choice"><input type="radio" name="rating" value="{{ rating.code }}"{% if edit.rating == rating.code %} checked{% elif edit.rating_locked %} disabled{% endif %}> {{ rating.label }}</label>
           {% endfor %}
         </fieldset>
         <label for="edit-source">Source</label>
@@ -166,6 +210,10 @@
         <label for="comment-body">Add a comment</label>
         <textarea id="comment-body" name="body" rows="4" maxlength="{{ comments.max_len }}" required>{{ comments.draft }}</textarea>
         {% include "comment_help.html" %}
+        {% if comments.captcha %}
+        <script src="{{ comments.captcha.script }}" async defer></script>
+        <div class="{{ comments.captcha.class }}" data-sitekey="{{ comments.captcha.site_key }}"></div>
+        {% endif %}
         <button type="submit">Post comment</button>
       </form>
       {% elif comments.login_needed %}

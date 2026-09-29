@@ -20,10 +20,14 @@ pub enum Flash {
     CheckEmail,
     EmailConfirmed,
     PasswordChanged,
+    /// Done, but some of the items were dealt with meanwhile.
+    SomeSkipped,
+    /// Left to a background job.
+    Queued,
 }
 
 impl Flash {
-    const ALL: [Flash; 9] = [
+    const ALL: [Flash; 11] = [
         Flash::LoggedIn,
         Flash::LoggedOut,
         Flash::Registered,
@@ -33,6 +37,8 @@ impl Flash {
         Flash::CheckEmail,
         Flash::EmailConfirmed,
         Flash::PasswordChanged,
+        Flash::SomeSkipped,
+        Flash::Queued,
     ];
 
     fn key(self) -> &'static str {
@@ -46,6 +52,8 @@ impl Flash {
             Flash::CheckEmail => "check_email",
             Flash::EmailConfirmed => "email_confirmed",
             Flash::PasswordChanged => "password_changed",
+            Flash::SomeSkipped => "some_skipped",
+            Flash::Queued => "queued",
         }
     }
 
@@ -64,6 +72,8 @@ impl Flash {
             }
             Flash::EmailConfirmed => "Your email address is confirmed.",
             Flash::PasswordChanged => "Your password was changed.",
+            Flash::SomeSkipped => "Done. Some had been dealt with meanwhile, and were skipped.",
+            Flash::Queued => "Started; it runs in the background.",
         }
     }
 

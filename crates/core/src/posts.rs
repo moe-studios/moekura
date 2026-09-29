@@ -98,6 +98,50 @@ impl FromStr for PostStatus {
     }
 }
 
+/// Part of a post staff can lock against changes. Holders of
+/// `LockPosts` aren't held back by locks; everyone else is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PostLock {
+    Rating,
+    Tags,
+    /// Adding, changing and deleting notes.
+    Notes,
+    /// Flagging, approving, deleting, restoring and appealing.
+    Status,
+}
+
+impl PostLock {
+    pub const ALL: [PostLock; 4] = [
+        PostLock::Rating,
+        PostLock::Tags,
+        PostLock::Notes,
+        PostLock::Status,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PostLock::Rating => "rating",
+            PostLock::Tags => "tags",
+            PostLock::Notes => "notes",
+            PostLock::Status => "status",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PostLock::Rating => "Rating",
+            PostLock::Tags => "Tags",
+            PostLock::Notes => "Notes",
+            PostLock::Status => "Status",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.as_str() == s)
+    }
+}
+
 pub const SOURCE_MAX_LEN: usize = 2048;
 pub const DESCRIPTION_MAX_LEN: usize = 20000;
 

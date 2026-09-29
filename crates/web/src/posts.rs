@@ -33,6 +33,31 @@ pub fn routes() -> Router<AppState> {
         .route("/posts/{id}/prev", get(previous))
 }
 
+/// Refuses a change to `lock`'s part of `post` if it's locked and
+/// `current` can't change locked posts.
+pub(crate) fn check_lock(
+    current: &CurrentUser,
+    post: &posts::Post,
+    lock: moekura_core::posts::PostLock,
+) -> Result<(), AppError> {
+    if post.is_locked(lock) && !current.can(Permission::LockPosts) {
+        return Err(AppError::BadRequest(locked_message(lock)));
+    }
+    Ok(())
+}
+
+/// What a refused change to a locked part of a post says.
+pub(crate) fn locked_message(lock: moekura_core::posts::PostLock) -> String {
+    use moekura_core::posts::PostLock;
+    match lock {
+        PostLock::Rating => "This post's rating is locked.",
+        PostLock::Tags => "This post's tags are locked.",
+        PostLock::Notes => "This post's notes are locked.",
+        PostLock::Status => "This post's status is locked.",
+    }
+    .to_owned()
+}
+
 /// Which posts `current` may see.
 pub fn visibility(current: &CurrentUser) -> Visibility {
     let mut statuses = vec![PostStatus::Active, PostStatus::Flagged];
@@ -614,7 +639,12 @@ pub(crate) async fn render_post(
     // a replica lags.
     let db = state.db.primary();
     let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
-    if !visibility(&page.current).allows(&post) {
+    // Uploaders see their own deleted posts, to know why and to appeal,
+    // but can't do anything else with them.
+    let me = page.current.user.as_ref().map(|u| u.id);
+    let own_deleted = post.status == PostStatus::Deleted && me.is_some() && post.uploader_id == me;
+    let limited = !visibility(&page.current).allows(&post);
+    if limited && !own_deleted {
         return Err(AppError::NotFound);
     }
     let asset = media::for_post(db, id).await?.ok_or(AppError::NotFound)?;
@@ -662,11 +692,32 @@ pub(crate) async fn render_post(
     } else {
         Vec::new()
     };
+    let disapprovals: Vec<Value> =
+        if page.current.can(Permission::ApprovePosts) && post.status == PostStatus::Pending {
+            crate::moderation::disapprovals(db, &[id])
+                .await?
+                .into_iter()
+                .map(|(_, d)| d)
+                .collect()
+        } else {
+            Vec::new()
+        };
+    let appeal = crate::moderation::appeal_context(state, &page.current, &post).await?;
+    let locks: Vec<Value> = moekura_core::posts::PostLock::ALL
+        .iter()
+        .map(|l| context! { name => l.as_str(), label => l.label(), on => post.is_locked(*l) })
+        .collect();
     let moderate = context! {
+        locks => locks,
+        locked => post.locks.iter().map(|l| l.label()).collect::<Vec<_>>(),
+        can_lock => page.current.can(Permission::LockPosts) && !limited,
+        disapprovals => disapprovals,
+        appeal => appeal,
         can_flag => page.current.is_logged_in()
             && page.current.can(Permission::Flag)
             && matches!(post.status, PostStatus::Active | PostStatus::Flagged),
         flags => flag_history,
+        can_review => page.current.can(Permission::ApprovePosts) && post.status == PostStatus::Pending,
         can_delete => page.current.can(Permission::DeletePosts) && post.status != PostStatus::Deleted,
         can_restore => page.current.can(Permission::DeletePosts) && post.status == PostStatus::Deleted,
         can_purge => page.current.can(Permission::PurgePosts) && post.status == PostStatus::Deleted,
@@ -679,7 +730,6 @@ pub(crate) async fn render_post(
         query.append_pair("blacklist", "off");
         url_value(&format!("/posts/{id}?{}", query.finish()))
     };
-    let me = page.current.user.as_ref().map(|u| u.id);
     let (favorited, vote) = match me {
         Some(user) => (
             moekura_db::favorites::exists(db, user, id).await?,
@@ -692,8 +742,8 @@ pub(crate) async fn render_post(
         fav_count => post.fav_count,
         favorited => favorited,
         vote => vote,
-        can_favorite => me.is_some() && page.current.can(Permission::Favorite),
-        can_vote => me.is_some() && page.current.can(Permission::Vote),
+        can_favorite => me.is_some() && page.current.can(Permission::Favorite) && !limited,
+        can_vote => me.is_some() && page.current.can(Permission::Vote) && !limited,
         // Keeps the search across the form's redirect.
         query => (!search.is_empty()).then(|| url_value(&format!(
             "?{}",
@@ -752,28 +802,34 @@ pub(crate) async fn render_post(
         created => created.get(..10).unwrap_or_default(),
         created_iso => created,
     };
-    let edit = page
-        .current
-        .can(Permission::EditPosts)
-        .then(|| match &failed {
-            Some(failed) => context! {
-                tags => failed.form.tags,
-                old_tags => failed.form.old_tags,
-                rating => failed.form.rating,
-                source => failed.form.source,
-                description => failed.form.description,
-                parent => failed.form.parent,
-                error => failed.error,
-            },
-            None => context! {
-                tags => tag_string,
-                old_tags => tag_string,
-                rating => post.rating.code(),
-                source => post.source,
-                description => post.description,
-                parent => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
-            },
-        });
+    let bound = |lock| post.is_locked(lock) && !page.current.can(Permission::LockPosts);
+    let tags_locked = bound(moekura_core::posts::PostLock::Tags);
+    let rating_locked = bound(moekura_core::posts::PostLock::Rating);
+    let edit = (page.current.can(Permission::EditPosts) && !limited).then(|| match &failed {
+        Some(failed) => context! {
+            tags => failed.form.tags,
+            old_tags => failed.form.old_tags,
+            rating => failed.form.rating,
+            source => failed.form.source,
+            description => failed.form.description,
+            parent => failed.form.parent,
+            error => failed.error,
+        },
+        None => context! {
+            tags => tag_string,
+            old_tags => tag_string,
+            rating => post.rating.code(),
+            source => post.source,
+            description => post.description,
+            parent => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
+        },
+    });
+    let edit = edit.map(|fields| {
+        context! {
+            ..fields,
+            ..context! { tags_locked => tags_locked, rating_locked => rating_locked }
+        }
+    });
     let suggestions = if edit.is_some() {
         crate::suggestions::for_edit_form(state, db, &post, &categories).await?
     } else {

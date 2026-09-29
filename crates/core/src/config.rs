@@ -105,6 +105,8 @@ pub struct AuthConfig {
     pub session_max_days: u32,
     /// Logging in through an OpenID Connect provider (single sign-on).
     pub oidc: Option<OidcConfig>,
+    /// A captcha service; site settings say where it's asked for.
+    pub captcha: Option<CaptchaConfig>,
 }
 
 impl Default for AuthConfig {
@@ -113,6 +115,74 @@ impl Default for AuthConfig {
             session_idle_days: 30,
             session_max_days: 365,
             oidc: None,
+            captcha: None,
+        }
+    }
+}
+
+/// A captcha service that checks tokens its widget hands the browser.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptchaConfig {
+    pub provider: CaptchaProvider,
+    /// The public key the widget shows.
+    pub site_key: String,
+    /// The private key tokens are checked with.
+    pub secret_key: String,
+    /// Where tokens are checked; the provider's own address by default.
+    #[serde(default)]
+    pub verify_url: Option<Url>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptchaProvider {
+    /// Cloudflare Turnstile.
+    Turnstile,
+    Hcaptcha,
+}
+
+impl CaptchaProvider {
+    /// The script that draws the widget.
+    pub fn script_url(self) -> &'static str {
+        match self {
+            CaptchaProvider::Turnstile => "https://challenges.cloudflare.com/turnstile/v0/api.js",
+            CaptchaProvider::Hcaptcha => "https://js.hcaptcha.com/1/api.js",
+        }
+    }
+
+    /// The origins the widget loads scripts, frames and styles from, for
+    /// the content security policy.
+    pub fn origins(self) -> &'static [&'static str] {
+        match self {
+            CaptchaProvider::Turnstile => &["https://challenges.cloudflare.com"],
+            CaptchaProvider::Hcaptcha => &["https://hcaptcha.com", "https://*.hcaptcha.com"],
+        }
+    }
+
+    /// The element class the script turns into a widget.
+    pub fn widget_class(self) -> &'static str {
+        match self {
+            CaptchaProvider::Turnstile => "cf-turnstile",
+            CaptchaProvider::Hcaptcha => "h-captcha",
+        }
+    }
+
+    /// The form field the widget puts its token in.
+    pub fn response_field(self) -> &'static str {
+        match self {
+            CaptchaProvider::Turnstile => "cf-turnstile-response",
+            CaptchaProvider::Hcaptcha => "h-captcha-response",
+        }
+    }
+
+    /// Where tokens are checked.
+    pub fn verify_url(self) -> &'static str {
+        match self {
+            CaptchaProvider::Turnstile => {
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+            }
+            CaptchaProvider::Hcaptcha => "https://api.hcaptcha.com/siteverify",
         }
     }
 }
@@ -783,6 +853,19 @@ impl Config {
                     key: "auth.oidc.scopes",
                     message: "must include `openid`".into(),
                 });
+            }
+        }
+        if let Some(captcha) = &self.auth.captcha {
+            for (key, value) in [
+                ("auth.captcha.site_key", &captcha.site_key),
+                ("auth.captcha.secret_key", &captcha.secret_key),
+            ] {
+                if value.trim().is_empty() {
+                    problems.push(ConfigProblem {
+                        key,
+                        message: "is required".into(),
+                    });
+                }
             }
         }
         let mail = &self.mail;

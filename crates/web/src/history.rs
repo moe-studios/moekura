@@ -9,7 +9,7 @@ use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
-use moekura_core::posts::Rating;
+use moekura_core::posts::{PostLock, Rating};
 use moekura_db::post_versions::{self, Version};
 use moekura_db::posts::{self, PostEdit};
 use moekura_db::tags::{self, Tag, WantedTag};
@@ -92,6 +92,8 @@ async fn history(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> 
                     && (previous.is_some() || v.parent_id.is_some()))
                 .then(|| v.parent_id.map_or_else(|| "none".to_owned(), |p| format!("#{p}"))),
                 description_changed => previous.is_some() && changed(|v| v.description.clone()),
+                locks => (changed(|v| v.locks.join(",")) && (previous.is_some() || !v.locks.is_empty()))
+                    .then(|| if v.locks.is_empty() { "none".to_owned() } else { v.locks.join(", ") }),
                 current => i == 0,
                 can_revert => can_revert && i > 0,
             }
@@ -144,6 +146,12 @@ async fn revert(
         .rating
         .parse::<Rating>()
         .map_err(|()| AppError::Internal(format!("stored rating `{}`", old.rating)))?;
+    if tag_ids != post.tag_ids {
+        crate::posts::check_lock(&page.current, &post, PostLock::Tags)?;
+    }
+    if rating != post.rating {
+        crate::posts::check_lock(&page.current, &post, PostLock::Rating)?;
+    }
     post_versions::attribute(&mut tx, page.current.user.as_ref().map(|u| u.id), None).await?;
     posts::update(
         &mut *tx,

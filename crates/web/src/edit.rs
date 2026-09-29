@@ -6,7 +6,7 @@ use axum::routing::post;
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use moekura_core::permissions::Permission;
-use moekura_core::posts::{DESCRIPTION_MAX_LEN, Rating, SOURCE_MAX_LEN};
+use moekura_core::posts::{DESCRIPTION_MAX_LEN, PostLock, Rating, SOURCE_MAX_LEN};
 use moekura_core::tags::POST_MAX_TAGS;
 use moekura_db::posts::{self, PostEdit};
 use moekura_db::tags::{self, WantedTag};
@@ -207,6 +207,14 @@ pub(crate) async fn apply(
         .map(|t| t.id)
         .collect();
 
+    for (changed, lock) in [
+        (tag_ids != post.tag_ids, PostLock::Tags),
+        (rating != post.rating, PostLock::Rating),
+    ] {
+        if changed && crate::posts::check_lock(current, &post, lock).is_err() {
+            return Err(Refused::Invalid(crate::posts::locked_message(lock)));
+        }
+    }
     moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
         .await?;
     posts::update(
@@ -382,5 +390,166 @@ mod tests {
             .post_form(&format!("/posts/{child}/edit"), None, &[], &edit("", "b"))
             .await;
         assert_eq!(anonymous.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn locked_posts_hold_their_rating_tags_notes_and_status(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::posts::routes())
+                .merge(crate::history::routes())
+                .merge(crate::moderation::routes())
+                .merge(crate::notes::routes())
+                .merge(crate::upload::routes(max)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let id = upload(&app, &alice, &fixture::png(20, 20), "cat").await;
+        let lock = format!("/posts/{id}/locks");
+        assert_eq!(
+            app.post_form(&lock, Some(&janitor), &[], "tags=1")
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        let page = app
+            .get(&format!("/posts/{id}"), Some(&moderator))
+            .await
+            .body;
+        assert!(page.contains(&lock), "{page}");
+        let locked = app
+            .post_form(
+                &lock,
+                Some(&moderator),
+                &[],
+                "rating=1&tags=1&notes=1&status=1",
+            )
+            .await;
+        assert_eq!(locked.status, StatusCode::SEE_OTHER, "{}", locked.body);
+
+        let edit = format!("/posts/{id}/edit");
+        let refused = app
+            .post_form(
+                &edit,
+                Some(&alice),
+                &[],
+                &form(&[("tags", "cat dog"), ("old_tags", "cat"), ("rating", "s")]),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("tags are locked"), "{}", refused.body);
+        let refused = app
+            .post_form(
+                &edit,
+                Some(&alice),
+                &[],
+                &form(&[("tags", "cat"), ("old_tags", "cat"), ("rating", "e")]),
+            )
+            .await;
+        assert!(
+            refused.body.contains("rating is locked"),
+            "{}",
+            refused.body
+        );
+        // Other fields still change.
+        let fine = app
+            .post_form(
+                &edit,
+                Some(&alice),
+                &[],
+                &form(&[
+                    ("tags", "cat"),
+                    ("old_tags", "cat"),
+                    ("rating", "s"),
+                    ("source", "x"),
+                ]),
+            )
+            .await;
+        assert_eq!(fine.status, StatusCode::SEE_OTHER, "{}", fine.body);
+        // Staff who lock posts aren't held back.
+        let staff = app
+            .post_form(
+                &edit,
+                Some(&moderator),
+                &[],
+                &form(&[("tags", "cat dog"), ("old_tags", "cat"), ("rating", "s")]),
+            )
+            .await;
+        assert_eq!(staff.status, StatusCode::SEE_OTHER, "{}", staff.body);
+        assert_eq!(tag_names(&pool, id).await, ["cat", "dog"]);
+
+        let flag = app
+            .post_form(&format!("/posts/{id}/flag"), Some(&alice), &[], "reason=x")
+            .await;
+        assert_eq!(flag.status, StatusCode::BAD_REQUEST);
+        let delete = app
+            .post_form(
+                &format!("/posts/{id}/delete"),
+                Some(&janitor),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(delete.status, StatusCode::BAD_REQUEST);
+        assert!(delete.body.contains("status is locked"), "{}", delete.body);
+        let state = test_state(&pool).await;
+        let current = crate::test_support::current_user(&state, &alice).await;
+        let note = crate::notes::create(
+            &state,
+            &current,
+            id,
+            moekura_core::notes::NoteBox {
+                x: 1,
+                y: 1,
+                width: 5,
+                height: 5,
+            },
+            "hi",
+        )
+        .await;
+        assert!(
+            matches!(&note, Err(crate::error::AppError::BadRequest(m)) if m.contains("notes are locked")),
+            "{note:?}"
+        );
+
+        // The page and the history say so.
+        let page = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(
+            page.contains("Locked: rating, tags, notes, status."),
+            "{page}"
+        );
+        let history = app
+            .get(&format!("/posts/{id}/history"), Some(&alice))
+            .await
+            .body;
+        assert!(
+            history.contains("locked: rating, tags, notes, status"),
+            "{history}"
+        );
+        let logged: String =
+            sqlx::query_scalar("SELECT action FROM mod_actions WHERE action = 'post.lock'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(logged, "post.lock");
+
+        // Mass edits pass it by.
+        let dog: i32 = sqlx::query_scalar("SELECT id FROM tags WHERE name = 'dog'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let changed = moekura_db::mass_updates::retag(&pool, &[id], &[], &[dog], None)
+            .await
+            .unwrap();
+        assert_eq!(changed, 0);
+        app.post_form(&lock, Some(&moderator), &[], "").await;
+        let changed = moekura_db::mass_updates::retag(&pool, &[id], &[], &[dog], None)
+            .await
+            .unwrap();
+        assert_eq!(changed, 1);
     }
 }

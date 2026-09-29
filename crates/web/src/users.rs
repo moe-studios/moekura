@@ -64,6 +64,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let favorite_groups = moekura_db::favorite_groups::for_user(db, user.id, own)
         .await?
         .len();
+    let notes = crate::user_moderation::notes(page.state(), &page.current, user.id).await?;
     let comments_url = format!(
         "/comments?{}",
         url::form_urlencoded::Serializer::new(String::new())
@@ -97,9 +98,18 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
                     .finish()
             )),
             comments_url => crate::templates::url_value(&comments_url),
+            changes_url => crate::templates::url_value(&format!(
+                "/post_versions?{}",
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("user", &user.name)
+                    .finish()
+            )),
             bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
             can_ban => can_ban,
             banned => banned,
+            notes => notes,
+            record_url => crate::user_moderation::may_view(&page.current)
+                .then(|| crate::templates::url_value(&crate::user_moderation::url(&user.name))),
             can_unban => can_ban && banned,
             durations => crate::bans::durations(),
         },

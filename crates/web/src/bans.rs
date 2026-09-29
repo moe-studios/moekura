@@ -1,6 +1,6 @@
 //! Banning users and networks.
 
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Router};
@@ -47,6 +47,25 @@ struct BanForm {
     /// Days; empty for until lifted.
     #[serde(default)]
     days: String,
+}
+
+/// Where to go after banning or unbanning: the profile, unless the form
+/// came from elsewhere (the user moderation page).
+#[derive(Debug, Default, Deserialize)]
+struct Back {
+    back: Option<String>,
+}
+
+impl Back {
+    fn or_profile(&self, user: &User) -> String {
+        match &self.back {
+            Some(back) => crate::account::safe_next(Some(back)).to_owned(),
+            None => format!(
+                "/users/{}",
+                url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>()
+            ),
+        }
+    }
 }
 
 /// When a ban of `days` days made now ends; `None` days is until lifted.
@@ -123,11 +142,12 @@ async fn ban_user(
     page: Page,
     jar: CookieJar,
     Path(name): Path<String>,
+    Query(back): Query<Back>,
     Form(form): Form<BanForm>,
 ) -> Result<Response, AppError> {
     let expires_at = form_expiry(&form.days)?;
     let user = ban(page.state(), &page.current, &name, &form.reason, expires_at).await?;
-    Ok(saved(jar, &format!("/users/{}", user.name)))
+    Ok(saved(jar, &back.or_profile(&user)))
 }
 
 /// Bans the user called `name` until `expires_at` (or until lifted),
@@ -167,9 +187,10 @@ async fn unban_user(
     page: Page,
     jar: CookieJar,
     Path(name): Path<String>,
+    Query(back): Query<Back>,
 ) -> Result<Response, AppError> {
     let user = unban(page.state(), &page.current, &name).await?;
-    Ok(saved(jar, &format!("/users/{}", user.name)))
+    Ok(saved(jar, &back.or_profile(&user)))
 }
 
 /// Lifts the ban on the user called `name`.
@@ -202,6 +223,10 @@ struct NetworkForm {
     reason: String,
     #[serde(default)]
     days: String,
+    /// `full` to keep the network from seeing the site at all; otherwise
+    /// it can't change anything.
+    #[serde(default)]
+    kind: String,
 }
 
 async fn ban_network_form(
@@ -212,6 +237,11 @@ async fn ban_network_form(
 ) -> Result<Response, AppError> {
     page.current.require(Permission::BanUsers)?;
     let expires_at = form_expiry(&form.days)?;
+    let full = match form.kind.as_str() {
+        "" | "partial" => false,
+        "full" => true,
+        _ => return Err(AppError::BadRequest("Unknown kind of ban".into())),
+    };
     ban_network(
         page.state(),
         &page.current,
@@ -219,14 +249,15 @@ async fn ban_network_form(
         &form.network,
         &form.reason,
         expires_at,
+        full,
     )
     .await?;
     Ok(saved(jar, "/moderation/bans"))
 }
 
-/// Bans a network (an address or a CIDR range) from making changes.
-/// `own_ip` is the requester's address, which the range may not include:
-/// they couldn't lift the ban.
+/// Bans a network (an address or a CIDR range) from making changes, or
+/// with `full` from seeing the site at all. `own_ip` is the requester's
+/// address, which the range may not include: they couldn't lift the ban.
 pub(crate) async fn ban_network(
     state: &AppState,
     current: &CurrentUser,
@@ -234,6 +265,7 @@ pub(crate) async fn ban_network(
     text: &str,
     reason_text: &str,
     expires_at: Option<OffsetDateTime>,
+    full: bool,
 ) -> Result<IpNet, AppError> {
     current.require(Permission::BanUsers)?;
     let text = text.trim();
@@ -255,15 +287,20 @@ pub(crate) async fn ban_network(
     let reason = reason(reason_text)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
-    bans::ban_network(&mut *tx, network, reason, expires_at, actor).await?;
+    bans::ban_network(&mut tx, network, reason, expires_at, full, actor).await?;
     mod_actions::record(
         &mut *tx,
         NewAction::new(actor, ActionKind::IpBan)
             .reason(reason)
-            .details(serde_json::json!({ "network": network.trunc().to_string() })),
+            .details(serde_json::json!({
+                "network": network.trunc().to_string(),
+                "kind": if full { "full" } else { "partial" },
+            })),
     )
     .await?;
     tx.commit().await?;
+    // Other nodes reload when notified; this one needn't wait.
+    state.site.reload(state.db.primary()).await?;
     Ok(network.trunc())
 }
 
@@ -285,7 +322,7 @@ pub(crate) async fn lift_network(
     current.require(Permission::BanUsers)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
-    let network = bans::lift_network(&mut *tx, id, actor)
+    let network = bans::lift_network(&mut tx, id, actor)
         .await?
         .ok_or(AppError::NotFound)?;
     mod_actions::record(
@@ -295,10 +332,18 @@ pub(crate) async fn lift_network(
     )
     .await?;
     tx.commit().await?;
+    state.site.reload(state.db.primary()).await?;
     Ok(())
 }
 
-async fn index(page: Page) -> Result<Response, AppError> {
+#[derive(Debug, Default, Deserialize)]
+struct IndexQuery {
+    /// Fills in the form to ban a network.
+    #[serde(default)]
+    network: String,
+}
+
+async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::BanUsers)?;
     let db = page.state().db.primary();
     let users = bans::active(db, 200).await?;
@@ -313,8 +358,10 @@ async fn index(page: Page) -> Result<Response, AppError> {
                 reason => n.reason,
                 by => n.banner_name,
                 until => n.expires_at.map(|t| t.date().to_string()),
+                full => n.full,
             }).collect::<Vec<_>>(),
             durations => durations(),
+            network => query.network,
         },
     ))
 }
@@ -448,5 +495,26 @@ mod tests {
         assert_eq!(response.status, StatusCode::SEE_OTHER);
         let register = visitor.post_form("/register", None, &[], "name=x").await;
         assert_ne!(register.status, StatusCode::FORBIDDEN);
+
+        // A full ban keeps the network from seeing anything.
+        let response = moderation
+            .post_form(
+                "/moderation/ip-bans",
+                Some(&admin),
+                &[],
+                "network=198.51.100.0%2F24&reason=scraping&kind=full",
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let look = visitor.get("/login", None).await;
+        assert_eq!(look.status, StatusCode::FORBIDDEN);
+        assert!(look.body.contains("scraping"), "{}", look.body);
+        assert_eq!(
+            moderation.get("/login", None).await.status,
+            StatusCode::OK,
+            "other networks are fine"
+        );
+        let page = moderation.get("/moderation/bans", Some(&admin)).await.body;
+        assert!(page.contains("full"), "{page}");
     }
 }

@@ -3,6 +3,111 @@
 /// Most characters in a moderation reason.
 pub const REASON_MAX_LEN: usize = 2000;
 
+/// Most characters in a preset reason (see [`PostReasons`]).
+pub const PRESET_MAX_LEN: usize = 200;
+
+/// Most preset reasons in each list.
+pub const MAX_PRESETS: usize = 50;
+
+/// Reasons offered when deleting, rejecting or flagging a post, so
+/// they're consistent; a free-text reason is always possible too.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PostReasons {
+    /// For deleting and rejecting posts.
+    pub deletion: Vec<String>,
+    /// For flagging posts.
+    pub flag: Vec<String>,
+}
+
+impl Default for PostReasons {
+    fn default() -> Self {
+        let common = ["Duplicate", "Poor quality", "Off-topic", "Breaks the rules"];
+        Self {
+            deletion: common.map(String::from).to_vec(),
+            flag: common.map(String::from).to_vec(),
+        }
+    }
+}
+
+impl PostReasons {
+    /// Reasons from text, one per line, trimmed, without blanks or
+    /// repeats.
+    pub fn parse_list(text: &str) -> Vec<String> {
+        let mut reasons: Vec<String> = Vec::new();
+        for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            if !reasons.iter().any(|r| r == line) {
+                reasons.push(line.to_owned());
+            }
+        }
+        reasons
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        for list in [&self.deletion, &self.flag] {
+            if list.len() > MAX_PRESETS {
+                return Err(format!("offer at most {MAX_PRESETS} reasons of each kind"));
+            }
+            if list
+                .iter()
+                .any(|r| r.trim().is_empty() || r.chars().count() > PRESET_MAX_LEN)
+            {
+                return Err(format!("each reason has 1 to {PRESET_MAX_LEN} characters"));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The reason given with a preset (`preset`) and free text (`text`): the
+/// preset, the text, or both as "preset: text".
+pub fn combine_reason(preset: &str, text: &str) -> String {
+    match (preset.trim(), text.trim()) {
+        (preset, "") => preset.to_owned(),
+        ("", text) => text.to_owned(),
+        (preset, text) => format!("{preset}: {text}"),
+    }
+}
+
+/// Why an approver passed on a pending post without rejecting it
+/// (Danbooru's disapprovals).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DisapprovalReason {
+    BreaksRules,
+    PoorQuality,
+    /// The approver just isn't interested in approving it.
+    Disinterest,
+}
+
+impl DisapprovalReason {
+    pub const ALL: [DisapprovalReason; 3] = [
+        DisapprovalReason::BreaksRules,
+        DisapprovalReason::PoorQuality,
+        DisapprovalReason::Disinterest,
+    ];
+
+    /// As stored, and as Danbooru names them.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DisapprovalReason::BreaksRules => "breaks_rules",
+            DisapprovalReason::PoorQuality => "poor_quality",
+            DisapprovalReason::Disinterest => "disinterest",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DisapprovalReason::BreaksRules => "Breaks the rules",
+            DisapprovalReason::PoorQuality => "Poor quality",
+            DisapprovalReason::Disinterest => "Not interested",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|r| r.as_str() == s)
+    }
+}
+
 /// The longest timed ban, in days; longer ones are until lifted.
 pub const MAX_BAN_DAYS: i64 = 3650;
 
@@ -42,10 +147,13 @@ pub enum ActionKind {
     BulkUpdateReject,
     RoleCreate,
     RoleDelete,
+    AppealReject,
+    PostLock,
+    UndoEdits,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 32] = [
+    pub const ALL: [ActionKind; 35] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -78,6 +186,9 @@ impl ActionKind {
         ActionKind::BulkUpdateReject,
         ActionKind::RoleCreate,
         ActionKind::RoleDelete,
+        ActionKind::AppealReject,
+        ActionKind::PostLock,
+        ActionKind::UndoEdits,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -114,6 +225,9 @@ impl ActionKind {
             ActionKind::BulkUpdateReject => "bulk_update.reject",
             ActionKind::RoleCreate => "role.create",
             ActionKind::RoleDelete => "role.delete",
+            ActionKind::AppealReject => "appeal.reject",
+            ActionKind::PostLock => "post.lock",
+            ActionKind::UndoEdits => "post_versions.undo",
         }
     }
 
@@ -152,6 +266,9 @@ impl ActionKind {
             ActionKind::BulkUpdateReject => "rejected a bulk update request",
             ActionKind::RoleCreate => "added a role",
             ActionKind::RoleDelete => "deleted a role",
+            ActionKind::AppealReject => "turned down an appeal of post",
+            ActionKind::PostLock => "changed the locks on post",
+            ActionKind::UndoEdits => "undid the post edits of",
         }
     }
 
@@ -163,6 +280,23 @@ impl ActionKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasons_combine() {
+        assert_eq!(combine_reason("Duplicate", " "), "Duplicate");
+        assert_eq!(combine_reason("", "blurry"), "blurry");
+        assert_eq!(
+            combine_reason("Poor quality", "blurry"),
+            "Poor quality: blurry"
+        );
+        assert_eq!(PostReasons::parse_list(" a \n\nb\na\n"), ["a", "b"]);
+        assert!(PostReasons::default().validate().is_ok());
+        let long = PostReasons {
+            deletion: vec!["x".repeat(PRESET_MAX_LEN + 1)],
+            flag: Vec::new(),
+        };
+        assert!(long.validate().is_err());
+    }
 
     #[test]
     fn names_are_unique_and_round_trip() {

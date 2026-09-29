@@ -48,10 +48,15 @@ pub enum Permission {
     EditNotes = 20,
     /// Add and remove tags on every post matching a search at once.
     MassEditTags = 21,
+    /// Lock posts' rating, tags, notes and status, and change locked
+    /// posts.
+    LockPosts = 22,
+    /// Undo all of a user's post edits in a range of days (vandalism).
+    UndoEdits = 23,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 22] = [
+    pub const ALL: [Permission; 24] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -74,6 +79,8 @@ impl Permission {
         Permission::EditPools,
         Permission::EditNotes,
         Permission::MassEditTags,
+        Permission::LockPosts,
+        Permission::UndoEdits,
     ];
 
     const fn bit(self) -> u64 {
@@ -105,6 +112,8 @@ impl Permission {
             Permission::EditPools => "edit_pools",
             Permission::EditNotes => "edit_notes",
             Permission::MassEditTags => "mass_edit_tags",
+            Permission::LockPosts => "lock_posts",
+            Permission::UndoEdits => "undo_edits",
         }
     }
 
@@ -133,6 +142,8 @@ impl Permission {
             Permission::EditPools => "Create and edit pools",
             Permission::EditNotes => "Edit notes",
             Permission::MassEditTags => "Mass edit tags",
+            Permission::LockPosts => "Lock posts and change locked ones",
+            Permission::UndoEdits => "Undo a user's post edits",
         }
     }
 }
@@ -283,8 +294,13 @@ impl SystemRole {
             ViewDeleted,
             ModerateComments,
         ]));
-        const MODERATOR: Permissions =
-            JANITOR.with(Permissions::of(&[BanUsers, ViewAuditLog, MassEditTags]));
+        const MODERATOR: Permissions = JANITOR.with(Permissions::of(&[
+            BanUsers,
+            ViewAuditLog,
+            MassEditTags,
+            LockPosts,
+            UndoEdits,
+        ]));
         match self {
             SystemRole::Anonymous => ANONYMOUS,
             SystemRole::Member => MEMBER,

@@ -2,7 +2,7 @@
 //! made of posts.
 
 use moekura_core::permissions::SystemRole;
-use moekura_core::posts::Rating;
+use moekura_core::posts::{PostLock, Rating};
 use moekura_core::tags::POST_MAX_TAGS;
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
@@ -225,6 +225,13 @@ pub async fn apply(
     let Some(post) = crate::posts::lock(&mut *conn, post_id).await? else {
         return Ok(false);
     };
+    // Locked parts are left as they are.
+    let tag_ids = if post.is_locked(PostLock::Tags) {
+        &[]
+    } else {
+        tag_ids
+    };
+    let rating = rating.filter(|_| !post.is_locked(PostLock::Rating));
     let mut ids = post.tag_ids.clone();
     ids.extend_from_slice(tag_ids);
     let names: Vec<String> = crate::tags::by_ids(&mut *conn, &ids)

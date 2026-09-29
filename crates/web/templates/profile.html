@@ -3,6 +3,7 @@
 {% block content %}
 <section class="card medium">
   <h1>{{ user.name }}</h1>
+  {% if record_url %}<p><a href="{{ record_url }}">Moderation record</a></p>{% endif %}
   <dl class="facts">
     <dt>Role</dt><dd>{{ user.role or "—" }}</dd>
     <dt>Joined</dt><dd>{{ user.joined }}</dd>
@@ -11,6 +12,7 @@
     <dt>Favorites</dt><dd><a href="{{ favorites_url }}">{{ favorites }}</a></dd>
     <dt>Favorite groups</dt><dd><a href="{{ favorite_groups_url }}">{{ favorite_groups }}</a></dd>
     <dt>Comments</dt><dd><a href="{{ comments_url }}">{{ comments }}</a></dd>
+    <dt>Post changes</dt><dd><a href="{{ changes_url }}">View</a></dd>
   </dl>
   {% if promotion.promoted %}<p class="hint">Promoted automatically on {{ promotion.promoted }}.</p>{% endif %}
   {% if promotion.can_change %}
@@ -47,5 +49,6 @@
   {% if can_unban %}
   <form method="post" action="/users/{{ user.name }}/unban"><button type="submit">Lift the ban</button></form>
   {% endif %}
+  {% include "user_notes.html" %}
 </section>
 {% endblock %}

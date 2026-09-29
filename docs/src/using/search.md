@@ -54,7 +54,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
 | `tagcount:` | `tagcount:<5` | number of tags |
 | `ai:` | `ai:long_hair` | the [tagger](tags.md#suggestions-from-the-tagger) suggests this tag, and the post doesn't have it yet |
-| `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted` or `any` (see below) |
+| `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted`, `unmoderated`, `appealed` or `any` (see below) |
 
 Numbers (and sizes and dates) can be compared:
 
@@ -74,7 +74,10 @@ Dates take the same forms: `date:2026-01-31`, `date:>=2026-01`,
 Searches show active and flagged posts, plus your own uploads that are
 waiting for approval. Staff who review uploads also see pending posts.
 Deleted posts only appear with `status:deleted` or `status:any`, and only to
-those allowed to see them.
+those allowed to see them. For staff who review uploads,
+`status:unmoderated` finds the pending posts left for them: ones they
+didn't upload and haven't disapproved; `status:appealed` finds deleted
+posts with an open appeal.
 
 ## Order and page size
 

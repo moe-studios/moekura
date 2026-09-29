@@ -354,3 +354,13 @@ pub mod fixture {
         encode(width, height, "png")
     }
 }
+
+/// The requester a session token stands for, for calling handlers'
+/// helpers directly.
+pub async fn current_user(state: &AppState, session: &str) -> crate::auth::CurrentUser {
+    let found = moekura_db::sessions::lookup(state.db.primary(), session)
+        .await
+        .unwrap()
+        .expect("a live session");
+    crate::auth::CurrentUser::for_user(found.user, found.ban, &state.site.get())
+}

@@ -122,6 +122,11 @@ pub enum StatusFilter {
     Deleted,
     /// Everything the viewer may see, deleted posts included.
     Any,
+    /// Pending posts the viewer didn't upload and hasn't disapproved:
+    /// what's left for them to review.
+    Unmoderated,
+    /// Deleted posts with an open appeal.
+    Appealed,
 }
 
 impl StatusFilter {
@@ -132,6 +137,8 @@ impl StatusFilter {
             StatusFilter::Flagged => "flagged",
             StatusFilter::Deleted => "deleted",
             StatusFilter::Any => "any",
+            StatusFilter::Unmoderated => "unmoderated",
+            StatusFilter::Appealed => "appealed",
         }
     }
 }
@@ -552,7 +559,13 @@ impl Query {
                 "flagged" => StatusFilter::Flagged,
                 "deleted" => StatusFilter::Deleted,
                 "any" | "all" => StatusFilter::Any,
-                _ => return Err(invalid("expected pending, active, flagged, deleted or any")),
+                "unmoderated" => StatusFilter::Unmoderated,
+                "appealed" => StatusFilter::Appealed,
+                _ => {
+                    return Err(invalid(
+                        "expected pending, active, flagged, deleted, unmoderated, appealed or any",
+                    ));
+                }
             }),
             "user" => {
                 if value.is_empty() {

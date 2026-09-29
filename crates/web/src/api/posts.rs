@@ -36,6 +36,10 @@ pub struct ApiPost {
     pub rating: String,
     /// `active`, `pending` (awaiting approval), `flagged` or `deleted`.
     pub status: String,
+    /// What staff locked against changes: `rating`, `tags`, `notes`,
+    /// `status`.
+    #[schema(example = json!(["rating"]))]
+    pub locks: Vec<String>,
     pub source: String,
     pub description: String,
     pub parent_id: Option<i64>,
@@ -178,6 +182,7 @@ pub(crate) async fn load(
                 id: post.id,
                 rating: post.rating.code().to_owned(),
                 status: post.status.as_str().to_owned(),
+                locks: post.locks.iter().map(|l| l.as_str().to_owned()).collect(),
                 uploader: post.uploader_id.and_then(|id| uploaders.get(&id).cloned()),
                 source: post.source,
                 description: post.description,

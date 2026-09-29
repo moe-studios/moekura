@@ -26,6 +26,7 @@ impl Templates {
     /// (including in an override) fails startup rather than a page view.
     pub fn load(override_dir: Option<PathBuf>, assets: Arc<Assets>) -> Result<Self, Error> {
         let mut env = Environment::new();
+        env.add_global("build_version", env!("MOEKURA_BUILD_VERSION"));
         env.set_loader(move |name| load_source(override_dir.as_ref(), name));
         // Asset URLs are built by us from hex hashes and embedded paths, so
         // they are marked safe; escaping would turn `/` into `&#x2f;`.
@@ -115,6 +116,10 @@ mod tests {
                 context! { status => 400, message => "<script>alert(1)</script>", site => context! { name => "x" } },
             )
             .unwrap();
+        assert!(
+            html.contains(&format!("Moekura</a> {}", env!("MOEKURA_BUILD_VERSION"))),
+            "{html}"
+        );
         assert!(html.contains("&lt;script&gt;"), "{html}");
         assert!(!html.contains("<script>alert"));
     }

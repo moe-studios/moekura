@@ -18,6 +18,8 @@ FROM chef AS build
 COPY --from=plan /src/recipe.json recipe.json
 RUN cargo chef cook --release --locked -p moekura --features tagger --recipe-path recipe.json
 COPY . .
+# Set by CI, or passed by source builds whose context excludes .git.
+ARG MOEKURA_BUILD_VERSION
 # With the tagger built in: it loads ONNX Runtime only when it runs,
 # which only the tagger image below has.
 RUN cargo build --release --locked -p moekura --features tagger \

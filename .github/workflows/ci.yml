@@ -124,6 +124,8 @@ jobs:
       E2E_ADMIN_PASSWORD: e2e admin password
     steps:
       - uses: actions/checkout@v5
+      - name: Version embedded in the binary
+        run: echo "MOEKURA_BUILD_VERSION=git-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@v4
       # Layers cached between runs: the media tools rarely change, and the
       # Rust dependencies only with Cargo.lock.
@@ -132,12 +134,14 @@ jobs:
           context: .
           load: true
           tags: moekura:ci
+          build-args: MOEKURA_BUILD_VERSION=${{ env.MOEKURA_BUILD_VERSION }}
           cache-from: type=gha,scope=ci
           cache-to: type=gha,mode=max,scope=ci
       - name: The tagger image loads ONNX Runtime
         # Its layers are the app's plus the library.
         run: |
           docker buildx build --target tagger --load -t moekura:ci-tagger \
+            --build-arg MOEKURA_BUILD_VERSION="$MOEKURA_BUILD_VERSION" \
             --cache-from type=gha,scope=ci .
           docker run --rm -e MOEKURA_DATABASE__URL=postgres://unused/unused moekura:ci-tagger tagger --check
       - name: Media tools work in the image

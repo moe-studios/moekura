@@ -163,6 +163,7 @@ jobs:
           curl -fsS http://localhost:8080/readyz
           printf '%s\n' "$E2E_ADMIN_PASSWORD" | docker compose -f deploy/compose.tiny.yml exec -T app \
             moekura admin create-user "$E2E_ADMIN_NAME" --role admin
+          echo "app memory after start: $(deploy/smoke/rss.sh) MB"
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -179,6 +180,20 @@ jobs:
         run: |
           pipx install gallery-dl==1.32.13
           e2e/clients/gallery-dl.sh
+      - name: Memory stays small
+        # docs/design.md: one `moekura serve` stays under about 150 MB
+        # when idle. After the tests above, and after a burst of requests
+        # (which also checks every page answers 200 OK).
+        run: |
+          echo "app memory after the tests: $(deploy/smoke/rss.sh) MB"
+          docker compose -f deploy/compose.tiny.yml exec -T app \
+            moekura admin bench-http --runs 500 --concurrency 32
+          rss=$(deploy/smoke/rss.sh)
+          echo "app memory after a burst of requests: $rss MB"
+          if [ "$rss" -ge 150 ]; then
+            echo "::error::moekura serve uses $rss MB, over 150 MB"
+            exit 1
+          fi
       - name: Server logs
         if: failure()
         run: docker compose -f deploy/compose.tiny.yml logs app

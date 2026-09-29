@@ -57,6 +57,8 @@ Wants=network-online.target
 [Service]
 User=moekura
 Environment=MOEKURA_CONFIG=/etc/moekura/moekura.toml
+# Keeps memory use down after bursts of requests (as in the image).
+Environment=MALLOC_ARENA_MAX=2
 ExecStart=/usr/local/bin/moekura serve
 Restart=on-failure
 # Keep the database password out of the config file:

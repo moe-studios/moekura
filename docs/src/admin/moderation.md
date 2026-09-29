@@ -8,7 +8,10 @@ it and why.
 
 When **New uploads wait for approval** is ticked (**Admin → Settings**), uploads by people without *Upload without approval* are
 *pending*: only their uploader and staff see them. Approve them, or reject
-them with a reason, from **Moderation → Approval queue**.
+them with a reason, from **Moderation → Approval queue**, or under
+**Moderate** on the post's own page. The queue leaves out your own
+uploads; find those with `status:pending user:yourname` and approve them
+from their page.
 
 An approver can also *disapprove* a post: pass on it without rejecting
 it, saying whether it breaks the rules, is of poor quality, or just isn't

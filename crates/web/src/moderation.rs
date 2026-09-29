@@ -987,15 +987,38 @@ pub(crate) async fn disapprove_post(
     Ok(())
 }
 
-async fn approve(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
+/// Where approving or rejecting goes back to: the queue, or with
+/// `from=post` the post's page.
+#[derive(Debug, Default, Deserialize)]
+struct ReviewedFrom {
+    #[serde(default)]
+    from: String,
+}
+
+impl ReviewedFrom {
+    fn url(&self, id: i64) -> String {
+        match self.from.as_str() {
+            "post" => format!("/posts/{id}"),
+            _ => "/moderation/queue".to_owned(),
+        }
+    }
+}
+
+async fn approve(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Query(from): Query<ReviewedFrom>,
+) -> Result<Response, AppError> {
     moderate(page.state(), &page.current, id, PostAction::Approve, "").await?;
-    Ok(back_to(jar, "/moderation/queue"))
+    Ok(back_to(jar, &from.url(id)))
 }
 
 async fn reject(
     page: Page,
     jar: CookieJar,
     Path(id): Path<i64>,
+    Query(from): Query<ReviewedFrom>,
     Form(form): Form<ReasonForm>,
 ) -> Result<Response, AppError> {
     moderate(
@@ -1006,7 +1029,7 @@ async fn reject(
         &form.reason(),
     )
     .await?;
-    Ok(back_to(jar, "/moderation/queue"))
+    Ok(back_to(jar, &from.url(id)))
 }
 
 /// The latest deletion or rejection of a post, for its page.
@@ -2000,5 +2023,80 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(reason, "Off-topic");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn approving_from_the_post_page(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes().merge(crate::posts::routes()),
+        );
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let mut ids = Vec::new();
+        for (i, uploader) in ["jan", "alice"].iter().enumerate() {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO posts (rating, status, uploader_id)
+                 SELECT 'g', 'pending', id FROM users WHERE name = $1 RETURNING id",
+            )
+            .bind(uploader)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO media_assets (post_id, sha256, md5, media_type, width, height, file_size, storage_key)
+                 VALUES ($1, sha256($1::text::bytea), substring(sha256($1::text::bytea) FROM 1 FOR 16), 'png', 10, 10, 1, $2)",
+            )
+            .bind(id)
+            .bind(format!("original/aa/aa/{i}.png"))
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let (own, theirs) = (ids[0], ids[1]);
+        // Their own upload isn't in their queue, but its page offers it.
+        let queue = app.get("/moderation/queue", Some(&jan)).await.body;
+        assert!(!queue.contains(&format!("/posts/{own}/approve")), "{queue}");
+        let page = app.get(&format!("/posts/{own}"), Some(&jan)).await.body;
+        assert!(
+            page.contains(&format!("/posts/{own}/approve?from=post")),
+            "{page}"
+        );
+        let uploader_view = app
+            .get(&format!("/posts/{theirs}"), Some(&alice))
+            .await
+            .body;
+        assert!(!uploader_view.contains("/approve"), "{uploader_view}");
+
+        let approved = app
+            .post(&format!("/posts/{own}/approve?from=post"), Some(&jan), &[])
+            .await;
+        assert_eq!(approved.location, Some(format!("/posts/{own}")));
+        let rejected = app
+            .post_form(
+                &format!("/posts/{theirs}/reject?from=post"),
+                Some(&jan),
+                &[],
+                "preset=Duplicate",
+            )
+            .await;
+        assert_eq!(rejected.location, Some(format!("/posts/{theirs}")));
+        let statuses: Vec<String> = sqlx::query_scalar("SELECT status FROM posts ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(statuses, ["active", "deleted"]);
+        // Without `from`, back to the queue as before.
+        let other: i64 = sqlx::query_scalar(
+            "INSERT INTO posts (rating, status) VALUES ('g', 'pending') RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let approved = app
+            .post(&format!("/posts/{other}/approve"), Some(&jan), &[])
+            .await;
+        assert_eq!(approved.location.as_deref(), Some("/moderation/queue"));
     }
 }

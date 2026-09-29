@@ -117,9 +117,17 @@
       </form>
     </details>
     {% endif %}
-    {% if moderate.can_delete or moderate.can_restore or moderate.can_lock %}
-    <details class="edit moderate">
+    {% if moderate.can_review or moderate.can_delete or moderate.can_restore or moderate.can_lock %}
+    <details class="edit moderate"{% if moderate.can_review %} open{% endif %}>
       <summary>Moderate</summary>
+      {% if moderate.can_review %}
+      <p class="hint">This post is waiting for approval.</p>
+      <form method="post" action="/posts/{{ post.id }}/approve?from=post"><button type="submit">Approve</button></form>
+      <form method="post" action="/posts/{{ post.id }}/reject?from=post">
+        {{ reason_fields("reject-reason", reasons.deletion, "Reason for rejecting", required=false) }}
+        <button type="submit" class="secondary">Reject</button>
+      </form>
+      {% endif %}
       {% if moderate.can_lock %}
       <form method="post" action="/posts/{{ post.id }}/locks">
         <fieldset class="locks">

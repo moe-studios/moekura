@@ -76,9 +76,11 @@ test("staff delete it", async ({ page, browser }) => {
   await logIn(page, admin.name, admin.password);
   await page.goto(postPath);
   await page.locator("details", { has: page.locator("#delete-reason") }).locator("summary").click();
+  // A preset reason, with details.
+  await page.locator("#delete-reason-preset").selectOption("Off-topic");
   await page.locator("#delete-reason").fill("end-to-end test");
   await page.getByRole("button", { name: "Delete", exact: true }).click();
-  await expect(page.getByText("end-to-end test")).toBeVisible();
+  await expect(page.getByText("Off-topic: end-to-end test")).toBeVisible();
 
   // Visitors don't see deleted posts.
   const visitor = await browser.newPage();

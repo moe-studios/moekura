@@ -40,6 +40,8 @@ pub struct SiteSettings {
     pub email_domains: crate::spam::EmailDomains,
     /// Where the captcha is asked for, if one is configured.
     pub captcha: crate::spam::CaptchaSettings,
+    /// Reasons offered for deleting, rejecting and flagging posts.
+    pub post_reasons: crate::moderation::PostReasons,
 }
 
 /// The longest [`SiteSettings::ip_history_days`].
@@ -66,6 +68,7 @@ impl Default for SiteSettings {
             ip_history_days: 365,
             email_domains: crate::spam::EmailDomains::default(),
             captcha: crate::spam::CaptchaSettings::default(),
+            post_reasons: crate::moderation::PostReasons::default(),
         }
     }
 }
@@ -155,6 +158,7 @@ impl SiteSettings {
         crate::blacklist::Blacklist::parse(&self.default_blacklist).map_err(|e| e.to_string())?;
         self.tagger.validate()?;
         self.email_domains.validate()?;
+        self.post_reasons.validate()?;
         if self.ip_history_days > MAX_IP_HISTORY_DAYS {
             return Err(format!(
                 "keep addresses for at most {MAX_IP_HISTORY_DAYS} days"
@@ -181,6 +185,7 @@ mod tests {
                 "email_domains",
                 "email_verification",
                 "ip_history_days",
+                "post_reasons",
                 "preview_all_ratings",
                 "promotion_rules",
                 "registration_mode",

@@ -46,8 +46,22 @@ pub fn routes() -> Router<AppState> {
 
 #[derive(Debug, Default, Deserialize)]
 struct ReasonForm {
+    /// One of the site's preset reasons; `other` or empty for none.
+    #[serde(default)]
+    preset: String,
+    /// Free text, on its own or adding to the preset.
     #[serde(default)]
     reason: String,
+}
+
+impl ReasonForm {
+    fn reason(&self) -> String {
+        let preset = match self.preset.as_str() {
+            "other" => "",
+            preset => preset,
+        };
+        moekura_core::moderation::combine_reason(preset, &self.reason)
+    }
 }
 
 fn check_reason(reason: &str) -> Result<&str, AppError> {
@@ -199,7 +213,7 @@ async fn delete(
         &page.current,
         id,
         PostAction::Delete,
-        &form.reason,
+        &form.reason(),
     )
     .await?;
     Ok(back_to(jar, &format!("/posts/{id}")))
@@ -211,7 +225,7 @@ async fn flag(
     Path(id): Path<i64>,
     Form(form): Form<ReasonForm>,
 ) -> Result<Response, AppError> {
-    flag_post(page.state(), &page.current, id, &form.reason).await?;
+    flag_post(page.state(), &page.current, id, &form.reason()).await?;
     Ok(back_to(jar, &format!("/posts/{id}")))
 }
 
@@ -424,7 +438,7 @@ async fn reject(
         &page.current,
         id,
         PostAction::Reject,
-        &form.reason,
+        &form.reason(),
     )
     .await?;
     Ok(back_to(jar, "/moderation/queue"))
@@ -959,5 +973,96 @@ mod tests {
             .get("/moderation/log?since=yesterday", Some(&moderator))
             .await;
         assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn preset_reasons(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes().merge(crate::posts::routes()),
+        );
+        let bob = crate::test_support::session_for(&pool, "bob", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let mut ids = Vec::new();
+        for i in 0..3 {
+            let id: i64 =
+                sqlx::query_scalar("INSERT INTO posts (rating) VALUES ('g') RETURNING id")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            sqlx::query(
+                "INSERT INTO media_assets (post_id, sha256, md5, media_type, width, height, file_size, storage_key)
+                 VALUES ($1, sha256($1::text::bytea), substring(sha256($1::text::bytea) FROM 1 FOR 16), 'png', 10, 10, 1, $2)",
+            )
+            .bind(id)
+            .bind(format!("original/aa/aa/{i}.png"))
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let page = app
+            .get(&format!("/posts/{}", ids[0]), Some(&moderator))
+            .await
+            .body;
+        assert!(
+            page.contains("<option value=\"Duplicate\">Duplicate</option>"),
+            "{page}"
+        );
+
+        let form = |preset: &str, reason: &str| {
+            url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("preset", preset)
+                .append_pair("reason", reason)
+                .finish()
+        };
+        for (id, preset, reason) in [
+            (ids[0], "Duplicate", ""),
+            (ids[1], "Poor quality", "blurry"),
+            (ids[2], "other", "my own words"),
+        ] {
+            let response = app
+                .post_form(
+                    &format!("/posts/{id}/delete"),
+                    Some(&moderator),
+                    &[],
+                    &form(preset, reason),
+                )
+                .await;
+            assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        }
+        let reasons: Vec<String> =
+            sqlx::query_scalar("SELECT reason FROM mod_actions ORDER BY post_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            reasons,
+            ["Duplicate", "Poor quality: blurry", "my own words"]
+        );
+        // "Other" alone says nothing.
+        let flagless: i64 =
+            sqlx::query_scalar("INSERT INTO posts (rating) VALUES ('g') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let unexplained = app
+            .post_form(
+                &format!("/posts/{flagless}/flag"),
+                Some(&bob),
+                &[],
+                &form("other", ""),
+            )
+            .await;
+        assert_eq!(unexplained.status, StatusCode::BAD_REQUEST);
+        let flagged = app
+            .post_form(
+                &format!("/posts/{flagless}/flag"),
+                Some(&bob),
+                &[],
+                &form("Off-topic", ""),
+            )
+            .await;
+        assert_eq!(flagged.status, StatusCode::SEE_OTHER);
     }
 }

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "reason_fields.html" import reason_fields %}
 {# The first few names that say what the post is, so tabs and history can be told apart. #}
 {% block title %}{% for group in tag_groups if group.name in ("character", "copyright", "artist") %}{% for tag in group.tags[:2] %}{{ tag.name }} · {% endfor %}{% endfor %}Post #{{ post.id }} · {{ site.name }}{% endblock %}
 {% block head %}{% include "preview_meta.html" %}{% endblock %}
@@ -84,8 +85,7 @@
     <details class="edit">
       <summary>Flag</summary>
       <form method="post" action="/posts/{{ post.id }}/flag">
-        <label for="flag-reason">What's wrong with this post?</label>
-        <input id="flag-reason" name="reason" maxlength="2000" required>
+        {{ reason_fields("flag-reason", reasons.flag, "What's wrong with this post?") }}
         <button type="submit">Flag for review</button>
       </form>
     </details>
@@ -95,8 +95,7 @@
       <summary>Moderate</summary>
       {% if moderate.can_delete %}
       <form method="post" action="/posts/{{ post.id }}/delete">
-        <label for="delete-reason">Reason for deleting</label>
-        <input id="delete-reason" name="reason" maxlength="2000" required>
+        {{ reason_fields("delete-reason", reasons.deletion, "Reason for deleting") }}
         <button type="submit">Delete</button>
       </form>
       {% endif %}

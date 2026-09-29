@@ -1,0 +1,19 @@
+{#- A reason for deleting, rejecting or flagging a post: one of `presets`
+    (the site's preset reasons) and, or instead, free text. With `label`
+    as a visible label; `compact` forms label the fields for screen
+    readers only. -#}
+{% macro reason_fields(id, presets, label, required=true, compact=false) %}
+{% if presets %}
+{% if not compact %}<label for="{{ id }}-preset">{{ label }}</label>{% endif %}
+<select id="{{ id }}-preset" name="preset"{% if compact %} aria-label="{{ label }}"{% endif %}{% if required %} required{% endif %}>
+  {% if required %}<option value="" disabled selected>Choose a reason</option>{% else %}<option value="" selected>No reason</option>{% endif %}
+  {% for r in presets %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+  <option value="other">Other (say why)</option>
+</select>
+{% if not compact %}<label for="{{ id }}">Details <span class="optional">(optional with a reason above)</span></label>{% endif %}
+<input id="{{ id }}" name="reason" maxlength="1800"{% if compact %} placeholder="Details" aria-label="Details"{% endif %}>
+{% else %}
+{% if not compact %}<label for="{{ id }}">{{ label }}</label>{% endif %}
+<input id="{{ id }}" name="reason" maxlength="2000"{% if compact %} placeholder="Reason" aria-label="{{ label }}"{% endif %}{% if required %} required{% endif %}>
+{% endif %}
+{% endmacro %}

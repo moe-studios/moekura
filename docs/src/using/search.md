@@ -68,6 +68,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `commenter:` | `commenter:alice` | has a comment by this user |
 | `comment:` | `comment:nice_art` | comments contain these words (underscores for spaces) |
 | `noter:` | `noter:alice` | has a note this user wrote or edited |
+| `upvote:`, `downvote:` | `upvote:alice` | voted up / down by this user; votes are private, so only staff who review posts may search for others' votes, everyone else only for their own |
 | `flagger:` | `flagger:alice` | flagged by this user; only staff who review posts may search for others' flags, everyone else only for their own |
 | `search:` | `search:all`, `search:artists` | the newest posts (500 each) of your [saved searches](account.md#saved-searches), all or those with a label |
 | `favgroup:` | `favgroup:best`, `favgroup:7` | in one of your favorite groups (by name), or any public group (by number) |

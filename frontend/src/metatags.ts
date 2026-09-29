@@ -79,6 +79,8 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
   comment: [],
   noter: [],
   flagger: [],
+  upvote: [],
+  downvote: [],
   has: ["source", "children", "parent", "pools", "notes", "comments"],
 };
 

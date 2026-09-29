@@ -78,6 +78,8 @@ var METATAGS = {
   comment: [],
   noter: [],
   flagger: [],
+  upvote: [],
+  downvote: [],
   has: ["source", "children", "parent", "pools", "notes", "comments"]
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];

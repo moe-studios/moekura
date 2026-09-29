@@ -73,6 +73,8 @@ pub const METATAGS: &[&str] = &[
     "comment",
     "noter",
     "flagger",
+    "upvote",
+    "downvote",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -263,6 +265,10 @@ pub enum Filter {
     Noter(String),
     /// Flagged by this user; only for staff, or the flagger.
     Flagger(String),
+    /// Voted up by this user; only for staff, or the voter.
+    Upvote(String),
+    /// Voted down by this user; only for staff, or the voter.
+    Downvote(String),
     /// Looks like this post (perceptual hash), the post included.
     Similar(i64),
     Pool(PoolFilter),
@@ -851,7 +857,7 @@ impl Query {
                 "none" => UserMatch::None,
                 name => UserMatch::Name(name.to_owned()),
             }),
-            "commenter" | "noter" | "flagger" => {
+            "commenter" | "noter" | "flagger" | "upvote" | "downvote" => {
                 if value.is_empty() {
                     return Err(invalid("expected a user name"));
                 }
@@ -859,7 +865,9 @@ impl Query {
                 match name {
                     "commenter" => Filter::Commenter(value),
                     "noter" => Filter::Noter(value),
-                    _ => Filter::Flagger(value),
+                    "flagger" => Filter::Flagger(value),
+                    "upvote" => Filter::Upvote(value),
+                    _ => Filter::Downvote(value),
                 }
             }
             "notecount" => Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
@@ -1277,6 +1285,8 @@ impl fmt::Display for Filter {
             Filter::Comment(words) => write!(f, "comment:{}", words.replace(' ', "_")),
             Filter::Noter(name) => write!(f, "noter:{name}"),
             Filter::Flagger(name) => write!(f, "flagger:{name}"),
+            Filter::Upvote(name) => write!(f, "upvote:{name}"),
+            Filter::Downvote(name) => write!(f, "downvote:{name}"),
             Filter::Similar(id) => write!(f, "similar:{id}"),
         }
     }
@@ -1638,6 +1648,8 @@ mod tests {
         assert_eq!(filter("commenter:bob"), Filter::Commenter("bob".into()));
         assert_eq!(filter("noter:bob"), Filter::Noter("bob".into()));
         assert_eq!(filter("flagger:bob"), Filter::Flagger("bob".into()));
+        assert_eq!(filter("upvote:Bob"), Filter::Upvote("bob".into()));
+        assert_eq!(parse("-downvote:bob").to_string(), "-downvote:bob");
         assert_eq!(
             filter("comment:Nice_Art"),
             Filter::Comment("nice art".into())
@@ -1754,10 +1766,13 @@ mod tests {
     fn malformed_terms() {
         assert_eq!(error("-~a"), "`-~a`: use either `-` or `~`, not both");
         assert_eq!(error("-"), "`-` is missing a tag");
-        assert_eq!(
-            error("upvote:bob"),
-            "`upvote:` searches aren't supported yet"
-        );
+        // Every reserved prefix is a metatag or a category by now.
+        for prefix in RESERVED_PREFIXES {
+            assert!(
+                METATAGS.contains(prefix) || CATEGORY_PREFIXES.contains(prefix),
+                "{prefix}"
+            );
+        }
         assert_eq!(filter("similar:12"), Filter::Similar(12));
         assert!(error("similar:x").contains("expected a post id"));
         assert_eq!(

@@ -116,6 +116,8 @@ enum Link {
     /// Wrote or edited a note.
     Noted,
     Flagged,
+    Upvoted,
+    Downvoted,
 }
 
 /// A filter or group with the names in it looked up, ready for SQL.
@@ -273,6 +275,16 @@ impl Node {
                     Link::Flagged => (
                         "EXISTS (SELECT 1 FROM post_flags pf WHERE pf.post_id = p.id \
                          AND pf.creator_id = ",
+                        ")",
+                    ),
+                    Link::Upvoted => (
+                        "EXISTS (SELECT 1 FROM post_votes v WHERE v.post_id = p.id \
+                         AND v.score = 1 AND v.user_id = ",
+                        ")",
+                    ),
+                    Link::Downvoted => (
+                        "EXISTS (SELECT 1 FROM post_votes v WHERE v.post_id = p.id \
+                         AND v.score = -1 AND v.user_id = ",
                         ")",
                     ),
                 };
@@ -1084,22 +1096,25 @@ async fn resolve_filter(
         | Filter::Approver(UserMatch::Name(name))
         | Filter::Commenter(name)
         | Filter::Noter(name)
-        | Filter::Flagger(name) => {
+        | Filter::Flagger(name)
+        | Filter::Upvote(name)
+        | Filter::Downvote(name) => {
             let link = match filter {
                 Filter::User(_) => Link::Uploaded,
                 Filter::Fav(_) => Link::Favorited,
                 Filter::Approver(_) => Link::Approved,
                 Filter::Commenter(_) => Link::Commented,
                 Filter::Noter(_) => Link::Noted,
-                _ => Link::Flagged,
+                Filter::Flagger(_) => Link::Flagged,
+                Filter::Upvote(_) => Link::Upvoted,
+                _ => Link::Downvoted,
             };
             let user = crate::users::by_name(db, name).await?.map(|user| user.id);
-            // Who flagged what is for staff, and for the flaggers
-            // themselves.
+            // Flags and votes are private: for staff, and for the flaggers
+            // and voters themselves.
+            let private = matches!(link, Link::Flagged | Link::Upvoted | Link::Downvoted);
             let user = user.filter(|&user| {
-                link != Link::Flagged
-                    || visibility.reviews_posts()
-                    || visibility.viewer == Some(user)
+                !private || visibility.reviews_posts() || visibility.viewer == Some(user)
             });
             found(user.map(|user| Node::ByUser(link, user)))
         }
@@ -1443,6 +1458,8 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         | Filter::Commenter(_)
         | Filter::Noter(_)
         | Filter::Flagger(_)
+        | Filter::Upvote(_)
+        | Filter::Downvote(_)
         | Filter::Similar(_)
         | Filter::Search(_)
         | Filter::FavGroup(_)
@@ -1887,6 +1904,36 @@ mod tests {
             viewer: Some(alice),
         };
         assert_eq!(search_as(&pool, "flagger:bob", &staff).await, [ids[2]]);
+
+        // Votes are private the same way.
+        for (post, score) in [(ids[0], 1), (ids[1], -1)] {
+            sqlx::query("INSERT INTO post_votes (user_id, post_id, score) VALUES ($1, $2, $3)")
+                .bind(bob)
+                .bind(post)
+                .bind(score as i16)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            search_as(&pool, "upvote:bob", &as_user(bob)).await,
+            [ids[0]]
+        );
+        assert_eq!(
+            search_as(&pool, "downvote:bob", &as_user(bob)).await,
+            [ids[1]]
+        );
+        assert_eq!(
+            search_as(&pool, "-upvote:bob", &as_user(bob)).await,
+            [ids[2], ids[1]]
+        );
+        assert_eq!(search_as(&pool, "upvote:bob", &staff).await, [ids[0]]);
+        assert!(
+            search_as(&pool, "upvote:bob", &as_user(alice))
+                .await
+                .is_empty()
+        );
+        assert!(search(&pool, "downvote:bob").await.is_empty());
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

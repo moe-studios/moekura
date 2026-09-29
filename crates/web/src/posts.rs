@@ -8,7 +8,7 @@ use axum::routing::get;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::{PostStatus, Rating};
-use moekura_core::search::{Order, Query as SearchQuery};
+use moekura_core::search::{Order, Query as SearchQuery, TagTerm};
 use moekura_core::user_settings::UserSettings;
 use moekura_db::media::{self, Variant};
 use moekura_db::posts::{self, Card, Post, Visibility};
@@ -86,6 +86,12 @@ struct IndexQuery {
 
 /// Tags listed beside search results.
 const SIDEBAR_TAGS: usize = 25;
+
+/// Tags of a search that found nothing checked for "did you mean".
+const DID_YOU_MEAN_TERMS: usize = 6;
+
+/// Replacements offered for each tag.
+const DID_YOU_MEAN_EACH: i64 = 3;
 
 /// Search results; the front page is the empty search.
 async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response, AppError> {
@@ -190,6 +196,12 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
     let shown: Vec<Card> = shown.into_iter().cloned().collect();
     let sidebar = sidebar_tags(db, &shown, &normalized).await?;
     let wiki = crate::wiki::search_excerpt(db, &query).await?;
+    // Only for searches that found nothing, so the rest pay nothing.
+    let did_you_mean = if ids.is_empty() {
+        did_you_mean(db, &query, &normalized).await?
+    } else {
+        Vec::new()
+    };
     let pager = Pager {
         query: &normalized,
         page: page_ref,
@@ -219,9 +231,60 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             count => count_text(count),
             sidebar => sidebar,
             wiki => wiki,
+            did_you_mean => did_you_mean,
             pager => pager.context(),
         },
     ))
+}
+
+/// For a search that found nothing: its plain tags that match no posts,
+/// each with searches that swap it for a tag likely meant instead.
+async fn did_you_mean(
+    db: &sqlx::PgPool,
+    query: &SearchQuery,
+    normalized: &str,
+) -> Result<Vec<Value>, AppError> {
+    // Negated terms, wildcards and metatags aren't tag names to fix.
+    let terms = query
+        .all
+        .iter()
+        .map(|term| (term, ""))
+        .chain(query.any.iter().map(|term| (term, "~")))
+        .filter_map(|(term, prefix)| match term {
+            TagTerm::Name(name) => Some((name.as_str(), prefix)),
+            TagTerm::Wildcard(_) => None,
+        })
+        .take(DID_YOU_MEAN_TERMS);
+    let mut found = Vec::new();
+    for (name, prefix) in terms {
+        let replacements = tags::replacements(db, name, DID_YOU_MEAN_EACH).await?;
+        if replacements.is_empty() {
+            continue;
+        }
+        // Top-level tags print as words of their own.
+        let typed = format!("{prefix}{name}");
+        let links: Vec<Value> = replacements
+            .iter()
+            .map(|replacement| {
+                let replaced: Vec<String> = normalized
+                    .split(' ')
+                    .map(|word| {
+                        if word == typed {
+                            format!("{prefix}{replacement}")
+                        } else {
+                            word.to_owned()
+                        }
+                    })
+                    .collect();
+                context! {
+                    name => replacement,
+                    url => Value::from_safe_string(search_url(&replaced.join(" "))),
+                }
+            })
+            .collect();
+        found.push(context! { term => name, replacements => links });
+    }
+    Ok(found)
 }
 
 /// The most used tags among `cards`, grouped as on post pages, each with
@@ -1291,6 +1354,17 @@ mod tests {
         assert_eq!(bad.status, StatusCode::BAD_REQUEST);
         assert!(bad.body.contains("is missing its"), "{}", bad.body);
         // No "without the last term" that would break the group.
+        // Likely typos get replacements.
+        let typo = app.get("/posts?tags=rating:g+cuet", None).await.body;
+        assert!(
+            typo.contains(
+                "Did you mean <a href=\"/posts?tags=cute+rating%3Ag\"><strong>cute</strong></a>"
+            ) && typo.contains(" instead of cuet?"),
+            "{typo}"
+        );
+        let typo = app.get("/posts?tags=dgo", None).await.body;
+        assert!(typo.contains("<strong>dog</strong></a>?"), "{typo}");
+        assert!(!typo.contains("Look for tags starting with"));
         let nothing = app.get("/posts?tags=dog+(cat+or+rating:e)", None).await;
         assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
         assert!(

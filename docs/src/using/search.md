@@ -130,6 +130,14 @@ didn't upload and haven't disapproved; `status:appealed` finds deleted
 posts with an open appeal. `status:modqueue` finds everything waiting for
 a moderator: pending and flagged posts.
 
+## When nothing is found
+
+If a search finds nothing, tags in it that match no posts get
+suggestions: the tag a retired alias pointed to, or used tags spelled
+almost the same (`long_hiar` → `long_hair`). Each links to the same
+search with the tag swapped. Excluded tags, wildcards and filters get
+none.
+
 ## Order and page size
 
 | Filter | Order |

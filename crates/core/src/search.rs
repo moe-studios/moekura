@@ -81,6 +81,24 @@ pub const METATAGS: &[&str] = &[
 /// (`artist:name` searches for `name`).
 const CATEGORY_PREFIXES: &[&str] = &["general", "artist", "copyright", "character", "meta"];
 
+/// Danbooru's short names for the default categories in `gentags:` and
+/// the like; other categories go by their names (`artisttags:`).
+pub const CATEGORY_SHORT_NAMES: &[(&str, &str)] = &[
+    ("gen", "general"),
+    ("art", "artist"),
+    ("copy", "copyright"),
+    ("char", "character"),
+];
+
+/// The category of a `<category>tags` metatag or order name.
+fn tags_category(name: &str) -> Option<&str> {
+    let category = name.strip_suffix("tags")?;
+    let mut chars = category.chars();
+    let valid = chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    valid.then_some(category)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TagTerm {
     Name(TagName),
@@ -253,6 +271,11 @@ pub enum Filter {
     Child(bool),
     Source(SourceFilter),
     TagCount(Bound<i64>),
+    /// Tags of a category (by name or short name, as typed).
+    CategoryTags {
+        category: String,
+        count: Bound<i64>,
+    },
     /// Favorited by this user (name as typed).
     Fav(String),
     /// Approved by this user, by anyone, or by no one.
@@ -325,6 +348,9 @@ pub enum Order {
     /// Most recently noted first; only posts with notes.
     NoteDesc,
     NoteAsc,
+    /// Most tags of [`Query::ordcategory`] first (`order:arttags`).
+    CategoryTagsDesc,
+    CategoryTagsAsc,
 }
 
 impl Order {
@@ -461,6 +487,8 @@ pub struct Query {
     pub ordpool: Option<PoolRef>,
     /// With `ordfavgroup:name`: the favorite group whose order this is.
     pub ordfavgroup: Option<PoolRef>,
+    /// With `order:<category>tags`: the category, as typed.
+    pub ordcategory: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -781,6 +809,17 @@ impl Query {
                     self.metatag(word, negated, or || nested, &prefix, &value.to_lowercase())?;
                 return Ok((negated, or, filter.map(Expr::Filter)));
             }
+            // `arttags:0`; only with a number, so tags that happen to look
+            // like one still work.
+            if let Some(category) = tags_category(&prefix)
+                && let Some(count) = bound(value, int)
+            {
+                let filter = Filter::CategoryTags {
+                    category: category.to_owned(),
+                    count,
+                };
+                return Ok((negated, or, Some(Expr::Filter(filter))));
+            }
             if CATEGORY_PREFIXES.contains(&prefix.as_str()) && !value.is_empty() {
                 tag = value;
             } else if RESERVED_PREFIXES.contains(&prefix.as_str()) {
@@ -897,11 +936,28 @@ impl Query {
                 Filter::Fav(value.into())
             }
             "order" => {
-                let order = Order::NAMES
+                let named = Order::NAMES
                     .iter()
                     .find(|(n, _)| *n == value)
-                    .map(|(_, order)| *order)
-                    .ok_or_else(|| invalid("unknown order; try id, score, favcount or random"))?;
+                    .map(|(_, order)| *order);
+                let order = match named {
+                    Some(order) => order,
+                    None => {
+                        let (name, ascending) = match value.strip_suffix("_asc") {
+                            Some(name) => (name, true),
+                            None => (value.strip_suffix("_desc").unwrap_or(value), false),
+                        };
+                        let category = tags_category(name).ok_or_else(|| {
+                            invalid("unknown order; try id, score, favcount or random")
+                        })?;
+                        self.ordcategory = Some(category.to_owned());
+                        if ascending {
+                            Order::CategoryTagsAsc
+                        } else {
+                            Order::CategoryTagsDesc
+                        }
+                    }
+                };
                 self.order = Some(order);
                 return Ok(None);
             }
@@ -1277,6 +1333,7 @@ impl fmt::Display for Filter {
             Filter::Source(SourceFilter::None) => f.write_str("source:none"),
             Filter::Source(SourceFilter::Pattern(pattern)) => write!(f, "source:{pattern}"),
             Filter::TagCount(b) => write!(f, "tagcount:{b}"),
+            Filter::CategoryTags { category, count } => write!(f, "{category}tags:{count}"),
             Filter::Fav(name) => write!(f, "fav:{name}"),
             Filter::Approver(UserMatch::Any) => f.write_str("approver:any"),
             Filter::Approver(UserMatch::None) => f.write_str("approver:none"),
@@ -1302,7 +1359,17 @@ impl fmt::Display for Query {
         terms.extend(self.none.iter().map(|t| format!("-{t}")));
         terms.extend(self.conditions.iter().map(ToString::to_string));
         terms.extend(self.groups.iter().map(ToString::to_string));
+        match (self.order, &self.ordcategory) {
+            (Some(Order::CategoryTagsDesc), Some(category)) => {
+                terms.push(format!("order:{category}tags"));
+            }
+            (Some(Order::CategoryTagsAsc), Some(category)) => {
+                terms.push(format!("order:{category}tags_asc"));
+            }
+            _ => {}
+        }
         match (self.order, &self.ordfav, &self.ordpool, &self.ordfavgroup) {
+            (Some(Order::CategoryTagsDesc | Order::CategoryTagsAsc), ..) => {}
             (Some(Order::Favorited), Some(user), ..) => terms.push(format!("ordfav:{user}")),
             (Some(Order::Pool), _, Some(pool), _) => terms.push(format!("ordpool:{pool}")),
             (Some(Order::FavGroup), .., Some(group)) => {
@@ -1662,6 +1729,38 @@ mod tests {
     }
 
     #[test]
+    fn category_tags() {
+        let arttags = |count| Filter::CategoryTags {
+            category: "art".into(),
+            count,
+        };
+        assert_eq!(filter("arttags:0"), arttags(Bound::Eq(0)));
+        assert_eq!(filter("ArtTags:>=2"), arttags(Bound::Ge(2)));
+        assert_eq!(
+            filter("character_2tags:1..3"),
+            Filter::CategoryTags {
+                category: "character_2".into(),
+                count: Bound::Between(1, 3),
+            }
+        );
+        // Not a number: a tag after all.
+        assert_eq!(parse("mytags:favourite").all, [name("mytags:favourite")]);
+        assert_eq!(parse("-arttags:0").to_string(), "-arttags:0");
+
+        let query = parse("order:chartags");
+        assert_eq!(
+            (query.order, query.ordcategory.as_deref()),
+            (Some(Order::CategoryTagsDesc), Some("char"))
+        );
+        assert_eq!(query.to_string(), "order:chartags");
+        let query = parse("cat order:generaltags_asc limit:5");
+        assert_eq!(query.order, Some(Order::CategoryTagsAsc));
+        assert_eq!(query.to_string(), "cat order:generaltags_asc limit:5");
+        assert_eq!(parse("order:gentags_desc").to_string(), "order:gentags");
+        assert!(error("order:tags").contains("unknown order"));
+    }
+
+    #[test]
     fn groups_and_or() {
         let tag = |s: &str| Expr::Tag(name(s));
         let not = |e: Expr| Expr::Not(Box::new(e));
@@ -1769,7 +1868,9 @@ mod tests {
         // Every reserved prefix is a metatag or a category by now.
         for prefix in RESERVED_PREFIXES {
             assert!(
-                METATAGS.contains(prefix) || CATEGORY_PREFIXES.contains(prefix),
+                METATAGS.contains(prefix)
+                    || CATEGORY_PREFIXES.contains(prefix)
+                    || tags_category(prefix).is_some(),
                 "{prefix}"
             );
         }

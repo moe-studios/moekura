@@ -86,6 +86,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
 | `child:` | `child:any`, `child:none` | posts with children (that aren't deleted), or without |
 | `tagcount:` | `tagcount:<5` | number of tags |
+| `<category>tags:` | `arttags:0`, `gentags:>20` | number of tags in a category: the category's name followed by `tags` (`artisttags:`, `charactertags:`), or Danbooru's `gentags:`, `arttags:`, `copytags:`, `chartags:` and `metatags:`; `arttags:0` finds posts missing an artist |
 | `ai:` | `ai:long_hair` | the [tagger](tags.md#suggestions-from-the-tagger) suggests this tag, and the post doesn't have it yet |
 | `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted`, `unmoderated`, `appealed` or `any` (see below) |
 
@@ -138,6 +139,7 @@ posts with an open appeal.
 | `order:landscape`, `order:portrait` | widest / tallest first |
 | `order:duration`, `order:duration_asc` | longest / shortest video |
 | `order:tagcount`, `order:tagcount_asc` | most / fewest tags |
+| `order:arttags`, `order:gentags_asc`, … | most / fewest tags in a category |
 | `order:comment`, `order:comment_asc` | most / least recently commented (only posts with comments) |
 | `order:note`, `order:note_asc` | most / least recently noted (only posts with notes) |
 | `order:random` | shuffled |

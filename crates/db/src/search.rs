@@ -142,6 +142,8 @@ enum Node {
     Unmoderated(Option<i64>),
     /// Deleted with an open appeal.
     Appealed,
+    /// The number of tags of this category.
+    CategoryTags(i16, Bound<i64>),
     Not(Box<Node>),
     And(Vec<Node>),
     Or(Vec<Node>),
@@ -332,6 +334,9 @@ impl Node {
                 }
                 sql.push(")");
             }
+            Node::CategoryTags(category, count) => {
+                push_bound(sql, &category_count(*category), count);
+            }
             Node::Appealed => {
                 sql.push("EXISTS (SELECT 1 FROM post_appeals x WHERE x.post_id = p.id AND x.status = 'open')");
             }
@@ -393,6 +398,8 @@ pub struct Plan {
     ordpool: Option<i32>,
     /// `ordfavgroup:`'s group.
     ordfavgroup: Option<i32>,
+    /// `order:<category>tags`'s category.
+    ordcategory: Option<i16>,
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
@@ -437,6 +444,7 @@ impl Plan {
             ordfav: None,
             ordpool: None,
             ordfavgroup: None,
+            ordcategory: None,
             statuses,
             own_pending,
             order: query.order.unwrap_or_default(),
@@ -502,6 +510,11 @@ impl Plan {
                 Some(id) => plan.ordfavgroup = Some(id),
                 None => plan.nothing = true,
             }
+        }
+        if let Some(category) = &query.ordcategory
+            && matches!(plan.order, Order::CategoryTagsDesc | Order::CategoryTagsAsc)
+        {
+            plan.ordcategory = Some(category_id(db, category).await?);
         }
         if let Some(pool) = &query.ordpool
             && plan.order == Order::Pool
@@ -852,6 +865,15 @@ impl Plan {
             Order::Pool => {
                 sql.push("po.position ASC");
             }
+            Order::CategoryTagsDesc | Order::CategoryTagsAsc => {
+                let direction = if self.order == Order::CategoryTagsDesc {
+                    "DESC"
+                } else {
+                    "ASC"
+                };
+                let count = category_count(self.ordcategory.unwrap_or_default());
+                sql.push(format!("{count} {direction}, p.id {direction}"));
+            }
             Order::FavGroup => {
                 sql.push("fgo.position ASC");
             }
@@ -1168,6 +1190,9 @@ async fn resolve_filter(
                     .map(|tag| Node::Suggested(tag.id)),
             )
         }
+        Filter::CategoryTags { category, count } => {
+            Node::CategoryTags(category_id(db, category).await?, count.clone())
+        }
         Filter::Pool(PoolFilter::Any) => Node::Pool(None),
         Filter::Pool(PoolFilter::None) => Node::Pool(None).not(),
         Filter::Pool(PoolFilter::In(pool)) => found(
@@ -1178,6 +1203,28 @@ async fn resolve_filter(
         ),
         filter => Node::Plain(filter.clone()),
     })
+}
+
+/// The id of the tag category `typed` names, by name or short name.
+async fn category_id(db: &PgPool, typed: &str) -> Result<i16, SearchError> {
+    let name = moekura_core::search::CATEGORY_SHORT_NAMES
+        .iter()
+        .find(|(short, _)| *short == typed)
+        .map_or(typed, |(_, name)| name);
+    crate::tags::categories(db)
+        .await?
+        .into_iter()
+        .find(|c| c.name == name)
+        .map(|c| c.id)
+        .ok_or_else(|| SearchError::Invalid(format!("There's no tag category `{typed}`.")))
+}
+
+/// SQL for a post's number of tags in `category`.
+fn category_count(category: i16) -> String {
+    format!(
+        "coalesce(p.category_counts[{}], 0)",
+        i32::from(category) + 1
+    )
 }
 
 /// The favorite group `group` names for `viewer`: by id, if it's public
@@ -1460,6 +1507,7 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         | Filter::Flagger(_)
         | Filter::Upvote(_)
         | Filter::Downvote(_)
+        | Filter::CategoryTags { .. }
         | Filter::Similar(_)
         | Filter::Search(_)
         | Filter::FavGroup(_)
@@ -1819,6 +1867,70 @@ mod tests {
         assert_eq!(plan.required.len(), 1);
         assert_eq!(plan.any.as_ref().map(|set| set.ids.len()), Some(2));
         assert!(plan.filters.is_empty());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn category_tags(pool: PgPool) {
+        let a = seed(
+            &pool,
+            Seed {
+                tags: &["alice_(artist)", "bob_(artist)", "cat"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let b = seed(
+            &pool,
+            Seed {
+                tags: &["bob_(artist)", "cat", "dog", "tree"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        let c = seed(&pool, Seed::default()).await;
+        // Moving tags to the artist category recounts their posts.
+        for name in ["alice_(artist)", "bob_(artist)"] {
+            let tag = crate::tags::by_name(&pool, name).await.unwrap().unwrap();
+            crate::tags::update(&pool, tag.id, 1, false).await.unwrap();
+        }
+        let cases: &[(&str, &[i64])] = &[
+            ("arttags:0", &[c]),
+            ("arttags:2", &[a]),
+            ("artisttags:>0", &[b, a]),
+            ("gentags:3", &[b]),
+            ("generaltags:1 arttags:2", &[a]),
+            ("-arttags:0 copytags:0", &[b, a]),
+            ("(arttags:1 or gentags:0)", &[c, b]),
+            ("order:gentags", &[b, a, c]),
+            ("order:arttags_asc", &[c, b, a]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(&search(&pool, input).await, expected, "{input}");
+        }
+        // Tags added later count too.
+        let mut conn = pool.acquire().await.unwrap();
+        let wanted = [WantedTag {
+            name: "carol",
+            category_id: Some(1),
+        }];
+        let carol = crate::tags::ensure(&mut conn, &wanted, false)
+            .await
+            .unwrap()[0]
+            .id;
+        drop(conn);
+        sqlx::query("UPDATE posts SET tag_ids = ARRAY[$1] WHERE id = $2")
+            .bind(carol)
+            .bind(c)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(search(&pool, "arttags:1").await, [c, b]);
+
+        let query = Query::parse("fishtags:0").unwrap();
+        assert!(matches!(
+            Plan::resolve(&pool, &query, &public(), &SearchConfig::default()).await,
+            Err(SearchError::Invalid(message)) if message.contains("no tag category `fish`")
+        ));
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
@@ -2796,6 +2908,7 @@ mod tests {
             ordfav: None,
             ordpool: None,
             ordfavgroup: None,
+            ordcategory: None,
             statuses: vec!["active"],
             own_pending: None,
             order,

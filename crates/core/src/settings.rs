@@ -30,6 +30,9 @@ pub struct SiteSettings {
     /// Blacklist for visitors and for users who never saved their own
     /// (see [`crate::blacklist`]); e.g. `rating:e` to hide explicit posts.
     pub default_blacklist: String,
+    /// The only ratings logged-out visitors see, anywhere: searches, post
+    /// pages, feeds and the APIs. Empty: all of them.
+    pub visitor_ratings: Vec<crate::posts::Rating>,
     /// What the tagger's suggestions are used for (see
     /// [`crate::tagger::TaggerSettings`]).
     pub tagger: crate::tagger::TaggerSettings,
@@ -64,6 +67,7 @@ impl Default for SiteSettings {
             },
             preview_all_ratings: false,
             default_blacklist: String::new(),
+            visitor_ratings: Vec::new(),
             tagger: crate::tagger::TaggerSettings::default(),
             ip_history_days: 365,
             email_domains: crate::spam::EmailDomains::default(),
@@ -192,7 +196,8 @@ mod tests {
                 "site_name",
                 "tagger",
                 "upload_approval",
-                "upload_limit_scaling"
+                "upload_limit_scaling",
+                "visitor_ratings"
             ]
         );
     }
@@ -203,6 +208,16 @@ mod tests {
             .with_value("registration_mode", json!("closed"))
             .unwrap();
         assert_eq!(settings.registration_mode, RegistrationMode::Closed);
+        let settings = settings
+            .with_value("visitor_ratings", json!(["g", "s"]))
+            .unwrap();
+        assert_eq!(
+            settings.visitor_ratings,
+            [
+                crate::posts::Rating::General,
+                crate::posts::Rating::Sensitive
+            ]
+        );
     }
 
     #[test]

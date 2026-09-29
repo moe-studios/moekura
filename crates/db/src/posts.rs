@@ -122,6 +122,8 @@ pub struct Visibility {
     pub statuses: Vec<PostStatus>,
     /// The viewer, whose own pending uploads are always visible.
     pub viewer: Option<i64>,
+    /// The only ratings visible (the site's for visitors); empty for all.
+    pub ratings: Vec<Rating>,
 }
 
 impl Visibility {
@@ -132,10 +134,25 @@ impl Visibility {
     }
 
     pub fn allows(&self, post: &Post) -> bool {
-        self.statuses.contains(&post.status)
+        let status = self.statuses.contains(&post.status)
             || (post.status == PostStatus::Pending
                 && post.uploader_id.is_some()
-                && post.uploader_id == self.viewer)
+                && post.uploader_id == self.viewer);
+        status && self.allows_rating(post.rating)
+    }
+
+    pub fn allows_rating(&self, rating: Rating) -> bool {
+        self.ratings.is_empty() || self.ratings.contains(&rating)
+    }
+
+    /// The codes of the ratings visible, for `p.rating = ANY(…)`: all four
+    /// when nothing is left out.
+    pub fn rating_codes(&self) -> Vec<&'static str> {
+        Rating::ALL
+            .into_iter()
+            .filter(|r| self.allows_rating(*r))
+            .map(Rating::code)
+            .collect()
     }
 
     fn status_names(&self) -> Vec<&'static str> {
@@ -420,11 +437,13 @@ pub async fn family(
         "SELECT id FROM posts
          WHERE (id = $1 OR parent_id = $1)
            AND (status = ANY($2) OR (status = 'pending' AND uploader_id = $3))
+           AND rating = ANY($4)
          ORDER BY id LIMIT 100",
     )
     .bind(root)
     .bind(visibility.status_names())
     .bind(visibility.viewer)
+    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }
@@ -519,6 +538,7 @@ mod tests {
         let public = Visibility {
             statuses: vec![PostStatus::Active],
             viewer: None,
+            ratings: Vec::new(),
         };
         assert_eq!(
             family(&pool, parent, &public).await.unwrap(),

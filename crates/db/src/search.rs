@@ -414,6 +414,8 @@ pub struct Plan {
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
+    /// The only ratings the viewer may see; empty for all.
+    ratings: Vec<&'static str>,
     order: Order,
     per_page: u32,
     /// Estimated number of posts, for choosing a strategy.
@@ -458,6 +460,11 @@ impl Plan {
             ordcategory: None,
             statuses,
             own_pending,
+            ratings: if visibility.ratings.is_empty() {
+                Vec::new()
+            } else {
+                visibility.rating_codes()
+            },
             order: query.order.unwrap_or_default(),
             per_page: query.limit.unwrap_or(config.per_page),
             total: 0.0,
@@ -605,7 +612,7 @@ impl Plan {
             "{:?}",
             (
                 self.nothing,
-                &self.statuses,
+                (&self.statuses, &self.ratings),
                 self.own_pending,
                 self.required.iter().map(|s| &s.ids).collect::<Vec<_>>(),
                 self.any.as_ref().map(|s| &s.ids),
@@ -958,6 +965,11 @@ impl Plan {
                 .push(")");
         }
         sql.push(")");
+        if !self.ratings.is_empty() {
+            sql.push(" AND p.rating = ANY(")
+                .push_bind(self.ratings.clone())
+                .push(")");
+        }
         if self.only_commented() {
             sql.push(" AND p.last_commented_at IS NOT NULL");
         }
@@ -1046,6 +1058,7 @@ impl Plan {
             && !self.only_commented()
             && !self.only_noted()
             && !self.only_ranked()
+            && self.ratings.is_empty()
             && self.excluded.is_empty()
             && self.any.is_none();
         let shortcut = match &self.required[..] {
@@ -1769,6 +1782,7 @@ mod tests {
         Visibility {
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
+            ratings: Vec::new(),
         }
     }
 
@@ -1923,6 +1937,7 @@ mod tests {
         let staff = Visibility {
             statuses: vec![PostStatus::Active, PostStatus::Deleted],
             viewer: None,
+            ratings: Vec::new(),
         };
         assert_eq!(
             search_as(&pool, "cat (status:deleted or rating:e)", &staff).await,
@@ -2193,6 +2208,7 @@ mod tests {
         let staff = Visibility {
             statuses: vec![PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
             viewer: Some(alice),
+            ratings: Vec::new(),
         };
         assert_eq!(search_as(&pool, "flagger:bob", &staff).await, [ids[2]]);
 
@@ -2490,6 +2506,7 @@ mod tests {
                 PostStatus::Deleted,
             ],
             viewer: None,
+            ratings: Vec::new(),
         };
         // Deleted posts only when asked for.
         assert_eq!(
@@ -3120,6 +3137,7 @@ mod tests {
             ordcategory: None,
             statuses: vec!["active"],
             own_pending: None,
+            ratings: Vec::new(),
             order,
             per_page: 40,
             total,

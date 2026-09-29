@@ -118,6 +118,10 @@ Numbers (and sizes and dates) can be compared:
 Dates take the same forms: `date:2026-01-31`, `date:>=2026-01`,
 `date:2025..2026` (all of 2025 and 2026).
 
+A site can limit the ratings logged-out visitors see (**Admin →
+Settings → Ratings visitors see**). Their searches, post pages, feeds and
+API results then leave out other ratings, whatever the search asks for.
+
 ### Statuses
 
 Searches show active and flagged posts, plus your own uploads that are

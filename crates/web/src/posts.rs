@@ -70,6 +70,7 @@ pub fn visibility(current: &CurrentUser) -> Visibility {
     Visibility {
         statuses,
         viewer: current.user.as_ref().map(|u| u.id),
+        ratings: current.ratings.clone(),
     }
 }
 
@@ -1018,6 +1019,7 @@ async fn similar_context(
             let status: Option<PostStatus> = card.status.parse().ok();
             let rating = card.rating.parse().unwrap_or(Rating::Explicit);
             status.is_some_and(|s| visible.statuses.contains(&s))
+                && visible.allows_rating(rating)
                 && blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
         })
         .map(|card| card_context(state, card, box_size, None))
@@ -1375,6 +1377,37 @@ mod tests {
         assert_eq!(
             app.get("/posts?page=x", None).await.status,
             StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn visitors_see_only_allowed_ratings(pool: PgPool) {
+        moekura_db::settings::set(&pool, "visitor_ratings", serde_json::json!(["g", "s"]))
+            .await
+            .unwrap();
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let explicit = upload(&app, &alice, &fixture::png(20, 20), &[("rating", "e")]).await;
+        let general = upload(&app, &alice, &fixture::png(24, 20), &[("rating", "g")]).await;
+
+        let grid = app.get("/", None).await.body;
+        assert!(grid.contains(&format!("/posts/{general}?")), "{grid}");
+        assert!(!grid.contains(&format!("/posts/{explicit}")), "{grid}");
+        assert!(grid.contains("1 post"), "{grid}");
+        let searched = app.get("/posts?tags=rating:e", None).await.body;
+        assert!(searched.contains("Nothing found"), "{searched}");
+        assert_eq!(
+            app.get(&format!("/posts/{explicit}"), None).await.status,
+            StatusCode::NOT_FOUND
+        );
+        // Members see everything.
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(grid.contains(&format!("/posts/{explicit}?")), "{grid}");
+        assert_eq!(
+            app.get(&format!("/posts/{explicit}"), Some(&alice))
+                .await
+                .status,
+            StatusCode::OK
         );
     }
 

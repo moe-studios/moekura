@@ -43,6 +43,9 @@ pub struct CurrentUser {
     /// They changed something moments ago, so their reads go to the
     /// primary rather than a replica that may not have it yet.
     pub recent_write: bool,
+    /// The only ratings they may see; empty for all. Only visitors are
+    /// limited, by the site's `visitor_ratings`.
+    pub ratings: Vec<moekura_core::posts::Rating>,
 }
 
 impl CurrentUser {
@@ -52,6 +55,7 @@ impl CurrentUser {
             role: anonymous_role(site),
             ban: None,
             recent_write: false,
+            ratings: site.settings.visitor_ratings.clone(),
         }
     }
 
@@ -70,6 +74,7 @@ impl CurrentUser {
             role,
             ban,
             recent_write: false,
+            ratings: Vec::new(),
         }
     }
 

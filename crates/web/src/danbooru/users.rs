@@ -132,7 +132,7 @@ async fn profile(
         "favorite_tags": "",
         "per_page": settings.per_page.unwrap_or(state.config.search.per_page),
         "time_zone": settings.time_zone.as_deref().unwrap_or("UTC"),
-        "default_image_size": "large",
+        "default_image_size": if settings.original_images { "original" } else { "large" },
         "comment_threshold": 0,
         "theme": "auto",
         "custom_style": settings.custom_css,

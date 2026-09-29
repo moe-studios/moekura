@@ -73,6 +73,8 @@ pub struct UserSettings {
     pub blacklist: Option<String>,
     /// Only general-rated posts, everywhere.
     pub safe_mode: bool,
+    /// Post pages show the original image rather than the resized sample.
+    pub original_images: bool,
     /// Grids use the larger thumbnails.
     pub large_thumbnails: bool,
     /// Blacklisted posts stay in grids, blurred, rather than being left out.
@@ -97,6 +99,7 @@ impl Default for UserSettings {
             theme: None,
             blacklist: None,
             safe_mode: false,
+            original_images: false,
             large_thumbnails: false,
             blur_blacklisted: false,
             time_zone: None,
@@ -155,6 +158,7 @@ impl UserSettings {
             theme,
             blacklist,
             safe_mode: flag("safe_mode"),
+            original_images: flag("original_images"),
             large_thumbnails: flag("large_thumbnails"),
             blur_blacklisted: flag("blur_blacklisted"),
             time_zone,
@@ -184,6 +188,7 @@ impl UserSettings {
         };
         for (key, on) in [
             ("safe_mode", self.safe_mode),
+            ("original_images", self.original_images),
             ("large_thumbnails", self.large_thumbnails),
             ("blur_blacklisted", self.blur_blacklisted),
             ("hide_comments", self.hide_comments),

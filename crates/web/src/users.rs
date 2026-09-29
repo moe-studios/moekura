@@ -202,6 +202,7 @@ fn render_settings(
             current_theme => settings.theme,
             prefs_form => context! {
                 safe_mode => settings.safe_mode,
+                original_images => settings.original_images,
                 large_thumbnails => settings.large_thumbnails,
                 blur_blacklisted => settings.blur_blacklisted,
                 hide_comments => settings.hide_comments,
@@ -235,6 +236,7 @@ struct SettingsForm {
     blacklist: String,
     // Checkboxes: present when ticked.
     safe_mode: Option<String>,
+    original_images: Option<String>,
     large_thumbnails: Option<String>,
     blur_blacklisted: Option<String>,
     hide_comments: Option<String>,
@@ -293,6 +295,7 @@ async fn save_settings(
         theme,
         blacklist: Some(blacklist.trim().to_owned()),
         safe_mode: form.safe_mode.is_some(),
+        original_images: form.original_images.is_some(),
         large_thumbnails: form.large_thumbnails.is_some(),
         blur_blacklisted: form.blur_blacklisted.is_some(),
         time_zone,

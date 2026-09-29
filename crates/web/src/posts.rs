@@ -699,6 +699,10 @@ struct ShowQuery {
     reply: Option<i64>,
     /// The pool the post was opened from, for stepping through it.
     pool: Option<i32>,
+    /// `1` shows the original image rather than the resized sample, `0`
+    /// the sample even for those who chose originals.
+    #[serde(default)]
+    original: String,
 }
 
 async fn show(
@@ -718,6 +722,11 @@ async fn show(
         Extra {
             comment,
             pool: params.pool,
+            original: match params.original.as_str() {
+                "1" => Some(true),
+                "0" => Some(false),
+                _ => None,
+            },
             ..Extra::default()
         },
     )
@@ -744,6 +753,9 @@ pub(crate) struct Extra<'a> {
     pub comment: Option<CommentDraft>,
     /// The pool the post was opened from.
     pub pool: Option<i32>,
+    /// Whether to show the original image rather than the resized sample;
+    /// `None` for the viewer's setting.
+    pub original: Option<bool>,
 }
 
 /// The post page.
@@ -884,12 +896,33 @@ pub(crate) async fn render_post(
     let original = url_of(&asset.storage_key);
     let video = matches!(asset.media_type.as_str(), "mp4" | "webm");
     let animated = asset.frames > 1;
-    // Stills show the resized sample when there is one; animations and
-    // videos always use the original.
-    let display = match variant("sample") {
-        Some(sample) if !video && !animated => url_of(&sample.storage_key),
+    // Stills show the resized sample when there is one, unless the viewer
+    // wants the original; animations and videos always use the original.
+    let sample = variant("sample").filter(|_| !video && !animated);
+    let show_original = extra.original.unwrap_or_else(|| {
+        page.current
+            .user
+            .as_ref()
+            .is_some_and(|u| UserSettings::from_json(&u.settings).original_images)
+    });
+    let display = match sample {
+        Some(sample) if !show_original => url_of(&sample.storage_key),
         _ => original.clone(),
     };
+    // Switches between the two without scripts; with them, in place.
+    let resized = sample.map(|sample| {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if from_search {
+            query.append_pair("q", search);
+        }
+        query.append_pair("original", if show_original { "0" } else { "1" });
+        context! {
+            percent => (i64::from(sample.width) * 100 / i64::from(asset.width.max(1))).max(1),
+            sample => url_of(&sample.storage_key),
+            showing_original => show_original,
+            toggle_url => url_value(&format!("/posts/{id}?{}", query.finish())),
+        }
+    });
     let poster = variant("poster").and_then(|v| url_of(&v.storage_key));
     // Notes go on stills and animations, not videos.
     let notes = if video {
@@ -902,6 +935,7 @@ pub(crate) async fn render_post(
     let file = context! {
         original => original,
         display => display,
+        resized => resized,
         poster => poster,
         video => video,
         animated => animated,
@@ -1570,6 +1604,53 @@ mod tests {
             .body;
         assert!(post.contains("Your settings hide comments"), "{post}");
         assert!(!post.contains("id=\"new-comment\""));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn resized_samples_say_so(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = upload(&app, &alice, &fixture::png(40, 20), &[]).await;
+        let page = app.get(&format!("/posts/{id}"), None).await.body;
+        assert!(!page.contains("data-resized"), "no sample, no notice");
+        sqlx::query(
+            "INSERT INTO media_variants (asset_id, kind, format, width, height, file_size, storage_key)
+             SELECT id, 'sample', 'webp', 10, 5, 1, 'samples/ab/cd/abcd.webp'
+             FROM media_assets WHERE post_id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let page = app.get(&format!("/posts/{id}?q=x"), None).await.body;
+        assert!(page.contains("Resized to 25% of the original."), "{page}");
+        assert!(
+            page.contains("<img src=\"/data/samples/ab/cd/abcd.webp\""),
+            "{page}"
+        );
+        assert!(
+            page.contains(&format!("href=\"/posts/{id}?q=x&amp;original=1\"")),
+            "{page}"
+        );
+        let original = app.get(&format!("/posts/{id}?original=1"), None).await.body;
+        assert!(original.contains("Showing the original."), "{original}");
+        assert!(!original.contains("<img src=\"/data/samples/"));
+
+        // Or always, by choice, until asked for the sample.
+        set_user_settings(
+            &pool,
+            "alice",
+            serde_json::json!({ "original_images": true }),
+        )
+        .await;
+        let chosen = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(chosen.contains("Showing the original."), "{chosen}");
+        assert!(chosen.contains(&format!("href=\"/posts/{id}?original=0\"")));
+        let sample = app
+            .get(&format!("/posts/{id}?original=0"), Some(&alice))
+            .await
+            .body;
+        assert!(sample.contains("Resized to 25%"), "{sample}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

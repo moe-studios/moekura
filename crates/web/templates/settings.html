@@ -32,6 +32,7 @@
     <fieldset class="group">
       <legend>Display</legend>
       <label class="choice"><input type="checkbox" name="safe_mode" value="1"{% if prefs_form.safe_mode %} checked{% endif %}> Safe mode: only show general-rated posts</label>
+      <label class="choice"><input type="checkbox" name="original_images" value="1"{% if prefs_form.original_images %} checked{% endif %}> Show original images on post pages, not resized ones</label>
       {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> Large thumbnails ({{ large_thumbnail_size }} pixels)</label>{% endif %}
       <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> Hide comments on post pages</label>
       <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> Suggest tags while typing</label>

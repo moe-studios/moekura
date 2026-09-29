@@ -4,7 +4,7 @@
 var METATAGS = {
   id: [],
   rating: ["general", "sensitive", "questionable", "explicit"],
-  status: ["pending", "active", "flagged", "deleted", "unmoderated", "appealed", "any"],
+  status: ["pending", "active", "flagged", "deleted", "modqueue", "unmoderated", "appealed", "any"],
   user: [],
   score: [],
   favcount: [],
@@ -60,7 +60,7 @@ var METATAGS = {
   pool: ["any", "none"],
   ordpool: [],
   search: ["all"],
-  favgroup: [],
+  favgroup: ["any", "none"],
   ordfavgroup: [],
   ai: [],
   child: ["any", "none"],
@@ -77,6 +77,7 @@ var METATAGS = {
     "active",
     "flagged",
     "deleted",
+    "modqueue",
     "unmoderated",
     "appealed"
   ],

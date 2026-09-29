@@ -71,7 +71,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `upvote:`, `downvote:` | `upvote:alice` | voted up / down by this user; votes are private, so only staff who review posts may search for others' votes, everyone else only for their own |
 | `flagger:` | `flagger:alice` | flagged by this user; only staff who review posts may search for others' flags, everyone else only for their own |
 | `search:` | `search:all`, `search:artists` | the newest posts (500 each) of your [saved searches](account.md#saved-searches), all or those with a label |
-| `favgroup:` | `favgroup:best`, `favgroup:7` | in one of your favorite groups (by name), or any public group (by number) |
+| `favgroup:` | `favgroup:best`, `favgroup:7`, `favgroup:any`, `favgroup:none` | in one of your favorite groups (by name), or any public group (by number); in any or none of your groups |
 | `pool:` | `pool:my_comic`, `pool:12`, `pool:any`, `pool:none` | in this pool (by name or number), in any pool, or in none |
 | `width:`, `height:` | `width:>=1920` | size in pixels |
 | `mpixels:` | `mpixels:>2` | megapixels (width × height ÷ 1,000,000) |
@@ -90,7 +90,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `tagcount:` | `tagcount:<5` | number of tags |
 | `<category>tags:` | `arttags:0`, `gentags:>20` | number of tags in a category: the category's name followed by `tags` (`artisttags:`, `charactertags:`), or Danbooru's `gentags:`, `arttags:`, `copytags:`, `chartags:` and `metatags:`; `arttags:0` finds posts missing an artist |
 | `ai:` | `ai:long_hair` | the [tagger](tags.md#suggestions-from-the-tagger) suggests this tag, and the post doesn't have it yet |
-| `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted`, `unmoderated`, `appealed` or `any` (see below) |
+| `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted`, `modqueue`, `unmoderated`, `appealed` or `any` (see below) |
 
 `is:` and `has:` are shorthands for other filters, as on Danbooru:
 
@@ -127,7 +127,8 @@ Deleted posts only appear with `status:deleted` or `status:any` (or with a
 to those allowed to see them. For staff who review uploads,
 `status:unmoderated` finds the pending posts left for them: ones they
 didn't upload and haven't disapproved; `status:appealed` finds deleted
-posts with an open appeal.
+posts with an open appeal. `status:modqueue` finds everything waiting for
+a moderator: pending and flagged posts.
 
 ## Order and page size
 

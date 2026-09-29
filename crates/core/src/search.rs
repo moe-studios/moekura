@@ -24,7 +24,7 @@ use std::fmt;
 
 use time::{Date, Duration, Month};
 
-use crate::posts::Rating;
+use crate::posts::{PostStatus, Rating};
 use crate::tags::{RESERVED_PREFIXES, TagName, TagNameError, normalize};
 
 /// File types as stored in `media_assets.media_type`.
@@ -165,11 +165,27 @@ pub enum StatusFilter {
     Unmoderated,
     /// Deleted posts with an open appeal.
     Appealed,
+    /// Pending or flagged: waiting for a moderator.
+    Modqueue,
 }
 
 impl StatusFilter {
+    /// The post statuses it stands for, if that's all it takes (not
+    /// `any`, `unmoderated` or `appealed`).
+    pub fn post_statuses(self) -> Option<&'static [PostStatus]> {
+        Some(match self {
+            StatusFilter::Pending => &[PostStatus::Pending],
+            StatusFilter::Active => &[PostStatus::Active],
+            StatusFilter::Flagged => &[PostStatus::Flagged],
+            StatusFilter::Deleted => &[PostStatus::Deleted],
+            StatusFilter::Modqueue => &[PostStatus::Pending, PostStatus::Flagged],
+            StatusFilter::Any | StatusFilter::Unmoderated | StatusFilter::Appealed => return None,
+        })
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
+            StatusFilter::Modqueue => "modqueue",
             StatusFilter::Pending => "pending",
             StatusFilter::Active => "active",
             StatusFilter::Flagged => "flagged",
@@ -388,8 +404,8 @@ pub enum Filter {
     /// Looks like this post (perceptual hash), the post included.
     Similar(i64),
     Pool(PoolFilter),
-    /// In this favorite group.
-    FavGroup(PoolRef),
+    /// In this favorite group, or in any or none of the viewer's.
+    FavGroup(PoolFilter),
     /// Active notes on the post contain these words.
     Note(String),
     /// Active notes.
@@ -1019,12 +1035,12 @@ impl Query {
                 }
             }
             "notecount" => Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
-            "favgroup" => {
-                if value.is_empty() {
-                    return Err(invalid("expected a favorite group name or id"));
-                }
-                Filter::FavGroup(pool_ref(value))
-            }
+            "favgroup" => Filter::FavGroup(match value {
+                "" => return Err(invalid("expected a favorite group name or id, any or none")),
+                "any" => PoolFilter::Any,
+                "none" => PoolFilter::None,
+                value => PoolFilter::In(pool_ref(value)),
+            }),
             "pool" => Filter::Pool(match value {
                 "" => return Err(invalid("expected a pool name or id, any or none")),
                 "any" => PoolFilter::Any,
@@ -1125,9 +1141,11 @@ impl Query {
                 "any" | "all" => StatusFilter::Any,
                 "unmoderated" => StatusFilter::Unmoderated,
                 "appealed" => StatusFilter::Appealed,
+                "modqueue" => StatusFilter::Modqueue,
                 _ => {
                     return Err(invalid(
-                        "expected pending, active, flagged, deleted, unmoderated, appealed or any",
+                        "expected pending, active, flagged, deleted, modqueue, unmoderated, \
+                         appealed or any",
                     ));
                 }
             }),
@@ -1164,7 +1182,8 @@ impl Query {
                 "child" => Filter::Parent(ParentFilter::Any),
                 "sfw" => Filter::Rating(vec![Rating::General, Rating::Sensitive]),
                 "nsfw" => Filter::Rating(vec![Rating::Questionable, Rating::Explicit]),
-                "pending" | "active" | "flagged" | "deleted" | "unmoderated" | "appealed" => {
+                "pending" | "active" | "flagged" | "deleted" | "modqueue" | "unmoderated"
+                | "appealed" => {
                     return self.metatag(word, negated, nested, "status", value);
                 }
                 value => Filter::Rating(vec![value.parse().map_err(|_| {
@@ -1436,7 +1455,9 @@ impl fmt::Display for Filter {
             Filter::Pool(PoolFilter::None) => f.write_str("pool:none"),
             Filter::Pool(PoolFilter::In(pool)) => write!(f, "pool:{pool}"),
             Filter::Search(label) => write!(f, "search:{label}"),
-            Filter::FavGroup(group) => write!(f, "favgroup:{group}"),
+            Filter::FavGroup(PoolFilter::Any) => f.write_str("favgroup:any"),
+            Filter::FavGroup(PoolFilter::None) => f.write_str("favgroup:none"),
+            Filter::FavGroup(PoolFilter::In(group)) => write!(f, "favgroup:{group}"),
             Filter::Note(words) => write!(f, "note:{}", words.replace(' ', "_")),
             Filter::NoteCount(b) => write!(f, "notecount:{b}"),
             Filter::Ai(tag) => write!(f, "ai:{tag}"),
@@ -1731,7 +1752,17 @@ mod tests {
         );
         assert!(error("pool:").contains("expected a pool"));
         assert_eq!(filter("search:Pets"), Filter::Search("pets".into()));
-        assert_eq!(filter("favgroup:3"), Filter::FavGroup(PoolRef::Id(3)));
+        assert_eq!(
+            filter("favgroup:3"),
+            Filter::FavGroup(PoolFilter::In(PoolRef::Id(3)))
+        );
+        assert_eq!(filter("favgroup:any"), Filter::FavGroup(PoolFilter::Any));
+        assert_eq!(parse("-favgroup:none").to_string(), "-favgroup:none");
+        assert_eq!(
+            filter("status:modqueue"),
+            Filter::Status(StatusFilter::Modqueue)
+        );
+        assert_eq!(parse("is:modqueue"), parse("status:modqueue"));
         assert_eq!(
             filter("note:Good_Morning"),
             Filter::Note("good morning".into())

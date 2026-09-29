@@ -136,6 +136,8 @@ enum Node {
     /// In this pool, or with `None` in any pool that isn't deleted.
     Pool(Option<i32>),
     FavGroup(i32),
+    /// In one of this user's favorite groups.
+    OwnFavGroup(i64),
     /// The tagger suggests this tag, and the post doesn't have it yet.
     Suggested(i32),
     /// Pending, not uploaded by this viewer and not disapproved by them.
@@ -294,6 +296,15 @@ impl Node {
             }
             Node::Posts(ids) => {
                 sql.push("p.id = ANY(").push_bind(ids.clone()).push(")");
+            }
+            Node::OwnFavGroup(user) => {
+                sql.push(
+                    "EXISTS (SELECT 1 FROM favorite_group_posts fg \
+                     JOIN favorite_groups g ON g.id = fg.group_id \
+                     WHERE fg.post_id = p.id AND g.creator_id = ",
+                )
+                .push_bind(*user)
+                .push(")");
             }
             Node::Pool(Some(pool)) => {
                 sql.push(
@@ -1189,7 +1200,12 @@ async fn resolve_filter(
                 None => Node::Const(false),
             }
         }
-        Filter::FavGroup(group) => found(
+        Filter::FavGroup(PoolFilter::Any) => found(visibility.viewer.map(Node::OwnFavGroup)),
+        // Visitors have no groups, so every post is in none of them.
+        Filter::FavGroup(PoolFilter::None) => visibility
+            .viewer
+            .map_or(Node::Const(true), |user| Node::OwnFavGroup(user).not()),
+        Filter::FavGroup(PoolFilter::In(group)) => found(
             favorite_group(db, group, visibility.viewer)
                 .await?
                 .map(Node::FavGroup),
@@ -1350,34 +1366,37 @@ fn statuses(query: &Query, visibility: &Visibility) -> (Vec<&'static str>, Optio
             .copied()
             .filter(|s| *s != PostStatus::Deleted)
             .collect(),
-        Some(StatusFilter::Any) => visible.clone(),
-        // The rest is a condition on each post.
-        Some(StatusFilter::Unmoderated) => visible
-            .iter()
-            .copied()
-            .filter(|s| *s == PostStatus::Pending)
-            .collect(),
-        Some(StatusFilter::Appealed) => visible
-            .iter()
-            .copied()
-            .filter(|s| *s == PostStatus::Deleted)
-            .collect(),
-        Some(status) => {
-            let status: PostStatus = status
-                .as_str()
-                .parse()
-                .expect("status filters name post statuses");
-            visible.iter().copied().filter(|s| *s == status).collect()
-        }
+        Some(status) => match status.post_statuses() {
+            Some(statuses) => visible
+                .iter()
+                .copied()
+                .filter(|s| statuses.contains(s))
+                .collect(),
+            None => {
+                // The rest is a condition on each post, of these statuses.
+                let only = match status {
+                    StatusFilter::Unmoderated => Some(PostStatus::Pending),
+                    StatusFilter::Appealed => Some(PostStatus::Deleted),
+                    _ => None,
+                };
+                visible
+                    .iter()
+                    .copied()
+                    .filter(|s| only.is_none_or(|only| *s == only))
+                    .collect()
+            }
+        },
     };
     let mut own_pending = matches!(
         query.status(),
-        None | Some(StatusFilter::Any) | Some(StatusFilter::Pending)
+        None | Some(StatusFilter::Any | StatusFilter::Pending | StatusFilter::Modqueue)
     );
     for condition in &query.conditions {
-        if let (true, Filter::Status(status)) = (condition.negated, &condition.filter) {
-            wanted.retain(|s| s.as_str() != status.as_str());
-            if *status == StatusFilter::Pending {
+        if let (true, Filter::Status(status)) = (condition.negated, &condition.filter)
+            && let Some(excluded) = status.post_statuses()
+        {
+            wanted.retain(|s| !excluded.contains(s));
+            if excluded.contains(&PostStatus::Pending) {
                 own_pending = false;
             }
         }
@@ -1512,13 +1531,14 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         }
         // Inside groups; at the top level, statuses are folded into the
         // statuses searched.
-        Filter::Status(
-            status @ (StatusFilter::Pending
-            | StatusFilter::Active
-            | StatusFilter::Flagged
-            | StatusFilter::Deleted),
-        ) => {
-            sql.push("p.status = ").push_bind(status.as_str());
+        Filter::Status(status) if status.post_statuses().is_some() => {
+            let statuses: Vec<&str> = status
+                .post_statuses()
+                .unwrap_or_default()
+                .iter()
+                .map(|s| s.as_str())
+                .collect();
+            sql.push("p.status = ANY(").push_bind(statuses).push(")");
         }
         Filter::Status(_)
         | Filter::User(_)
@@ -2485,6 +2505,20 @@ mod tests {
             search_as(&pool, "status:any -status:flagged -status:pending", &staff).await,
             [deleted, active]
         );
+        // The mod queue: pending or flagged.
+        assert_eq!(
+            search_as(&pool, "status:modqueue", &staff).await,
+            [mine, pending, flagged]
+        );
+        assert_eq!(
+            search_as(&pool, "status:modqueue", &member).await,
+            [mine, flagged]
+        );
+        assert_eq!(search_as(&pool, "-status:modqueue", &staff).await, [active]);
+        assert_eq!(
+            search_as(&pool, "(status:modqueue or status:deleted)", &staff).await,
+            [deleted, mine, pending, flagged]
+        );
 
         // What's left for an approver: pending posts they didn't upload
         // or disapprove.
@@ -2761,6 +2795,22 @@ mod tests {
             search_as(&pool, "ordfavgroup:best", &as_user(alice)).await,
             [ids[0], ids[2]]
         );
+        // Any or none of the viewer's own groups, private ones included.
+        assert_eq!(
+            search_as(&pool, "favgroup:any", &as_user(alice)).await,
+            [ids[2], ids[1], ids[0]]
+        );
+        assert!(
+            search_as(&pool, "favgroup:none", &as_user(alice))
+                .await
+                .is_empty()
+        );
+        assert!(
+            search_as(&pool, "favgroup:any", &as_user(bob))
+                .await
+                .is_empty()
+        );
+        assert_eq!(search(&pool, "favgroup:none").await.len(), 3);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

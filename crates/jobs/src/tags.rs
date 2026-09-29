@@ -6,7 +6,7 @@
 use moekura_core::bulk::{self, Command};
 use moekura_core::config::SearchConfig;
 use moekura_core::jobs::{ApplyBulkUpdate, ApplyTagRelation, MassUpdate};
-use moekura_core::posts::PostStatus;
+use moekura_core::posts::{PostStatus, Rating};
 use moekura_core::search::Query;
 use moekura_db::posts::Visibility;
 use moekura_db::search::{PageRef, Plan, SearchError};
@@ -179,13 +179,18 @@ impl TagJobs {
             }
         }
         remove.sort_unstable();
+        let rating = update
+            .rating
+            .as_deref()
+            .and_then(|r| r.parse::<Rating>().ok());
 
         let (mut seen, mut changed) = (0i32, 0i32);
         let mut page = PageRef::Number(1);
         loop {
             let ids = plan.ids(&self.db, page).await.map_err(search_error)?;
             let Some(&last) = ids.last() else { break };
-            let n = mass_updates::retag(&self.db, &ids, &add, &remove, update.creator_id).await?;
+            let n = mass_updates::retag(&self.db, &ids, &add, &remove, rating, update.creator_id)
+                .await?;
             seen += ids.len() as i32;
             changed += n as i32;
             mass_updates::progress(&self.db, id, seen, changed).await?;
@@ -352,8 +357,8 @@ impl TagJobs {
             Command::Update { query, add, remove } => {
                 let add: Vec<String> = add.iter().map(|t| t.as_str().to_owned()).collect();
                 let remove: Vec<String> = remove.iter().map(|t| t.as_str().to_owned()).collect();
-                let id =
-                    mass_updates::create(&self.db, Some(approver), query, &add, &remove).await?;
+                let id = mass_updates::create(&self.db, Some(approver), query, &add, &remove, None)
+                    .await?;
                 self.mass_update(id).await?;
                 Ok(())
             }
@@ -487,6 +492,7 @@ mod tests {
             "cat_ears",
             &["animal_ears".to_owned()],
             &["cat_ears".to_owned()],
+            None,
         )
         .await
         .unwrap();
@@ -512,7 +518,31 @@ mod tests {
         // Again: nothing left to change.
         jobs.mass_update(id).await.unwrap();
 
-        let bad = mass_updates::create(&pool, None, "~", &[], &[])
+        // A rating alone, left alone where it's locked.
+        sqlx::query("UPDATE posts SET locks = '{rating}' WHERE id = $1")
+            .bind(other)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let unlocked = post(&pool, &["dog"]).await;
+        let rated = mass_updates::create(&pool, None, "dog", &[], &[], Some(Rating::Explicit))
+            .await
+            .unwrap();
+        jobs.mass_update(rated).await.unwrap();
+        let rating = |id: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>("SELECT rating FROM posts WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(rating(other).await, "g");
+        assert_eq!(rating(unlocked).await, "e");
+
+        let bad = mass_updates::create(&pool, None, "~", &[], &[], None)
             .await
             .unwrap();
         assert!(matches!(

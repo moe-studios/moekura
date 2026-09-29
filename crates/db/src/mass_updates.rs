@@ -1,5 +1,6 @@
 //! Mass tag edits (`mass_updates`) and changing tags on many posts.
 
+use moekura_core::posts::Rating;
 use sqlx::{PgExecutor, PgPool};
 use time::OffsetDateTime;
 
@@ -11,6 +12,8 @@ pub struct MassUpdate {
     pub query: String,
     pub add_tags: Vec<String>,
     pub remove_tags: Vec<String>,
+    /// The rating code to set, if any.
+    pub rating: Option<String>,
     pub status: String,
     pub seen: i32,
     pub changed: i32,
@@ -23,7 +26,7 @@ macro_rules! select_updates {
     ($rest:literal) => {
         concat!(
             "SELECT m.id, u.name::text AS creator_name, m.creator_id, m.query, m.add_tags,
-                    m.remove_tags, m.status, m.seen, m.changed, m.error, m.created_at,
+                    m.remove_tags, m.rating, m.status, m.seen, m.changed, m.error, m.created_at,
                     m.finished_at
              FROM mass_updates m LEFT JOIN users u ON u.id = m.creator_id ",
             $rest
@@ -38,15 +41,17 @@ pub async fn create(
     query: &str,
     add: &[String],
     remove: &[String],
+    rating: Option<Rating>,
 ) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "INSERT INTO mass_updates (creator_id, query, add_tags, remove_tags)
-         VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO mass_updates (creator_id, query, add_tags, remove_tags, rating)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(creator_id)
     .bind(query)
     .bind(add)
     .bind(remove)
+    .bind(rating.map(Rating::code))
     .fetch_one(db)
     .await
 }
@@ -108,29 +113,38 @@ pub async fn finish(db: impl PgExecutor<'_>, id: i64, error: Option<&str>) -> sq
     Ok(())
 }
 
-/// Adds tags `add` and takes off `remove` on posts `ids`, credited to
-/// `updater_id` in their history, leaving posts with locked tags alone.
-/// Returns how many posts changed.
+/// Adds tags `add`, takes off `remove` and sets `rating` on posts `ids`,
+/// credited to `updater_id` in their history, leaving locked tags and
+/// ratings alone. Returns how many posts changed.
 pub async fn retag(
     db: &PgPool,
     ids: &[i64],
     add: &[i32],
     remove: &[i32],
+    rating: Option<Rating>,
     updater_id: Option<i64>,
 ) -> sqlx::Result<u64> {
     let mut tx = db.begin().await?;
     crate::post_versions::attribute(&mut tx, updater_id, None).await?;
     let result = sqlx::query(
-        "WITH batch AS (SELECT id FROM posts WHERE id = ANY($1) ORDER BY id FOR UPDATE)
-         UPDATE posts SET tag_ids = uniq(sort((posts.tag_ids - $3::int4[]) | $2::int4[])),
-                          updated_at = now()
-         FROM batch
-         WHERE posts.id = batch.id AND NOT 'tags' = ANY(posts.locks)
-           AND posts.tag_ids <> uniq(sort((posts.tag_ids - $3::int4[]) | $2::int4[]))",
+        "WITH batch AS (SELECT id FROM posts WHERE id = ANY($1) ORDER BY id FOR UPDATE),
+         wanted AS (
+             SELECT p.id,
+                    CASE WHEN 'tags' = ANY(p.locks) THEN p.tag_ids
+                         ELSE uniq(sort((p.tag_ids - $3::int4[]) | $2::int4[])) END AS tag_ids,
+                    CASE WHEN $4::text IS NULL OR 'rating' = ANY(p.locks) THEN p.rating
+                         ELSE $4 END AS rating
+             FROM posts p JOIN batch ON batch.id = p.id
+         )
+         UPDATE posts SET tag_ids = wanted.tag_ids, rating = wanted.rating, updated_at = now()
+         FROM wanted
+         WHERE posts.id = wanted.id
+           AND (posts.tag_ids, posts.rating) IS DISTINCT FROM (wanted.tag_ids, wanted.rating)",
     )
     .bind(ids)
     .bind(add)
     .bind(remove)
+    .bind(rating.map(Rating::code))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;

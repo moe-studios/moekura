@@ -112,8 +112,26 @@ var METATAGS = {
   has: ["source", "children", "parent", "pools", "notes", "comments"]
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
+var EDIT_METATAGS = {
+  rating: ["general", "sensitive", "questionable", "explicit"],
+  parent: ["none"],
+  child: [],
+  source: ["none"],
+  pool: [],
+  newpool: [],
+  fav: [],
+  favgroup: [],
+  upvote: [],
+  downvote: []
+};
+var NEGATABLE = ["parent", "child", "pool", "fav", "favgroup"];
 
 // src/autocomplete.ts
+function metatagsOf(mode) {
+  if (mode === "search") return METATAGS;
+  if (mode === "edit") return EDIT_METATAGS;
+  return {};
+}
 var DEBOUNCE_MS = 120;
 var cache = /* @__PURE__ */ new Map();
 var nextId = 0;
@@ -132,11 +150,15 @@ function target(value, caret, mode) {
     if (word.endsWith(")") && unbalanced(word)) return null;
     while (end > caret && value.charAt(end - 1) === ")" && unbalanced(value.slice(start, end))) end--;
   }
+  if (mode === "edit" && word.startsWith("-")) {
+    start += 1;
+    word = word.slice(1);
+  }
   const colon = word.indexOf(":");
   if (colon > 0) {
     const prefix = word.slice(0, colon).toLowerCase();
     const rest = word.slice(colon + 1);
-    if (mode === "search" && prefix in METATAGS) {
+    if (mode !== "tags" && prefix in metatagsOf(mode)) {
       const comma = rest.lastIndexOf(",");
       const typed = rest.slice(comma + 1);
       return { start: start + colon + 1 + comma + 1, end, typed, kind: "metatag-value", metatag: prefix };
@@ -162,13 +184,13 @@ async function fetchSuggestions(typed, signal) {
   cache.set(key, suggestions);
   return suggestions;
 }
-function metatagNames(typed) {
+function metatagNames(typed, mode, negated = false) {
   const lower = typed.toLowerCase();
-  return Object.keys(METATAGS).filter((name) => name.startsWith(lower)).map((name) => ({ text: `${name}:`, finished: false }));
+  return Object.keys(metatagsOf(mode)).filter((name) => name.startsWith(lower) && (!negated || mode !== "edit" || NEGATABLE.includes(name))).map((name) => ({ text: `${name}:`, finished: false }));
 }
-function metatagValues(metatag, typed) {
+function metatagValues(mode, metatag, typed) {
   const lower = typed.toLowerCase();
-  return (METATAGS[metatag] ?? []).filter((value) => value.startsWith(lower) && value !== lower).map((value) => ({ text: value, finished: true }));
+  return (metatagsOf(mode)[metatag] ?? []).filter((value) => value.startsWith(lower) && value !== lower).map((value) => ({ text: value, finished: true }));
 }
 var Autocomplete = class {
   field;
@@ -223,7 +245,7 @@ var Autocomplete = class {
       return;
     }
     if (found.kind === "metatag-value") {
-      this.show(metatagValues(found.metatag ?? "", found.typed));
+      this.show(metatagValues(this.mode, found.metatag ?? "", found.typed));
       return;
     }
     const request = new AbortController();
@@ -242,7 +264,10 @@ var Autocomplete = class {
       count: s.post_count,
       ...s.antecedent === void 0 ? {} : { antecedent: s.antecedent }
     }));
-    if (this.mode === "search") items.push(...metatagNames(found.typed).slice(0, 3));
+    if (this.mode !== "tags") {
+      const negated = this.field.value.charAt(found.start - 1) === "-";
+      items.push(...metatagNames(found.typed, this.mode, negated).slice(0, 3));
+    }
     this.show(items);
   }
   show(items) {
@@ -348,7 +373,8 @@ var Autocomplete = class {
 };
 function attachAll(root = document) {
   for (const field of root.querySelectorAll("input[data-autocomplete], textarea[data-autocomplete]")) {
-    const mode = field.dataset["autocomplete"] === "search" ? "search" : "tags";
+    const wanted = field.dataset["autocomplete"];
+    const mode = wanted === "search" || wanted === "edit" ? wanted : "tags";
     new Autocomplete(field, mode);
   }
 }
@@ -1049,13 +1075,17 @@ function parseScript(text) {
       const rating = RATINGS[lower.slice("rating:".length)];
       if (!rating) throw new Error(`Unknown rating in \u201C${word}\u201D.`);
       script.rating = rating;
-    } else if (word.startsWith("-") && word.length > 1) {
+    } else if (word.startsWith("-") && word.length > 1 && !isNegatedMetatag(lower)) {
       script.remove.push(word.slice(1));
     } else {
       script.add.push(word);
     }
   }
   return script;
+}
+function isNegatedMetatag(word) {
+  const name = word.slice(1).split(":")[0] ?? "";
+  return NEGATABLE.includes(name) && (word.includes(":") || name === "fav" || name === "parent");
 }
 function postId(href) {
   return /\/posts\/(\d+)/.exec(href)?.[1] ?? null;

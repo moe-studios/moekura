@@ -270,22 +270,18 @@ pub(super) async fn create_post(
     staged_uploads::used(state.db.primary(), id, post_id).await?;
     let parent = field("parent_id");
     if !parent.trim().is_empty() {
-        let form = crate::edit::EditForm {
-            tags: upload.tags.clone(),
-            old_tags: String::new(),
-            rating: upload
-                .rating
-                .map(|r| r.code().to_owned())
-                .unwrap_or_default(),
-            source: upload.source.clone(),
-            description: upload.description.clone(),
-            parent,
-            ..Default::default()
+        let set = match parent.trim().parse::<i64>() {
+            Ok(parent) => crate::edit::set_parent(&state, &current, post_id, Some(parent)).await,
+            Err(_) => Err(crate::edit::Refused::Invalid(
+                "The parent must be a post number.".into(),
+            )),
         };
-        if let Err(crate::edit::Refused::Invalid(message)) =
-            crate::edit::apply(&state, &current, post_id, &form).await
-        {
-            tracing::warn!(post_id, message, "parent from a Danbooru upload not set");
+        match set {
+            Ok(()) => {}
+            Err(crate::edit::Refused::Invalid(message)) => {
+                tracing::warn!(post_id, message, "parent from a Danbooru upload not set");
+            }
+            Err(crate::edit::Refused::Error(error)) => return Err(error),
         }
     }
     let db = state.db.primary();

@@ -10,6 +10,8 @@ use minijinja::{Value, context};
 use moekura_core::jobs::MassUpdate;
 use moekura_core::moderation::ActionKind;
 use moekura_core::permissions::Permission;
+use moekura_core::post_edit::{self, Metatag};
+use moekura_core::posts::Rating;
 use moekura_core::search::Query as SearchQuery;
 use moekura_core::tags::TagName;
 use moekura_db::mass_updates;
@@ -48,12 +50,58 @@ pub(crate) fn tag_list(text: &str) -> Result<Vec<String>, AppError> {
     Ok(names)
 }
 
-/// A mass edit, checked: the search normalised, and the tags to add and
-/// remove.
+/// A mass edit, checked: the search normalised, the tags to add and
+/// remove, and the rating to set.
 pub(crate) struct Checked {
     pub query: String,
     pub add: Vec<String>,
     pub remove: Vec<String>,
+    pub rating: Option<Rating>,
+}
+
+/// What the tags to add ask for.
+struct Changes {
+    add: Vec<String>,
+    remove: Vec<String>,
+    rating: Option<Rating>,
+}
+
+/// The tags to add, as typed: also `-tag` to remove one and `rating:x`,
+/// the metatags that make sense for many posts at once.
+fn changes(text: &str) -> Result<Changes, AppError> {
+    let mut add = Vec::new();
+    let mut remove = Vec::new();
+    let mut rating = None;
+    for word in text.split_whitespace() {
+        let parsed = post_edit::parse(word, &[], &[]);
+        if let Some(bad) = parsed.bad_metatags.first() {
+            return Err(AppError::Unprocessable(format!("{bad}.")));
+        }
+        match parsed.metatags.first() {
+            Some(Metatag::Rating(r)) => rating = Some(*r),
+            Some(_) => {
+                return Err(AppError::Unprocessable(format!(
+                    "“{word}” can't be used in a mass edit; only tags, -tags and rating: can."
+                )));
+            }
+            None => {
+                let (list, name) = match word.strip_prefix('-') {
+                    Some(rest) if !parsed.removed.is_empty() => (&mut remove, rest),
+                    _ => (&mut add, word),
+                };
+                for name in tag_list(name)? {
+                    if !list.contains(&name) {
+                        list.push(name);
+                    }
+                }
+            }
+        }
+    }
+    Ok(Changes {
+        add,
+        remove,
+        rating,
+    })
 }
 
 pub(crate) fn check(query: &str, add: &str, remove: &str) -> Result<Checked, AppError> {
@@ -63,11 +111,20 @@ pub(crate) fn check(query: &str, add: &str, remove: &str) -> Result<Checked, App
             "Give a search: a mass edit of every post isn't allowed.".into(),
         ));
     }
-    let add = tag_list(add)?;
-    let remove = tag_list(remove)?;
-    if add.is_empty() && remove.is_empty() {
+    let removing = remove;
+    let Changes {
+        add,
+        mut remove,
+        rating,
+    } = changes(add)?;
+    for name in tag_list(&remove_text(removing))? {
+        if !remove.contains(&name) {
+            remove.push(name);
+        }
+    }
+    if add.is_empty() && remove.is_empty() && rating.is_none() {
         return Err(AppError::Unprocessable(
-            "Give tags to add or remove.".into(),
+            "Give tags to add or remove, or a rating.".into(),
         ));
     }
     if let Some(both) = add.iter().find(|t| remove.contains(t)) {
@@ -79,7 +136,16 @@ pub(crate) fn check(query: &str, add: &str, remove: &str) -> Result<Checked, App
         query: parsed.to_string(),
         add,
         remove,
+        rating,
     })
+}
+
+/// The remove box, where a `-` is allowed but not needed.
+fn remove_text(text: &str) -> String {
+    text.split_whitespace()
+        .map(|w| w.strip_prefix('-').unwrap_or(w))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Starts a checked mass edit as `current`; returns its id.
@@ -91,7 +157,15 @@ pub(crate) async fn start(
     current.require(Permission::MassEditTags)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
-    let id = mass_updates::create(&mut *tx, actor, &edit.query, &edit.add, &edit.remove).await?;
+    let id = mass_updates::create(
+        &mut *tx,
+        actor,
+        &edit.query,
+        &edit.add,
+        &edit.remove,
+        edit.rating,
+    )
+    .await?;
     moekura_db::jobs::enqueue(&mut tx, &MassUpdate { id }).await?;
     mod_actions::record(
         &mut *tx,
@@ -100,6 +174,7 @@ pub(crate) async fn start(
             "query": edit.query,
             "add": edit.add,
             "remove": edit.remove,
+            "rating": edit.rating.map(Rating::code),
         })),
     )
     .await?;
@@ -116,6 +191,7 @@ fn update_context(u: &mass_updates::MassUpdate) -> Value {
         search_url => Value::from_safe_string(crate::templates::search_url(&u.query)),
         add => u.add_tags,
         remove => u.remove_tags,
+        rating => u.rating.as_deref().and_then(|r| r.parse::<Rating>().ok()).map(Rating::label),
         status => u.status,
         seen => u.seen,
         changed => u.changed,
@@ -225,10 +301,17 @@ async fn submit(
         query => checked.query,
         add => checked.add,
         remove => checked.remove,
+        rating => checked.rating.map(Rating::label),
     };
     let form = MassEditForm {
         query: checked.query.clone(),
-        add: checked.add.join(" "),
+        add: checked
+            .add
+            .iter()
+            .cloned()
+            .chain(checked.rating.map(|r| format!("rating:{}", r.code())))
+            .collect::<Vec<_>>()
+            .join(" "),
         remove: checked.remove.join(" "),
         step: String::new(),
     };
@@ -258,6 +341,27 @@ mod tests {
                 vec!["cat".to_owned()]
             )
         );
+    }
+
+    #[test]
+    fn checks_metatags() {
+        let checked = super::check("cat", "dog -cute rating:e dog", "-old").unwrap();
+        assert_eq!(checked.add, ["dog"]);
+        assert_eq!(checked.remove, ["cute", "old"]);
+        assert_eq!(checked.rating, Some(moekura_core::posts::Rating::Explicit));
+        assert!(super::check("cat", "rating:q", "").is_ok());
+        for (add, error) in [
+            ("pool:3", "can't be used in a mass edit"),
+            ("rating:x", "isn't a rating"),
+            ("", "or a rating"),
+        ] {
+            match super::check("cat", add, "") {
+                Err(AppError::Unprocessable(message)) => {
+                    assert!(message.contains(error), "{add}: {message}");
+                }
+                _ => panic!("{add} should be refused"),
+            }
+        }
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

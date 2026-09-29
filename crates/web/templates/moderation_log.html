@@ -28,7 +28,7 @@
     <span class="hint"><time>{{ e.when }} {{ e.time }}</time></span>
     <strong>{{ e.actor or "command line" }}</strong> {{ e.label }}
     {% if e.post_id %}<a href="/posts/{{ e.post_id }}">#{{ e.post_id }}</a>{% endif %}
-    {% if e.user %}<a href="/users/{{ e.user }}">{{ e.user }}</a>{% endif %}
+    {% if e.user %}<a href="/moderation/users/{{ e.user }}">{{ e.user }}</a>{% endif %}
     {% if e.reason %}<div class="reason">“{{ e.reason }}”</div>{% endif %}
     {% if e.details %}<div class="hint">{% for d in e.details %}{{ d.key }}: {{ d.value }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
   </li>

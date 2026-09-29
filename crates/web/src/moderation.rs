@@ -499,7 +499,7 @@ pub(crate) fn day_span(
     )
 }
 
-fn entry_context(entry: &Entry) -> Value {
+pub(crate) fn entry_context(entry: &Entry) -> Value {
     let kind = ActionKind::parse(&entry.action);
     let details: Vec<Value> = entry
         .details

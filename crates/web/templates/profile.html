@@ -3,6 +3,7 @@
 {% block content %}
 <section class="card medium">
   <h1>{{ user.name }}</h1>
+  {% if record_url %}<p><a href="{{ record_url }}">Moderation record</a></p>{% endif %}
   <dl class="facts">
     <dt>Role</dt><dd>{{ user.role or "—" }}</dd>
     <dt>Joined</dt><dd>{{ user.joined }}</dd>

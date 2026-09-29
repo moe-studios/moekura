@@ -35,6 +35,7 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/moderation/log", get(log))
         .route("/moderation/queue", get(queue))
+        .route("/moderation/queue/bulk", post(bulk_review))
         .route("/moderation/flags", get(flag_queue))
         .route("/moderation/appeals", get(appeal_queue))
         .route("/posts/{id}/appeal", post(appeal))
@@ -587,32 +588,102 @@ pub(crate) async fn review_cards(
         .collect())
 }
 
-/// Pending posts the approver hasn't dealt with (`status:unmoderated`),
-/// oldest first, from after post `after`.
+/// Orders the approval queue offers, as `order:` names and labels.
+const QUEUE_ORDERS: [(&str, &str); 7] = [
+    ("id_asc", "Oldest first"),
+    ("id", "Newest first"),
+    ("score", "Highest score"),
+    ("favcount", "Most favorites"),
+    ("tagcount_asc", "Fewest tags"),
+    ("mpixels", "Largest"),
+    ("filesize", "Largest file"),
+];
+
+/// What the approval queue shows: a search within the pending posts the
+/// approver hasn't dealt with, in an order, a page at a time.
+#[derive(Debug, Default, Deserialize)]
+pub(crate) struct ApprovalQuery {
+    #[serde(default)]
+    tags: String,
+    #[serde(default)]
+    order: String,
+    page: Option<u32>,
+}
+
+impl ApprovalQuery {
+    /// The queue's URL for `page`.
+    fn url(&self, page: u32) -> String {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if !self.tags.trim().is_empty() {
+            query.append_pair("tags", self.tags.trim());
+        }
+        if !self.order.is_empty() {
+            query.append_pair("order", &self.order);
+        }
+        if page > 1 {
+            query.append_pair("page", &page.to_string());
+        }
+        let query = query.finish();
+        if query.is_empty() {
+            "/moderation/queue".to_owned()
+        } else {
+            format!("/moderation/queue?{query}")
+        }
+    }
+
+    /// The full search: `status:unmoderated`, the approver's terms and
+    /// the order. The error is for the approver.
+    fn search(&self) -> Result<moekura_core::search::Query, String> {
+        let own = moekura_core::search::Query::parse(&self.tags).map_err(|e| e.to_string())?;
+        if own
+            .conditions
+            .iter()
+            .any(|c| matches!(c.filter, moekura_core::search::Filter::Status(_)))
+        {
+            return Err("The queue only has pending posts; leave out status:.".into());
+        }
+        let order = match (own.order.is_some(), self.order.as_str()) {
+            // An order: typed in the box wins.
+            (true, _) => String::new(),
+            (false, "") => "order:id_asc".to_owned(),
+            (false, name) if QUEUE_ORDERS.iter().any(|(o, _)| *o == name) => {
+                format!("order:{name}")
+            }
+            (false, _) => return Err("Unknown order".into()),
+        };
+        moekura_core::search::Query::parse(&format!(
+            "status:unmoderated {} {order}",
+            self.tags.trim()
+        ))
+        .map_err(|e| e.to_string())
+    }
+}
+
+/// Pending posts matching `query` that the approver hasn't dealt with
+/// (`status:unmoderated`).
 async fn unmoderated(
     state: &AppState,
     current: &CurrentUser,
-    after: i64,
-) -> Result<Vec<i64>, AppError> {
-    let query = moekura_core::search::Query::parse("status:unmoderated order:id_asc")
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+    query: &moekura_core::search::Query,
+    page: u32,
+) -> Result<Result<Vec<i64>, String>, AppError> {
     let mut config = state.config.search.clone();
     config.per_page = QUEUE_PAGE as u32;
     let db = state.db.primary();
     let visibility = crate::posts::visibility(current);
-    let page = moekura_db::search::PageRef::After(after);
-    let ids = async {
-        moekura_db::search::Plan::resolve(db, &query, &visibility, &config)
+    let page = moekura_db::search::PageRef::Number(page);
+    let found = async {
+        moekura_db::search::Plan::resolve(db, query, &visibility, &config)
             .await?
             .ids(db, page)
             .await
     }
-    .await
-    .map_err(|e| match e {
-        moekura_db::search::SearchError::Db(e) => AppError::from(e),
-        moekura_db::search::SearchError::Invalid(message) => AppError::Internal(message),
-    })?;
-    Ok(ids)
+    .await;
+    match found {
+        Ok(ids) => Ok(Ok(ids)),
+        Err(moekura_db::search::SearchError::Invalid(message)) => Ok(Err(message)),
+        Err(moekura_db::search::SearchError::Db(e)) => Err(e.into()),
+    }
 }
 
 /// Each post's uploader's name, for queues.
@@ -660,11 +731,19 @@ pub(crate) async fn disapprovals(
         .collect())
 }
 
-async fn queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, AppError> {
+async fn queue(page: Page, Query(query): Query<ApprovalQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ApprovePosts)?;
     let state = page.state();
     let db = state.db.primary();
-    let ids = unmoderated(state, &page.current, query.after.unwrap_or(0)).await?;
+    let number = query.page.unwrap_or(1).max(1);
+    let found = match query.search() {
+        Ok(search) => unmoderated(state, &page.current, &search, number).await?,
+        Err(message) => Err(message),
+    };
+    let (ids, error) = match found {
+        Ok(ids) => (ids, None),
+        Err(message) => (Vec::new(), Some(message)),
+    };
     let uploaders = uploader_names(db, &ids).await?;
     let cards = review_cards(state, &ids, &uploaders).await?;
     let disapprovals = disapprovals(db, &ids).await?;
@@ -680,23 +759,110 @@ async fn queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, 
             context! { ..card, ..context! { disapprovals => theirs } }
         })
         .collect();
-    let more = (ids.len() == QUEUE_PAGE as usize)
-        .then(|| {
-            ids.last()
-                .map(|id| url_value(&format!("/moderation/queue?after={id}")))
-        })
-        .flatten();
-    Ok(page.render(
+    let more = (ids.len() == QUEUE_PAGE as usize).then(|| url_value(&query.url(number + 1)));
+    let previous = (number > 1).then(|| url_value(&query.url(number - 1)));
+    let status = if error.is_some() {
+        axum::http::StatusCode::BAD_REQUEST
+    } else {
+        axum::http::StatusCode::OK
+    };
+    Ok(page.render_with_status(
+        status,
         "moderation_queue.html",
         context! {
             posts => cards,
             more_url => more,
+            previous_url => previous,
+            back => query.url(number),
+            error => error,
+            query => context! {
+                tags => query.tags.trim(),
+                order => query.order,
+            },
+            orders => QUEUE_ORDERS
+                .iter()
+                .map(|(name, label)| context! { name => name, label => label })
+                .collect::<Vec<_>>(),
             disapproval_reasons => DisapprovalReason::ALL
                 .iter()
                 .map(|r| context! { name => r.as_str(), label => r.label() })
                 .collect::<Vec<_>>(),
         },
     ))
+}
+
+/// Most posts approved or rejected at once.
+const BULK_MAX: usize = 100;
+
+#[derive(Debug, Default, Deserialize)]
+struct BulkForm {
+    #[serde(default)]
+    ids: Vec<i64>,
+    /// `approve` or `reject`.
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    preset: String,
+    #[serde(default)]
+    reason: String,
+    /// The queue page to go back to.
+    back: Option<String>,
+}
+
+/// Approves or rejects the posts ticked in the queue. Posts someone else
+/// dealt with meanwhile are skipped.
+async fn bulk_review(
+    page: Page,
+    jar: CookieJar,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<BulkForm>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ApprovePosts)?;
+    let action = match form.action.as_str() {
+        "approve" => PostAction::Approve,
+        "reject" => PostAction::Reject,
+        _ => return Err(AppError::BadRequest("Approve or reject?".into())),
+    };
+    if form.ids.is_empty() {
+        return Err(AppError::BadRequest("Tick the posts first".into()));
+    }
+    if form.ids.len() > BULK_MAX {
+        return Err(AppError::BadRequest(format!(
+            "At most {BULK_MAX} posts at once"
+        )));
+    }
+    let reason = ReasonForm {
+        preset: form.preset.clone(),
+        reason: form.reason.clone(),
+    }
+    .reason();
+    check_reason(&reason)?;
+    let mut skipped = 0;
+    for id in &form.ids {
+        match moderate(page.state(), &page.current, *id, action, &reason).await {
+            Ok(()) => {}
+            // Someone got there first.
+            Err(AppError::BadRequest(_) | AppError::NotFound) => skipped += 1,
+            Err(error) => return Err(error),
+        }
+    }
+    tracing::info!(
+        posts = form.ids.len(),
+        skipped,
+        action = form.action,
+        "posts reviewed in bulk"
+    );
+    let flash = if skipped > 0 {
+        Flash::SomeSkipped
+    } else {
+        Flash::Saved
+    };
+    let back = crate::account::safe_next(form.back.as_deref());
+    let back = if back.starts_with("/moderation/queue") {
+        back
+    } else {
+        "/moderation/queue"
+    };
+    Ok((flash::set(jar, flash), Redirect::to(back)).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1653,5 +1819,112 @@ mod tests {
             page.contains(&format!("/posts/{}/appeal", ids[1])),
             "may appeal again"
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_queue_searches_sorts_and_acts_in_bulk(pool: PgPool) {
+        moekura_db::settings::set(&pool, "upload_approval", serde_json::json!(true))
+            .await
+            .unwrap();
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::posts::routes())
+                .merge(crate::upload::routes(max)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let mut ids = Vec::new();
+        for (i, (tags, rating)) in [("cat", "g"), ("dog", "e"), ("cat dog", "g")]
+            .iter()
+            .enumerate()
+        {
+            let response = app
+                .post_multipart(
+                    "/upload",
+                    Some(&alice),
+                    &[
+                        ("rating", (*rating).to_owned()),
+                        ("tags", (*tags).to_owned()),
+                    ],
+                    Some((
+                        "a.png",
+                        &crate::test_support::fixture::png(20 + 4 * i as u32, 20),
+                    )),
+                )
+                .await;
+            ids.push(
+                response.location.unwrap()["/posts/".len()..]
+                    .parse::<i64>()
+                    .unwrap(),
+            );
+        }
+        let approve = |id: i64| format!("/posts/{id}/approve");
+        let shown = |body: &str| -> Vec<i64> {
+            ids.iter()
+                .copied()
+                .filter(|id| body.contains(&approve(*id)))
+                .collect()
+        };
+        let cats = app.get("/moderation/queue?tags=cat", Some(&jan)).await.body;
+        assert_eq!(shown(&cats), [ids[0], ids[2]]);
+        let explicit = app
+            .get("/moderation/queue?tags=rating%3Ae+user%3Aalice", Some(&jan))
+            .await
+            .body;
+        assert_eq!(shown(&explicit), [ids[1]]);
+        // Newest first.
+        let newest = app.get("/moderation/queue?order=id", Some(&jan)).await.body;
+        let at = |id: i64| newest.find(&approve(id)).unwrap();
+        assert!(at(ids[2]) < at(ids[0]), "{newest}");
+        let refused = app
+            .get("/moderation/queue?tags=status%3Aactive", Some(&jan))
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+        assert!(
+            refused.body.contains("leave out status:"),
+            "{}",
+            refused.body
+        );
+
+        // Approve two at once, then reject the last with a reason.
+        let bulk = format!(
+            "ids={}&ids={}&action=approve&back=%2Fmoderation%2Fqueue%3Ftags%3Dcat",
+            ids[0], ids[2]
+        );
+        assert_eq!(
+            app.post_form("/moderation/queue/bulk", Some(&alice), &[], &bulk)
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        let done = app
+            .post_form("/moderation/queue/bulk", Some(&jan), &[], &bulk)
+            .await;
+        assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.body);
+        assert_eq!(done.location.as_deref(), Some("/moderation/queue?tags=cat"));
+        // Already approved: skipped, not refused.
+        let again = format!(
+            "ids={}&ids={}&action=reject&preset=Off-topic",
+            ids[0], ids[1]
+        );
+        let done = app
+            .post_form("/moderation/queue/bulk", Some(&jan), &[], &again)
+            .await;
+        assert_eq!(done.status, StatusCode::SEE_OTHER);
+        assert!(done.set_cookie.iter().any(|c| c.contains("some_skipped")));
+        let statuses: Vec<String> = sqlx::query_scalar("SELECT status FROM posts ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(statuses, ["active", "deleted", "active"]);
+        let reason: String =
+            sqlx::query_scalar("SELECT reason FROM mod_actions WHERE action = 'post.reject'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(reason, "Off-topic");
     }
 }

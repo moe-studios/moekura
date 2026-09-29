@@ -4,11 +4,30 @@
 {% block content %}
 {% include "moderation_nav.html" %}
 <h1>Approval queue</h1>
-<p class="hint">Pending posts you didn't upload and haven't disapproved (<a href="{{ search_url('status:unmoderated') }}">status:unmoderated</a>), oldest first. Disapproving passes on a post without rejecting it: it leaves your queue, and other approvers see why.</p>
+<p class="hint">Pending posts you didn't upload and haven't disapproved (<a href="{{ search_url('status:unmoderated') }}">status:unmoderated</a>). Disapproving passes on a post without rejecting it: it leaves your queue, and other approvers see why.</p>
+<form class="filters" method="get" action="/moderation/queue">
+  <label for="queue-tags">Search</label>
+  <input id="queue-tags" name="tags" value="{{ query.tags }}" placeholder="tags, user:name, rating:e…" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  <label for="queue-order">Order</label>
+  <select id="queue-order" name="order">
+    {% for o in orders %}<option value="{{ o.name }}"{% if query.order == o.name %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+  </select>
+  <button type="submit">Filter</button>
+</form>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 {% if posts %}
+<form id="bulk" class="bulk-review" method="post" action="/moderation/queue/bulk">
+  <input type="hidden" name="back" value="{{ back }}">
+  <p class="hint">Tick posts below to approve or reject them together.</p>
+  <label class="choice select-all"><input type="checkbox" data-select-all="bulk"> Tick every post on this page</label>
+  <button type="submit" name="action" value="approve">Approve ticked</button>
+  {{ reason_fields("bulk-reason", reasons.deletion, "Reason for rejecting the ticked posts", required=false, compact=true) }}
+  <button type="submit" name="action" value="reject" class="secondary">Reject ticked</button>
+</form>
 <ul class="review">
   {% for p in posts %}
   <li>
+    <input type="checkbox" name="ids" value="{{ p.id }}" form="bulk" aria-label="Tick #{{ p.id }}">
     <a class="review-thumb" href="/posts/{{ p.id }}">{% if p.thumb %}<img src="{{ p.thumb }}" alt="Post #{{ p.id }}" loading="lazy">{% else %}<img src="{{ asset('processing.svg') }}" alt="Post #{{ p.id }} (processing)">{% endif %}</a>
     <div class="review-body">
       <p><a href="/posts/{{ p.id }}">#{{ p.id }}</a> · rating {{ p.rating }}{% if p.uploader %} · by <a href="/users/{{ p.uploader }}">{{ p.uploader }}</a>{% endif %}</p>
@@ -37,8 +56,13 @@
   </li>
   {% endfor %}
 </ul>
-{% if more_url %}<nav class="pager"><a class="button" href="{{ more_url }}" rel="next">More</a></nav>{% endif %}
-{% else %}
-<p class="empty">Nothing waiting for approval.</p>
+{% elif not error %}
+<p class="empty">Nothing waiting for approval{% if query.tags %} matches that search{% endif %}.</p>
+{% endif %}
+{% if more_url or previous_url %}
+<nav class="pager">
+  {% if previous_url %}<a class="button secondary" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if more_url %}<a class="button" href="{{ more_url }}" rel="next">More</a>{% endif %}
+</nav>
 {% endif %}
 {% endblock %}

@@ -15,6 +15,7 @@ import { enableSelectAll } from "./select-all.ts";
 import { enableSuggestions } from "./suggestions.ts";
 import { enableTagScript } from "./tag-script.ts";
 import { enableToasts } from "./toast.ts";
+import { enableUpload } from "./upload.ts";
 
 // Lets styles tell whether scripts run.
 document.documentElement.classList.add("js");
@@ -33,3 +34,4 @@ enableNoteEditor();
 enableTagScript();
 enableSuggestions();
 enableSelectAll();
+enableUpload();

@@ -11,10 +11,14 @@
   {% elif error %}
   <p class="form-error" role="alert">{{ error }}</p>
   {% endif %}
-  <form method="post" action="/upload" enctype="multipart/form-data">
-    <label for="file">File</label>
-    <input id="file" name="file" type="file"
-           accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/jxl,video/mp4,video/webm">
+  <form method="post" action="/upload" enctype="multipart/form-data" data-upload>
+    <div class="upload-drop-zone" data-upload-drop-zone>
+      <label for="file">File</label>
+      <input id="file" name="file" type="file"
+             accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/jxl,video/mp4,video/webm">
+      <p class="hint" data-upload-hint hidden>Choose a file, drop it onto this form, or paste it from your clipboard. One file at a time.</p>
+      <p class="hint" data-upload-status role="status" aria-live="polite"></p>
+    </div>
     <label for="url">…or a link to it</label>
     <input id="url" name="url" type="url" value="{{ form.url }}" placeholder="https://">
     <p class="hint">Images or videos up to {{ max_mb }} MB.</p>

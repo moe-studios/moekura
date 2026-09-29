@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "reason_fields.html" import reason_fields %}
 {% block title %}Flags · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "moderation_nav.html" %}
@@ -16,7 +17,7 @@
       <div class="actions">
         <form method="post" action="/posts/{{ p.id }}/flags/dismiss"><button type="submit" class="secondary">Dismiss</button></form>
         <form class="reject" method="post" action="/posts/{{ p.id }}/delete">
-          <input name="reason" placeholder="Reason" maxlength="2000" aria-label="Reason for deleting #{{ p.id }}" required>
+          {{ reason_fields("delete-" ~ p.id, reasons.deletion, "Reason for deleting #" ~ p.id, compact=true) }}
           <button type="submit">Delete post</button>
         </form>
       </div>

@@ -160,6 +160,10 @@ fn render_settings(
                     allow => current.email_domains.mode == moekura_core::spam::DomainMode::Allow,
                     list => current.email_domains.domains.join("\n"),
                 },
+                post_reasons => context! {
+                    deletion => current.post_reasons.deletion.join("\n"),
+                    flag => current.post_reasons.flag.join("\n"),
+                },
                 captcha => context! {
                     sign_up => current.captcha.sign_up,
                     comment_account_days => current.captcha.comment_account_days,
@@ -228,6 +232,10 @@ struct SettingsForm {
     /// Present when ticked.
     captcha_sign_up: Option<String>,
     captcha_comment_account_days: Option<String>,
+    /// One per line.
+    deletion_reasons: Option<String>,
+    /// One per line.
+    flag_reasons: Option<String>,
     /// Present when ticked.
     tagger_auto_apply: Option<String>,
     tagger_auto_threshold: Option<String>,
@@ -327,6 +335,19 @@ async fn save_settings(
                 "domains": form.email_domains.as_deref().map_or_else(
                     || before.email_domains.domains.clone(),
                     moekura_core::spam::EmailDomains::parse_list,
+                ),
+            }),
+        ),
+        (
+            "post_reasons",
+            json!({
+                "deletion": form.deletion_reasons.as_deref().map_or_else(
+                    || before.post_reasons.deletion.clone(),
+                    moekura_core::moderation::PostReasons::parse_list,
+                ),
+                "flag": form.flag_reasons.as_deref().map_or_else(
+                    || before.post_reasons.flag.clone(),
+                    moekura_core::moderation::PostReasons::parse_list,
                 ),
             }),
         ),

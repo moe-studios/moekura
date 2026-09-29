@@ -27,6 +27,16 @@ the reports. Hidden comments, and those their authors deleted, stay
 visible to staff, marked *deleted*. Comments voted down to −5 or lower
 are collapsed for everyone.
 
+## Reasons
+
+Deleting, rejecting and flagging a post offer the site's preset reasons
+(*Duplicate*, *Poor quality*, *Off-topic*, *Breaks the rules* to begin
+with), so reasons stay consistent, with a box for details or a reason of
+one's own (*Other*). A preset with details is recorded as
+"Poor quality: blurry". Change the lists under **Admin → Settings →
+Moderation reasons**, one per line; empty lists leave just the box. The
+API and Danbooru clients send free text as before.
+
 ## Deleting, restoring, purging
 
 Deleting a post (with a reason, which is required and shown on the post) hides it from everyone

@@ -35,6 +35,14 @@
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>
     <p class="hint">For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.</p>
     <fieldset class="limits">
+      <legend>Moderation reasons</legend>
+      <p class="hint">Offered when deleting, rejecting and flagging posts, one per line; anyone can still give another reason, or add details.</p>
+      <label for="deletion_reasons">For deleting and rejecting posts</label>
+      <textarea id="deletion_reasons" name="deletion_reasons" rows="4">{{ settings.post_reasons.deletion }}</textarea>
+      <label for="flag_reasons">For flagging posts</label>
+      <textarea id="flag_reasons" name="flag_reasons" rows="4">{{ settings.post_reasons.flag }}</textarea>
+    </fieldset>
+    <fieldset class="limits">
       <legend>Spam</legend>
       <label for="email_domain_mode">Email domains listed below are</label>
       <select id="email_domain_mode" name="email_domain_mode">

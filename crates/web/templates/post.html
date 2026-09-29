@@ -73,6 +73,14 @@
       </ul>
     </section>
     {% endif %}
+    {% if moderate.disapprovals %}
+    <section class="family flags" aria-label="Disapprovals">
+      <p>Approvers passed on this post:</p>
+      <ul class="plain">
+        {% for d in moderate.disapprovals %}<li>{{ d.when }} {{ d.by }}: {{ d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
     {% if moderate.flags %}
     <section class="family flags" aria-label="Flags">
       <p>Flags</p>

@@ -7,8 +7,8 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::jobs::PurgePost;
-use moekura_core::moderation::ActionKind;
 use moekura_core::moderation::REASON_MAX_LEN;
+use moekura_core::moderation::{ActionKind, DisapprovalReason};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
 use moekura_core::webhooks::Event;
@@ -38,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         .route("/posts/{id}/flag", post(flag))
         .route("/posts/{id}/flags/dismiss", post(dismiss_flags))
         .route("/posts/{id}/approve", post(approve))
+        .route("/posts/{id}/disapprove", post(disapprove))
         .route("/posts/{id}/reject", post(reject))
         .route("/posts/{id}/delete", post(delete))
         .route("/posts/{id}/restore", post(restore))
@@ -398,18 +399,99 @@ pub(crate) async fn review_cards(
         .collect())
 }
 
+/// Pending posts the approver hasn't dealt with (`status:unmoderated`),
+/// oldest first, from after post `after`.
+async fn unmoderated(
+    state: &AppState,
+    current: &CurrentUser,
+    after: i64,
+) -> Result<Vec<i64>, AppError> {
+    let query = moekura_core::search::Query::parse("status:unmoderated order:id_asc")
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let mut config = state.config.search.clone();
+    config.per_page = QUEUE_PAGE as u32;
+    let db = state.db.primary();
+    let visibility = crate::posts::visibility(current);
+    let page = moekura_db::search::PageRef::After(after);
+    let ids = async {
+        moekura_db::search::Plan::resolve(db, &query, &visibility, &config)
+            .await?
+            .ids(db, page)
+            .await
+    }
+    .await
+    .map_err(|e| match e {
+        moekura_db::search::SearchError::Db(e) => AppError::from(e),
+        moekura_db::search::SearchError::Invalid(message) => AppError::Internal(message),
+    })?;
+    Ok(ids)
+}
+
+/// Each post's uploader's name, for queues.
+async fn uploader_names(
+    db: &sqlx::PgPool,
+    ids: &[i64],
+) -> Result<Vec<(i64, Option<String>)>, AppError> {
+    let found = posts::by_ids(db, ids).await?;
+    let uploader_ids: Vec<i64> = found.iter().filter_map(|p| p.uploader_id).collect();
+    let names = users::names(db, &uploader_ids).await?;
+    Ok(found
+        .iter()
+        .map(|p| {
+            let name = p
+                .uploader_id
+                .and_then(|u| names.iter().find(|(id, _)| *id == u))
+                .map(|(_, name)| name.clone());
+            (p.id, name)
+        })
+        .collect())
+}
+
+/// The disapprovals of `ids` as the queue and post page show them.
+pub(crate) async fn disapprovals(
+    db: &sqlx::PgPool,
+    ids: &[i64],
+) -> Result<Vec<(i64, Value)>, AppError> {
+    Ok(moekura_db::disapprovals::for_posts(db, ids)
+        .await?
+        .into_iter()
+        .map(|d| {
+            let reason = d
+                .reason()
+                .map_or(d.reason.clone(), |r| r.label().to_owned());
+            (
+                d.post_id,
+                context! {
+                    by => d.user_name,
+                    reason => reason,
+                    message => d.message,
+                    when => d.created_at.date().to_string(),
+                },
+            )
+        })
+        .collect())
+}
+
 async fn queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ApprovePosts)?;
     let state = page.state();
-    let pending = posts::by_status(
-        state.db.primary(),
-        PostStatus::Pending,
-        query.after.unwrap_or(0),
-        QUEUE_PAGE,
-    )
-    .await?;
-    let ids: Vec<i64> = pending.iter().map(|(id, _)| *id).collect();
-    let cards = review_cards(state, &ids, &pending).await?;
+    let db = state.db.primary();
+    let ids = unmoderated(state, &page.current, query.after.unwrap_or(0)).await?;
+    let uploaders = uploader_names(db, &ids).await?;
+    let cards = review_cards(state, &ids, &uploaders).await?;
+    let disapprovals = disapprovals(db, &ids).await?;
+    let cards: Vec<Value> = cards
+        .into_iter()
+        .map(|card| {
+            let id = card.get_attr("id").ok().and_then(|v| i64::try_from(v).ok());
+            let theirs: Vec<&Value> = disapprovals
+                .iter()
+                .filter(|(post, _)| Some(*post) == id)
+                .map(|(_, d)| d)
+                .collect();
+            context! { ..card, ..context! { disapprovals => theirs } }
+        })
+        .collect();
     let more = (ids.len() == QUEUE_PAGE as usize)
         .then(|| {
             ids.last()
@@ -418,8 +500,63 @@ async fn queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, 
         .flatten();
     Ok(page.render(
         "moderation_queue.html",
-        context! { posts => cards, more_url => more },
+        context! {
+            posts => cards,
+            more_url => more,
+            disapproval_reasons => DisapprovalReason::ALL
+                .iter()
+                .map(|r| context! { name => r.as_str(), label => r.label() })
+                .collect::<Vec<_>>(),
+        },
     ))
+}
+
+#[derive(Debug, Deserialize)]
+struct DisapproveForm {
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    message: String,
+}
+
+async fn disapprove(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<DisapproveForm>,
+) -> Result<Response, AppError> {
+    disapprove_post(page.state(), &page.current, id, &form.reason, &form.message).await?;
+    Ok(back_to(jar, "/moderation/queue"))
+}
+
+/// Passes on pending post `id` for `current` without rejecting it.
+pub(crate) async fn disapprove_post(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    reason: &str,
+    message: &str,
+) -> Result<(), AppError> {
+    current.require(Permission::ApprovePosts)?;
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let reason = DisapprovalReason::parse(reason).ok_or_else(|| {
+        AppError::BadRequest("Say why: breaks_rules, poor_quality or disinterest".into())
+    })?;
+    let message = check_reason(message)?;
+    if !moekura_db::disapprovals::disapprove(state.db.primary(), id, user.id, reason, message)
+        .await?
+    {
+        return Err(AppError::BadRequest(
+            "Only pending posts can be disapproved".into(),
+        ));
+    }
+    tracing::info!(
+        post_id = id,
+        user = user.name,
+        reason = reason.as_str(),
+        "post disapproved"
+    );
+    Ok(())
 }
 
 async fn approve(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
@@ -787,6 +924,116 @@ mod tests {
             .post(&format!("/posts/{}/approve", ids[0]), Some(&janitor), &[])
             .await;
         assert_eq!(again.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn approvers_pass_on_posts(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes().merge(crate::posts::routes()),
+        );
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let kim = session_for(&pool, "kim", SystemRole::Janitor).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let jan_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'jan'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for (i, uploader) in [alice_id, alice_id, jan_id].into_iter().enumerate() {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO posts (rating, status, uploader_id) VALUES ('g', 'pending', $1) RETURNING id",
+            )
+            .bind(uploader)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO media_assets (post_id, sha256, md5, media_type, width, height, file_size, storage_key)
+                 VALUES ($1, sha256($1::text::bytea), substring(sha256($1::text::bytea) FROM 1 FOR 16), 'png', 10, 10, 1, $2)",
+            )
+            .bind(id)
+            .bind(format!("original/aa/aa/{i}.png"))
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let queue = app.get("/moderation/queue", Some(&jan)).await.body;
+        assert!(
+            queue.contains(&format!("/posts/{}/approve", ids[0])),
+            "{queue}"
+        );
+        assert!(
+            !queue.contains(&format!("/posts/{}/approve", ids[2])),
+            "not their own upload"
+        );
+        assert_eq!(
+            app.post_form(
+                &format!("/posts/{}/disapprove", ids[0]),
+                Some(&alice),
+                &[],
+                "reason=poor_quality"
+            )
+            .await
+            .status,
+            StatusCode::FORBIDDEN
+        );
+        let bad = app
+            .post_form(
+                &format!("/posts/{}/disapprove", ids[0]),
+                Some(&jan),
+                &[],
+                "reason=meh",
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+        let done = app
+            .post_form(
+                &format!("/posts/{}/disapprove", ids[0]),
+                Some(&jan),
+                &[],
+                "reason=poor_quality&message=too+blurry",
+            )
+            .await;
+        assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.body);
+        // Gone from jan's queue; shown to kim, with why.
+        let queue = app.get("/moderation/queue", Some(&jan)).await.body;
+        assert!(
+            !queue.contains(&format!("/posts/{}/approve", ids[0])),
+            "{queue}"
+        );
+        assert!(queue.contains(&format!("/posts/{}/approve", ids[1])));
+        let queue = app.get("/moderation/queue", Some(&kim)).await.body;
+        assert!(
+            queue.contains(&format!("/posts/{}/approve", ids[0])),
+            "{queue}"
+        );
+        assert!(
+            queue.contains("by jan: Poor quality — “too blurry”"),
+            "{queue}"
+        );
+        let page = app
+            .get(&format!("/posts/{}", ids[0]), Some(&kim))
+            .await
+            .body;
+        assert!(page.contains("too blurry"), "{page}");
+        // Still pending, and approvable.
+        app.post(&format!("/posts/{}/approve", ids[0]), Some(&kim), &[])
+            .await;
+        let again = app
+            .post_form(
+                &format!("/posts/{}/disapprove", ids[0]),
+                Some(&kim),
+                &[],
+                "reason=disinterest",
+            )
+            .await;
+        assert_eq!(again.status, StatusCode::BAD_REQUEST, "no longer pending");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -84,6 +84,43 @@ pub(crate) async fn reject(
     act(&state, &current, id, PostAction::Reject, &body.reason).await
 }
 
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct NewDisapproval {
+    /// `breaks_rules`, `poor_quality` or `disinterest`.
+    #[schema(example = "poor_quality")]
+    reason: String,
+    /// A note for other approvers.
+    #[serde(default)]
+    message: String,
+}
+
+/// Disapprove a pending post.
+///
+/// Needs `approve_posts`. Passes on the post without rejecting it: it
+/// leaves your approval queue (`status:unmoderated`), and other approvers
+/// see why. Disapproving again replaces your earlier reason.
+#[utoipa::path(
+    post,
+    path = "/posts/{id}/disapprove",
+    operation_id = "disapprove_post",
+    tag = "moderation",
+    params(("id" = i64, Path, description = "Post number")),
+    request_body = NewDisapproval,
+    responses(
+        (status = 204, description = "Disapproved"),
+        (status = 400, body = ErrorBody, description = "The post isn't pending, or the reason is unknown"),
+    ),
+)]
+pub(crate) async fn disapprove(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+    Json(body): Json<NewDisapproval>,
+) -> Result<StatusCode, AppError> {
+    crate::moderation::disapprove_post(&state, &current, id, &body.reason, &body.message).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Delete a post.
 ///
 /// Needs `delete_posts`, and a reason, which the post shows in its place.

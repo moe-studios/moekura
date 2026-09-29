@@ -111,6 +111,10 @@
   {% endif %}
   <p>Filed by them: {{ flags_filed.total }}
     ({% for c in flags_filed.counts %}{{ c.count }} {{ c.status }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+  {% if disapprovals.total %}
+  <p>Pending posts they disapproved: {{ disapprovals.total }}
+    ({% for c in disapprovals.counts %}{{ c.count }} {{ c.status | replace("_", " ") }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+  {% endif %}
 </section>
 
 <section class="card">

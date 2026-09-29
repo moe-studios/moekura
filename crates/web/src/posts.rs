@@ -662,7 +662,18 @@ pub(crate) async fn render_post(
     } else {
         Vec::new()
     };
+    let disapprovals: Vec<Value> =
+        if page.current.can(Permission::ApprovePosts) && post.status == PostStatus::Pending {
+            crate::moderation::disapprovals(db, &[id])
+                .await?
+                .into_iter()
+                .map(|(_, d)| d)
+                .collect()
+        } else {
+            Vec::new()
+        };
     let moderate = context! {
+        disapprovals => disapprovals,
         can_flag => page.current.is_logged_in()
             && page.current.can(Permission::Flag)
             && matches!(post.status, PostStatus::Active | PostStatus::Flagged),

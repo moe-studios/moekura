@@ -145,6 +145,9 @@ pub struct Plan {
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
+    /// `status:unmoderated` (or with `true`, `-status:unmoderated`) for
+    /// the viewer, if any.
+    unmoderated: Vec<(bool, Option<i64>)>,
     order: Order,
     per_page: u32,
     /// Estimated number of posts, for choosing a strategy.
@@ -194,6 +197,7 @@ impl Plan {
             suggested: Vec::new(),
             statuses,
             own_pending,
+            unmoderated: Vec::new(),
             order: query.order.unwrap_or_default(),
             per_page: query.limit.unwrap_or(config.per_page),
             total: 0.0,
@@ -237,6 +241,10 @@ impl Plan {
 
         for condition in &query.conditions {
             match &condition.filter {
+                Filter::Status(StatusFilter::Unmoderated) => {
+                    plan.unmoderated
+                        .push((condition.negated, visibility.viewer));
+                }
                 // Already folded into `statuses`.
                 Filter::Status(_) => {}
                 Filter::User(name) | Filter::Fav(name) => {
@@ -396,7 +404,7 @@ impl Plan {
             (
                 self.nothing,
                 &self.statuses,
-                self.own_pending,
+                (self.own_pending, &self.unmoderated),
                 self.required.iter().map(|s| &s.ids).collect::<Vec<_>>(),
                 self.any.as_ref().map(|s| &s.ids),
                 &self.excluded,
@@ -737,6 +745,21 @@ impl Plan {
                 .push(")");
         }
         sql.push(")");
+        for (negated, viewer) in &self.unmoderated {
+            sql.push(if *negated { " AND NOT (" } else { " AND (" })
+                .push("p.status = 'pending'");
+            if let Some(viewer) = viewer {
+                sql.push(" AND p.uploader_id IS DISTINCT FROM ")
+                    .push_bind(*viewer)
+                    .push(
+                        " AND NOT EXISTS (SELECT 1 FROM post_disapprovals d \
+                         WHERE d.post_id = p.id AND d.user_id = ",
+                    )
+                    .push_bind(*viewer)
+                    .push(")");
+            }
+            sql.push(")");
+        }
         if self.only_commented() {
             sql.push(" AND p.last_commented_at IS NOT NULL");
         }
@@ -1030,6 +1053,12 @@ fn statuses(query: &Query, visibility: &Visibility) -> (Vec<&'static str>, Optio
             .filter(|s| *s != PostStatus::Deleted)
             .collect(),
         Some(StatusFilter::Any) => visible.clone(),
+        // The rest is a condition on each post.
+        Some(StatusFilter::Unmoderated) => visible
+            .iter()
+            .copied()
+            .filter(|s| *s == PostStatus::Pending)
+            .collect(),
         Some(status) => {
             let status: PostStatus = status
                 .as_str()
@@ -1658,6 +1687,47 @@ mod tests {
             search_as(&pool, "status:any -status:flagged -status:pending", &staff).await,
             [deleted, active]
         );
+
+        // What's left for an approver: pending posts they didn't upload
+        // or disapprove.
+        let approver = Visibility {
+            viewer: Some(viewer),
+            ..staff.clone()
+        };
+        let another = seed(
+            &pool,
+            Seed {
+                status: "pending",
+                ..Seed::default()
+            },
+        )
+        .await;
+        assert_eq!(
+            search_as(&pool, "status:unmoderated", &approver).await,
+            [another, pending]
+        );
+        crate::disapprovals::disapprove(
+            &pool,
+            another,
+            viewer,
+            moekura_core::moderation::DisapprovalReason::Disinterest,
+            "",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            search_as(&pool, "status:unmoderated", &approver).await,
+            [pending]
+        );
+        assert_eq!(
+            search_as(&pool, "status:pending -status:unmoderated", &approver).await,
+            [another, mine]
+        );
+        assert!(
+            search_as(&pool, "status:unmoderated", &member)
+                .await
+                .is_empty()
+        );
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
@@ -2207,6 +2277,7 @@ mod tests {
             suggested: Vec::new(),
             statuses: vec!["active"],
             own_pending: None,
+            unmoderated: Vec::new(),
             order,
             per_page: 40,
             total,

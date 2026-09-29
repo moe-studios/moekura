@@ -4,6 +4,7 @@
 {% block content %}
 {% include "moderation_nav.html" %}
 <h1>Approval queue</h1>
+<p class="hint">Pending posts you didn't upload and haven't disapproved (<a href="{{ search_url('status:unmoderated') }}">status:unmoderated</a>), oldest first. Disapproving passes on a post without rejecting it: it leaves your queue, and other approvers see why.</p>
 {% if posts %}
 <ul class="review">
   {% for p in posts %}
@@ -12,11 +13,24 @@
     <div class="review-body">
       <p><a href="/posts/{{ p.id }}">#{{ p.id }}</a> · rating {{ p.rating }}{% if p.uploader %} · by <a href="/users/{{ p.uploader }}">{{ p.uploader }}</a>{% endif %}</p>
       <p class="review-tags">{{ p.tags or "no tags" }}</p>
+      {% if p.disapprovals %}
+      <ul class="plain disapprovals">
+        {% for d in p.disapprovals %}<li><span class="status status-dismissed">disapproved</span> by {{ d.by }}: {{ d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}</li>{% endfor %}
+      </ul>
+      {% endif %}
       <div class="actions">
         <form method="post" action="/posts/{{ p.id }}/approve"><button type="submit">Approve</button></form>
         <form class="reject" method="post" action="/posts/{{ p.id }}/reject">
           {{ reason_fields("reject-" ~ p.id, reasons.deletion, "Reason for rejecting #" ~ p.id, required=false, compact=true) }}
           <button type="submit" class="secondary">Reject</button>
+        </form>
+        <form class="reject" method="post" action="/posts/{{ p.id }}/disapprove">
+          <select name="reason" aria-label="Why you pass on #{{ p.id }}" required>
+            <option value="" disabled selected>Pass on it…</option>
+            {% for r in disapproval_reasons %}<option value="{{ r.name }}">{{ r.label }}</option>{% endfor %}
+          </select>
+          <input name="message" placeholder="Note for other approvers" maxlength="2000" aria-label="Note on #{{ p.id }} for other approvers">
+          <button type="submit" class="secondary">Disapprove</button>
         </form>
       </div>
     </div>

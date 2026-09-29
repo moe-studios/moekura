@@ -375,16 +375,15 @@ pub(crate) async fn update(
     if !tags::categories(db).await?.iter().any(|c| c.id == category) {
         return Err(AppError::BadRequest("Unknown category".into()));
     }
-    tags::update(db, tag.id, category, deprecated).await?;
+    let updater_id = current.user.as_ref().map(|u| u.id);
+    tags::update(db, tag.id, category, deprecated, updater_id).await?;
     mod_actions::record(
         db,
-        NewAction::new(current.user.as_ref().map(|u| u.id), ActionKind::TagUpdate).details(
-            serde_json::json!({
-                "tag": tag.name,
-                "category": category,
-                "deprecated": deprecated,
-            }),
-        ),
+        NewAction::new(updater_id, ActionKind::TagUpdate).details(serde_json::json!({
+            "tag": tag.name,
+            "category": category,
+            "deprecated": deprecated,
+        })),
     )
     .await?;
     tracing::info!(tag = tag.name, category, deprecated, "tag edited");

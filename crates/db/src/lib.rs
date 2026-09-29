@@ -37,6 +37,7 @@ pub mod tag_relations;
 pub mod tag_suggestions;
 pub mod tags;
 pub mod two_factor;
+pub mod user_record;
 pub mod users;
 pub mod webhooks;
 pub mod wiki;

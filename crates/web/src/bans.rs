@@ -1,6 +1,6 @@
 //! Banning users and networks.
 
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Router};
@@ -47,6 +47,25 @@ struct BanForm {
     /// Days; empty for until lifted.
     #[serde(default)]
     days: String,
+}
+
+/// Where to go after banning or unbanning: the profile, unless the form
+/// came from elsewhere (the user moderation page).
+#[derive(Debug, Default, Deserialize)]
+struct Back {
+    back: Option<String>,
+}
+
+impl Back {
+    fn or_profile(&self, user: &User) -> String {
+        match &self.back {
+            Some(back) => crate::account::safe_next(Some(back)).to_owned(),
+            None => format!(
+                "/users/{}",
+                url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>()
+            ),
+        }
+    }
 }
 
 /// When a ban of `days` days made now ends; `None` days is until lifted.
@@ -123,11 +142,12 @@ async fn ban_user(
     page: Page,
     jar: CookieJar,
     Path(name): Path<String>,
+    Query(back): Query<Back>,
     Form(form): Form<BanForm>,
 ) -> Result<Response, AppError> {
     let expires_at = form_expiry(&form.days)?;
     let user = ban(page.state(), &page.current, &name, &form.reason, expires_at).await?;
-    Ok(saved(jar, &format!("/users/{}", user.name)))
+    Ok(saved(jar, &back.or_profile(&user)))
 }
 
 /// Bans the user called `name` until `expires_at` (or until lifted),
@@ -167,9 +187,10 @@ async fn unban_user(
     page: Page,
     jar: CookieJar,
     Path(name): Path<String>,
+    Query(back): Query<Back>,
 ) -> Result<Response, AppError> {
     let user = unban(page.state(), &page.current, &name).await?;
-    Ok(saved(jar, &format!("/users/{}", user.name)))
+    Ok(saved(jar, &back.or_profile(&user)))
 }
 
 /// Lifts the ban on the user called `name`.

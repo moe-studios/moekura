@@ -46,6 +46,19 @@ under **Moderation → Bans**. Requests from them can read, but not
 register, log in or change anything. The range may not include your own
 address, or be wider than a `/8` (IPv4) or `/16` (IPv6).
 
+## A user's record
+
+Staff who can ban users or read the log see a **Moderation record** link
+on each profile (and the log's user names lead there too). The page puts a
+user's history in one place: their role, status, when they joined and were
+last seen, whether two-factor login is on and whether they're kept from
+automatic promotion; their bans, with controls to ban or lift the ban;
+their uploads by status and the recent deletions with reasons; the flags
+on their uploads, and the flags they filed with how many were upheld or
+dismissed; reports about their comments and their hidden comments; and,
+for those who read the log, what was logged about them and what they
+did themselves.
+
 ## Tag aliases and implications
 
 Members request them under **Tags → Aliases** or **Implications**; people

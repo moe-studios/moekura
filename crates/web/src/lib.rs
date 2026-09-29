@@ -46,6 +46,7 @@ mod templates;
 mod test_support;
 mod two_factor;
 mod upload;
+mod user_moderation;
 mod users;
 mod webhooks;
 mod wiki;
@@ -243,6 +244,7 @@ pub fn router(state: AppState) -> Router {
         .merge(tags::routes())
         .merge(tag_relations::routes())
         .merge(two_factor::routes())
+        .merge(user_moderation::routes())
         .merge(users::routes())
         .merge(webhooks::routes())
         .merge(wiki::routes())

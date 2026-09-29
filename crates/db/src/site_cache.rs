@@ -1,5 +1,5 @@
-//! An in-memory copy of site settings and roles, read on nearly every
-//! request.
+//! An in-memory copy of site settings, roles and network bans, read on
+//! nearly every request.
 //!
 //! Every node keeps its own copy. Writers send a `NOTIFY` on [`CHANNEL`]
 //! in the same transaction as their change, and [`SiteCache::listen`]
@@ -14,7 +14,8 @@ use moekura_core::settings::SiteSettings;
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 
-use crate::{roles, settings};
+use crate::bans::NetworkBan;
+use crate::{bans, roles, settings};
 
 pub const CHANNEL: &str = "moekura_site_cache";
 
@@ -24,11 +25,34 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 pub struct SiteSnapshot {
     pub settings: SiteSettings,
     roles: Vec<Role>,
+    network_bans: Vec<NetworkBan>,
 }
 
 impl SiteSnapshot {
     pub fn new(settings: SiteSettings, roles: Vec<Role>) -> Self {
-        Self { settings, roles }
+        Self {
+            settings,
+            roles,
+            network_bans: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_network_bans(mut self, network_bans: Vec<NetworkBan>) -> Self {
+        self.network_bans = network_bans;
+        self
+    }
+
+    /// The network ban covering `ip` now, a full one before a partial one.
+    pub fn network_ban(&self, ip: std::net::IpAddr) -> Option<&NetworkBan> {
+        let now = time::OffsetDateTime::now_utc();
+        let mut covering = self.network_bans.iter().filter(|b| b.covers(ip, now));
+        let first = covering.next()?;
+        Some(if first.full {
+            first
+        } else {
+            covering.find(|b| b.full).unwrap_or(first)
+        })
     }
 
     /// Lowest rank first.
@@ -132,7 +156,8 @@ async fn fetch(db: &PgPool) -> sqlx::Result<SiteSnapshot> {
             );
         }
     }
-    Ok(SiteSnapshot::new(settings, roles))
+    let network_bans = bans::networks_in_force(db).await?;
+    Ok(SiteSnapshot::new(settings, roles).with_network_bans(network_bans))
 }
 
 #[cfg(test)]
@@ -150,6 +175,22 @@ mod tests {
         let anonymous = snapshot.system_role(SystemRole::Anonymous).unwrap();
         assert_eq!(snapshot.role(anonymous.id), Some(anonymous));
         assert_eq!(snapshot.roles().len(), SystemRole::ALL.len());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn knows_the_network_bans(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        for (network, full) in [("203.0.113.0/24", false), ("203.0.113.0/28", true)] {
+            bans::ban_network(&mut conn, network.parse().unwrap(), "x", None, full, None)
+                .await
+                .unwrap();
+        }
+        let cache = SiteCache::load(&pool).await.unwrap();
+        let snapshot = cache.get();
+        let ban = |ip: &str| snapshot.network_ban(ip.parse().unwrap()).map(|b| b.full);
+        assert_eq!(ban("203.0.113.1"), Some(true), "the full ban wins");
+        assert_eq!(ban("203.0.113.100"), Some(false));
+        assert_eq!(ban("198.51.100.1"), None);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

@@ -355,6 +355,9 @@ pub struct ApiNetworkBan {
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
     pub expires_at: Option<OffsetDateTime>,
+    /// The network can't see the site at all; otherwise it can look but
+    /// not change anything.
+    pub full: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -407,6 +410,7 @@ pub(crate) async fn list_bans(
                 banner: b.banner_name,
                 created_at: b.created_at,
                 expires_at: b.expires_at,
+                full: b.full,
             })
             .collect(),
     }))
@@ -483,12 +487,17 @@ pub struct NewNetworkBan {
     reason: String,
     /// How long, in days; leave out for until lifted.
     days: Option<i64>,
+    /// Keep the network from seeing the site at all, rather than only
+    /// from changing anything.
+    #[serde(default)]
+    full: bool,
 }
 
 /// Ban a network.
 ///
 /// Needs `ban_users`. Requests from the network can read but not change
-/// anything, and it can't register or log in.
+/// anything, and it can't register or log in; with `full`, it can't see
+/// the site at all.
 #[utoipa::path(
     post,
     path = "/network-bans",
@@ -515,6 +524,7 @@ pub(crate) async fn ban_network(
         &ban.network,
         &ban.reason,
         expires_at,
+        ban.full,
     )
     .await?;
     let created = bans::active_networks(state.db.primary())
@@ -531,6 +541,7 @@ pub(crate) async fn ban_network(
             banner: created.banner_name,
             created_at: created.created_at,
             expires_at: created.expires_at,
+            full: created.full,
         }),
     ))
 }
@@ -940,6 +951,7 @@ mod tests {
         assert_eq!(network.status, StatusCode::CREATED, "{}", network.body);
         let network = json(&network.body);
         assert_eq!(network["network"], json!("203.0.113.0/24"));
+        assert_eq!(network["full"], json!(false));
         let too_wide = app
             .json(
                 "POST",

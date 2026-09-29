@@ -10,6 +10,7 @@ publish.workspace = true
 
 [dependencies]
 moekura-core.workspace = true
+futures-util.workspace = true
 hex.workspace = true
 ipnet.workspace = true
 serde.workspace = true
@@ -17,7 +18,7 @@ serde_json.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
 
 [dev-dependencies]

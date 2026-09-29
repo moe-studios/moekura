@@ -3,6 +3,8 @@
 //! Password hashing is CPU-heavy, so it runs on tokio's blocking pool
 //! rather than stalling the async workers.
 
+use std::sync::LazyLock;
+
 use moekura_core::accounts::{self, EmailError, NameError, PasswordError, UserName, Verification};
 use sqlx::{PgExecutor, PgPool};
 
@@ -147,7 +149,16 @@ pub async fn set_password(
     Ok(())
 }
 
+/// Hashes computed at once. Each takes 19 MiB for as long as it runs, so a
+/// burst of logins could otherwise take hundreds of megabytes; more than
+/// one per core wouldn't finish any sooner anyway.
+static HASHING: LazyLock<tokio::sync::Semaphore> = LazyLock::new(|| {
+    let cores = std::thread::available_parallelism().map_or(1, usize::from);
+    tokio::sync::Semaphore::new(cores.clamp(1, 4))
+});
+
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+    let _permit = HASHING.acquire().await.expect("never closed");
     tokio::task::spawn_blocking(f)
         .await
         .expect("password hashing panicked")

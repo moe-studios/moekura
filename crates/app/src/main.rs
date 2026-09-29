@@ -1,4 +1,5 @@
 mod admin;
+mod bench_http;
 mod config;
 mod import;
 mod import_remote;

@@ -1673,6 +1673,7 @@ dependencies = [
  "anyhow",
  "clap",
  "figment",
+ "futures-util",
  "moekura-core",
  "moekura-db",
  "moekura-jobs",
@@ -1680,6 +1681,7 @@ dependencies = [
  "moekura-storage",
  "moekura-tagger",
  "moekura-web",
+ "reqwest",
  "rpassword",
  "serde_json",
  "sqlx",
@@ -1715,6 +1717,7 @@ name = "moekura-db"
 version = "0.4.0"
 dependencies = [
  "argon2",
+ "futures-util",
  "hex",
  "ipnet",
  "moekura-core",

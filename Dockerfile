@@ -109,6 +109,10 @@ RUN ldconfig \
 COPY --from=build /usr/local/bin/moekura /usr/local/bin/moekura
 USER moekura
 WORKDIR /var/lib/moekura
+# glibc gives each thread that allocates at once a heap of its own, up to
+# eight per core, and keeps what they free; a burst of requests leaves a
+# server twice the size it needs. Two heaps keep it under 100 MB.
+ENV MALLOC_ARENA_MAX=2
 # Stored files (storage.path defaults to ./data); mount a volume here.
 VOLUME /var/lib/moekura/data
 EXPOSE 8080

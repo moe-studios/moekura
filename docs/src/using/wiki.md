@@ -14,6 +14,8 @@ start or change a page. Every change is kept: **History** lists them,
 and you can view any old version or revert to it. If someone else saves
 the page while you're editing it, you're told instead of overwriting
 their change, and your text is kept so you can save again.
+**Recent changes** on the wiki's index (`/wiki_page_versions`) lists
+the changes to every page, newest first, and can be filtered by user.
 
 ## Formatting
 

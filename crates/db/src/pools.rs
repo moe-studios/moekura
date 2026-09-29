@@ -434,6 +434,60 @@ pub async fn versions(db: impl PgExecutor<'_>, pool_id: i32) -> sqlx::Result<Vec
     .await
 }
 
+/// A version in the sitewide list, with the version before it.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Change {
+    pub id: i64,
+    pub pool_id: i32,
+    #[sqlx(flatten)]
+    pub version: Version,
+    #[sqlx(flatten)]
+    pub previous: Previous,
+}
+
+/// What the version before a [`Change`] had; all `None` for a pool's
+/// first version.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Previous {
+    pub previous_name: Option<String>,
+    pub previous_description: Option<String>,
+    pub previous_category: Option<String>,
+    pub previous_is_deleted: Option<bool>,
+    pub previous_post_ids: Option<Vec<i64>>,
+}
+
+/// Versions of every pool, newest first, optionally only one user's,
+/// older than version id `before`. Pools deleted now are left out unless
+/// `deleted` is set.
+pub async fn recent_versions(
+    db: impl PgExecutor<'_>,
+    updater_id: Option<i64>,
+    deleted: bool,
+    before: Option<i64>,
+    limit: i64,
+) -> sqlx::Result<Vec<Change>> {
+    sqlx::query_as(
+        "SELECT v.id, v.pool_id, v.version, u.name::text AS updater_name, v.name, v.description,
+                v.category, v.is_deleted, v.post_ids, v.created_at,
+                pv.name AS previous_name, pv.description AS previous_description,
+                pv.category AS previous_category, pv.is_deleted AS previous_is_deleted,
+                pv.post_ids AS previous_post_ids
+         FROM pool_versions v
+         JOIN pools p ON p.id = v.pool_id
+         LEFT JOIN pool_versions pv ON pv.pool_id = v.pool_id AND pv.version = v.version - 1
+         LEFT JOIN users u ON u.id = v.updater_id
+         WHERE ($1::bigint IS NULL OR v.updater_id = $1) AND ($2 OR NOT p.is_deleted)
+           AND ($3::bigint IS NULL OR v.id < $3)
+         ORDER BY v.id DESC LIMIT $4",
+    )
+    .bind(updater_id)
+    .bind(deleted)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn version(
     db: impl PgExecutor<'_>,
     pool_id: i32,

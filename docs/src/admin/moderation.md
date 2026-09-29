@@ -198,7 +198,10 @@ in order, and approving or rejecting it is logged. See
 post's history and each profile) lists every change to posts across the
 site, newest first, for anyone: tags added and removed, rating, source,
 parent, description and locks. Filter it by who made the change, the
-post, a tag added or removed, and a range of days.
+post, a tag added or removed, and a range of days. Changes to tags,
+wiki pages, pools and notes have lists of their own (`/tag_versions`,
+`/wiki_page_versions`, `/pool_versions`, `/note_versions`), filtered by
+user the same way and linked from each user's moderation page.
 
 Filtered to one user, it offers those with *Undo a user's post edits*
 (moderators, by default) **Undo their edits**, for users ranked below them: in the

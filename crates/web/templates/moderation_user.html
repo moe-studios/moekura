@@ -3,7 +3,7 @@
 {% block content %}
 {% include "moderation_nav.html" %}
 <h1>{{ user.name }}</h1>
-<p><a href="{{ user.profile_url }}">Profile</a> · <a href="/post_versions?user={{ user.name | urlencode }}">Post changes</a></p>
+<p><a href="{{ user.profile_url }}">Profile</a> · <a href="/post_versions?user={{ user.name | urlencode }}">Post changes</a> · <a href="/tag_versions?user={{ user.name | urlencode }}">Tag changes</a> · <a href="/wiki_page_versions?user={{ user.name | urlencode }}">Wiki changes</a> · <a href="/pool_versions?user={{ user.name | urlencode }}">Pool changes</a> · <a href="/note_versions?user={{ user.name | urlencode }}">Note changes</a></p>
 
 <section class="card">
   <h2>Account</h2>

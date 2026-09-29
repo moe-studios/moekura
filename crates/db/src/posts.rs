@@ -1,6 +1,6 @@
 //! Queries on `posts`.
 
-use moekura_core::posts::{PostStatus, Rating};
+use moekura_core::posts::{PostLock, PostStatus, Rating};
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
 
@@ -33,6 +33,14 @@ pub struct Post {
     pub last_noted_at: Option<OffsetDateTime>,
     pub tag_ids: Vec<i32>,
     pub created_at: OffsetDateTime,
+    /// What staff locked against changes.
+    pub locks: Vec<PostLock>,
+}
+
+impl Post {
+    pub fn is_locked(&self, lock: PostLock) -> bool {
+        self.locks.contains(&lock)
+    }
 }
 
 #[derive(sqlx::FromRow)]
@@ -52,6 +60,7 @@ struct PostRow {
     last_noted_at: Option<OffsetDateTime>,
     tag_ids: Vec<i32>,
     created_at: OffsetDateTime,
+    locks: Vec<String>,
 }
 
 impl TryFrom<PostRow> for Post {
@@ -83,6 +92,11 @@ impl TryFrom<PostRow> for Post {
             last_noted_at: row.last_noted_at,
             tag_ids: row.tag_ids,
             created_at: row.created_at,
+            locks: row
+                .locks
+                .iter()
+                .map(|l| PostLock::parse(l).ok_or_else(|| bad("lock", l)))
+                .collect::<Result<_, _>>()?,
         })
     }
 }
@@ -93,7 +107,7 @@ macro_rules! select_posts {
         concat!(
             "SELECT id, uploader_id, rating, status, source, description, parent_id, score,
                     fav_count, comment_count, last_commented_at,
-                    note_count, last_noted_at, tag_ids, created_at
+                    note_count, last_noted_at, tag_ids, created_at, locks
              FROM posts ",
             $rest
         )
@@ -312,6 +326,21 @@ pub async fn lock(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post>
         .fetch_optional(db)
         .await?;
     row.map(Post::try_from).transpose()
+}
+
+/// Replaces a post's locks (in the order of [`PostLock::ALL`]).
+pub async fn set_locks(db: impl PgExecutor<'_>, id: i64, locks: &[PostLock]) -> sqlx::Result<()> {
+    let names: Vec<&str> = PostLock::ALL
+        .iter()
+        .filter(|l| locks.contains(l))
+        .map(|l| l.as_str())
+        .collect();
+    sqlx::query("UPDATE posts SET locks = $2, updated_at = now() WHERE id = $1")
+        .bind(id)
+        .bind(names)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// The editable fields of a post.

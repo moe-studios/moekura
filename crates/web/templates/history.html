@@ -25,6 +25,7 @@
       {% if v.source is not none %}<li class="source">source: {{ v.source or "none" }}</li>{% endif %}
       {% if v.parent %}<li>parent: {{ v.parent }}</li>{% endif %}
       {% if v.description_changed %}<li>description changed</li>{% endif %}
+      {% if v.locks %}<li>locked: {{ v.locks }}</li>{% endif %}
     </ul>
   </li>
   {% endfor %}

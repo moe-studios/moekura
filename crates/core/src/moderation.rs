@@ -148,10 +148,11 @@ pub enum ActionKind {
     RoleCreate,
     RoleDelete,
     AppealReject,
+    PostLock,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 33] = [
+    pub const ALL: [ActionKind; 34] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -185,6 +186,7 @@ impl ActionKind {
         ActionKind::RoleCreate,
         ActionKind::RoleDelete,
         ActionKind::AppealReject,
+        ActionKind::PostLock,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -222,6 +224,7 @@ impl ActionKind {
             ActionKind::RoleCreate => "role.create",
             ActionKind::RoleDelete => "role.delete",
             ActionKind::AppealReject => "appeal.reject",
+            ActionKind::PostLock => "post.lock",
         }
     }
 
@@ -261,6 +264,7 @@ impl ActionKind {
             ActionKind::RoleCreate => "added a role",
             ActionKind::RoleDelete => "deleted a role",
             ActionKind::AppealReject => "turned down an appeal of post",
+            ActionKind::PostLock => "changed the locks on post",
         }
     }
 

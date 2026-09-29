@@ -8,6 +8,7 @@
   <section class="post-media">
     {% if deleted %}<p class="notice">Deleted {{ deleted.when }}{% if deleted.by %} by {{ deleted.by }}{% endif %}{% if deleted.reason %}: “{{ deleted.reason }}”{% endif %}</p>
     {% elif post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
+    {% if moderate.locked %}<p class="notice">Locked: {{ moderate.locked | join(", ") | lower }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
     {% for p in pools.pools %}
     <nav class="pool-nav{% if p.current %} current{% endif %}" aria-label="Pool {{ p.name }}">
@@ -116,9 +117,18 @@
       </form>
     </details>
     {% endif %}
-    {% if moderate.can_delete or moderate.can_restore %}
+    {% if moderate.can_delete or moderate.can_restore or moderate.can_lock %}
     <details class="edit moderate">
       <summary>Moderate</summary>
+      {% if moderate.can_lock %}
+      <form method="post" action="/posts/{{ post.id }}/locks">
+        <fieldset class="locks">
+          <legend>Locked against changes</legend>
+          {% for l in moderate.locks %}<label class="choice"><input type="checkbox" name="{{ l.name }}"{% if l.on %} checked{% endif %}> {{ l.label }}</label>{% endfor %}
+        </fieldset>
+        <button type="submit" class="secondary">Save locks</button>
+      </form>
+      {% endif %}
       {% if moderate.can_delete %}
       <form method="post" action="/posts/{{ post.id }}/delete">
         {{ reason_fields("delete-reason", reasons.deletion, "Reason for deleting") }}
@@ -143,11 +153,12 @@
       <form method="post" action="/posts/{{ post.id }}/edit{% if search.tags %}?q={{ search.tags|urlencode }}{% endif %}">
         <input type="hidden" name="old_tags" value="{{ edit.old_tags }}">
         <label for="edit-tags">Tags</label>
-        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="tags">{{ edit.tags }}</textarea>
+        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="tags"{% if edit.tags_locked %} readonly{% endif %}>{{ edit.tags }}</textarea>
+        {% if edit.tags_locked %}<p class="hint">The tags are locked.</p>{% endif %}
         <fieldset class="ratings">
           <legend>Rating</legend>
           {% for rating in ratings %}
-          <label class="choice"><input type="radio" name="rating" value="{{ rating.code }}"{% if edit.rating == rating.code %} checked{% endif %}> {{ rating.label }}</label>
+          <label class="choice"><input type="radio" name="rating" value="{{ rating.code }}"{% if edit.rating == rating.code %} checked{% elif edit.rating_locked %} disabled{% endif %}> {{ rating.label }}</label>
           {% endfor %}
         </fieldset>
         <label for="edit-source">Source</label>

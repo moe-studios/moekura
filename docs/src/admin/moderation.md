@@ -60,6 +60,25 @@ without *See deleted posts*, except its uploader, who still sees the post
 and why it went, but can't change it. It can be restored. Purging a deleted post
 removes it, its files and its history for good, in the background.
 
+## Locks
+
+Staff with *Lock posts* (moderators, by default) lock a post's rating,
+tags, notes or status under **Moderate** on the post page, for instance
+to end an edit war. The post says what's locked, and locking and
+unlocking show in its history and the log. For everyone without *Lock
+posts*:
+
+- a locked **rating** or **tags** can't be changed: not by editing the
+  post (on the site, through the API, Danbooru apps or tag scripts), nor
+  by reverting to an earlier version;
+- locked **notes** can't be added, changed or deleted;
+- a locked **status** means the post can't be flagged, approved,
+  rejected, deleted, restored or appealed.
+
+Mass tag edits leave posts with locked tags alone, and the tagger doesn't
+touch locked tags or ratings. Tag aliases and implications still apply to
+every post, so a renamed tag stays renamed.
+
 ## Appeals
 
 The uploader of a deleted post (and anyone who can see deleted posts),

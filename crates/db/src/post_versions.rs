@@ -1,5 +1,6 @@
-//! Post history. Versions are recorded by triggers on `posts` (migration
-//! 0012) whenever tags, rating, source, description or parent change;
+//! Post history. Versions are recorded by triggers on `posts` (migrations
+//! 0012 and 0046) whenever tags, rating, source, description, parent or
+//! locks change;
 //! [`attribute`] tells them who is making the change.
 
 use sqlx::{PgConnection, PgExecutor};
@@ -22,6 +23,8 @@ pub struct Version {
     pub source: String,
     pub description: String,
     pub parent_id: Option<i64>,
+    /// The post's locks (`moekura_core::posts::PostLock` names).
+    pub locks: Vec<String>,
     pub created_at: OffsetDateTime,
 }
 
@@ -33,7 +36,7 @@ macro_rules! select_versions {
                     r.antecedent_name::text AS relation_antecedent,
                     r.consequent_name::text AS relation_consequent,
                     v.tag_ids, v.added_tag_ids, v.removed_tag_ids, v.rating, v.source,
-                    v.description, v.parent_id, v.created_at
+                    v.description, v.parent_id, v.locks, v.created_at
              FROM post_versions v
              LEFT JOIN users u ON u.id = v.updater_id
              LEFT JOIN tag_relations r ON r.id = v.relation_id ",

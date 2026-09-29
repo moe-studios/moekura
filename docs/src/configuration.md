@@ -193,7 +193,7 @@ if they aren't on `PATH`.
 | Key | Meaning |
 |---|---|
 | `templates_override` | a directory whose files replace built-in templates with the same path, e.g. `base.html` |
-| `static_override` | the same for static files, e.g. `css/main.css` |
+| `static_override` | the same for static files, e.g. `css/main.css`; also where [themes](admin/themes.md) are added |
 
 ## `[tagger]`
 

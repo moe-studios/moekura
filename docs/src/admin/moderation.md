@@ -10,6 +10,14 @@ When **New uploads wait for approval** is ticked (**Admin → Settings**), uploa
 *pending*: only their uploader and staff see them. Approve them, or reject
 them with a reason, from **Moderation → Approval queue**.
 
+An approver can also *disapprove* a post: pass on it without rejecting
+it, saying whether it breaks the rules, is of poor quality, or just isn't
+for them, with an optional note. The post stays pending and leaves that
+approver's queue, while other approvers see the disapprovals (and the post
+page lists them). The queue holds the posts found by `status:unmoderated`:
+pending posts the approver didn't upload and hasn't disapproved. A user's
+moderation record counts the posts they disapproved.
+
 ## Flags
 
 Members flag posts that should go, with a reason. Flagged posts stay

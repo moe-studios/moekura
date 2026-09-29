@@ -207,6 +207,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     let flags_filed = user_record::flags_filed(db, user.id).await?;
     let reports = user_record::reports_received(db, user.id).await?;
     let hidden = user_record::hidden_comments(db, user.id, RECENT).await?;
+    let disapprovals = Tally(moekura_db::disapprovals::counts_by(db, user.id).await?);
     let flag_statuses = ["open", "upheld", "dismissed"];
     let notes = notes(state, &page.current, user.id).await?;
     // Addresses are for those who can ban them.
@@ -282,6 +283,10 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 when => f.created_at.date().to_string(),
             }).collect::<Vec<_>>(),
             flags_filed => tally_context(&flags_filed, &flag_statuses),
+            disapprovals => tally_context(
+                &disapprovals,
+                &moekura_core::moderation::DisapprovalReason::ALL.map(|r| r.as_str()),
+            ),
             reports => tally_context(&reports, &flag_statuses),
             hidden => hidden.iter().map(|c| context! {
                 id => c.id,

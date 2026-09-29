@@ -69,6 +69,45 @@ pub fn combine_reason(preset: &str, text: &str) -> String {
     }
 }
 
+/// Why an approver passed on a pending post without rejecting it
+/// (Danbooru's disapprovals).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DisapprovalReason {
+    BreaksRules,
+    PoorQuality,
+    /// The approver just isn't interested in approving it.
+    Disinterest,
+}
+
+impl DisapprovalReason {
+    pub const ALL: [DisapprovalReason; 3] = [
+        DisapprovalReason::BreaksRules,
+        DisapprovalReason::PoorQuality,
+        DisapprovalReason::Disinterest,
+    ];
+
+    /// As stored, and as Danbooru names them.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DisapprovalReason::BreaksRules => "breaks_rules",
+            DisapprovalReason::PoorQuality => "poor_quality",
+            DisapprovalReason::Disinterest => "disinterest",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DisapprovalReason::BreaksRules => "Breaks the rules",
+            DisapprovalReason::PoorQuality => "Poor quality",
+            DisapprovalReason::Disinterest => "Not interested",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|r| r.as_str() == s)
+    }
+}
+
 /// The longest timed ban, in days; longer ones are until lifted.
 pub const MAX_BAN_DAYS: i64 = 3650;
 

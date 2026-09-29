@@ -6,6 +6,7 @@ pub mod api_keys;
 pub mod bans;
 pub mod bench;
 pub mod comments;
+pub mod disapprovals;
 pub mod favorite_groups;
 pub mod favorites;
 pub mod feeds;

@@ -27,6 +27,7 @@ mod health;
 mod history;
 pub mod import;
 mod mass_edit;
+mod metatags;
 mod moderation;
 mod notes;
 pub mod oidc;

@@ -2,11 +2,18 @@
 // under the cursor from /tags/autocomplete, following the ARIA combobox
 // pattern. Without scripts, the fields are plain inputs.
 
-import { CATEGORIES, METATAGS } from "./metatags.ts";
+import { CATEGORIES, EDIT_METATAGS, METATAGS, NEGATABLE } from "./metatags.ts";
 
 /** `search`: search syntax (`-`, `~`, metatags). `tags`: tag input
- * (category prefixes). */
-export type Mode = "search" | "tags";
+ * (category prefixes). `edit`: a post's tag box, tags with category
+ * prefixes, `-tag` and the edit metatags. */
+export type Mode = "search" | "tags" | "edit";
+
+function metatagsOf(mode: Mode): Readonly<Record<string, readonly string[]>> {
+  if (mode === "search") return METATAGS;
+  if (mode === "edit") return EDIT_METATAGS;
+  return {};
+}
 
 interface Suggestion {
   name: string;
@@ -62,11 +69,16 @@ export function target(value: string, caret: number, mode: Mode): Target | null 
     if (word.endsWith(")") && unbalanced(word)) return null;
     while (end > caret && value.charAt(end - 1) === ")" && unbalanced(value.slice(start, end))) end--;
   }
+  if (mode === "edit" && word.startsWith("-")) {
+    // `-tag` takes a tag off; `-pool:` and friends undo a metatag.
+    start += 1;
+    word = word.slice(1);
+  }
   const colon = word.indexOf(":");
   if (colon > 0) {
     const prefix = word.slice(0, colon).toLowerCase();
     const rest = word.slice(colon + 1);
-    if (mode === "search" && prefix in METATAGS) {
+    if (mode !== "tags" && prefix in metatagsOf(mode)) {
       // Lists (`rating:g,s`) complete their last item.
       const comma = rest.lastIndexOf(",");
       const typed = rest.slice(comma + 1);
@@ -95,16 +107,17 @@ async function fetchSuggestions(typed: string, signal: AbortSignal): Promise<Sug
   return suggestions;
 }
 
-function metatagNames(typed: string): Item[] {
+/** Metatag names for `typed`; `negated` when it followed a `-`. */
+export function metatagNames(typed: string, mode: Mode, negated = false): Item[] {
   const lower = typed.toLowerCase();
-  return Object.keys(METATAGS)
-    .filter((name) => name.startsWith(lower))
+  return Object.keys(metatagsOf(mode))
+    .filter((name) => name.startsWith(lower) && (!negated || mode !== "edit" || NEGATABLE.includes(name)))
     .map((name) => ({ text: `${name}:`, finished: false }));
 }
 
-function metatagValues(metatag: string, typed: string): Item[] {
+function metatagValues(mode: Mode, metatag: string, typed: string): Item[] {
   const lower = typed.toLowerCase();
-  return (METATAGS[metatag] ?? [])
+  return (metatagsOf(mode)[metatag] ?? [])
     .filter((value) => value.startsWith(lower) && value !== lower)
     .map((value) => ({ text: value, finished: true }));
 }
@@ -169,7 +182,7 @@ class Autocomplete {
       return;
     }
     if (found.kind === "metatag-value") {
-      this.show(metatagValues(found.metatag ?? "", found.typed));
+      this.show(metatagValues(this.mode, found.metatag ?? "", found.typed));
       return;
     }
     const request = new AbortController();
@@ -189,7 +202,10 @@ class Autocomplete {
       count: s.post_count,
       ...(s.antecedent === undefined ? {} : { antecedent: s.antecedent }),
     }));
-    if (this.mode === "search") items.push(...metatagNames(found.typed).slice(0, 3));
+    if (this.mode !== "tags") {
+      const negated = this.field.value.charAt(found.start - 1) === "-";
+      items.push(...metatagNames(found.typed, this.mode, negated).slice(0, 3));
+    }
     this.show(items);
   }
 
@@ -305,7 +321,8 @@ class Autocomplete {
 /** Adds autocomplete to every field marked `data-autocomplete`. */
 export function attachAll(root: ParentNode = document): void {
   for (const field of root.querySelectorAll<Field>("input[data-autocomplete], textarea[data-autocomplete]")) {
-    const mode = field.dataset["autocomplete"] === "search" ? "search" : "tags";
+    const wanted = field.dataset["autocomplete"];
+    const mode: Mode = wanted === "search" || wanted === "edit" ? wanted : "tags";
     new Autocomplete(field, mode);
   }
 }

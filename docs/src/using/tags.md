@@ -18,6 +18,32 @@ list.
 
 Each tag can have a [wiki page](wiki.md) describing it.
 
+## Metatags in the tag box
+
+The tags box on the edit and upload forms takes more than tags, as on
+Danbooru. `-tag` takes a tag off, and these metatags change other
+things:
+
+| Metatag | Does |
+|---|---|
+| `rating:g`, `s`, `q`, `e` (or the full name) | sets the rating |
+| `source:https://…`, `source:none` | sets or clears the source |
+| `parent:123`, `parent:none` or `-parent` | sets or clears the parent; `-parent:123` clears it only if it's 123 |
+| `child:123`, `-child:123` | makes post 123 a child of this one, or stops it being one |
+| `pool:12`, `pool:name`, `-pool:12` | adds the post to the end of a pool, or takes it out |
+| `newpool:name` | starts a pool with the post (or adds it to the pool of that name) |
+| `fav`, `-fav` | favorites the post, or stops favoriting it |
+| `favgroup:12`, `favgroup:name`, `-favgroup:12` | adds the post to one of your favorite groups, or takes it out |
+| `upvote`, `downvote` | votes on the post |
+
+Each needs the permission it would need done by hand (editing pools to
+use `pool:`, favoriting to use `fav`, …), and is recorded where that
+would be: parents in the posts' history, pools in the pool's. A metatag
+you can't use, or one naming something that doesn't exist, stops the
+save with the reason. Metatags in the box win over the form's own
+rating, source and parent fields. They also work in tag scripts and the
+APIs' tag fields; in a mass edit, only `-tag` and `rating:` do.
+
 ## Suggestions from the tagger
 
 On sites that run the [tagger](../admin/tagger.md), a model looks at each
@@ -97,6 +123,7 @@ To tag many posts quickly, open **Tag script** beside search results
 (for those who can edit posts), type a script and tick **Apply by
 clicking posts**. Clicking a post then applies the script to it instead
 of opening it: `tag` adds a tag, `-tag` removes one, and `rating:s` sets
-the rating, so `cat_ears -cat rating:g` does all three. Changed posts
+the rating, so `cat_ears -cat rating:g` does all three; the other
+[metatags](#metatags-in-the-tag-box) (`pool:12`, `fav`, …) work too. Changed posts
 are outlined green, refused ones red with the reason below the script.
 Each change is in the post's history as if you had edited it.

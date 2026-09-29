@@ -161,7 +161,7 @@
       <form method="post" action="/posts/{{ post.id }}/edit{% if search.tags %}?q={{ search.tags|urlencode }}{% endif %}">
         <input type="hidden" name="old_tags" value="{{ edit.old_tags }}">
         <label for="edit-tags">Tags</label>
-        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="tags"{% if edit.tags_locked %} readonly{% endif %}>{{ edit.tags }}</textarea>
+        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="edit"{% if edit.tags_locked %} readonly{% endif %}>{{ edit.tags }}</textarea>
         {% if edit.tags_locked %}<p class="hint">The tags are locked.</p>{% endif %}
         <fieldset class="ratings">
           <legend>Rating</legend>

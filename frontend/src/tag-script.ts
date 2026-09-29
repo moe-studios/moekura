@@ -1,7 +1,10 @@
 // Tag scripts: on search results, those who can edit posts type a script
-// like `tag_a -tag_b rating:s`, then clicking a post applies it (through
-// the API) instead of opening it. Each change is in the post's history as
+// like `tag_a -tag_b rating:s pool:12`, then clicking a post applies it
+// (through the API) instead of opening it. Metatags work as in the tag
+// box; the server reads them. Each change is in the post's history as
 // usual. Without scripts the panel stays hidden.
+
+import { NEGATABLE } from "./metatags.ts";
 
 export interface Script {
   add: string[];
@@ -30,13 +33,20 @@ export function parseScript(text: string): Script {
       const rating = RATINGS[lower.slice("rating:".length)];
       if (!rating) throw new Error(`Unknown rating in “${word}”.`);
       script.rating = rating;
-    } else if (word.startsWith("-") && word.length > 1) {
+    } else if (word.startsWith("-") && word.length > 1 && !isNegatedMetatag(lower)) {
       script.remove.push(word.slice(1));
     } else {
       script.add.push(word);
     }
   }
   return script;
+}
+
+/** Whether `word` (lower case) undoes a metatag, like `-pool:12` or
+ * `-fav`, rather than taking a tag off. */
+function isNegatedMetatag(word: string): boolean {
+  const name = word.slice(1).split(":")[0] ?? "";
+  return NEGATABLE.includes(name) && (word.includes(":") || name === "fav" || name === "parent");
 }
 
 /** The post number a card links to. */

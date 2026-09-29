@@ -14,6 +14,7 @@ pub mod moderation;
 pub mod notes;
 pub mod permissions;
 pub mod pools;
+pub mod post_edit;
 pub mod posts;
 pub mod promotion;
 pub mod remote;

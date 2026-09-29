@@ -102,3 +102,21 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
 
 /// Prefixes that set a new tag's category when tagging.
 export const CATEGORIES: readonly string[] = ["artist", "copyright", "character", "general", "meta"];
+
+/// Metatags of the tag box when editing and uploading, mirroring
+/// moekura_core::post_edit::METATAGS, with their fixed values.
+export const EDIT_METATAGS: Readonly<Record<string, readonly string[]>> = {
+  rating: ["general", "sensitive", "questionable", "explicit"],
+  parent: ["none"],
+  child: [],
+  source: ["none"],
+  pool: [],
+  newpool: [],
+  fav: [],
+  favgroup: [],
+  upvote: [],
+  downvote: [],
+};
+
+/// Edit metatags that also work with a leading `-`.
+export const NEGATABLE: readonly string[] = ["parent", "child", "pool", "fav", "favgroup"];

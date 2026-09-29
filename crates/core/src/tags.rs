@@ -42,6 +42,7 @@ pub const RESERVED_PREFIXES: &[&str] = &[
     "md5",
     "metatags",
     "mpixels",
+    "newpool",
     "note",
     "notecount",
     "noter",

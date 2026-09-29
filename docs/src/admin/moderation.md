@@ -68,6 +68,13 @@ dismissed; reports about their comments and their hidden comments; and,
 for those who read the log, what was logged about them and what they
 did themselves.
 
+### Staff notes
+
+The same staff keep private notes about users, on the profile and the
+record: who wrote each and when, in the same markup as comments. Only
+staff see them, not the user. Authors delete their own notes; those who
+can ban users delete anyone's.
+
 ### Addresses
 
 For staff who can ban users, the record also lists the addresses the

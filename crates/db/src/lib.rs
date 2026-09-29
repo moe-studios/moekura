@@ -38,6 +38,7 @@ pub mod tag_suggestions;
 pub mod tags;
 pub mod two_factor;
 pub mod user_ips;
+pub mod user_notes;
 pub mod user_record;
 pub mod users;
 pub mod webhooks;

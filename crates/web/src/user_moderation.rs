@@ -1,17 +1,23 @@
 //! The user moderation page: one user's record for staff, in one place.
 
-use axum::Router;
-use axum::extract::Path;
-use axum::response::Response;
-use axum::routing::get;
+use axum::extract::{Path, Query};
+use axum::response::{IntoResponse, Redirect, Response};
+use axum::routing::{get, post};
+use axum::{Form, Router};
+use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
+use moekura_core::markup;
 use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Filter};
+use moekura_db::user_notes::{self, UserNote};
 use moekura_db::user_record::{self, Tally};
 use moekura_db::{bans, user_ips, users};
+use serde::Deserialize;
 
 use crate::AppState;
+use crate::auth::CurrentUser;
 use crate::error::AppError;
+use crate::flash::{self, Flash};
 use crate::pages::Page;
 use crate::templates::url_value;
 
@@ -22,11 +28,14 @@ const RECENT: i64 = 20;
 const ADDRESSES: i64 = 50;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/moderation/users/{name}", get(page))
+    Router::new()
+        .route("/moderation/users/{name}", get(page))
+        .route("/users/{name}/notes", post(add_note))
+        .route("/moderation/user-notes/{id}/delete", post(delete_note))
 }
 
-/// Whether `current` may see users' moderation pages.
-pub(crate) fn may_view(current: &crate::auth::CurrentUser) -> bool {
+/// Whether `current` may see users' moderation pages, and staff notes.
+pub(crate) fn may_view(current: &CurrentUser) -> bool {
     current.can(Permission::BanUsers) || current.can(Permission::ViewAuditLog)
 }
 
@@ -74,6 +83,94 @@ fn ban_url(network: &str) -> Value {
     ))
 }
 
+/// Staff notes about `user_id` for a page, if `current` may see them.
+pub(crate) async fn notes(
+    state: &AppState,
+    current: &CurrentUser,
+    user_id: i64,
+) -> Result<Option<Vec<Value>>, AppError> {
+    if !may_view(current) {
+        return Ok(None);
+    }
+    let notes = user_notes::for_user(state.db.primary(), user_id).await?;
+    Ok(Some(
+        notes
+            .iter()
+            .map(|note| {
+                context! {
+                    id => note.id,
+                    by => note.creator_name,
+                    when => note.created_at.date().to_string(),
+                    html => Value::from_safe_string(markup::render(&note.body)),
+                    can_delete => may_delete_note(current, note),
+                }
+            })
+            .collect(),
+    ))
+}
+
+/// Authors delete their own notes; those who can ban users, anyone's.
+fn may_delete_note(current: &CurrentUser, note: &UserNote) -> bool {
+    let own = current.user.as_ref().map(|u| u.id) == note.creator_id && note.creator_id.is_some();
+    may_view(current) && (own || current.can(Permission::BanUsers))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Back {
+    back: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NoteForm {
+    #[serde(default)]
+    body: String,
+}
+
+async fn add_note(
+    page: Page,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Query(back): Query<Back>,
+    Form(form): Form<NoteForm>,
+) -> Result<Response, AppError> {
+    if !may_view(&page.current) {
+        page.current.require(Permission::BanUsers)?;
+    }
+    let me = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let db = page.state().db.primary();
+    let user = users::by_name(db, &name).await?.ok_or(AppError::NotFound)?;
+    let body = form.body.replace("\r\n", "\n");
+    let body = body.trim();
+    if body.is_empty() || body.chars().count() > user_notes::MAX_LEN {
+        return Err(AppError::BadRequest(format!(
+            "A note has 1 to {} characters",
+            user_notes::MAX_LEN
+        )));
+    }
+    user_notes::create(db, user.id, me.id, body).await?;
+    let to = crate::account::safe_next(back.back.as_deref()).to_owned();
+    Ok((flash::set(jar, Flash::Saved), Redirect::to(&to)).into_response())
+}
+
+async fn delete_note(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Query(back): Query<Back>,
+) -> Result<Response, AppError> {
+    if !may_view(&page.current) {
+        page.current.require(Permission::BanUsers)?;
+    }
+    let db = page.state().db.primary();
+    let note = user_notes::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    if !may_delete_note(&page.current, &note) {
+        return Err(AppError::Forbidden);
+    }
+    user_notes::delete(db, id).await?;
+    let to = crate::account::safe_next(back.back.as_deref()).to_owned();
+    Ok((flash::set(jar, Flash::Saved), Redirect::to(&to)).into_response())
+}
+
 async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError> {
     if !may_view(&page.current) {
         page.current.require(Permission::BanUsers)?;
@@ -111,6 +208,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     let reports = user_record::reports_received(db, user.id).await?;
     let hidden = user_record::hidden_comments(db, user.id, RECENT).await?;
     let flag_statuses = ["open", "upheld", "dismissed"];
+    let notes = notes(state, &page.current, user.id).await?;
     // Addresses are for those who can ban them.
     let (addresses, related) = if page.current.can(Permission::BanUsers) {
         (
@@ -142,6 +240,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
             can_ban => can_ban,
             banned => banned,
             durations => crate::bans::durations(),
+            notes => notes,
             read_log => read_log,
             about => about.iter().map(crate::moderation::entry_context).collect::<Vec<_>>(),
             about_url => log_url("user", &user.name),
@@ -350,5 +449,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn staff_keep_notes_on_users(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes().merge(crate::users::routes()),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        assert_eq!(
+            app.post_form("/users/alice/notes", Some(&alice), &[], "body=hi")
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        let added = app
+            .post_form(
+                "/users/alice/notes?back=%2Fusers%2Falice",
+                Some(&moderator),
+                &[],
+                "body=Warned+about+*spam*",
+            )
+            .await;
+        assert_eq!(added.location.as_deref(), Some("/users/alice"));
+        let profile = app.get("/users/alice", Some(&moderator)).await.body;
+        assert!(profile.contains("Staff notes"), "{profile}");
+        assert!(profile.contains("Warned about"), "{profile}");
+        assert!(profile.contains("· mod"), "{profile}");
+        let record = app.get("/moderation/users/alice", Some(&admin)).await.body;
+        assert!(record.contains("Warned about"), "{record}");
+        // Hidden from everyone else, the user included.
+        let own = app.get("/users/alice", Some(&alice)).await.body;
+        assert!(!own.contains("Warned about") && !own.contains("Staff notes"));
+
+        let id: i64 = sqlx::query_scalar("SELECT id FROM user_notes")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let delete = format!("/moderation/user-notes/{id}/delete");
+        assert_eq!(
+            app.post(&delete, Some(&alice), &[]).await.status,
+            StatusCode::FORBIDDEN
+        );
+        let deleted = app.post(&delete, Some(&admin), &[]).await;
+        assert_eq!(deleted.status, StatusCode::SEE_OTHER);
+        assert!(
+            !app.get("/users/alice", Some(&moderator))
+                .await
+                .body
+                .contains("Warned about")
+        );
     }
 }

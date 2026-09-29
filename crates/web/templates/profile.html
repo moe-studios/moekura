@@ -48,5 +48,6 @@
   {% if can_unban %}
   <form method="post" action="/users/{{ user.name }}/unban"><button type="submit">Lift the ban</button></form>
   {% endif %}
+  {% include "user_notes.html" %}
 </section>
 {% endblock %}

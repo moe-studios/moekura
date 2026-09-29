@@ -469,7 +469,7 @@ mod tests {
                 .await
                 .unwrap()
         };
-        moekura_db::comments::create(&pool, cat, alice, "So [b]fluffy[/b]")
+        moekura_db::comments::create(&pool, cat, alice, "So [b]fluffy[/b]", true)
             .await
             .unwrap();
         let comments = app.get("/comments.atom", None).await;

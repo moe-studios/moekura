@@ -220,7 +220,7 @@ impl DanbooruPost {
             is_banned: false,
             pixiv_id: None,
             bit_flags: 0,
-            last_comment_bumped_at: post.last_commented_at.map(timestamp),
+            last_comment_bumped_at: post.last_comment_bumped_at.map(timestamp),
             last_commented_at: post.last_commented_at.map(timestamp),
             last_noted_at: post.last_noted_at.map(timestamp),
             media_asset: MediaAsset {

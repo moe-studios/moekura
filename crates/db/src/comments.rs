@@ -18,6 +18,10 @@ pub struct Comment {
     pub score: i32,
     pub created_at: OffsetDateTime,
     pub edited_at: Option<OffsetDateTime>,
+    /// Pinned by staff to the top of its post's comments.
+    pub is_sticky: bool,
+    /// Posted without bumping its post in `order:comment_bumped`.
+    pub do_not_bump: bool,
 }
 
 /// `SELECT <comment columns> FROM comments c LEFT JOIN users u` followed
@@ -26,28 +30,43 @@ macro_rules! select_comments {
     ($rest:literal) => {
         concat!(
             "SELECT c.id, c.post_id, c.creator_id, u.name::text AS creator_name, c.body,
-                    c.is_deleted, c.score, c.created_at, c.edited_at
+                    c.is_deleted, c.score, c.created_at, c.edited_at, c.is_sticky, c.do_not_bump
              FROM comments c LEFT JOIN users u ON u.id = c.creator_id ",
             $rest
         )
     };
 }
 
-/// Adds a comment and returns its id.
+/// Adds a comment and returns its id. Unless `bump`, the post keeps its
+/// place in `order:comment_bumped`.
 pub async fn create(
     db: impl PgExecutor<'_>,
     post_id: i64,
     creator_id: i64,
     body: &str,
+    bump: bool,
 ) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "INSERT INTO comments (post_id, creator_id, body) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO comments (post_id, creator_id, body, do_not_bump)
+         VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(post_id)
     .bind(creator_id)
     .bind(body)
+    .bind(!bump)
     .fetch_one(db)
     .await
+}
+
+/// Pins or unpins a comment; false if it already was.
+pub async fn set_sticky(db: impl PgExecutor<'_>, id: i64, sticky: bool) -> sqlx::Result<bool> {
+    let result =
+        sqlx::query("UPDATE comments SET is_sticky = $2 WHERE id = $1 AND is_sticky <> $2")
+            .bind(id)
+            .bind(sticky)
+            .execute(db)
+            .await?;
+    Ok(result.rows_affected() == 1)
 }
 
 pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Comment>> {
@@ -57,8 +76,8 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Comm
         .await
 }
 
-/// The latest `limit` comments on a post, oldest first, with deleted ones
-/// if `with_deleted`.
+/// The latest `limit` comments on a post, sticky ones first, then oldest
+/// first, with deleted ones if `with_deleted`.
 pub async fn for_post(
     db: impl PgExecutor<'_>,
     post_id: i64,
@@ -66,7 +85,8 @@ pub async fn for_post(
     limit: i64,
 ) -> sqlx::Result<Vec<Comment>> {
     let mut comments: Vec<Comment> = sqlx::query_as(select_comments!(
-        "WHERE c.post_id = $1 AND ($2 OR NOT c.is_deleted) ORDER BY c.id DESC LIMIT $3"
+        "WHERE c.post_id = $1 AND ($2 OR NOT c.is_deleted)
+         ORDER BY c.is_sticky DESC, c.id DESC LIMIT $3"
     ))
     .bind(post_id)
     .bind(with_deleted)
@@ -74,6 +94,8 @@ pub async fn for_post(
     .fetch_all(db)
     .await?;
     comments.reverse();
+    // Stable, so each part stays oldest first.
+    comments.sort_by_key(|c| !c.is_sticky);
     Ok(comments)
 }
 
@@ -319,8 +341,8 @@ mod tests {
         let post = post(&pool, "active").await;
         assert_eq!(counts(&pool, post).await, (0, None));
 
-        let first = create(&pool, post, alice, "First").await.unwrap();
-        let second = create(&pool, post, alice, "Second").await.unwrap();
+        let first = create(&pool, post, alice, "First", true).await.unwrap();
+        let second = create(&pool, post, alice, "Second", true).await.unwrap();
         let second_at = by_id(&pool, second).await.unwrap().unwrap().created_at;
         assert_eq!(counts(&pool, post).await, (2, Some(second_at)));
 
@@ -340,12 +362,60 @@ mod tests {
         assert_eq!(counts(&pool, post).await, (0, None));
     }
 
+    async fn bumped_at(pool: &PgPool, post: i64) -> Option<OffsetDateTime> {
+        sqlx::query_scalar("SELECT last_comment_bumped_at FROM posts WHERE id = $1")
+            .bind(post)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn only_bumping_comments_bump(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let post = post(&pool, "active").await;
+        let first = create(&pool, post, alice, "First", true).await.unwrap();
+        let first_at = by_id(&pool, first).await.unwrap().unwrap().created_at;
+        let quiet = create(&pool, post, alice, "Quiet", false).await.unwrap();
+        let quiet_at = by_id(&pool, quiet).await.unwrap().unwrap().created_at;
+        assert_eq!(bumped_at(&pool, post).await, Some(first_at));
+        assert_eq!(counts(&pool, post).await, (2, Some(quiet_at)));
+        assert!(by_id(&pool, quiet).await.unwrap().unwrap().do_not_bump);
+        set_deleted(&pool, first, true).await.unwrap();
+        assert_eq!(bumped_at(&pool, post).await, None);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn sticky_comments_come_first(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let post = post(&pool, "active").await;
+        let mut ids = Vec::new();
+        for body in ["one", "two", "three", "four"] {
+            ids.push(create(&pool, post, alice, body, true).await.unwrap());
+        }
+        assert!(set_sticky(&pool, ids[0], true).await.unwrap());
+        assert!(!set_sticky(&pool, ids[0], true).await.unwrap());
+        let bodies = |comments: Vec<Comment>| -> Vec<String> {
+            comments.into_iter().map(|c| c.body).collect()
+        };
+        // Even when older than the latest `limit`.
+        assert_eq!(
+            bodies(for_post(&pool, post, false, 3).await.unwrap()),
+            ["one", "three", "four"]
+        );
+        set_sticky(&pool, ids[0], false).await.unwrap();
+        assert_eq!(
+            bodies(for_post(&pool, post, false, 3).await.unwrap()),
+            ["two", "three", "four"]
+        );
+    }
+
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn votes_and_reports(pool: PgPool) {
         let alice = user(&pool, "alice").await;
         let bob = user(&pool, "bob").await;
         let post = post(&pool, "active").await;
-        let id = create(&pool, post, alice, "Hello").await.unwrap();
+        let id = create(&pool, post, alice, "Hello", true).await.unwrap();
         let score = |pool: PgPool| async move { by_id(&pool, id).await.unwrap().unwrap().score };
 
         vote(&pool, alice, id, 1).await.unwrap();
@@ -395,7 +465,7 @@ mod tests {
             (pending, bob, "hidden"),
             (active, alice, "three"),
         ] {
-            ids.push(create(&pool, post, user, body).await.unwrap());
+            ids.push(create(&pool, post, user, body, true).await.unwrap());
         }
         set_deleted(&pool, ids[1], true).await.unwrap();
 

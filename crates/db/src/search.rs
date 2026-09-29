@@ -2151,10 +2151,10 @@ mod tests {
         crate::posts::set_approver(&pool, ids[0], Some(alice))
             .await
             .unwrap();
-        crate::comments::create(&pool, ids[0], bob, "Nice art, love the colours")
+        crate::comments::create(&pool, ids[0], bob, "Nice art, love the colours", true)
             .await
             .unwrap();
-        let hidden = crate::comments::create(&pool, ids[1], bob, "nice try")
+        let hidden = crate::comments::create(&pool, ids[1], bob, "nice try", true)
             .await
             .unwrap();
         crate::comments::set_deleted(&pool, hidden, true)
@@ -2606,7 +2606,7 @@ mod tests {
         .unwrap();
         // Post 0 gets two comments, then post 2 one.
         for post in [ids[0], ids[0], ids[2]] {
-            crate::comments::create(&pool, post, user, "hi")
+            crate::comments::create(&pool, post, user, "hi", true)
                 .await
                 .unwrap();
         }

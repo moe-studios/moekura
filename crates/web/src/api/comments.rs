@@ -36,6 +36,10 @@ pub struct ApiComment {
     pub score: i32,
     /// Only staff see deleted comments.
     pub is_deleted: bool,
+    /// Pinned by staff to the top of the post's comments.
+    pub is_sticky: bool,
+    /// Posted without bumping the post in `order:comment_bumped`.
+    pub do_not_bump: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339::option")]
@@ -52,6 +56,8 @@ impl From<Comment> for ApiComment {
             body: c.body,
             score: c.score,
             is_deleted: c.is_deleted,
+            is_sticky: c.is_sticky,
+            do_not_bump: c.do_not_bump,
             created_at: c.created_at,
             edited_at: c.edited_at,
         }
@@ -152,6 +158,9 @@ pub(crate) async fn show(
 pub struct CommentText {
     /// In the site's wiki markup; at most 10,000 characters.
     body: String,
+    /// Leave the post's place in `order:comment_bumped` alone.
+    #[serde(default)]
+    do_not_bump: bool,
 }
 
 /// Comment on a post.
@@ -185,7 +194,7 @@ pub(crate) async fn create(
     let body = clean_body(&text.body)?;
     let user = commenter(&state, &current, &post).await?;
     let db = state.db.primary();
-    let comment_id = comments::create(db, id, user, &body).await?;
+    let comment_id = comments::create(db, id, user, &body, !text.do_not_bump).await?;
     crate::webhooks::emit_comment(&state, comment_id).await;
     let comment = comments::by_id(db, comment_id)
         .await?

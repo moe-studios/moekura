@@ -318,7 +318,8 @@ pub async fn batch(
             FROM generate_series($3::bigint, $4::bigint - 1) g
         ), made AS (
             INSERT INTO posts (uploader_id, rating, status, score, fav_count, tag_ids, created_at, updated_at,
-                               comment_count, last_commented_at, note_count, last_noted_at)
+                               comment_count, last_commented_at, last_comment_bumped_at,
+                               note_count, last_noted_at)
             SELECT
                 -- A few prolific uploaders, like real sites.
                 ($1::bigint[])[least(cardinality($1::bigint[]),
@@ -339,6 +340,7 @@ pub async fn batch(
                 ),
                 at, at,
                 comments, CASE WHEN comments > 0 THEN least(now(), at + comments * interval '47 minutes') END,
+                CASE WHEN comments > 0 THEN least(now(), at + comments * interval '47 minutes') END,
                 notes, CASE WHEN notes > 0 THEN least(now(), at + notes * interval '3 hours') END
             FROM drawn
             ORDER BY g
@@ -793,9 +795,11 @@ mod tests {
         );
         let wrong: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM posts p
-             WHERE (p.comment_count, p.last_commented_at, p.note_count, p.last_noted_at)
+             WHERE (p.comment_count, p.last_commented_at, p.last_comment_bumped_at,
+                    p.note_count, p.last_noted_at)
                    IS DISTINCT FROM
                    ((SELECT count(*) FROM comments c WHERE c.post_id = p.id AND NOT c.is_deleted),
+                    (SELECT max(created_at) FROM comments c WHERE c.post_id = p.id AND NOT c.is_deleted),
                     (SELECT max(created_at) FROM comments c WHERE c.post_id = p.id AND NOT c.is_deleted),
                     (SELECT count(*) FROM notes n WHERE n.post_id = p.id AND n.is_active),
                     (SELECT max(updated_at) FROM notes n WHERE n.post_id = p.id))",

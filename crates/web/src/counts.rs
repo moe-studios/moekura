@@ -140,6 +140,7 @@ mod tests {
             statuses: vec![PostStatus::Active],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         let search = async |input: &str| {
             let query = Query::parse(input).unwrap();

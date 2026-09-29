@@ -128,7 +128,9 @@ Searches show active and flagged posts, plus your own uploads that are
 waiting for approval. Staff who review uploads also see pending posts.
 Deleted posts only appear with `status:deleted` or `status:any` (or with a
 `status:` inside a group, such as `(status:deleted or rating:e)`), and only
-to those allowed to see them. For staff who review uploads,
+to those allowed to see them. They see how many deleted posts a search
+left out, with a link to include them, or can include them in every
+search with **Include deleted posts in searches** in their settings. For staff who review uploads,
 `status:unmoderated` finds the pending posts left for them: ones they
 didn't upload and haven't disapproved; `status:appealed` finds deleted
 posts with an open appeal. `status:modqueue` finds everything waiting for

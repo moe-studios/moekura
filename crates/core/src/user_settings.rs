@@ -75,6 +75,8 @@ pub struct UserSettings {
     pub safe_mode: bool,
     /// Post pages show the original image rather than the resized sample.
     pub original_images: bool,
+    /// Searches include deleted posts, for those who may see them.
+    pub show_deleted: bool,
     /// Grids use the larger thumbnails.
     pub large_thumbnails: bool,
     /// Blacklisted posts stay in grids, blurred, rather than being left out.
@@ -100,6 +102,7 @@ impl Default for UserSettings {
             blacklist: None,
             safe_mode: false,
             original_images: false,
+            show_deleted: false,
             large_thumbnails: false,
             blur_blacklisted: false,
             time_zone: None,
@@ -159,6 +162,7 @@ impl UserSettings {
             blacklist,
             safe_mode: flag("safe_mode"),
             original_images: flag("original_images"),
+            show_deleted: flag("show_deleted"),
             large_thumbnails: flag("large_thumbnails"),
             blur_blacklisted: flag("blur_blacklisted"),
             time_zone,
@@ -189,6 +193,7 @@ impl UserSettings {
         for (key, on) in [
             ("safe_mode", self.safe_mode),
             ("original_images", self.original_images),
+            ("show_deleted", self.show_deleted),
             ("large_thumbnails", self.large_thumbnails),
             ("blur_blacklisted", self.blur_blacklisted),
             ("hide_comments", self.hide_comments),

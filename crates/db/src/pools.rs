@@ -517,6 +517,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         assert_eq!(
             visible_post_ids(&pool, id, &public, 0, 10).await.unwrap(),

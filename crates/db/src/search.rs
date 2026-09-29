@@ -1359,7 +1359,7 @@ async fn saved_search_posts(
 
 /// The statuses a search covers, and the viewer if their own pending
 /// posts are included. Without a `status:` filter, deleted posts are left
-/// out even for those who may see them.
+/// out even for those who may see them, unless they chose otherwise.
 fn statuses(query: &Query, visibility: &Visibility) -> (Vec<&'static str>, Option<i64>) {
     let visible = &visibility.statuses;
     // `status:` inside a group decides for each post.
@@ -1373,7 +1373,7 @@ fn statuses(query: &Query, visibility: &Visibility) -> (Vec<&'static str>, Optio
         })
         .any(|filter| matches!(filter, Filter::Status(_)));
     let mut wanted: Vec<PostStatus> = match query.status() {
-        None if nested_status => visible.clone(),
+        None if nested_status || visibility.deleted_by_default => visible.clone(),
         None => visible
             .iter()
             .copied()
@@ -1783,6 +1783,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         }
     }
 
@@ -1938,6 +1939,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Deleted],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         assert_eq!(
             search_as(&pool, "cat (status:deleted or rating:e)", &staff).await,
@@ -2209,6 +2211,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
             viewer: Some(alice),
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         assert_eq!(search_as(&pool, "flagger:bob", &staff).await, [ids[2]]);
 
@@ -2507,6 +2510,7 @@ mod tests {
             ],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         // Deleted posts only when asked for.
         assert_eq!(

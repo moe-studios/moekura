@@ -243,6 +243,7 @@ async fn show(
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         let image = match pools::visible_post_ids(db, id, &public, 0, 1)
             .await?

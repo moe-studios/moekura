@@ -203,6 +203,7 @@ fn render_settings(
             prefs_form => context! {
                 safe_mode => settings.safe_mode,
                 original_images => settings.original_images,
+                show_deleted => settings.show_deleted,
                 large_thumbnails => settings.large_thumbnails,
                 blur_blacklisted => settings.blur_blacklisted,
                 hide_comments => settings.hide_comments,
@@ -212,6 +213,7 @@ fn render_settings(
                 custom_css => settings.custom_css,
             },
             time_zones => crate::dates::zone_names(),
+            can_view_deleted => page.current.can(Permission::ViewDeleted),
             large_thumbnail_size => page.state().media.config().thumbnail_sizes.get(1),
             site_theme => crate::themes::label(crate::themes::resolve(
                 &page.state().assets,
@@ -237,6 +239,7 @@ struct SettingsForm {
     // Checkboxes: present when ticked.
     safe_mode: Option<String>,
     original_images: Option<String>,
+    show_deleted: Option<String>,
     large_thumbnails: Option<String>,
     blur_blacklisted: Option<String>,
     hide_comments: Option<String>,
@@ -296,6 +299,7 @@ async fn save_settings(
         blacklist: Some(blacklist.trim().to_owned()),
         safe_mode: form.safe_mode.is_some(),
         original_images: form.original_images.is_some(),
+        show_deleted: form.show_deleted.is_some() && page.current.can(Permission::ViewDeleted),
         large_thumbnails: form.large_thumbnails.is_some(),
         blur_blacklisted: form.blur_blacklisted.is_some(),
         time_zone,

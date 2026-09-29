@@ -10,7 +10,7 @@ use moekura_core::jobs::PurgePost;
 use moekura_core::moderation::REASON_MAX_LEN;
 use moekura_core::moderation::{ActionKind, DisapprovalReason};
 use moekura_core::permissions::Permission;
-use moekura_core::posts::PostStatus;
+use moekura_core::posts::{PostLock, PostStatus};
 use moekura_core::webhooks::Event;
 use moekura_db::appeals::{self, AppealError};
 use moekura_db::flags::{self, FlagError};
@@ -49,6 +49,7 @@ pub fn routes() -> Router<AppState> {
         .route("/posts/{id}/delete", post(delete))
         .route("/posts/{id}/restore", post(restore))
         .route("/posts/{id}/purge", post(purge))
+        .route("/posts/{id}/locks", post(set_locks_form))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -145,6 +146,8 @@ pub(crate) async fn moderate(
 ) -> Result<(), AppError> {
     let db = state.db.primary();
     let actor = current.user.as_ref().map(|u| u.id);
+    let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    crate::posts::check_lock(current, &post, PostLock::Status)?;
     let (permission, from, to, kind, reason): (_, &[PostStatus], _, _, _) = match action {
         PostAction::Approve => (
             Permission::ApprovePosts,
@@ -253,6 +256,10 @@ pub(crate) async fn flag_post(
     if reason.is_empty() {
         return Err(AppError::BadRequest("Say why the post should go".into()));
     }
+    let post = posts::by_id(state.db.primary(), id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    crate::posts::check_lock(current, &post, PostLock::Status)?;
     state.rate_limits.check_report(user.id).await?;
     let mut tx = state.db.primary().begin().await?;
     match flags::create(&mut tx, id, user.id, reason).await {
@@ -347,6 +354,72 @@ async fn restore(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Resp
     Ok(back_to(jar, &format!("/posts/{id}")))
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct LocksForm {
+    /// Present when ticked, one per lock.
+    rating: Option<String>,
+    tags: Option<String>,
+    notes: Option<String>,
+    status: Option<String>,
+}
+
+async fn set_locks_form(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<LocksForm>,
+) -> Result<Response, AppError> {
+    let locks: Vec<PostLock> = [
+        (form.rating.is_some(), PostLock::Rating),
+        (form.tags.is_some(), PostLock::Tags),
+        (form.notes.is_some(), PostLock::Notes),
+        (form.status.is_some(), PostLock::Status),
+    ]
+    .into_iter()
+    .filter_map(|(ticked, lock)| ticked.then_some(lock))
+    .collect();
+    set_locks(page.state(), &page.current, id, &locks).await?;
+    Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+/// Locks exactly `locks` of post `id`, recording it in the post's history
+/// and the log.
+pub(crate) async fn set_locks(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    locks: &[PostLock],
+) -> Result<(), AppError> {
+    current.require(Permission::LockPosts)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = state.db.primary().begin().await?;
+    let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
+    if !crate::posts::visibility(current).allows(&post) {
+        return Err(AppError::NotFound);
+    }
+    let names = |locks: &[PostLock]| -> Vec<&str> {
+        PostLock::ALL
+            .iter()
+            .filter(|l| locks.contains(l))
+            .map(|l| l.as_str())
+            .collect()
+    };
+    if names(&post.locks) == names(locks) {
+        return Ok(());
+    }
+    moekura_db::post_versions::attribute(&mut tx, actor, None).await?;
+    posts::set_locks(&mut *tx, id, locks).await?;
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor, ActionKind::PostLock)
+            .post(id)
+            .details(serde_json::json!({ "from": names(&post.locks), "locks": names(locks) })),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Queues removal of a deleted post and its files.
 async fn purge(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
     moderate(page.state(), &page.current, id, PostAction::Purge, "").await?;
@@ -423,6 +496,7 @@ pub(crate) async fn appeal_post(
             AppError::BadRequest("Only deleted posts can be appealed".into())
         });
     }
+    crate::posts::check_lock(current, &post, PostLock::Status)?;
     let reason = check_reason(reason)?;
     if reason.is_empty() {
         return Err(AppError::BadRequest(

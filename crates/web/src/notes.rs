@@ -71,7 +71,7 @@ pub(crate) fn check_editor(current: &CurrentUser, post: &posts::Post) -> Result<
             "Notes on deleted posts can't be changed.".into(),
         ));
     }
-    Ok(())
+    crate::posts::check_lock(current, post, moekura_core::posts::PostLock::Notes)
 }
 
 /// A note's text, checked.

@@ -5,6 +5,7 @@
     <a class="hint" href="{{ comment.url }}"><time datetime="{{ comment.created_iso }}">{{ comment.date }}</time></a>
     {% if comment.edited %}<span class="hint">· edited</span>{% endif %}
     {% if comment.deleted %}<span class="status status-deleted">deleted</span>{% endif %}
+    {% if comment.sticky %}<span class="status status-sticky">pinned</span>{% endif %}
     {% if comment.can_vote %}
     <form class="vote" method="post" action="/comments/{{ comment.id }}/vote" data-reaction>
       <button type="submit" name="score" value="{{ 0 if comment.vote == 1 else 1 }}" class="icon" aria-pressed="{{ 'true' if comment.vote == 1 else 'false' }}" aria-label="Vote up" title="Vote up">▲</button>
@@ -18,7 +19,7 @@
   {% else %}
   <div class="markup">{{ comment.html }}</div>
   {% endif %}
-  {% if comment.can_reply or comment.can_edit or comment.can_report or comment.can_hide or comment.can_restore %}
+  {% if comment.can_reply or comment.can_edit or comment.can_report or comment.can_stick or comment.can_hide or comment.can_restore %}
   <footer class="comment-actions">
     {% if comment.can_reply %}<a href="/posts/{{ comment.post_id }}?reply={{ comment.id }}#new-comment">Reply</a>{% endif %}
     {% if comment.can_edit %}
@@ -34,6 +35,9 @@
         <button type="submit">Report</button>
       </form>
     </details>
+    {% endif %}
+    {% if comment.can_stick %}
+    <form method="post" action="/comments/{{ comment.id }}/sticky"><input type="hidden" name="sticky" value="{{ 0 if comment.sticky else 1 }}"><button type="submit" class="link">{{ "Unpin" if comment.sticky else "Pin to top" }}</button></form>
     {% endif %}
     {% if comment.can_hide %}
     <details class="inline">

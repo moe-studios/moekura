@@ -28,6 +28,9 @@ pub struct Post {
     /// Comments that aren't deleted.
     pub comment_count: i32,
     pub last_commented_at: Option<OffsetDateTime>,
+    /// The last comment that bumped the post (was posted without "don't
+    /// bump").
+    pub last_comment_bumped_at: Option<OffsetDateTime>,
     /// Notes that aren't deleted.
     pub note_count: i32,
     pub last_noted_at: Option<OffsetDateTime>,
@@ -56,6 +59,7 @@ struct PostRow {
     fav_count: i32,
     comment_count: i32,
     last_commented_at: Option<OffsetDateTime>,
+    last_comment_bumped_at: Option<OffsetDateTime>,
     note_count: i32,
     last_noted_at: Option<OffsetDateTime>,
     tag_ids: Vec<i32>,
@@ -88,6 +92,7 @@ impl TryFrom<PostRow> for Post {
             fav_count: row.fav_count,
             comment_count: row.comment_count,
             last_commented_at: row.last_commented_at,
+            last_comment_bumped_at: row.last_comment_bumped_at,
             note_count: row.note_count,
             last_noted_at: row.last_noted_at,
             tag_ids: row.tag_ids,
@@ -106,7 +111,7 @@ macro_rules! select_posts {
     ($rest:literal) => {
         concat!(
             "SELECT id, uploader_id, rating, status, source, description, parent_id, score,
-                    fav_count, comment_count, last_commented_at,
+                    fav_count, comment_count, last_commented_at, last_comment_bumped_at,
                     note_count, last_noted_at, tag_ids, created_at, locks
              FROM posts ",
             $rest

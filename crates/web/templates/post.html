@@ -219,6 +219,7 @@
         <label for="comment-body">Add a comment</label>
         <textarea id="comment-body" name="body" rows="4" maxlength="{{ comments.max_len }}" required>{{ comments.draft }}</textarea>
         {% include "comment_help.html" %}
+        <label class="choice"><input type="checkbox" name="do_not_bump" value="1"> Don't bump the post</label>
         {% if comments.captcha %}
         <script src="{{ comments.captcha.script }}" async defer></script>
         <div class="{{ comments.captcha.class }}" data-sitekey="{{ comments.captcha.site_key }}"></div>

@@ -139,6 +139,8 @@ pub enum ActionKind {
     CommentHide,
     CommentRestore,
     CommentReportDismiss,
+    CommentSticky,
+    CommentUnsticky,
     PoolDelete,
     PoolUndelete,
     UserPromote,
@@ -153,7 +155,7 @@ pub enum ActionKind {
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 35] = [
+    pub const ALL: [ActionKind; 37] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -178,6 +180,8 @@ impl ActionKind {
         ActionKind::CommentHide,
         ActionKind::CommentRestore,
         ActionKind::CommentReportDismiss,
+        ActionKind::CommentSticky,
+        ActionKind::CommentUnsticky,
         ActionKind::PoolDelete,
         ActionKind::PoolUndelete,
         ActionKind::UserPromote,
@@ -217,6 +221,8 @@ impl ActionKind {
             ActionKind::CommentHide => "comment.hide",
             ActionKind::CommentRestore => "comment.restore",
             ActionKind::CommentReportDismiss => "comment_report.dismiss",
+            ActionKind::CommentSticky => "comment.sticky",
+            ActionKind::CommentUnsticky => "comment.unsticky",
             ActionKind::PoolDelete => "pool.delete",
             ActionKind::PoolUndelete => "pool.undelete",
             ActionKind::UserPromote => "user.promote",
@@ -258,6 +264,8 @@ impl ActionKind {
             ActionKind::CommentHide => "hid a comment on post",
             ActionKind::CommentRestore => "restored a comment on post",
             ActionKind::CommentReportDismiss => "dismissed reports about a comment on post",
+            ActionKind::CommentSticky => "pinned a comment on post",
+            ActionKind::CommentUnsticky => "unpinned a comment on post",
             ActionKind::PoolDelete => "deleted a pool",
             ActionKind::PoolUndelete => "restored a pool",
             ActionKind::UserPromote => "promoted",

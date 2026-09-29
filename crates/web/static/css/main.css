@@ -375,6 +375,7 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .status-active { color: var(--tag-character); }
 .status-pending { color: var(--tag-meta); }
 .status-rejected, .status-deleted { color: var(--muted); }
+.status-sticky { color: var(--accent); }
 
 /* Search */
 

@@ -95,8 +95,8 @@ impl From<Comment> for DanbooruComment {
             updated_at: c.edited_at.map_or_else(|| created.clone(), timestamp),
             created_at: created,
             is_deleted: c.is_deleted,
-            is_sticky: false,
-            do_not_bump_post: false,
+            is_sticky: c.is_sticky,
+            do_not_bump_post: c.do_not_bump,
         }
     }
 }
@@ -176,7 +176,10 @@ async fn create_comment(
         .ok_or(AppError::NotFound)?;
     let body = crate::comments::clean_body(fields.get("comment[body]").unwrap_or_default())?;
     let user = crate::comments::commenter(&state, &current, &post).await?;
-    let id = comments::create(db, post_id, user, &body).await?;
+    let bump = !fields
+        .get("comment[do_not_bump_post]")
+        .is_some_and(|v| matches!(v.trim(), "yes" | "true" | "1"));
+    let id = comments::create(db, post_id, user, &body, bump).await?;
     crate::webhooks::emit_comment(&state, id).await;
     let comment = comments::by_id(db, id).await?.ok_or(AppError::NotFound)?;
     Ok((

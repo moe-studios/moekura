@@ -200,8 +200,8 @@ site, newest first, for anyone: tags added and removed, rating, source,
 parent, description and locks. Filter it by who made the change, the
 post, a tag added or removed, and a range of days.
 
-Filtered to one user, it offers those with *Mass edit tags* (moderators,
-by default) **Undo their edits**, for users ranked below them: in the
+Filtered to one user, it offers those with *Undo a user's post edits*
+(moderators, by default) **Undo their edits**, for users ranked below them: in the
 background, every post edit the user made in the range is taken back.
 Tags they added come off and tags they removed go back; a rating,
 source, description or parent they set is put back where nobody changed

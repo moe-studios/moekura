@@ -14,6 +14,7 @@ mod client_ip;
 mod comments;
 mod counts;
 mod danbooru;
+mod dates;
 mod edit;
 mod email;
 pub mod error;

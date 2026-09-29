@@ -176,7 +176,7 @@ fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value
             url_value(&format!("/users/{}", url::form_urlencoded::byte_serialize(name.as_bytes()).collect::<String>()))
         }),
         html => Value::from_safe_string(markup::render(&comment.body)),
-        date => comment.created_at.date().to_string(),
+        date => crate::dates::day(comment.created_at),
         created_iso => comment.created_at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         edited => comment.edited_at.is_some(),
         deleted => comment.is_deleted,
@@ -200,6 +200,17 @@ pub(crate) async fn thread(
     post: &Post,
     draft: Option<&CommentDraft>,
 ) -> Result<Value, AppError> {
+    let hidden = current.user.as_ref().is_some_and(|u| {
+        moekura_core::user_settings::UserSettings::from_json(&u.settings).hide_comments
+    });
+    // A refused comment is shown again even so.
+    if hidden && draft.is_none() {
+        return Ok(context! {
+            hidden => true,
+            count => post.comment_count,
+            all_url => url_value(&format!("/comments?post_id={}", post.id)),
+        });
+    }
     let db = state.db.primary();
     let with_deleted = sees_deleted(current);
     let shown = comments::for_post(db, post.id, with_deleted, THREAD_SIZE).await?;

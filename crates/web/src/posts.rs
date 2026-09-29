@@ -146,13 +146,8 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         (_, Err(SearchError::Invalid(message))) => return Ok(failed(message)),
     };
 
-    let sizes = &state.media.config().thumbnail_sizes;
-    let box_size = sizes.first().copied().unwrap_or(250);
-    let kinds = (
-        format!("thumb-{box_size}"),
-        format!("thumb-{}", sizes.get(1).copied().unwrap_or(box_size)),
-    );
-    let cards = posts::cards(db, &ids, (&kinds.0, &kinds.1)).await?;
+    let thumbs = Thumbs::for_viewer(state, &page.current);
+    let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
     let normalized = query.to_string();
     // Even the empty search, so the post page can step through it.
     let post_query = Some(
@@ -160,17 +155,25 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             .append_pair("q", &normalized)
             .finish(),
     );
-    // Blacklisted posts are left out of the page entirely, with a count
-    // and a link to show them.
+    // Blacklisted posts are left out of the page entirely, or blurred,
+    // with a count and a link to show them.
     let show_all = params.blacklist == "off";
     let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
-    let (shown, hidden): (Vec<&Card>, Vec<&Card>) = cards.iter().partition(|card| {
-        show_all
-            || blacklist.as_ref().is_none_or(|list| {
+    let blur = blur_blacklisted(&page.current);
+    let is_blacklisted = |card: &Card| {
+        !show_all
+            && blacklist.as_ref().is_some_and(|list| {
                 let rating = card.rating.parse().unwrap_or(Rating::Explicit);
-                list.matching(rating, &card.tag_ids).is_none()
+                list.matching(rating, &card.tag_ids).is_some()
             })
-    });
+    };
+    let (shown, hidden): (Vec<&Card>, Vec<&Card>) =
+        cards.iter().partition(|card| blur || !is_blacklisted(card));
+    let blurred = if blur {
+        cards.iter().filter(|card| is_blacklisted(card)).count()
+    } else {
+        0
+    };
     let blacklist_url = |off: bool| {
         let mut query = url::form_urlencoded::Serializer::new(String::new());
         if !normalized.is_empty() {
@@ -186,15 +189,28 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
     };
     let blacklisted = context! {
         hidden => hidden.len(),
-        show_url => (!hidden.is_empty()).then(|| blacklist_url(true)),
+        blurred => blurred,
+        show_url => (!hidden.is_empty() || blurred > 0).then(|| blacklist_url(true)),
         hide_url => (show_all && blacklist.is_some()).then(|| blacklist_url(false)),
     };
     let card_values: Vec<Value> = shown
         .iter()
-        .map(|card| card_context(state, card, box_size, post_query.as_deref()))
+        .map(|card| {
+            let value = card_context(state, card, thumbs.size, post_query.as_deref());
+            if is_blacklisted(card) {
+                with_blur(value)
+            } else {
+                value
+            }
+        })
         .collect();
 
-    let shown: Vec<Card> = shown.into_iter().cloned().collect();
+    // Blurred posts' tags stay out of the sidebar, as left out ones do.
+    let shown: Vec<Card> = shown
+        .into_iter()
+        .filter(|card| !is_blacklisted(card))
+        .cloned()
+        .collect();
     let sidebar = sidebar_tags(db, &shown, &normalized).await?;
     let wiki = crate::wiki::search_excerpt(db, &query).await?;
     // Only for searches that found nothing, so the rest pay nothing.
@@ -458,9 +474,52 @@ fn file_url(state: &AppState, key: &str) -> Option<Value> {
     Key::parse(key).map(|k| url_value(&state.file_url(&k)))
 }
 
+/// The thumbnails grids show a viewer: the smallest size, or the next
+/// one up for those who chose large thumbnails.
+pub(crate) struct Thumbs {
+    /// The box they fit in, in pixels.
+    pub size: u32,
+    /// Renditions for 1x and 2x screens.
+    kinds: (String, String),
+}
+
+impl Thumbs {
+    pub fn for_viewer(state: &AppState, current: &CurrentUser) -> Self {
+        let sizes = &state.media.config().thumbnail_sizes;
+        let small = sizes.first().copied().unwrap_or(250);
+        let large = sizes.get(1).copied().unwrap_or(small);
+        let wants_large = current
+            .user
+            .as_ref()
+            .is_some_and(|u| UserSettings::from_json(&u.settings).large_thumbnails);
+        let size = if wants_large { large } else { small };
+        Self {
+            size,
+            kinds: (format!("thumb-{size}"), format!("thumb-{large}")),
+        }
+    }
+
+    pub fn kinds(&self) -> (&str, &str) {
+        (&self.kinds.0, &self.kinds.1)
+    }
+}
+
+/// Whether `current` sees blacklisted posts blurred rather than left out.
+fn blur_blacklisted(current: &CurrentUser) -> bool {
+    current
+        .user
+        .as_ref()
+        .is_some_and(|u| UserSettings::from_json(&u.settings).blur_blacklisted)
+}
+
+/// A card marked as blacklisted, to be shown blurred.
+fn with_blur(card: Value) -> Value {
+    context! { ..card, ..context! { blacklisted => true } }
+}
+
 /// Grid cards for posts `ids` (their ids and contexts, in order), leaving
-/// out posts the viewer's blacklist hides. `post_query` is added to the
-/// post links, as for [`card_context`].
+/// out posts the viewer's blacklist hides, or blurring them if they chose
+/// that. `post_query` is added to the post links, as for [`card_context`].
 pub(crate) async fn grid(
     page: &Page,
     db: &sqlx::PgPool,
@@ -468,23 +527,24 @@ pub(crate) async fn grid(
     post_query: Option<&str>,
 ) -> Result<Vec<(i64, Value)>, AppError> {
     let state = page.state();
-    let sizes = &state.media.config().thumbnail_sizes;
-    let box_size = sizes.first().copied().unwrap_or(250);
-    let kinds = (
-        format!("thumb-{box_size}"),
-        format!("thumb-{}", sizes.get(1).copied().unwrap_or(box_size)),
-    );
-    let cards = posts::cards(db, ids, (&kinds.0, &kinds.1)).await?;
+    let thumbs = Thumbs::for_viewer(state, &page.current);
+    let cards = posts::cards(db, ids, thumbs.kinds()).await?;
     let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
+    let blur = blur_blacklisted(&page.current);
     Ok(cards
         .iter()
-        .filter(|card| {
-            blacklist.as_ref().is_none_or(|list| {
+        .filter_map(|card| {
+            let blacklisted = blacklist.as_ref().is_some_and(|list| {
                 let rating = card.rating.parse().unwrap_or(Rating::Explicit);
-                list.matching(rating, &card.tag_ids).is_none()
-            })
+                list.matching(rating, &card.tag_ids).is_some()
+            });
+            let value = card_context(state, card, thumbs.size, post_query);
+            match (blacklisted, blur) {
+                (false, _) => Some((card.id, value)),
+                (true, true) => Some((card.id, with_blur(value))),
+                (true, false) => None,
+            }
         })
-        .map(|card| (card.id, card_context(state, card, box_size, post_query)))
         .collect())
 }
 
@@ -734,7 +794,7 @@ pub(crate) async fn render_post(
             context! {
                 by => entry.actor_name,
                 reason => entry.reason,
-                when => entry.created_at.date().to_string(),
+                when => crate::dates::day(entry.created_at),
             }
         })
     } else {
@@ -749,7 +809,7 @@ pub(crate) async fn render_post(
                     by => f.creator_name,
                     reason => f.reason,
                     status => f.status,
-                    when => f.created_at.date().to_string(),
+                    when => crate::dates::day(f.created_at),
                 }
             })
             .collect()
@@ -863,7 +923,7 @@ pub(crate) async fn render_post(
         source_link => is_web_url(&post.source),
         description => post.description,
         has_notes => post.last_noted_at.is_some(),
-        created => created.get(..10).unwrap_or_default(),
+        created => crate::dates::day(post.created_at),
         created_iso => created,
     };
     let bound = |lock| post.is_locked(lock) && !page.current.can(Permission::LockPosts);
@@ -1008,11 +1068,9 @@ async fn similar_context(
     )
     .await?;
     let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
-    let sizes = &state.media.config().thumbnail_sizes;
-    let box_size = sizes.first().copied().unwrap_or(250);
-    let kind = format!("thumb-{box_size}");
+    let thumbs = Thumbs::for_viewer(state, &page.current);
     let visible = visibility(&page.current);
-    Ok(posts::cards(db, &ids, (&kind, &kind))
+    Ok(posts::cards(db, &ids, thumbs.kinds())
         .await?
         .iter()
         .filter(|card| {
@@ -1022,7 +1080,7 @@ async fn similar_context(
                 && visible.allows_rating(rating)
                 && blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
         })
-        .map(|card| card_context(state, card, box_size, None))
+        .map(|card| card_context(state, card, thumbs.size, None))
         .collect())
 }
 
@@ -1039,17 +1097,15 @@ async fn family_context(page: &Page, post: &Post) -> Result<Option<Value>, AppEr
     if ids.len() < 2 {
         return Ok(None);
     }
-    let sizes = &state.media.config().thumbnail_sizes;
-    let box_size = sizes.first().copied().unwrap_or(250);
-    let kind = format!("thumb-{box_size}");
-    let cards = posts::cards(db, &ids, (&kind, &kind)).await?;
+    let thumbs = Thumbs::for_viewer(state, &page.current);
+    let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
     Ok(Some(context! {
         is_child => post.parent_id.is_some(),
         root => root,
         cards => cards
             .iter()
             .map(|card| context! {
-                ..card_context(state, card, box_size, None),
+                ..card_context(state, card, thumbs.size, None),
                 ..context! { current => card.id == post.id }
             })
             .collect::<Vec<_>>(),
@@ -1453,6 +1509,89 @@ mod tests {
             .await
             .body;
         assert!(!shown.contains("matches your blacklist"));
+    }
+
+    /// Stores `settings` for the user called `name`.
+    async fn set_user_settings(pool: &PgPool, name: &str, settings: serde_json::Value) {
+        sqlx::query("UPDATE users SET settings = $2 WHERE name = $1")
+            .bind(name)
+            .bind(settings)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn display_settings_apply(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let general = upload(&app, &alice, &fixture::png(20, 20), &[("rating", "g")]).await;
+        let explicit = upload(&app, &alice, &fixture::png(24, 20), &[("rating", "e")]).await;
+
+        // Safe mode: general posts only, in searches and on post pages.
+        set_user_settings(&pool, "alice", serde_json::json!({ "safe_mode": true })).await;
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(grid.contains(&format!("/posts/{general}?")), "{grid}");
+        assert!(!grid.contains(&format!("/posts/{explicit}?")), "{grid}");
+        assert_eq!(
+            app.get(&format!("/posts/{explicit}"), Some(&alice))
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+
+        // Blurred rather than left out, with larger thumbnails, no
+        // comments, autocomplete or shortcuts.
+        set_user_settings(
+            &pool,
+            "alice",
+            serde_json::json!({
+                "blacklist": "rating:e",
+                "blur_blacklisted": true,
+                "large_thumbnails": true,
+                "hide_comments": true,
+                "autocomplete": false,
+                "shortcuts": false,
+            }),
+        )
+        .await;
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(grid.contains("is-blacklisted"), "{grid}");
+        assert!(grid.contains(&format!("/posts/{explicit}?")), "{grid}");
+        assert!(grid.contains("1 blurred by your blacklist"), "{grid}");
+        assert!(
+            grid.contains("data-thumbs=\"large\" data-autocomplete=\"off\" data-shortcuts=\"off\""),
+            "{grid}"
+        );
+        assert!(!grid.contains("data-shortcuts-link"));
+        let post = app
+            .get(&format!("/posts/{general}"), Some(&alice))
+            .await
+            .body;
+        assert!(post.contains("Your settings hide comments"), "{post}");
+        assert!(!post.contains("id=\"new-comment\""));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn dates_are_in_the_viewers_time_zone(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = upload(&app, &alice, &fixture::png(20, 20), &[]).await;
+        sqlx::query("UPDATE posts SET created_at = '2026-01-01 23:30Z' WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let utc = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(utc.contains(">2026-01-01<"), "{utc}");
+        set_user_settings(
+            &pool,
+            "alice",
+            serde_json::json!({ "time_zone": "Asia/Tokyo" }),
+        )
+        .await;
+        let tokyo = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(tokyo.contains(">2026-01-02<"), "{tokyo}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

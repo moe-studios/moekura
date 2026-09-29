@@ -1,11 +1,12 @@
 <!doctype html>
-<html lang="en" data-theme="{{ theme }}"{% if mode %} data-mode="{{ mode }}"{% endif %}>
+<html lang="en" data-theme="{{ theme }}"{% if mode %} data-mode="{{ mode }}"{% endif %}{% if prefs and prefs.large_thumbnails %} data-thumbs="large"{% endif %}{% if prefs and not prefs.autocomplete %} data-autocomplete="off"{% endif %}{% if prefs and not prefs.shortcuts %} data-shortcuts="off"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ site.name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ asset('css/main.css') }}">
   {% if theme_css %}<link rel="stylesheet" href="{{ asset(theme_css) }}">{% endif %}
+  {% if prefs and prefs.custom_css %}<link rel="stylesheet" href="{{ prefs.custom_css }}">{% endif %}
   <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml">
   <script type="module" src="{{ asset('js/main.js') }}"></script>
   {% block head %}{% endblock %}
@@ -49,7 +50,7 @@
   </main>
   <footer class="site-footer">
     <p>Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> {{ build_version }} · <a href="/api/docs">API</a>
-      <span data-shortcuts-link hidden>· <button type="button" class="link">Keyboard shortcuts</button> <kbd>?</kbd></span></p>
+      {% if not prefs or prefs.shortcuts %}<span data-shortcuts-link hidden>· <button type="button" class="link">Keyboard shortcuts</button> <kbd>?</kbd></span>{% endif %}</p>
     {% if mode_choice %}
     <div class="appearance">
       <form method="post" action="/settings/theme" aria-label="Mode">

@@ -56,9 +56,9 @@ async fn render(
                 id => k.id,
                 name => k.name,
                 prefix => k.prefix,
-                created => k.created_at.date().to_string(),
-                last_used => k.last_used_at.map(|t| t.date().to_string()),
-                expires => k.expires_at.map(|t| t.date().to_string()),
+                created => crate::dates::day(k.created_at),
+                last_used => k.last_used_at.map(crate::dates::day),
+                expires => k.expires_at.map(crate::dates::day),
                 expired => k.expires_at.is_some_and(|t| t <= now),
             }
         })

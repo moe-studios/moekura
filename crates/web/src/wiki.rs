@@ -140,7 +140,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
                 url => page_url(&p.title),
                 version => p.version,
                 updater => p.updater_name,
-                date => p.updated_at.date().to_string(),
+                date => crate::dates::day(p.updated_at),
             }
         })
         .collect();
@@ -227,7 +227,7 @@ async fn show(
         wiki => wiki_page.as_ref().map(|p| context! {
             version => p.version,
             updater => p.updater_name,
-            date => p.updated_at.date().to_string(),
+            date => crate::dates::day(p.updated_at),
         }),
         tag => tag.map(|t| context! {
             count => t.post_count,
@@ -342,7 +342,7 @@ async fn history(page: Page, Path(raw): Path<String>) -> Result<Response, AppErr
             let previous = versions.get(i + 1);
             context! {
                 version => v.version,
-                date => v.created_at.date().to_string(),
+                date => crate::dates::day(v.created_at),
                 updater => v.updater_name,
                 url => url_value(&format!("{base}?version={}", v.version)),
                 // Characters, as a rough measure of the change.

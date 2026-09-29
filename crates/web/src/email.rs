@@ -373,7 +373,7 @@ async fn sso_context(page: &Page, user: &User) -> Result<Option<minijinja::Value
         linked => linked.iter().map(|i| context! {
             id => i.id,
             provider => url::Url::parse(&i.issuer).ok().and_then(|u| u.host_str().map(str::to_owned)).unwrap_or_else(|| i.issuer.clone()),
-            date => i.created_at.date().to_string(),
+            date => crate::dates::day(i.created_at),
             // The last way in of an account without a password stays.
             removable => has_password || linked.len() > 1,
         }).collect::<Vec<_>>(),

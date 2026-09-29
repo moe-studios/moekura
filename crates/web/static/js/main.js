@@ -1147,13 +1147,14 @@ function enableUpload(root = document) {
 
 // src/main.ts
 document.documentElement.classList.add("js");
+var off = (feature) => document.documentElement.dataset[feature] === "off";
 enableToasts();
 enableConfirm();
 enableAutosubmit();
 enableLayout();
-attachAll();
+if (!off("autocomplete")) attachAll();
 enhanceReactions();
-enableShortcuts();
+if (!off("shortcuts")) enableShortcuts();
 enablePoolOrder();
 enableReader();
 enableNotes();

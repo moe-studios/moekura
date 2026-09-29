@@ -52,7 +52,7 @@
     </aside>
     {% endif %}
     {% if count %}<p class="result-count">{{ count }}{% if feed_url %} · <a href="{{ feed_url }}">Feed</a>{% endif %}
-      {% if blacklisted.show_url %}· {{ blacklisted.hidden }} hidden by your blacklist (<a href="{{ blacklisted.show_url }}">show</a>){% endif %}
+      {% if blacklisted.show_url %}· {% if blacklisted.hidden %}{{ blacklisted.hidden }} hidden{% else %}{{ blacklisted.blurred }} blurred{% endif %} by your blacklist (<a href="{{ blacklisted.show_url }}">show</a>){% endif %}
       {% if blacklisted.hide_url %}· showing blacklisted posts (<a href="{{ blacklisted.hide_url }}">hide</a>){% endif %}
     </p>{% endif %}
     {% if cards or blacklisted.hidden %}

@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::blacklist::Blacklist;
 use moekura_core::permissions::Permission;
-use moekura_core::user_settings::{Mode, PER_PAGE_CHOICES, UserSettings};
+use moekura_core::user_settings::{MAX_CUSTOM_CSS, Mode, PER_PAGE_CHOICES, UserSettings};
 use moekura_db::users::{self, UserStatus};
 use moekura_db::{favorites, posts};
 use serde::Deserialize;
@@ -29,6 +29,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/settings", get(settings_form).post(save_settings))
         .route("/settings/theme", axum::routing::post(set_theme))
+        .route("/settings/custom.css", get(custom_css))
 }
 
 async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppError> {
@@ -77,7 +78,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             user => context! {
                 name => user.name,
                 role => role,
-                joined => user.created_at.date().to_string(),
+                joined => crate::dates::day(user.created_at),
                 status => format!("{:?}", user.status).to_lowercase(),
             },
             uploads => uploads,
@@ -86,7 +87,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             favorites_url => Value::from_safe_string(search_url(&format!("ordfav:{}", user.name))),
             comments => comments,
             promotion => context! {
-                promoted => promoted_at.map(|at| at.date().to_string()),
+                promoted => promoted_at.map(crate::dates::day),
                 blocked => promotion_blocked,
                 can_change => can_manage,
             },
@@ -199,6 +200,18 @@ fn render_settings(
             per_page_choices => PER_PAGE_CHOICES.iter().filter(|&&n| n <= max).collect::<Vec<_>>(),
             current_mode => settings.mode.as_str(),
             current_theme => settings.theme,
+            prefs_form => context! {
+                safe_mode => settings.safe_mode,
+                large_thumbnails => settings.large_thumbnails,
+                blur_blacklisted => settings.blur_blacklisted,
+                hide_comments => settings.hide_comments,
+                autocomplete => settings.autocomplete,
+                shortcuts => settings.shortcuts,
+                time_zone => settings.time_zone,
+                custom_css => settings.custom_css,
+            },
+            time_zones => crate::dates::zone_names(),
+            large_thumbnail_size => page.state().media.config().thumbnail_sizes.get(1),
             site_theme => crate::themes::label(crate::themes::resolve(
                 &page.state().assets,
                 None,
@@ -220,6 +233,18 @@ struct SettingsForm {
     theme: String,
     #[serde(default)]
     blacklist: String,
+    // Checkboxes: present when ticked.
+    safe_mode: Option<String>,
+    large_thumbnails: Option<String>,
+    blur_blacklisted: Option<String>,
+    hide_comments: Option<String>,
+    autocomplete: Option<String>,
+    shortcuts: Option<String>,
+    /// Empty for UTC.
+    #[serde(default)]
+    time_zone: String,
+    #[serde(default)]
+    custom_css: String,
 }
 
 fn parse_mode(text: &str) -> Result<Mode, AppError> {
@@ -256,13 +281,35 @@ async fn save_settings(
     let mode = parse_mode(&form.mode)?;
     let theme = parse_theme(&page, &form.theme)?;
     let blacklist = form.blacklist.replace("\r\n", "\n");
+    let time_zone = match form.time_zone.as_str() {
+        "" => None,
+        name if crate::dates::zone_names().iter().any(|n| n == name) => Some(name.to_owned()),
+        _ => return Err(AppError::BadRequest("Unknown time zone".into())),
+    };
+    let custom_css = form.custom_css.replace("\r\n", "\n").trim().to_owned();
     let settings = UserSettings {
         per_page,
         mode,
         theme,
         blacklist: Some(blacklist.trim().to_owned()),
+        safe_mode: form.safe_mode.is_some(),
+        large_thumbnails: form.large_thumbnails.is_some(),
+        blur_blacklisted: form.blur_blacklisted.is_some(),
+        time_zone,
+        hide_comments: form.hide_comments.is_some(),
+        autocomplete: form.autocomplete.is_some(),
+        shortcuts: form.shortcuts.is_some(),
+        custom_css,
     };
-    if let Err(error) = Blacklist::parse(&blacklist) {
+    let error = match Blacklist::parse(&blacklist) {
+        Err(error) => Some(error.to_string()),
+        Ok(_) if settings.custom_css.len() > MAX_CUSTOM_CSS => Some(format!(
+            "Custom CSS can be at most {} KB",
+            MAX_CUSTOM_CSS / 1024
+        )),
+        Ok(_) => None,
+    };
+    if let Some(error) = error {
         let has_feed_token =
             moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
         return Ok(render_settings(
@@ -270,7 +317,7 @@ async fn save_settings(
             &settings,
             &blacklist,
             has_feed_token,
-            Some(error.to_string()),
+            Some(error),
         ));
     }
     users::set_settings(
@@ -280,6 +327,37 @@ async fn save_settings(
     )
     .await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to("/settings")).into_response())
+}
+
+/// Where the layout loads `settings`' custom stylesheet from, if there is
+/// one. The URL changes with the stylesheet, so it can be cached forever.
+pub(crate) fn custom_css_url(settings: &UserSettings) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    (!settings.custom_css.is_empty()).then(|| {
+        let digest = Sha256::digest(settings.custom_css.as_bytes());
+        format!("/settings/custom.css?v={}", hex::encode(&digest[..8]))
+    })
+}
+
+/// The user's custom stylesheet. It lives at its own URL because the CSP
+/// forbids inline styles.
+async fn custom_css(current: crate::auth::CurrentUser) -> Response {
+    let css = current
+        .user
+        .as_ref()
+        .map(|u| UserSettings::from_json(&u.settings).custom_css)
+        .unwrap_or_default();
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (
+                axum::http::header::CACHE_CONTROL,
+                "private, max-age=31536000, immutable",
+            ),
+        ],
+        css,
+    )
+        .into_response()
 }
 
 #[derive(Debug, Deserialize)]
@@ -439,6 +517,55 @@ mod tests {
             )
             .await;
         assert_eq!(offsite.location.as_deref(), Some("/"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn display_settings(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        // Ticked boxes are on; unticked ones off, the default-on ones too.
+        let saved = app
+            .post_form(
+                "/settings",
+                Some(&alice),
+                &[],
+                "mode=system&safe_mode=1&hide_comments=1&time_zone=Europe%2FBerlin\
+                 &custom_css=body+%7B+color%3A+red+%7D",
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        let page = app.get("/settings", Some(&alice)).await;
+        assert!(
+            page.body.contains("name=\"safe_mode\" value=\"1\" checked"),
+            "{}",
+            page.body
+        );
+        assert!(!page.body.contains("name=\"shortcuts\" value=\"1\" checked"));
+        assert!(
+            page.body
+                .contains("<option selected>Europe&#x2f;Berlin</option>")
+        );
+        assert!(page.body.contains("data-autocomplete=\"off\""));
+        let start = page.body.find("/settings/custom.css?v=").unwrap();
+        let end = start + page.body[start..].find('"').unwrap();
+        let css = app.get_full(&page.body[start..end]).await;
+        assert_eq!(css.headers()["content-type"], "text/css; charset=utf-8");
+        let css = app.get(&page.body[start..end], Some(&alice)).await;
+        assert_eq!(css.body, "body { color: red }");
+
+        let unknown = app
+            .post_form(
+                "/settings",
+                Some(&alice),
+                &[],
+                "mode=system&time_zone=Mars%2FBase",
+            )
+            .await;
+        assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
+        let big = format!("mode=system&custom_css={}", "a".repeat(65 * 1024));
+        let refused = app.post_form("/settings", Some(&alice), &[], &big).await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("at most 64 KB"), "{}", refused.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

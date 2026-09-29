@@ -160,7 +160,7 @@ fn row_context(relation: &Relation, manage: bool, me: Option<i64>) -> Value {
         reason => relation.reason,
         creator => relation.creator_name,
         approver => relation.approver_name,
-        created => relation.created_at.date().to_string(),
+        created => crate::dates::day(relation.created_at),
         can_approve => manage && pending,
         can_remove => (manage && relation.status == Status::Active) || (pending && (manage || own)),
     }

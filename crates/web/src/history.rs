@@ -73,7 +73,7 @@ async fn history(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> 
             let changed = |f: fn(&Version) -> String| previous.is_none_or(|p| f(p) != f(v));
             context! {
                 version => v.version,
-                date => v.created_at.date().to_string(),
+                date => crate::dates::day(v.created_at),
                 updater => v.updater_name,
                 relation => v.relation_kind.as_ref().map(|kind| context! {
                     kind => kind,

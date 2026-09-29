@@ -28,6 +28,24 @@
     <label for="blacklist">Blacklist</label>
     <textarea id="blacklist" name="blacklist" rows="5" autocapitalize="none" spellcheck="false">{{ blacklist }}</textarea>
     <p class="hint">Posts matching a line are hidden. One rule per line; every term on a line must match: <code>tag</code>, <code>-tag</code>, <code>rating:e,q</code>.</p>
+    <label class="choice"><input type="checkbox" name="blur_blacklisted" value="1"{% if prefs_form.blur_blacklisted %} checked{% endif %}> Blur blacklisted posts instead of leaving them out</label>
+    <fieldset class="group">
+      <legend>Display</legend>
+      <label class="choice"><input type="checkbox" name="safe_mode" value="1"{% if prefs_form.safe_mode %} checked{% endif %}> Safe mode: only show general-rated posts</label>
+      {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> Large thumbnails ({{ large_thumbnail_size }} pixels)</label>{% endif %}
+      <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> Hide comments on post pages</label>
+      <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> Suggest tags while typing</label>
+      <label class="choice"><input type="checkbox" name="shortcuts" value="1"{% if prefs_form.shortcuts %} checked{% endif %}> Keyboard shortcuts</label>
+    </fieldset>
+    <label for="time_zone">Time zone</label>
+    <select id="time_zone" name="time_zone">
+      <option value="">UTC</option>
+      {% for zone in time_zones %}{% if zone != "UTC" %}<option{% if prefs_form.time_zone == zone %} selected{% endif %}>{{ zone }}</option>{% endif %}{% endfor %}
+    </select>
+    <p class="hint">For the dates shown on pages.</p>
+    <label for="custom_css">Custom CSS</label>
+    <textarea id="custom_css" name="custom_css" rows="5" autocapitalize="none" spellcheck="false">{{ prefs_form.custom_css }}</textarea>
+    <p class="hint">Applied after the site's styles, on every page, for you alone.</p>
     <button type="submit">Save</button>
   </form>
   <p><a href="/settings/account">Your email address and password</a></p>

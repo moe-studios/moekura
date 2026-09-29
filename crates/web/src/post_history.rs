@@ -193,8 +193,8 @@ fn row(change: &Change, tag_list: &dyn Fn(&[i32]) -> Vec<Value>) -> Value {
     context! {
         post_id => change.post_id,
         version => v.version,
-        date => v.created_at.date().to_string(),
-        time => format!("{:02}:{:02}", v.created_at.hour(), v.created_at.minute()),
+        date => crate::dates::day(v.created_at),
+        time => crate::dates::clock(v.created_at),
         updater => v.updater_name,
         relation => v.relation_kind.as_ref().map(|kind| context! {
             kind => kind,

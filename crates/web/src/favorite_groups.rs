@@ -88,7 +88,7 @@ fn summary_context(group: &Group) -> Value {
         creator => group.creator_name,
         public => group.is_public,
         post_count => group.post_count,
-        date => group.updated_at.date().to_string(),
+        date => crate::dates::day(group.updated_at),
     }
 }
 

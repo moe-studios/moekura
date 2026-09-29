@@ -1,0 +1,10 @@
+/* Ocean: deep blue-green. */
+:root {
+  --bg: light-dark(#f4f8fa, #0e191e);
+  --surface: light-dark(#ffffff, #14232a);
+  --text: light-dark(#11272f, #e2eef3);
+  --muted: light-dark(#4f6b77, #92adb8);
+  --border: light-dark(#d6e4ea, #26404a);
+  --accent: light-dark(#006b87, #4cc0dc);
+  --accent-text: light-dark(#ffffff, #0e191e);
+}

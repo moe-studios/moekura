@@ -2,6 +2,7 @@
 // makes things quicker to use.
 
 import { attachAll } from "./autocomplete.ts";
+import { enableAutosubmit } from "./autosubmit.ts";
 import { enableConfirm } from "./confirm.ts";
 import { enableShortcuts } from "./keyboard.ts";
 import { enableLayout } from "./layout.ts";
@@ -20,6 +21,7 @@ document.documentElement.classList.add("js");
 
 enableToasts();
 enableConfirm();
+enableAutosubmit();
 enableLayout();
 attachAll();
 enhanceReactions();

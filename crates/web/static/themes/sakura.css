@@ -1,0 +1,10 @@
+/* Sakura: pink, Moekura's first colours. */
+:root {
+  --bg: light-dark(#fbfafc, #16141a);
+  --surface: light-dark(#ffffff, #1f1c24);
+  --text: light-dark(#1f1d24, #ece9f1);
+  --muted: light-dark(#6b6775, #a39fad);
+  --border: light-dark(#e4e1ea, #34303b);
+  --accent: light-dark(#c42a61, #f06595);
+  --accent-text: light-dark(#ffffff, #16141a);
+}

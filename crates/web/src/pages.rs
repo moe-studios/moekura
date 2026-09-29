@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
 use moekura_core::settings::RegistrationMode;
-use moekura_core::user_settings::{Theme, UserSettings};
+use moekura_core::user_settings::{Mode, UserSettings};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -111,6 +111,14 @@ pub(crate) fn render(
     let site = state.site.get();
     let settings = &site.settings;
     let path = target.split('?').next().unwrap_or(target);
+    let user_settings = current
+        .and_then(|c| c.user.as_ref())
+        .map(|user| UserSettings::from_json(&user.settings));
+    let theme = crate::themes::resolve(
+        &state.assets,
+        user_settings.as_ref().and_then(|s| s.theme.as_deref()),
+        &settings.default_theme,
+    );
     let layout = context! {
         path => path,
         target => target,
@@ -128,16 +136,19 @@ pub(crate) fn render(
             name => user.name,
             role => current.map(|c| c.role.name.clone()),
         }),
-        theme => current
-            .and_then(|c| c.user.as_ref())
-            .map(|user| UserSettings::from_json(&user.settings).theme)
-            .filter(|theme| *theme != Theme::System)
-            .map(Theme::as_str),
+        theme => theme,
+        // The default theme is in the main stylesheet, without a file.
+        theme_css => Some(format!("themes/{theme}.css"))
+            .filter(|path| state.assets.url(path).is_some()),
+        mode => user_settings
+            .as_ref()
+            .map(|s| s.mode)
+            .filter(|mode| *mode != Mode::System)
+            .map(Mode::as_str),
         // The user's choice, "system" included, for the footer switcher.
-        theme_choice => current
-            .and_then(|c| c.user.as_ref())
-            .map(|user| UserSettings::from_json(&user.settings).theme.as_str()),
-        themes => Theme::ALL.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+        mode_choice => user_settings.as_ref().map(|s| s.mode.as_str()),
+        modes => Mode::ALL.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
+        themes => crate::themes::choices(&state.assets),
         flash => flash.map(Flash::text),
         banned => current.and_then(|c| c.ban.as_ref()).map(|ban| context! {
             reason => ban.reason,

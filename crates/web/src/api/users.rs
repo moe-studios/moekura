@@ -91,6 +91,8 @@ pub struct ApiSettings {
     /// Posts per page on the site; `null` for the site's default.
     pub per_page: Option<u32>,
     /// `system`, `light` or `dark`.
+    pub mode: String,
+    /// The colour theme shown: the account's choice, or the site's default.
     pub theme: String,
     /// The blacklist in effect: the account's own, or the site's default.
     pub blacklist: String,
@@ -131,7 +133,13 @@ pub(crate) async fn me(
             .collect(),
         settings: ApiSettings {
             per_page: settings.per_page,
-            theme: settings.theme.as_str().to_owned(),
+            mode: settings.mode.as_str().to_owned(),
+            theme: crate::themes::resolve(
+                &state.assets,
+                settings.theme.as_deref(),
+                &state.site.get().settings.default_theme,
+            )
+            .to_owned(),
             blacklist: crate::blacklist::text_for(&state, &current),
         },
         uploads: {

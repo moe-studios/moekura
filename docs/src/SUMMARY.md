@@ -20,6 +20,7 @@
 - [File storage](admin/storage.md)
 - [Background jobs](admin/jobs.md)
 - [Webhooks](admin/webhooks.md)
+- [Themes](admin/themes.md)
 - [Backups](admin/backups.md)
 - [Bulk import](admin/import.md)
 - [The tagger](admin/tagger.md)

@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
 use moekura_core::permissions::{Permission, Permissions, Role, SystemRole};
-use moekura_core::settings::{RegistrationMode, SiteSettings};
+use moekura_core::settings::{RegistrationMode, SettingError, SiteSettings};
 use moekura_core::uploads::UploadLimits;
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, UserStatus};
@@ -168,6 +168,7 @@ fn render_settings(
                     sign_up => current.captcha.sign_up,
                     comment_account_days => current.captcha.comment_account_days,
                 },
+                default_theme => current.default_theme,
                 tagger => context! {
                     thresholds => thresholds,
                     auto_apply => current.tagger.auto_apply,
@@ -180,6 +181,7 @@ fn render_settings(
             tagger_enabled => page.state().config.tagger.enabled,
             tagger_account => page.state().config.tagger.account,
             modes => ["open", "invite", "approval", "closed"],
+            themes => crate::themes::choices(&page.state().assets),
             error => error,
         },
     )
@@ -236,6 +238,7 @@ struct SettingsForm {
     deletion_reasons: Option<String>,
     /// One per line.
     flag_reasons: Option<String>,
+    default_theme: Option<String>,
     /// Present when ticked.
     tagger_auto_apply: Option<String>,
     tagger_auto_threshold: Option<String>,
@@ -289,6 +292,10 @@ async fn save_settings(
         .tagger_auto_threshold
         .as_deref()
         .map_or_else(|| json!(before.tagger.auto_threshold), number);
+    let default_theme = form
+        .default_theme
+        .clone()
+        .unwrap_or_else(|| before.default_theme.clone());
     let wanted = [
         ("site_name", json!(form.site_name.trim())),
         ("registration_mode", json!(form.registration_mode)),
@@ -319,6 +326,7 @@ async fn save_settings(
             "default_blacklist",
             json!(form.default_blacklist.replace("\r\n", "\n").trim()),
         ),
+        ("default_theme", json!(default_theme)),
         (
             "ip_history_days",
             form.ip_history_days
@@ -375,7 +383,17 @@ async fn save_settings(
     // Validate everything first, so a bad field changes nothing.
     let mut checked = before.clone();
     for (key, value) in &wanted {
-        match checked.with_value(key, value.clone()) {
+        let result = if *key == "default_theme"
+            && !crate::themes::names(&state.assets).contains(&default_theme.as_str())
+        {
+            Err(SettingError::InvalidValue {
+                key: (*key).to_owned(),
+                message: "the site has no such theme".into(),
+            })
+        } else {
+            checked.with_value(key, value.clone())
+        };
+        match result {
             Ok(next) => checked = next,
             Err(error) => {
                 let mut shown = checked.clone();
@@ -1014,6 +1032,32 @@ mod tests {
             .await;
         assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(bad.body.contains("from 1 to 100"), "{}", bad.body);
+
+        // The default theme, for visitors: only one the site has.
+        let form = "site_name=Tiny+Booru&registration_mode=invite&promotion_uploads=20\
+                    &promotion_edits=5&promotion_account_days=14&promotion_max_recent_deletions=1";
+        let bad = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                &format!("{form}&default_theme=nope"),
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(bad.body.contains("no such theme"), "{}", bad.body);
+        let response = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                &format!("{form}&default_theme=sakura"),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let home = app.get("/", None).await.body;
+        assert!(home.contains("data-theme=\"sakura\""), "{home}");
+        assert!(home.contains("/static/themes/sakura."), "{home}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

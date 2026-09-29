@@ -76,6 +76,11 @@ impl Assets {
     pub fn url(&self, logical: &str) -> Option<&str> {
         self.urls.get(logical).map(String::as_str)
     }
+
+    /// Every file's logical path, in no particular order.
+    pub fn logical_paths(&self) -> impl Iterator<Item = &str> {
+        self.urls.keys().map(String::as_str)
+    }
 }
 
 /// `css/main.css` → `css/main.<8 hex chars>.css`.

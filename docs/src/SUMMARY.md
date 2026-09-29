@@ -4,6 +4,7 @@
 
 # Installing
 
+- [Hardware](install/hardware.md)
 - [With Docker Compose](install/compose.md)
 - [Without containers](install/bare-metal.md)
 - [Behind a reverse proxy](install/reverse-proxy.md)

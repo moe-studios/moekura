@@ -18,7 +18,10 @@ start.
 Two volumes hold everything worth keeping: `db` (PostgreSQL) and `files`
 (uploads and thumbnails). Back them up together; see [Backups](../admin/backups.md).
 
-The image (about 170 MB) includes its own builds of libvips and ffmpeg with
+The PostgreSQL settings in the file suit a machine with 1 GB of memory;
+[Hardware](hardware.md) has what the stack needs and how to grow it.
+
+The image (about 180 MB) includes its own builds of libvips and ffmpeg with
 only the formats Moekura accepts.
 
 To suggest tags for uploads with the [tagger](../admin/tagger.md), add

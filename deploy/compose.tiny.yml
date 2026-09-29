@@ -26,6 +26,29 @@ services:
   db:
     image: docker.io/library/postgres:18-alpine
     restart: unless-stopped
+    # Sized for a machine with 1 GB of memory, shared with the app. On a
+    # bigger one, raise shared_buffers to a quarter of memory and
+    # effective_cache_size to half (see the Scaling page).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      # The app's pool opens at most 16, plus room for admin commands and
+      # backups; each connection costs memory even when idle.
+      - -c
+      - max_connections=30
+      # Compiling queries costs more than it saves on a small site.
+      - -c
+      - jit=off
+      # For SSDs, which cheap VPSes and a Raspberry Pi's USB drive are.
+      - -c
+      - random_page_cost=1.1
     environment:
       POSTGRES_USER: moekura
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}

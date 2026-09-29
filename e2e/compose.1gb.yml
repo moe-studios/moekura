@@ -1,0 +1,15 @@
+# The tiny stack squeezed into what a VPS with 1 GB of memory and two
+# cores has, leaving about 128 MB for the system: CI runs the e2e tests
+# like this.
+#
+#   docker compose -f deploy/compose.tiny.yml -f e2e/compose.1gb.yml up -d
+
+services:
+  app:
+    cpuset: "0,1"
+    mem_limit: 384m
+    memswap_limit: 384m
+  db:
+    cpuset: "0,1"
+    mem_limit: 512m
+    memswap_limit: 512m

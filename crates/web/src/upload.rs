@@ -550,6 +550,9 @@ pub async fn create_post(
         };
 
     let mut tx = db.begin().await?;
+    // Credits the tags this creates; the post is the uploader's anyway.
+    moekura_db::post_versions::attribute(&mut tx, uploader.user.as_ref().map(|u| u.id), None)
+        .await?;
     let tag_ids: Vec<i32> = moekura_db::tags::for_post(
         &mut tx,
         &tags.wanted(),

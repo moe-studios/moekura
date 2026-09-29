@@ -3,7 +3,7 @@
 {% block content %}
 <section class="card narrow">
   <h1>Edit <a href="{{ tag.url }}">{{ tag.name }}</a></h1>
-  <p class="hint">Used on {{ tag.count }} post{% if tag.count != 1 %}s{% endif %}.</p>
+  <p class="hint">Used on {{ tag.count }} post{% if tag.count != 1 %}s{% endif %}. <a href="/tag_versions?tag={{ tag.name | urlencode }}">History</a></p>
   <form method="post" action="/tags/{{ tag.id }}/edit">
     <label for="category">Category</label>
     <select id="category" name="category">

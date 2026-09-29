@@ -79,6 +79,13 @@ while it's pending. If a line can't be applied (say, it would make an
 implication loop), the request stops there, marked failed with the
 reason; the lines before it stay applied.
 
+## History
+
+**Tags → History** lists every change to tags: when each was created and
+who changed its category or deprecation, newest first, with the old and
+new values. Filter it by tag or by user; a tag's edit page links to its
+own history.
+
 ## Deprecated tags
 
 A deprecated tag can't be added to posts any more, but stays on the posts

@@ -37,6 +37,7 @@ pub mod staged_uploads;
 pub mod stats;
 pub mod tag_relations;
 pub mod tag_suggestions;
+pub mod tag_versions;
 pub mod tags;
 pub mod two_factor;
 pub mod user_ips;

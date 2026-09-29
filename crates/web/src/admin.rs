@@ -148,6 +148,12 @@ fn render_settings(
                 upload_limit_scaling => current.upload_limit_scaling,
                 auto_promotion => current.auto_promotion,
                 preview_all_ratings => current.preview_all_ratings,
+                // Every rating ticked when visitors aren't limited.
+                visitor_ratings => moekura_core::posts::Rating::ALL
+                    .iter()
+                    .filter(|r| current.visitor_ratings.is_empty() || current.visitor_ratings.contains(r))
+                    .map(|r| r.code())
+                    .collect::<Vec<_>>(),
                 promotion => context! {
                     uploads => current.promotion_rules.uploads,
                     edits => current.promotion_rules.edits,
@@ -200,6 +206,26 @@ async fn settings_form(page: Page) -> Result<Response, AppError> {
     ))
 }
 
+/// The ratings ticked for visitors; none when all (or none) are, since
+/// that limits nothing.
+fn visitor_ratings(form: &SettingsForm) -> Vec<&'static str> {
+    let ticked: Vec<&'static str> = [
+        ("g", &form.visitor_rating_g),
+        ("s", &form.visitor_rating_s),
+        ("q", &form.visitor_rating_q),
+        ("e", &form.visitor_rating_e),
+    ]
+    .into_iter()
+    .filter(|(_, field)| field.is_some())
+    .map(|(code, _)| code)
+    .collect();
+    if ticked.len() == 4 {
+        Vec::new()
+    } else {
+        ticked
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct SettingsForm {
     #[serde(default)]
@@ -216,6 +242,11 @@ struct SettingsForm {
     auto_promotion: Option<String>,
     /// Present when ticked.
     preview_all_ratings: Option<String>,
+    /// Ratings visitors see, each present when ticked.
+    visitor_rating_g: Option<String>,
+    visitor_rating_s: Option<String>,
+    visitor_rating_q: Option<String>,
+    visitor_rating_e: Option<String>,
     #[serde(default)]
     promotion_uploads: String,
     #[serde(default)]
@@ -326,6 +357,7 @@ async fn save_settings(
             "default_blacklist",
             json!(form.default_blacklist.replace("\r\n", "\n").trim()),
         ),
+        ("visitor_ratings", json!(visitor_ratings(&form))),
         ("default_theme", json!(default_theme)),
         (
             "ip_history_days",
@@ -936,12 +968,25 @@ mod tests {
                 &[],
                 "site_name=Tiny+Booru&registration_mode=invite&upload_approval=on&default_blacklist=rating%3Ae\
                  &auto_promotion=on&promotion_uploads=20&promotion_edits=5&promotion_account_days=14\
-                 &promotion_max_recent_deletions=1",
+                 &promotion_max_recent_deletions=1&visitor_rating_g=on&visitor_rating_s=on",
             )
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
         let stored = moekura_db::settings::load(&pool).await.unwrap();
         assert_eq!(stored.site_name, "Tiny Booru");
+        assert_eq!(
+            stored.visitor_ratings,
+            [
+                moekura_core::posts::Rating::General,
+                moekura_core::posts::Rating::Sensitive
+            ]
+        );
+        let form = app.get("/admin/settings", Some(&admin)).await.body;
+        assert!(form.contains("name=\"visitor_rating_s\" checked"), "{form}");
+        assert!(
+            !form.contains("name=\"visitor_rating_e\" checked"),
+            "{form}"
+        );
         assert!(stored.upload_approval);
         assert!(stored.auto_promotion);
         assert_eq!(
@@ -989,7 +1034,7 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(logged, 6);
+        assert_eq!(logged, 7);
 
         // The tagger: thresholds by category, a blank one falling back to
         // general's.

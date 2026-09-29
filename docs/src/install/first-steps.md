@@ -59,6 +59,15 @@ haven't set their own:
 moekura admin settings set default_blacklist "rating:e"
 ```
 
+A blacklist only hides posts until someone turns it off. To keep
+visitors from seeing some ratings at all, in searches, on post pages, in
+feeds and through the APIs, limit the ratings they see (logged-in users
+still see everything):
+
+```sh
+moekura admin settings set visitor_ratings '["g", "s"]'
+```
+
 To show nothing at all without logging in, make the site
 [private](../admin/private-sites.md).
 

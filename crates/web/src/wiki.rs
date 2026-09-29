@@ -93,7 +93,11 @@ pub(crate) async fn search_excerpt(
     let [TagTerm::Name(name)] = query.all.as_slice() else {
         return Ok(None);
     };
-    if !(query.any.is_empty() && query.none.is_empty() && query.conditions.is_empty()) {
+    if !(query.any.is_empty()
+        && query.none.is_empty()
+        && query.conditions.is_empty()
+        && query.groups.is_empty())
+    {
         return Ok(None);
     }
     let title = tag_relations::aliases_of(db, &[name.as_str()])

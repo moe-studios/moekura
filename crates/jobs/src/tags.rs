@@ -148,6 +148,7 @@ impl TagJobs {
                 PostStatus::Deleted,
             ],
             viewer: None,
+            ratings: Vec::new(),
         };
         let plan = Plan::resolve(&self.db, &query, &visibility, &config)
             .await

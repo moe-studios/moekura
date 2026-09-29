@@ -112,6 +112,7 @@ pub async fn visible_post_ids(
         "SELECT pp.post_id FROM pool_posts pp JOIN posts p ON p.id = pp.post_id
          WHERE pp.pool_id = $1
            AND (p.status = ANY($2) OR (p.status = 'pending' AND p.uploader_id = $3))
+           AND p.rating = ANY($6)
          ORDER BY pp.position OFFSET $4 LIMIT $5",
     )
     .bind(pool_id)
@@ -119,6 +120,7 @@ pub async fn visible_post_ids(
     .bind(visibility.viewer)
     .bind(offset)
     .bind(limit)
+    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }
@@ -133,11 +135,13 @@ pub async fn visible_count(
     sqlx::query_scalar(
         "SELECT count(*) FROM pool_posts pp JOIN posts p ON p.id = pp.post_id
          WHERE pp.pool_id = $1
-           AND (p.status = ANY($2) OR (p.status = 'pending' AND p.uploader_id = $3))",
+           AND (p.status = ANY($2) OR (p.status = 'pending' AND p.uploader_id = $3))
+           AND p.rating = ANY($4)",
     )
     .bind(pool_id)
     .bind(statuses)
     .bind(visibility.viewer)
+    .bind(visibility.rating_codes())
     .fetch_one(db)
     .await
 }
@@ -181,7 +185,8 @@ pub async fn neighbours(
         "WITH visible AS (
              SELECT pp.post_id, pp.position FROM pool_posts pp JOIN posts p ON p.id = pp.post_id
              WHERE pp.pool_id = $1
-               AND (p.status = ANY($3) OR (p.status = 'pending' AND p.uploader_id = $4)))
+               AND (p.status = ANY($3) OR (p.status = 'pending' AND p.uploader_id = $4))
+               AND p.rating = ANY($5))
          SELECT (SELECT post_id FROM visible ORDER BY position LIMIT 1),
                 (SELECT post_id FROM visible WHERE position < $2 ORDER BY position DESC LIMIT 1),
                 (SELECT post_id FROM visible WHERE position > $2 ORDER BY position LIMIT 1),
@@ -191,6 +196,7 @@ pub async fn neighbours(
     .bind(position)
     .bind(statuses)
     .bind(visibility.viewer)
+    .bind(visibility.rating_codes())
     .fetch_one(db)
     .await
 }
@@ -510,6 +516,7 @@ mod tests {
         let public = Visibility {
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
+            ratings: Vec::new(),
         };
         assert_eq!(
             visible_post_ids(&pool, id, &public, 0, 10).await.unwrap(),

@@ -358,6 +358,99 @@ pub async fn autocomplete(db: &PgPool, prefix: &str, limit: i64) -> sqlx::Result
     Ok(found)
 }
 
+/// Similarly spelled tags [`replacements`] ranks by edit distance.
+const REPLACEMENT_CANDIDATES: i64 = 50;
+
+/// Used tags to suggest instead of `name`, a search term that matched no
+/// posts, best first: the consequent of an alias that's no longer
+/// active, then similarly spelled tags, fewest edits away first and more
+/// used first among equals. Empty if `name` is itself a used tag,
+/// directly or through an alias.
+///
+/// Similar tags are found by trigrams, with a lower threshold for short
+/// names (whose typos change most of their few trigrams), and kept only
+/// within a few edits, so nonsense gets no suggestions.
+pub async fn replacements(db: &PgPool, name: &str, limit: i64) -> sqlx::Result<Vec<String>> {
+    let current = crate::tag_relations::aliases_of(db, &[name])
+        .await?
+        .pop()
+        .map_or_else(|| name.to_owned(), |(_, consequent)| consequent);
+    if by_name(db, &current)
+        .await?
+        .is_some_and(|t| t.post_count > 0)
+    {
+        return Ok(Vec::new());
+    }
+    let mut found: Vec<String> = sqlx::query_scalar(
+        "SELECT t.name FROM tag_relations r JOIN tags t ON t.name = r.consequent_name
+         WHERE r.kind = 'alias' AND r.status IN ('rejected', 'deleted')
+           AND r.antecedent_name = $1 AND t.post_count > 0
+         ORDER BY t.post_count DESC LIMIT $2",
+    )
+    .bind(name)
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    let length = name.chars().count();
+    let threshold = match length {
+        ..5 => "0.1",
+        5..8 => "0.2",
+        _ => "0.3",
+    };
+    let mut tx = db.begin().await?;
+    sqlx::query("SELECT set_config('pg_trgm.similarity_threshold', $1, true)")
+        .bind(threshold)
+        .execute(&mut *tx)
+        .await?;
+    let mut similar: Vec<(String, i32)> = sqlx::query_as(
+        "SELECT name, post_count FROM tags
+         WHERE name % $1 AND name <> $1 AND post_count > 0
+         ORDER BY similarity(name, $1) DESC, post_count DESC LIMIT $2",
+    )
+    .bind(name)
+    .bind(REPLACEMENT_CANDIDATES)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    // Trigrams miss swapped letters (`long_hiar` looks more like
+    // `long_hat` than `long_hair`); edits don't.
+    let most_edits = 1 + length / 4;
+    similar.retain(|(candidate, _)| edit_distance(name, candidate) <= most_edits);
+    similar.sort_by_key(|(candidate, posts)| (edit_distance(name, candidate), -posts));
+    for (name, _) in similar {
+        if !found.contains(&name) {
+            found.push(name);
+        }
+    }
+    found.truncate(usize::try_from(limit).unwrap_or(0));
+    Ok(found)
+}
+
+/// Insertions, deletions, substitutions and swaps of neighbouring
+/// characters that turn `a` into `b` (optimal string alignment).
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let width = b.len() + 1;
+    let mut d = vec![0usize; (a.len() + 1) * width];
+    for i in 0..=a.len() {
+        for j in 0..=b.len() {
+            d[i * width + j] = if i == 0 || j == 0 {
+                i + j
+            } else {
+                let cost = usize::from(a[i - 1] != b[j - 1]);
+                let mut best = (d[(i - 1) * width + j] + 1)
+                    .min(d[i * width + j - 1] + 1)
+                    .min(d[(i - 1) * width + j - 1] + cost);
+                if i > 1 && j > 1 && a[i - 1] == b[j - 2] && a[i - 2] == b[j - 1] {
+                    best = best.min(d[(i - 2) * width + j - 2] + 1);
+                }
+                best
+            };
+        }
+    }
+    d[a.len() * width + b.len()]
+}
+
 /// The smallest string above every string starting with `prefix` (in
 /// the C collation tag names use), or `None` if there is none.
 fn prefix_end(prefix: &str) -> Option<String> {
@@ -469,6 +562,70 @@ pub(crate) mod tests {
         .fetch_one(pool)
         .await
         .unwrap()
+    }
+
+    #[test]
+    fn edit_distances() {
+        assert_eq!(edit_distance("long_hiar", "long_hair"), 1);
+        assert_eq!(edit_distance("long_hiar", "long_hat"), 2);
+        assert_eq!(edit_distance("", "abc"), 3);
+        assert_eq!(edit_distance("kitten", "sitting"), 3);
+        assert_eq!(edit_distance("ça", "ca"), 1);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn replacements_for_empty_terms(pool: PgPool) {
+        let ids = create(
+            &pool,
+            &[
+                "long_hair",
+                "long_hat",
+                "blonde_hair",
+                "unused_hair",
+                "dog",
+                "dogs_(animal)",
+            ],
+        )
+        .await;
+        for (id, count) in [
+            (ids[0], 50),
+            (ids[1], 5),
+            (ids[2], 10),
+            (ids[4], 3),
+            (ids[5], 9),
+        ] {
+            sqlx::query("UPDATE tags SET post_count = $2 WHERE id = $1")
+                .bind(id)
+                .bind(count)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO tag_relations (kind, antecedent_name, consequent_name, status)
+             VALUES ('alias', 'blond', 'blonde_hair', 'rejected')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let found = |name: &'static str| {
+            let pool = pool.clone();
+            async move { replacements(&pool, name, 3).await.unwrap() }
+        };
+        assert_eq!(found("long_hiar").await[0], "long_hair");
+        assert_eq!(found("blond").await[0], "blonde_hair");
+        // Short names: a lower threshold, but only a few edits away.
+        assert_eq!(found("dgo").await, ["dog"]);
+        assert!(found("lo").await.is_empty());
+        // Unused tags aren't suggested, nonsense gets nothing, and used
+        // tags need no replacement.
+        assert!(
+            !found("unused_hai")
+                .await
+                .contains(&"unused_hair".to_owned())
+        );
+        assert!(found("qzxv").await.is_empty());
+        assert!(found("long_hair").await.is_empty());
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

@@ -12,6 +12,7 @@
       <span class="hint">
         {{ v.date }}{% if v.updater %} · by {{ v.updater }}{% endif %}
         {% if v.change is not none %} · {% if v.change >= 0 %}+{% endif %}{{ v.change }} characters{% endif %}
+        {% if v.other_names_changed %} · other names changed{% endif %}
       </span>
       {% if v.can_revert %}
       <form method="post" action="{{ url }}/revert/{{ v.version }}"><button type="submit" class="secondary">Revert to this</button></form>

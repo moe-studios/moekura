@@ -12,7 +12,7 @@ use moekura_core::markup;
 use moekura_core::permissions::Permission;
 use moekura_core::search::{Query as SearchQuery, TagTerm};
 use moekura_core::tags::TagName;
-use moekura_db::wiki::{self, SaveError, WikiPage};
+use moekura_db::wiki::{self, Match, SaveError, Text, WikiPage};
 use moekura_db::{tag_relations, tags};
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -64,16 +64,23 @@ pub(crate) fn clean_body(body: &str) -> Result<String, AppError> {
     Ok(body)
 }
 
+/// Other names from a form or the API, normalised.
+pub(crate) fn clean_other_names<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<Vec<String>, AppError> {
+    moekura_core::wiki::other_names(names).map_err(|e| AppError::Unprocessable(e.to_string()))
+}
+
 /// Saves a page as `current`; see [`wiki::save`] for `base`.
 pub(crate) async fn save(
     state: &AppState,
     current: &CurrentUser,
     title: &TagName,
-    body: &str,
+    text: Text<'_>,
     base: Option<i32>,
 ) -> Result<i32, SaveError> {
     let updater = current.user.as_ref().map(|u| u.id);
-    let version = wiki::save(state.db.primary(), title.as_str(), body, updater, base).await?;
+    let version = wiki::save(state.db.primary(), title.as_str(), text, updater, base).await?;
     tracing::info!(title = title.as_str(), version, "wiki page saved");
     Ok(version)
 }
@@ -129,7 +136,14 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
     let db = page.state().reader(&page.current);
     let number = query.page.unwrap_or(1).clamp(1, MAX_PAGE);
     let pattern = moekura_core::tags::normalize(&query.title);
-    let mut found = wiki::list(db, &pattern, (number - 1) * PAGE_SIZE, PAGE_SIZE + 1).await?;
+    let mut found = wiki::list(
+        db,
+        &pattern,
+        Match::Either,
+        (number - 1) * PAGE_SIZE,
+        PAGE_SIZE + 1,
+    )
+    .await?;
     let has_next = found.len() > PAGE_SIZE as usize && number < MAX_PAGE;
     found.truncate(PAGE_SIZE as usize);
     let rows: Vec<Value> = found
@@ -138,6 +152,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
             context! {
                 title => display_title(&p.title),
                 url => page_url(&p.title),
+                other_names => p.other_names.iter().map(|n| display_title(n)).collect::<Vec<_>>(),
                 version => p.version,
                 updater => p.updater_name,
                 date => p.updated_at.date().to_string(),
@@ -208,21 +223,22 @@ async fn show(
         .await?
         .pop()
         .map(|(_, consequent)| context! { title => display_title(&consequent), url => page_url(&consequent) });
-    let (body, old_version) = match (&wiki_page, query.version) {
+    let (body, other_names, old_version) = match (&wiki_page, query.version) {
         (Some(p), Some(v)) if v != p.version => {
             let old = wiki::version(db, p.id, v)
                 .await?
                 .ok_or(AppError::NotFound)?;
-            (Some(old.body), Some(v))
+            (Some(old.body), old.other_names, Some(v))
         }
-        (Some(p), _) => (Some(p.body.clone()), None),
-        (None, _) => (None, None),
+        (Some(p), _) => (Some(p.body.clone()), p.other_names.clone(), None),
+        (None, _) => (None, Vec::new(), None),
     };
     let context = context! {
         title => display_title(title.as_str()),
         name => title.as_str(),
         url => page_url(title.as_str()),
         html => body.map(|b| Value::from_safe_string(markup::render(&b))),
+        other_names => other_names.iter().map(|n| display_title(n)).collect::<Vec<_>>(),
         old_version => old_version,
         wiki => wiki_page.as_ref().map(|p| context! {
             version => p.version,
@@ -255,11 +271,18 @@ async fn show(
     Ok(page.render_with_status(status, "wiki_page.html", context))
 }
 
-fn edit_context(title: &TagName, body: &str, base: i32, error: Option<String>) -> Value {
+fn edit_context(
+    title: &TagName,
+    body: &str,
+    other_names: &str,
+    base: i32,
+    error: Option<String>,
+) -> Value {
     context! {
         title => display_title(title.as_str()),
         url => page_url(title.as_str()),
         body => body,
+        other_names => other_names,
         base => base,
         is_new => base == 0,
         error => error,
@@ -273,13 +296,21 @@ async fn edit_form(page: Page, Path(raw): Path<String>) -> Result<Response, AppE
         Ok(found) => found,
         Err(redirect) => return Ok(redirect),
     };
-    let (body, base) = wiki_page.map_or((String::new(), 0), |p| (p.body, p.version));
-    Ok(page.render("wiki_edit.html", edit_context(&title, &body, base, None)))
+    let (body, names, base) = wiki_page.map_or((String::new(), String::new(), 0), |p| {
+        (p.body, p.other_names.join(" "), p.version)
+    });
+    Ok(page.render(
+        "wiki_edit.html",
+        edit_context(&title, &body, &names, base, None),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
 struct EditForm {
     body: String,
+    /// Separated by spaces.
+    #[serde(default)]
+    other_names: String,
     /// The version the form was loaded with; 0 for a new page.
     base: i32,
 }
@@ -292,8 +323,12 @@ async fn edit(
 ) -> Result<Response, AppError> {
     page.current.require(Permission::EditWiki)?;
     let title = title(&raw)?;
-    let body = match clean_body(&form.body) {
-        Ok(body) => body,
+    let cleaned = clean_body(&form.body).and_then(|body| {
+        let names = clean_other_names(form.other_names.split_whitespace())?;
+        Ok((body, names))
+    });
+    let (body, names) = match cleaned {
+        Ok(cleaned) => cleaned,
         Err(error) => {
             return Ok(page.render_with_status(
                 error.status(),
@@ -301,13 +336,18 @@ async fn edit(
                 edit_context(
                     &title,
                     &form.body,
+                    &form.other_names,
                     form.base,
                     Some(error.public_message().to_owned()),
                 ),
             ));
         }
     };
-    match save(page.state(), &page.current, &title, &body, Some(form.base)).await {
+    let text = Text {
+        body: &body,
+        other_names: Some(&names),
+    };
+    match save(page.state(), &page.current, &title, text, Some(form.base)).await {
         Ok(_) => Ok((
             flash::set(jar, Flash::Saved),
             Redirect::to(&markup::wiki_url(title.as_str())),
@@ -318,7 +358,13 @@ async fn edit(
         Err(SaveError::Conflict { current, .. }) => Ok(page.render_with_status(
             StatusCode::CONFLICT,
             "wiki_edit.html",
-            edit_context(&title, &body, current, Some(conflict_message())),
+            edit_context(
+                &title,
+                &body,
+                &names.join(" "),
+                current,
+                Some(conflict_message()),
+            ),
         )),
         Err(SaveError::Db(e)) => Err(e.into()),
     }
@@ -347,6 +393,7 @@ async fn history(page: Page, Path(raw): Path<String>) -> Result<Response, AppErr
                 url => url_value(&format!("{base}?version={}", v.version)),
                 // Characters, as a rough measure of the change.
                 change => previous.map(|p| v.body.chars().count() as i64 - p.body.chars().count() as i64),
+                other_names_changed => previous.is_some_and(|p| p.other_names != v.other_names),
                 current => i == 0,
                 can_revert => can_revert && i > 0,
             }
@@ -377,7 +424,11 @@ async fn revert(
     let old = wiki::version(db, wiki_page.id, version)
         .await?
         .ok_or(AppError::NotFound)?;
-    save(page.state(), &page.current, &title, &old.body, None)
+    let text = Text {
+        body: &old.body,
+        other_names: Some(&old.other_names),
+    };
+    save(page.state(), &page.current, &title, text, None)
         .await
         .map_err(|e| match e {
             SaveError::Db(e) => AppError::from(e),
@@ -498,6 +549,29 @@ mod tests {
             "{}",
             list.body
         );
+
+        // Other names: saved from the form, shown, searched, reverted.
+        let named = app
+            .post_form(
+                "/wiki/long_hair/edit",
+                Some(&alice),
+                &[],
+                "base=3&body=Hair+that+is+long.&other_names=%E9%95%B7%E9%AB%AA+Long_Locks",
+            )
+            .await;
+        assert_eq!(named.status, StatusCode::SEE_OTHER, "{}", named.body);
+        let shown = app.get("/wiki/long_hair", None).await.body;
+        assert!(shown.contains("長髪 · Long Locks"), "{shown}");
+        let edit = app.get("/wiki/long_hair/edit", Some(&alice)).await.body;
+        assert!(edit.contains("value=\"長髪 Long_Locks\""), "{edit}");
+        let found = app.get("/wiki?title=long_lo", None).await.body;
+        assert!(found.contains("href=\"/wiki/long_hair\""), "{found}");
+        let history = app.get("/wiki/long_hair/history", None).await.body;
+        assert!(history.contains("other names changed"), "{history}");
+        app.post("/wiki/long_hair/revert/3", Some(&alice), &[])
+            .await;
+        let page = wiki::by_title(&pool, "long_hair").await.unwrap().unwrap();
+        assert!(page.other_names.is_empty());
 
         // Titles may contain `/`, encoded in the URL.
         wiki::save(&pool, "fate/stay_night", "A series.", None, None)

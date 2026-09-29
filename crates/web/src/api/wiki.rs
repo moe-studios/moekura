@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use moekura_core::markup;
 use moekura_core::permissions::Permission;
-use moekura_db::wiki::{self, SaveError, Summary, Version, WikiPage};
+use moekura_db::wiki::{self, Match, SaveError, Summary, Text, Version, WikiPage};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use utoipa::{IntoParams, ToSchema};
@@ -13,7 +13,7 @@ use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, ErrorBody};
 use crate::tags::{MAX_PAGE, PAGE_SIZE};
-use crate::wiki::{clean_body, conflict_message, title};
+use crate::wiki::{clean_body, clean_other_names, conflict_message, title};
 
 use super::tags::page_number;
 
@@ -25,6 +25,9 @@ pub struct ApiWikiPage {
     pub body: String,
     /// `body` as HTML, the way the site shows it.
     pub html: String,
+    /// What the tag is called elsewhere (a Japanese name, a
+    /// romanisation), with underscores for spaces.
+    pub other_names: Vec<String>,
     /// Counts up with every change; send it back when saving.
     pub version: i32,
     /// Who made the latest change.
@@ -41,6 +44,7 @@ impl From<WikiPage> for ApiWikiPage {
             html: markup::render(&p.body),
             title: p.title,
             body: p.body,
+            other_names: p.other_names,
             version: p.version,
             updater: p.updater_name,
             created_at: p.created_at,
@@ -52,6 +56,7 @@ impl From<WikiPage> for ApiWikiPage {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiWikiSummary {
     pub title: String,
+    pub other_names: Vec<String>,
     pub version: i32,
     pub updater: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -62,6 +67,7 @@ impl From<Summary> for ApiWikiSummary {
     fn from(s: Summary) -> Self {
         Self {
             title: s.title,
+            other_names: s.other_names,
             version: s.version,
             updater: s.updater_name,
             updated_at: s.updated_at,
@@ -79,7 +85,8 @@ pub struct WikiPageList {
 #[derive(Debug, Deserialize, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct ListParams {
-    /// A title prefix, or a pattern with `*` wildcards.
+    /// A title prefix, or a pattern with `*` wildcards; other names
+    /// match too.
     #[serde(default)]
     title: String,
     /// 1-based.
@@ -108,6 +115,7 @@ pub(crate) async fn list(
     let mut found = wiki::list(
         state.reader(&current),
         &pattern,
+        Match::Either,
         (number - 1) * PAGE_SIZE,
         PAGE_SIZE + 1,
     )
@@ -149,6 +157,8 @@ pub(crate) async fn show(
 pub struct WikiChanges {
     /// The new text, in the site's wiki markup.
     body: String,
+    /// The page's other names; leave it out to keep them as they are.
+    other_names: Option<Vec<String>>,
     /// The version the text was based on, 0 for a new page. If someone
     /// has changed the page since, the save is refused with 409. Leave it
     /// out to save over whatever is there.
@@ -181,7 +191,15 @@ pub(crate) async fn save(
     current.require(Permission::EditWiki)?;
     let title = title(&raw)?;
     let body = clean_body(&changes.body)?;
-    crate::wiki::save(&state, &current, &title, &body, changes.base_version)
+    let names = match &changes.other_names {
+        Some(names) => Some(clean_other_names(names.iter().map(String::as_str))?),
+        None => None,
+    };
+    let text = Text {
+        body: &body,
+        other_names: names.as_deref(),
+    };
+    crate::wiki::save(&state, &current, &title, text, changes.base_version)
         .await
         .map_err(|e| match e {
             SaveError::Conflict { .. } => AppError::Conflict(conflict_message()),
@@ -198,6 +216,7 @@ pub struct ApiWikiVersion {
     pub version: i32,
     pub updater: Option<String>,
     pub body: String,
+    pub other_names: Vec<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }
@@ -208,6 +227,7 @@ impl From<Version> for ApiWikiVersion {
             version: v.version,
             updater: v.updater_name,
             body: v.body,
+            other_names: v.other_names,
             created_at: v.created_at,
         }
     }
@@ -300,8 +320,28 @@ mod tests {
             .await;
         assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
 
+        let named = app
+            .json(
+                "PUT",
+                "/api/v1/wiki-pages/cat",
+                Some(&alice),
+                Some(json!({ "body": "A dog.", "other_names": ["猫", "neko chan", "猫"] })),
+            )
+            .await;
+        assert_eq!(json(&named.body)["other_names"], json!(["猫", "neko_chan"]));
+        // Leaving them out keeps them.
+        let kept = app
+            .json(
+                "PUT",
+                "/api/v1/wiki-pages/cat",
+                Some(&alice),
+                Some(json!({ "body": "A dog!" })),
+            )
+            .await;
+        assert_eq!(json(&kept.body)["other_names"], json!(["猫", "neko_chan"]));
+
         let shown = json(&app.get("/api/v1/wiki-pages/cat", None).await.body);
-        assert_eq!(shown["body"], json!("A dog."));
+        assert_eq!(shown["body"], json!("A dog!"));
         assert_eq!(
             app.get("/api/v1/wiki-pages/dog", None).await.status,
             StatusCode::NOT_FOUND
@@ -310,6 +350,7 @@ mod tests {
         assert_eq!(list["pages"][0]["title"], json!("cat"));
         assert_eq!(list["next_page"], json!(null));
         let versions = json(&app.get("/api/v1/wiki-pages/cat/versions", None).await.body);
-        assert_eq!(versions[1]["body"], json!("A [b]cat[/b]."));
+        assert_eq!(versions[3]["body"], json!("A [b]cat[/b]."));
+        assert_eq!(versions[1]["other_names"], json!(["猫", "neko_chan"]));
     }
 }

@@ -27,3 +27,4 @@ pub mod totp;
 pub mod uploads;
 pub mod user_settings;
 pub mod webhooks;
+pub mod wiki;

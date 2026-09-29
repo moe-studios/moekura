@@ -215,6 +215,9 @@ pub(crate) async fn thread(
         older => (older > 0).then_some(older),
         all_url => url_value(&format!("/comments?post_id={}", post.id)),
         can_comment => can_comment,
+        captcha => can_comment
+            .then(|| crate::captcha::for_comment(state, current).map(|c| c.widget()))
+            .flatten(),
         login_needed => !current.is_logged_in(),
         draft => draft.map(|d| d.body.as_str()).unwrap_or_default(),
         error => draft.and_then(|d| d.error.as_deref()),
@@ -245,10 +248,14 @@ pub(crate) async fn reply_draft(
 #[derive(Debug, Deserialize)]
 struct CommentForm {
     body: String,
+    /// The captcha widget's token, for new accounts when asked for.
+    #[serde(default, alias = "cf-turnstile-response", alias = "h-captcha-response")]
+    captcha: String,
 }
 
 async fn create(
     page: Page,
+    info: crate::auth::RequestInfo,
     Path(id): Path<i64>,
     Form(form): Form<CommentForm>,
 ) -> Result<Response, AppError> {
@@ -269,6 +276,12 @@ async fn create(
     let result = async {
         let body = clean_body(&form.body)?;
         let user = commenter(state, &page.current, &post).await?;
+        if let Some(captcha) = crate::captcha::for_comment(state, &page.current) {
+            captcha
+                .check(&form.captcha, info.ip)
+                .await
+                .map_err(AppError::BadRequest)?;
+        }
         Ok::<_, AppError>((body, user))
     }
     .await;

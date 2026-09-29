@@ -62,6 +62,9 @@ struct RegisterForm {
     #[serde(default)]
     invite: String,
     next: Option<String>,
+    /// The captcha widget's token, under the name its service gives it.
+    #[serde(default, alias = "cf-turnstile-response", alias = "h-captcha-response")]
+    captcha: String,
 }
 
 /// Errors shown next to the form fields.
@@ -71,7 +74,11 @@ struct RegisterErrors {
     email: Option<String>,
     password: Option<String>,
     invite: Option<String>,
+    captcha: Option<String>,
 }
+
+/// Why an address at a refused domain can't be used.
+pub(crate) const DOMAIN_REFUSED: &str = "Addresses at that domain can't be used here.";
 
 fn registration_mode(state: &AppState) -> RegistrationMode {
     state.site.get().settings.registration_mode
@@ -115,6 +122,7 @@ fn render_register(
             needs_invite => mode == RegistrationMode::Invite,
             needs_approval => mode == RegistrationMode::Approval,
             email_required => crate::email::verification_required(page.state()),
+            captcha => crate::captcha::for_sign_up(page.state()).map(|c| c.widget()),
         },
     )
 }
@@ -150,6 +158,14 @@ async fn register(
         ))
     };
 
+    if let Some(captcha) = crate::captcha::for_sign_up(&state)
+        && let Err(message) = captcha.check(&form.captcha, info.ip).await
+    {
+        return invalid(RegisterErrors {
+            captcha: Some(message),
+            ..Default::default()
+        });
+    }
     if form.password != form.password_confirm {
         return invalid(RegisterErrors {
             password: Some("The passwords don't match.".into()),
@@ -160,6 +176,19 @@ async fn register(
     if verify && form.email.trim().is_empty() {
         return invalid(RegisterErrors {
             email: Some("An email address is required, to confirm your account.".into()),
+            ..Default::default()
+        });
+    }
+    if !form.email.trim().is_empty()
+        && !state
+            .site
+            .get()
+            .settings
+            .email_domains
+            .allows(form.email.trim())
+    {
+        return invalid(RegisterErrors {
+            email: Some(DOMAIN_REFUSED.into()),
             ..Default::default()
         });
     }

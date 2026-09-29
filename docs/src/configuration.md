@@ -80,8 +80,24 @@ account (with no password) when registration is `open`, or one waiting for
 approval when it's `approval`; with `invite` or `closed`, only people who
 [linked](using/account.md#single-sign-on) an existing account can. A new
 account takes its name from the provider (the next free one if it's
-taken), and the provider's email address if it says it's verified and
-nobody here uses it yet.
+taken), and the provider's email address if it says it's verified,
+nobody here uses it yet, and the site accepts its domain.
+
+### `[auth.captcha]`
+
+A captcha service for the sign-up form and new accounts' comments: where
+it's asked for is chosen under **Admin → Settings** (nowhere, until
+then). Leave the section out to turn it off.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `provider` | *(required)* | `"turnstile"` (Cloudflare Turnstile) or `"hcaptcha"` |
+| `site_key` | *(required)* | the public key the provider gives you |
+| `secret_key` | *(required)* | the private key tokens are checked with |
+| `verify_url` | *(the provider's)* | where tokens are checked, for a proxy or a compatible service |
+
+The page asking for it loads the provider's script and frame, which the
+content security policy then allows from the provider's origin.
 
 ## `[cache]`
 

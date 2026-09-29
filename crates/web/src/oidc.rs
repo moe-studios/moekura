@@ -481,8 +481,12 @@ async fn create_account(state: &AppState, claims: &Claims) -> Result<User, AppEr
     }
     let mut user =
         created.ok_or_else(|| AppError::Internal("no free name for a new account".into()))?;
-    // The provider's word that the address is theirs is good enough.
-    if let Some(email) = claims.email.as_deref().filter(|_| claims.email_verified())
+    // The provider's word that the address is theirs is good enough, if
+    // the site takes addresses at its domain.
+    if let Some(email) = claims
+        .email
+        .as_deref()
+        .filter(|e| claims.email_verified() && site.settings.email_domains.allows(e))
         && users::by_email(&mut *tx, email).await?.is_none()
     {
         users::set_email(&mut *tx, user.id, Some(email), true)

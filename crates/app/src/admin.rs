@@ -227,6 +227,7 @@ async fn bench(
                 ],
                 viewer: None,
                 ratings: Vec::new(),
+                deleted_by_default: false,
             };
             let plan = moekura_db::search::Plan::resolve(db, &query, &visitor, config).await?;
             println!("{}\n", plan.explain_text(db, case.page).await?);

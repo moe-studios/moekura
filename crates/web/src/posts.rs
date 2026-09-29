@@ -68,6 +68,11 @@ pub fn visibility(current: &CurrentUser) -> Visibility {
         statuses.push(PostStatus::Deleted);
     }
     Visibility {
+        deleted_by_default: statuses.contains(&PostStatus::Deleted)
+            && current
+                .user
+                .as_ref()
+                .is_some_and(|u| UserSettings::from_json(&u.settings).show_deleted),
         statuses,
         viewer: current.user.as_ref().map(|u| u.id),
         ratings: current.ratings.clone(),
@@ -211,6 +216,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         .filter(|card| !is_blacklisted(card))
         .cloned()
         .collect();
+    let deleted = deleted_hidden(&page, db, &query, &normalized, config).await?;
     let sidebar = sidebar_tags(db, &shown, &normalized).await?;
     let wiki = crate::wiki::search_excerpt(db, &query).await?;
     // Only for searches that found nothing, so the rest pay nothing.
@@ -245,6 +251,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             can_tag_script => page.current.is_logged_in() && page.current.can(Permission::EditPosts),
             cards => card_values,
             blacklisted => blacklisted,
+            deleted => deleted,
             count => count_text(count),
             sidebar => sidebar,
             wiki => wiki,
@@ -252,6 +259,43 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             pager => pager.context(),
         },
     ))
+}
+
+/// How many deleted posts a search left out, with a link to include
+/// them, for viewers who may see deleted posts but didn't ask for them.
+async fn deleted_hidden(
+    page: &Page,
+    db: &sqlx::PgPool,
+    query: &SearchQuery,
+    normalized: &str,
+    config: &moekura_core::config::SearchConfig,
+) -> Result<Option<Value>, AppError> {
+    let visible = visibility(&page.current);
+    // A `status:` anywhere, groups included, already decides.
+    if !visible.statuses.contains(&PostStatus::Deleted)
+        || visible.deleted_by_default
+        || query.status().is_some()
+        || !query.groups.is_empty()
+    {
+        return Ok(None);
+    }
+    let Ok(deleted) = SearchQuery::parse(&format!("{normalized} status:deleted")) else {
+        return Ok(None);
+    };
+    let plan = match Plan::resolve(db, &deleted, &visible, config).await {
+        Ok(plan) => plan,
+        Err(SearchError::Invalid(_)) => return Ok(None),
+        Err(SearchError::Db(error)) => return Err(error.into()),
+    };
+    let count = match page.state().counts.count(&plan, db, &page.current).await {
+        Ok(Count::Exact(0)) | Err(SearchError::Invalid(_)) => return Ok(None),
+        Ok(count) => count,
+        Err(SearchError::Db(error)) => return Err(error.into()),
+    };
+    Ok(Some(context! {
+        count => count_text(count).replacen(" post", " deleted post", 1),
+        show_url => Value::from_safe_string(search_url(format!("{normalized} status:any").trim_start())),
+    }))
 }
 
 /// For a search that found nothing: its plain tags that match no posts,
@@ -1604,6 +1648,47 @@ mod tests {
             .body;
         assert!(post.contains("Your settings hide comments"), "{post}");
         assert!(!post.contains("id=\"new-comment\""));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn deleted_posts_hidden_from_searches(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let kept = upload(&app, &alice, &fixture::png(20, 20), &[("tags", "cat")]).await;
+        let gone = upload(&app, &alice, &fixture::png(24, 20), &[("tags", "cat")]).await;
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(gone)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let grid = app.get("/posts?tags=cat", Some(&moderator)).await.body;
+        assert!(grid.contains(&format!("/posts/{kept}?")), "{grid}");
+        assert!(!grid.contains(&format!("/posts/{gone}?")), "{grid}");
+        assert!(grid.contains("1 deleted post hidden"), "{grid}");
+        assert!(
+            grid.contains("href=\"/posts?tags=cat+status%3Aany\""),
+            "{grid}"
+        );
+        // Not for those who couldn't see them anyway, nor with a status:.
+        let member = app.get("/posts?tags=cat", Some(&alice)).await.body;
+        assert!(!member.contains("deleted post"), "{member}");
+        let any = app
+            .get("/posts?tags=cat+status:any", Some(&moderator))
+            .await
+            .body;
+        assert!(any.contains(&format!("/posts/{gone}?")), "{any}");
+        assert!(!any.contains("deleted post hidden"));
+
+        // Included by choice.
+        set_user_settings(&pool, "mod", serde_json::json!({ "show_deleted": true })).await;
+        let grid = app.get("/posts?tags=cat", Some(&moderator)).await.body;
+        assert!(grid.contains(&format!("/posts/{gone}?")), "{grid}");
+        assert!(!grid.contains("deleted post hidden"));
+        set_user_settings(&pool, "alice", serde_json::json!({ "show_deleted": true })).await;
+        let member = app.get("/posts?tags=cat", Some(&alice)).await.body;
+        assert!(!member.contains(&format!("/posts/{gone}?")), "{member}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

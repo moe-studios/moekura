@@ -440,6 +440,7 @@ mod tests {
             statuses: vec![PostStatus::Active],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         let by_vandal = Filter {
             updater_id: Some(vandal),
@@ -475,6 +476,7 @@ mod tests {
             statuses: vec![PostStatus::Deleted],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         assert!(
             search(&pool, &Filter::default(), &hidden, 10)

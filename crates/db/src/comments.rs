@@ -413,6 +413,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         assert_eq!(
             bodies(
@@ -442,6 +443,7 @@ mod tests {
         let uploader = Visibility {
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
             statuses: vec![PostStatus::Active, PostStatus::Pending],
         };
         assert_eq!(

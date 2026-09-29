@@ -124,6 +124,9 @@ pub struct Visibility {
     pub viewer: Option<i64>,
     /// The only ratings visible (the site's for visitors); empty for all.
     pub ratings: Vec<Rating>,
+    /// Searches without a `status:` filter include deleted posts, if
+    /// `statuses` has them: the viewer's choice.
+    pub deleted_by_default: bool,
 }
 
 impl Visibility {
@@ -539,6 +542,7 @@ mod tests {
             statuses: vec![PostStatus::Active],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         assert_eq!(
             family(&pool, parent, &public).await.unwrap(),

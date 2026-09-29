@@ -148,6 +148,8 @@ pub struct Plan {
     /// `status:unmoderated` (or with `true`, `-status:unmoderated`) for
     /// the viewer, if any.
     unmoderated: Vec<(bool, Option<i64>)>,
+    /// `status:appealed`, or with `true` `-status:appealed`.
+    appealed: Vec<bool>,
     order: Order,
     per_page: u32,
     /// Estimated number of posts, for choosing a strategy.
@@ -198,6 +200,7 @@ impl Plan {
             statuses,
             own_pending,
             unmoderated: Vec::new(),
+            appealed: Vec::new(),
             order: query.order.unwrap_or_default(),
             per_page: query.limit.unwrap_or(config.per_page),
             total: 0.0,
@@ -245,6 +248,7 @@ impl Plan {
                     plan.unmoderated
                         .push((condition.negated, visibility.viewer));
                 }
+                Filter::Status(StatusFilter::Appealed) => plan.appealed.push(condition.negated),
                 // Already folded into `statuses`.
                 Filter::Status(_) => {}
                 Filter::User(name) | Filter::Fav(name) => {
@@ -404,7 +408,7 @@ impl Plan {
             (
                 self.nothing,
                 &self.statuses,
-                (self.own_pending, &self.unmoderated),
+                (self.own_pending, &self.unmoderated, &self.appealed),
                 self.required.iter().map(|s| &s.ids).collect::<Vec<_>>(),
                 self.any.as_ref().map(|s| &s.ids),
                 &self.excluded,
@@ -760,6 +764,14 @@ impl Plan {
             }
             sql.push(")");
         }
+        for negated in &self.appealed {
+            sql.push(if *negated {
+                " AND NOT EXISTS"
+            } else {
+                " AND EXISTS"
+            })
+            .push(" (SELECT 1 FROM post_appeals x WHERE x.post_id = p.id AND x.status = 'open')");
+        }
         if self.only_commented() {
             sql.push(" AND p.last_commented_at IS NOT NULL");
         }
@@ -1058,6 +1070,11 @@ fn statuses(query: &Query, visibility: &Visibility) -> (Vec<&'static str>, Optio
             .iter()
             .copied()
             .filter(|s| *s == PostStatus::Pending)
+            .collect(),
+        Some(StatusFilter::Appealed) => visible
+            .iter()
+            .copied()
+            .filter(|s| *s == PostStatus::Deleted)
             .collect(),
         Some(status) => {
             let status: PostStatus = status
@@ -2278,6 +2295,7 @@ mod tests {
             statuses: vec!["active"],
             own_pending: None,
             unmoderated: Vec::new(),
+            appealed: Vec::new(),
             order,
             per_page: 40,
             total,

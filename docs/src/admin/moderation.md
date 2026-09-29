@@ -48,8 +48,22 @@ API and Danbooru clients send free text as before.
 ## Deleting, restoring, purging
 
 Deleting a post (with a reason, which is required and shown on the post) hides it from everyone
-without *See deleted posts*. It can be restored. Purging a deleted post
+without *See deleted posts*, except its uploader, who still sees the post
+and why it went, but can't change it. It can be restored. Purging a deleted post
 removes it, its files and its history for good, in the background.
+
+## Appeals
+
+The uploader of a deleted post (and anyone who can see deleted posts),
+if their role can flag posts, can *appeal* it from the post page with a
+reason. A post has one open appeal at a time, and each person can appeal
+three posts at once, then one more every four hours. Open appeals are
+listed under **Moderation → Appeals** (and found with `status:appealed`)
+for those who can delete and restore posts: **Restore** brings the post
+back and grants the appeal (so does restoring it any other way); **Keep
+deleted** turns the appeal down, with an optional reason, in the log. The
+post page keeps its appeals and how they ended, for staff and the
+uploader.
 
 ## Bans
 

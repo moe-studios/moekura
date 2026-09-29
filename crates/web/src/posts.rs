@@ -614,7 +614,12 @@ pub(crate) async fn render_post(
     // a replica lags.
     let db = state.db.primary();
     let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
-    if !visibility(&page.current).allows(&post) {
+    // Uploaders see their own deleted posts, to know why and to appeal,
+    // but can't do anything else with them.
+    let me = page.current.user.as_ref().map(|u| u.id);
+    let own_deleted = post.status == PostStatus::Deleted && me.is_some() && post.uploader_id == me;
+    let limited = !visibility(&page.current).allows(&post);
+    if limited && !own_deleted {
         return Err(AppError::NotFound);
     }
     let asset = media::for_post(db, id).await?.ok_or(AppError::NotFound)?;
@@ -672,8 +677,10 @@ pub(crate) async fn render_post(
         } else {
             Vec::new()
         };
+    let appeal = crate::moderation::appeal_context(state, &page.current, &post).await?;
     let moderate = context! {
         disapprovals => disapprovals,
+        appeal => appeal,
         can_flag => page.current.is_logged_in()
             && page.current.can(Permission::Flag)
             && matches!(post.status, PostStatus::Active | PostStatus::Flagged),
@@ -690,7 +697,6 @@ pub(crate) async fn render_post(
         query.append_pair("blacklist", "off");
         url_value(&format!("/posts/{id}?{}", query.finish()))
     };
-    let me = page.current.user.as_ref().map(|u| u.id);
     let (favorited, vote) = match me {
         Some(user) => (
             moekura_db::favorites::exists(db, user, id).await?,
@@ -703,8 +709,8 @@ pub(crate) async fn render_post(
         fav_count => post.fav_count,
         favorited => favorited,
         vote => vote,
-        can_favorite => me.is_some() && page.current.can(Permission::Favorite),
-        can_vote => me.is_some() && page.current.can(Permission::Vote),
+        can_favorite => me.is_some() && page.current.can(Permission::Favorite) && !limited,
+        can_vote => me.is_some() && page.current.can(Permission::Vote) && !limited,
         // Keeps the search across the form's redirect.
         query => (!search.is_empty()).then(|| url_value(&format!(
             "?{}",
@@ -763,28 +769,25 @@ pub(crate) async fn render_post(
         created => created.get(..10).unwrap_or_default(),
         created_iso => created,
     };
-    let edit = page
-        .current
-        .can(Permission::EditPosts)
-        .then(|| match &failed {
-            Some(failed) => context! {
-                tags => failed.form.tags,
-                old_tags => failed.form.old_tags,
-                rating => failed.form.rating,
-                source => failed.form.source,
-                description => failed.form.description,
-                parent => failed.form.parent,
-                error => failed.error,
-            },
-            None => context! {
-                tags => tag_string,
-                old_tags => tag_string,
-                rating => post.rating.code(),
-                source => post.source,
-                description => post.description,
-                parent => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
-            },
-        });
+    let edit = (page.current.can(Permission::EditPosts) && !limited).then(|| match &failed {
+        Some(failed) => context! {
+            tags => failed.form.tags,
+            old_tags => failed.form.old_tags,
+            rating => failed.form.rating,
+            source => failed.form.source,
+            description => failed.form.description,
+            parent => failed.form.parent,
+            error => failed.error,
+        },
+        None => context! {
+            tags => tag_string,
+            old_tags => tag_string,
+            rating => post.rating.code(),
+            source => post.source,
+            description => post.description,
+            parent => post.parent_id.map(|p| p.to_string()).unwrap_or_default(),
+        },
+    });
     let suggestions = if edit.is_some() {
         crate::suggestions::for_edit_form(state, db, &post, &categories).await?
     } else {

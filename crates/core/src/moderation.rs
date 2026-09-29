@@ -147,10 +147,11 @@ pub enum ActionKind {
     BulkUpdateReject,
     RoleCreate,
     RoleDelete,
+    AppealReject,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 32] = [
+    pub const ALL: [ActionKind; 33] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -183,6 +184,7 @@ impl ActionKind {
         ActionKind::BulkUpdateReject,
         ActionKind::RoleCreate,
         ActionKind::RoleDelete,
+        ActionKind::AppealReject,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -219,6 +221,7 @@ impl ActionKind {
             ActionKind::BulkUpdateReject => "bulk_update.reject",
             ActionKind::RoleCreate => "role.create",
             ActionKind::RoleDelete => "role.delete",
+            ActionKind::AppealReject => "appeal.reject",
         }
     }
 
@@ -257,6 +260,7 @@ impl ActionKind {
             ActionKind::BulkUpdateReject => "rejected a bulk update request",
             ActionKind::RoleCreate => "added a role",
             ActionKind::RoleDelete => "deleted a role",
+            ActionKind::AppealReject => "turned down an appeal of post",
         }
     }
 

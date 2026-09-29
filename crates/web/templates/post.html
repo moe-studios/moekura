@@ -89,6 +89,24 @@
       </ul>
     </section>
     {% endif %}
+    {% if moderate.appeal.history %}
+    <section class="family flags" aria-label="Appeals">
+      <p>Appeals</p>
+      <ul class="plain">
+        {% for a in moderate.appeal.history %}<li><span class="status status-{{ 'open' if a.status == 'open' else 'dismissed' }}">{{ a.status }}</span> {{ a.when }}{% if a.by %} by {{ a.by }}{% endif %}: {{ a.reason }}{% if a.decided_by %} <span class="hint">(decided by {{ a.decided_by }})</span>{% endif %}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if moderate.appeal.can_appeal %}
+    <details class="edit">
+      <summary>Appeal</summary>
+      <form method="post" action="/posts/{{ post.id }}/appeal">
+        <label for="appeal-reason">Why should this post come back?</label>
+        <input id="appeal-reason" name="reason" maxlength="2000" required>
+        <button type="submit">Appeal</button>
+      </form>
+    </details>
+    {% endif %}
     {% if moderate.can_flag %}
     <details class="edit">
       <summary>Flag</summary>

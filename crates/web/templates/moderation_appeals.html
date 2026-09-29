@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Appeals · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Appeals</h1>
+<p class="hint">Deleted posts someone asked to bring back (<a href="{{ search_url('status:appealed') }}">status:appealed</a>), oldest appeal first. Restoring a post grants its appeal.</p>
+{% if posts %}
+<ul class="review">
+  {% for p in posts %}
+  <li>
+    <a class="review-thumb" href="/posts/{{ p.id }}">{% if p.thumb %}<img src="{{ p.thumb }}" alt="Post #{{ p.id }}" loading="lazy">{% else %}#{{ p.id }}{% endif %}</a>
+    <div class="review-body">
+      <p><a href="/posts/{{ p.id }}">#{{ p.id }}</a> · rating {{ p.rating }}{% if p.uploader %} · by <a href="/users/{{ p.uploader }}">{{ p.uploader }}</a>{% endif %}</p>
+      {% if p.deleted %}<p class="hint">Deleted {{ p.deleted.when }}{% if p.deleted.by %} by {{ p.deleted.by }}{% endif %}{% if p.deleted.reason %}: “{{ p.deleted.reason }}”{% endif %}</p>{% endif %}
+      <p>“{{ p.appeal.reason }}”{% if p.appeal.by %} <span class="hint">— {{ p.appeal.by }}, {{ p.appeal.when }}</span>{% endif %}</p>
+      <div class="actions">
+        <form method="post" action="/posts/{{ p.id }}/appeals/approve"><button type="submit">Restore</button></form>
+        <form class="reject" method="post" action="/posts/{{ p.id }}/appeals/reject">
+          <input name="reason" placeholder="Why it stays deleted" maxlength="2000" aria-label="Why #{{ p.id }} stays deleted">
+          <button type="submit" class="secondary">Keep deleted</button>
+        </form>
+      </div>
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% elif not more_url %}
+<p class="empty">No open appeals.</p>
+{% endif %}
+{% if more_url %}<nav class="pager"><a class="button" href="{{ more_url }}" rel="next">More</a></nav>{% endif %}
+{% endblock %}

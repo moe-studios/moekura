@@ -955,6 +955,23 @@ function enableReader(root = document) {
   }
 }
 
+// src/resized.ts
+function enableResized() {
+  const notice = document.querySelector("[data-resized]");
+  const image = document.querySelector("[data-notes] img");
+  const link = notice?.querySelector("a");
+  const text = notice?.querySelector("span");
+  const { sample, original, percent } = notice?.dataset ?? {};
+  if (!notice || !image || !link || !text || !sample || !original) return;
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    const showOriginal = image.getAttribute("src") !== original;
+    image.src = showOriginal ? original : sample;
+    text.textContent = showOriginal ? "Showing the original." : `Resized to ${percent}% of the original.`;
+    link.textContent = showOriginal ? "Show the resized image" : "View the original";
+  });
+}
+
 // src/select-all.ts
 function controlled(master) {
   const form = master.dataset.selectAll;
@@ -1157,6 +1174,7 @@ enhanceReactions();
 if (!off("shortcuts")) enableShortcuts();
 enablePoolOrder();
 enableReader();
+enableResized();
 enableNotes();
 enableNoteEditor();
 enableTagScript();

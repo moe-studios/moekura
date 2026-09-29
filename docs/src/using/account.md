@@ -10,6 +10,8 @@
   them in grids, blurred, instead.
 - **Safe mode** shows only general-rated posts, everywhere: searches,
   post pages, pools and the API.
+- Post pages show large images resized, saying so above them with a link
+  to the original. **Show original images** always shows the original.
 - **Large thumbnails** use the site's second thumbnail size in grids.
 - **Hide comments** leaves comments off post pages, with a link to read
   them.

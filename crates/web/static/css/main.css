@@ -478,6 +478,7 @@ form .suggestions button[type="submit"] { background: var(--border); color: var(
 .wiki-head h1 { margin: 0; overflow-wrap: anywhere; }
 .wiki-head .hint { margin-bottom: 16px; }
 .wiki .notice { margin: 0 0 16px; }
+.notice.resized { margin: 0 0 8px; }
 .markup { overflow-wrap: anywhere; }
 .markup > :first-child { margin-top: 0; }
 .markup > :last-child { margin-bottom: 0; }

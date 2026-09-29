@@ -29,6 +29,12 @@
     <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
            width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
     {% else %}
+    {% if file.resized %}
+    <p class="notice resized" data-resized data-percent="{{ file.resized.percent }}" data-sample="{{ file.resized.sample }}" data-original="{{ file.original }}">
+      <span>{% if file.resized.showing_original %}Showing the original.{% else %}Resized to {{ file.resized.percent }}% of the original.{% endif %}</span>
+      <a href="{{ file.resized.toggle_url }}">{% if file.resized.showing_original %}Show the resized image{% else %}View the original{% endif %}</a>
+    </p>
+    {% endif %}
     <div class="note-layer" data-notes{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
       <a href="{{ file.original }}">
         <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">

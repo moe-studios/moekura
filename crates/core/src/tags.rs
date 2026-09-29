@@ -17,6 +17,7 @@ pub const RESERVED_PREFIXES: &[&str] = &[
     // Metatags.
     "ai",
     "approver",
+    "child",
     "comment",
     "commentcount",
     "commenter",
@@ -27,8 +28,10 @@ pub const RESERVED_PREFIXES: &[&str] = &[
     "favcount",
     "filesize",
     "filetype",
+    "has",
     "height",
     "id",
+    "is",
     "limit",
     "md5",
     "mpixels",

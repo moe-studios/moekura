@@ -64,6 +64,9 @@ pub const METATAGS: &[&str] = &[
     "note",
     "notecount",
     "ai",
+    "child",
+    "is",
+    "has",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -177,6 +180,13 @@ pub enum PoolFilter {
     In(PoolRef),
 }
 
+/// What a post's source must be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceFilter {
+    /// Any source at all.
+    Any,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentFilter {
     /// Posts without a parent.
@@ -217,6 +227,9 @@ pub enum Filter {
     FileType(Vec<String>),
     Md5(Vec<[u8; 16]>),
     Parent(ParentFilter),
+    /// Has children that aren't deleted (`true`), or none.
+    Child(bool),
+    Source(SourceFilter),
     TagCount(Bound<i64>),
     /// Favorited by this user (name as typed).
     Fav(String),
@@ -899,6 +912,40 @@ impl Query {
             "md5" => Filter::Md5(
                 list(value, md5).ok_or_else(|| invalid("expected 32 hexadecimal digits"))?,
             ),
+            "child" => Filter::Child(match value {
+                "any" => true,
+                "none" => false,
+                _ => return Err(invalid("expected any or none")),
+            }),
+            // Shorthands for other filters, as on Danbooru.
+            "is" => match value {
+                "parent" => Filter::Child(true),
+                "child" => Filter::Parent(ParentFilter::Any),
+                "sfw" => Filter::Rating(vec![Rating::General, Rating::Sensitive]),
+                "nsfw" => Filter::Rating(vec![Rating::Questionable, Rating::Explicit]),
+                "pending" | "active" | "flagged" | "deleted" | "unmoderated" | "appealed" => {
+                    return self.metatag(word, negated, nested, "status", value);
+                }
+                value => Filter::Rating(vec![value.parse().map_err(|_| {
+                    invalid(
+                        "expected parent, child, sfw, nsfw, a rating like general, \
+                         or a status like pending",
+                    )
+                })?]),
+            },
+            "has" => match value {
+                "source" => Filter::Source(SourceFilter::Any),
+                "children" => Filter::Child(true),
+                "parent" => Filter::Parent(ParentFilter::Any),
+                "pools" => Filter::Pool(PoolFilter::Any),
+                "notes" => Filter::NoteCount(Bound::Gt(0)),
+                "comments" => Filter::CommentCount(Bound::Gt(0)),
+                _ => {
+                    return Err(invalid(
+                        "expected source, children, parent, pools, notes or comments",
+                    ));
+                }
+            },
             "parent" => Filter::Parent(match value {
                 "none" => ParentFilter::None,
                 "any" => ParentFilter::Any,
@@ -1158,6 +1205,9 @@ impl fmt::Display for Filter {
             Filter::Parent(ParentFilter::None) => f.write_str("parent:none"),
             Filter::Parent(ParentFilter::Any) => f.write_str("parent:any"),
             Filter::Parent(ParentFilter::Of(id)) => write!(f, "parent:{id}"),
+            Filter::Child(true) => f.write_str("child:any"),
+            Filter::Child(false) => f.write_str("child:none"),
+            Filter::Source(SourceFilter::Any) => f.write_str("has:source"),
             Filter::TagCount(b) => write!(f, "tagcount:{b}"),
             Filter::Fav(name) => write!(f, "fav:{name}"),
             Filter::Similar(id) => write!(f, "similar:{id}"),
@@ -1467,6 +1517,32 @@ mod tests {
         );
         // A lone `~` term is just required.
         assert_eq!(parse("~rating:e"), parse("rating:e"));
+    }
+
+    #[test]
+    fn shorthands() {
+        assert_eq!(filter("child:any"), Filter::Child(true));
+        assert_eq!(filter("child:none"), Filter::Child(false));
+        assert!(error("child:3").contains("expected any or none"));
+        assert_eq!(parse("is:parent"), parse("child:any"));
+        assert_eq!(parse("has:children"), parse("child:any"));
+        assert_eq!(parse("is:child"), parse("parent:any"));
+        assert_eq!(parse("has:parent"), parse("parent:any"));
+        assert_eq!(parse("-is:sfw"), parse("-rating:g,s"));
+        assert_eq!(parse("is:nsfw"), parse("rating:q,e"));
+        assert_eq!(parse("is:Explicit"), parse("rating:e"));
+        assert_eq!(parse("is:pending"), parse("status:pending"));
+        assert_eq!(parse("-is:deleted"), parse("-status:deleted"));
+        assert_eq!(parse("has:pools"), parse("pool:any"));
+        assert_eq!(parse("has:notes"), parse("notecount:>0"));
+        assert_eq!(parse("has:comments"), parse("commentcount:>0"));
+        assert_eq!(filter("has:source"), Filter::Source(SourceFilter::Any));
+        assert_eq!(
+            parse("-has:source child:none").to_string(),
+            "-has:source child:none"
+        );
+        assert!(error("is:big").contains("expected parent, child"));
+        assert!(error("has:").contains("expected source"));
     }
 
     #[test]

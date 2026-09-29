@@ -54,7 +54,25 @@ var METATAGS = {
   search: ["all"],
   favgroup: [],
   ordfavgroup: [],
-  ai: []
+  ai: [],
+  child: ["any", "none"],
+  is: [
+    "parent",
+    "child",
+    "sfw",
+    "nsfw",
+    "general",
+    "sensitive",
+    "questionable",
+    "explicit",
+    "pending",
+    "active",
+    "flagged",
+    "deleted",
+    "unmoderated",
+    "appealed"
+  ],
+  has: ["source", "children", "parent", "pools", "notes", "comments"]
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 

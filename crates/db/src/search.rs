@@ -20,7 +20,8 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
-    Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, StatusFilter, TagTerm,
+    Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, SourceFilter, StatusFilter,
+    TagTerm,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -1335,6 +1336,17 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
                 sql.push(" AND p.created_at < ").push_bind(midnight(until));
             }
         }
+        Filter::Child(any) => {
+            if !any {
+                sql.push("NOT ");
+            }
+            sql.push(
+                "EXISTS (SELECT 1 FROM posts c WHERE c.parent_id = p.id AND c.status <> 'deleted')",
+            );
+        }
+        Filter::Source(SourceFilter::Any) => {
+            sql.push("p.source <> ''");
+        }
         Filter::Parent(ParentFilter::None) => {
             sql.push("p.parent_id IS NULL");
         }
@@ -1767,6 +1779,11 @@ mod tests {
         )
         .await;
 
+        sqlx::query("UPDATE posts SET source = 'https://example.com/1' WHERE id = $1")
+            .bind(clip)
+            .execute(&pool)
+            .await
+            .unwrap();
         let cases: &[(&str, &[i64])] = &[
             ("rating:e", &[wide]),
             ("rating:q,e", &[tall, wide]),
@@ -1798,6 +1815,11 @@ mod tests {
             ("parent:none", &[clip, wide]),
             ("parent:any", &[tall]),
             (&format!("parent:{wide}"), &[tall, wide]),
+            ("child:any", &[wide]),
+            ("child:none", &[clip, tall]),
+            ("is:parent -is:sfw", &[wide]),
+            ("has:source", &[clip]),
+            ("-has:source", &[tall, wide]),
             // Date searches follow upload time, which is id order for
             // posts uploaded normally; `tall` is backdated here.
             ("date:>=2000", &[clip, wide, tall]),

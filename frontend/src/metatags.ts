@@ -56,6 +56,24 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
   favgroup: [],
   ordfavgroup: [],
   ai: [],
+  child: ["any", "none"],
+  is: [
+    "parent",
+    "child",
+    "sfw",
+    "nsfw",
+    "general",
+    "sensitive",
+    "questionable",
+    "explicit",
+    "pending",
+    "active",
+    "flagged",
+    "deleted",
+    "unmoderated",
+    "appealed",
+  ],
+  has: ["source", "children", "parent", "pools", "notes", "comments"],
 };
 
 /// Prefixes that set a new tag's category when tagging.

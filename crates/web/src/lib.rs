@@ -32,6 +32,7 @@ mod notes;
 pub mod oidc;
 pub mod pages;
 mod pools;
+mod post_history;
 mod posts;
 mod previews;
 pub mod rate_limit;
@@ -254,6 +255,7 @@ pub fn router(state: AppState) -> Router {
         .merge(notes::routes())
         .merge(oidc::routes())
         .merge(pools::routes())
+        .merge(post_history::routes())
         .merge(previews::routes())
         .merge(requests::routes())
         .merge(saved_searches::routes())

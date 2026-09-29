@@ -74,6 +74,21 @@ impl Job for PruneIpHistory {
     const MAX_ATTEMPTS: i32 = 3;
 }
 
+/// Undo the post edits user `user_id` made between `since` and `until`
+/// (Unix times; either open-ended), credited to `actor_id`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UndoUserEdits {
+    pub user_id: i64,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+    pub actor_id: Option<i64>,
+}
+
+impl Job for UndoUserEdits {
+    const KIND: &'static str = "post_versions.undo_user";
+    const MAX_ATTEMPTS: i32 = 3;
+}
+
 /// Apply a mass tag edit (`mass_updates` row `id`) to every post matching
 /// its search.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

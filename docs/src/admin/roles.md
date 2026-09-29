@@ -22,7 +22,7 @@ roles can't be deleted and keep their ranks.
 | Favorite, Vote | favoriting posts; voting on posts and comments |
 | Comment | posting comments, and editing and deleting your own |
 | Edit the wiki | |
-| Mass edit tags | adding and removing tags on every post a search finds (Moderation → Mass edit) |
+| Mass edit tags and undo a user's edits | adding and removing tags on every post a search finds (Moderation → Mass edit), and undoing a user's post edits (Moderation → Post changes) |
 | Lock posts and change locked ones | locking a post's rating, tags, notes or status, and changing them anyway |
 | Edit notes | adding, moving, changing and deleting notes on posts |
 | Create and edit pools | making pools, and changing their posts, names and descriptions (deleting a pool takes *Delete and restore posts*) |

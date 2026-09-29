@@ -3,7 +3,7 @@
 {% block content %}
 {% include "moderation_nav.html" %}
 <h1>{{ user.name }}</h1>
-<p><a href="{{ user.profile_url }}">Profile</a></p>
+<p><a href="{{ user.profile_url }}">Profile</a> · <a href="/post_versions?user={{ user.name | urlencode }}">Post changes</a></p>
 
 <section class="card">
   <h2>Account</h2>

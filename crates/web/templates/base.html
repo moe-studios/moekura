@@ -45,7 +45,7 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
-    <p>Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> · <a href="/api/docs">API</a>
+    <p>Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> {{ build_version }} · <a href="/api/docs">API</a>
       <span data-shortcuts-link hidden>· <button type="button" class="link">Keyboard shortcuts</button> <kbd>?</kbd></span></p>
     {% if theme_choice %}
     <form method="post" action="/settings/theme" aria-label="Theme">

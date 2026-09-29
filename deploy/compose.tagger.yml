@@ -1,5 +1,6 @@
 # The tagger, which suggests tags for new uploads, added to the tiny setup:
 #
+#   export MOEKURA_BUILD_VERSION="git-$(git rev-parse --short=7 HEAD)"
 #   docker compose -f deploy/compose.tiny.yml -f deploy/compose.tagger.yml up -d
 #
 # It downloads its model (about 380 MB) on first start, and needs about
@@ -14,6 +15,8 @@ services:
   tagger:
     build:
       context: ..
+      args:
+        MOEKURA_BUILD_VERSION: ${MOEKURA_BUILD_VERSION:-}
       target: tagger
     restart: unless-stopped
     environment:

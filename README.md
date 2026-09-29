@@ -32,7 +32,8 @@ Some starting points:
 
 ```sh
 echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > deploy/.env
-docker compose -f deploy/compose.tiny.yml up -d
+MOEKURA_BUILD_VERSION="git-$(git rev-parse --short=7 HEAD)" \
+  docker compose -f deploy/compose.tiny.yml up -d
 docker compose -f deploy/compose.tiny.yml exec app moekura admin create-user yourname --role admin
 ```
 

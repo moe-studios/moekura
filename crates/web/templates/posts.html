@@ -78,10 +78,13 @@
     <section class="empty">
       <h1>Nothing found</h1>
       <p>No posts match <strong>{{ search.tags }}</strong>.</p>
+      {% for item in did_you_mean %}
+      <p>Did you mean {% for r in item.replacements %}<a href="{{ r.url }}"><strong>{{ r.name }}</strong></a>{% if not loop.last %} or {% endif %}{% endfor %}{% if did_you_mean|length > 1 or search.tags != item.term %} instead of {{ item.term }}{% endif %}?</p>
+      {% endfor %}
       {% set terms = search.tags|split %}
       <p>
-        {% if terms|length > 1 %}Try without the last term: <a href="{{ search_url(terms[:-1]|join(' ')) }}">{{ terms[:-1]|join(' ') }}</a>.
-        {% elif terms[0] is not startingwith("-") and ":" not in terms[0] %}<a href="/tags?name={{ terms[0]|urlencode }}*">Look for tags starting with {{ terms[0] }}</a>, in case of a typo.{% endif %}
+        {% if terms|length > 1 %}{% if terms[-2]|lower != "or" and terms[-1] is not endingwith(")") %}Try without the last term: <a href="{{ search_url(terms[:-1]|join(' ')) }}">{{ terms[:-1]|join(' ') }}</a>.{% endif %}
+        {% elif not did_you_mean and terms[0] is not startingwith("-") and ":" not in terms[0] %}<a href="/tags?name={{ terms[0]|urlencode }}*">Look for tags starting with {{ terms[0] }}</a>, in case of a typo.{% endif %}
       </p>
       <p class="hint">See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.</p>
     </section>

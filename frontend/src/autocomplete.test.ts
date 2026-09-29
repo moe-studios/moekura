@@ -20,6 +20,11 @@ test("completes the word under the caret", () => {
 test("keeps search prefixes", () => {
   assert.deepEqual(at("-lo|"), { start: 1, end: 3, typed: "lo", kind: "tag" });
   assert.deepEqual(at("~lo|"), { start: 1, end: 3, typed: "lo", kind: "tag" });
+  // Groups.
+  assert.deepEqual(at("-(lo|"), { start: 2, end: 4, typed: "lo", kind: "tag" });
+  assert.deepEqual(at("(a or ~lo|))"), { start: 7, end: 9, typed: "lo", kind: "tag" });
+  assert.deepEqual(at("(a or foo_(b|))"), { start: 6, end: 13, typed: "foo_(b", kind: "tag" });
+  assert.equal(at("(a or b)|"), null);
   // In tag fields a leading "-" is part of what was typed.
   assert.deepEqual(at("-lo|", "tags"), { start: 0, end: 3, typed: "-lo", kind: "tag" });
 });

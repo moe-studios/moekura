@@ -89,6 +89,7 @@ pub async fn visible_post_ids(
         "SELECT gp.post_id FROM favorite_group_posts gp JOIN posts p ON p.id = gp.post_id
          WHERE gp.group_id = $1
            AND (p.status = ANY($2) OR (p.status = 'pending' AND p.uploader_id = $3))
+           AND p.rating = ANY($6)
          ORDER BY gp.position OFFSET $4 LIMIT $5",
     )
     .bind(group_id)
@@ -96,6 +97,7 @@ pub async fn visible_post_ids(
     .bind(visibility.viewer)
     .bind(offset)
     .bind(limit)
+    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }

@@ -9,6 +9,13 @@
 //! - `name:value` terms are filters on post properties (metatags), e.g.
 //!   `rating:e,q`, `score:>=10`, `width:1920..`, `date:2026-01`; most can
 //!   be negated with `-`
+//! - parentheses group terms, and `or` between terms or groups means
+//!   either side: `(cat or dog) -rating:e`, `-(a b)`, `(a b) or (c d)`.
+//!   Terms side by side bind tighter than `or`
+//!
+//! Plain terms at the top level land in [`Query`]'s lists, which the
+//! planner has fast paths for; anything nested is kept as an [`Expr`] in
+//! [`Query::groups`].
 //!
 //! [`Query::parse`] only checks syntax; resolving tags and users is the
 //! planner's job.
@@ -17,7 +24,7 @@ use std::fmt;
 
 use time::{Date, Duration, Month};
 
-use crate::posts::Rating;
+use crate::posts::{PostStatus, Rating};
 use crate::tags::{RESERVED_PREFIXES, TagName, TagNameError, normalize};
 
 /// File types as stored in `media_assets.media_type`.
@@ -57,11 +64,42 @@ pub const METATAGS: &[&str] = &[
     "note",
     "notecount",
     "ai",
+    "child",
+    "is",
+    "has",
+    "source",
+    "approver",
+    "commenter",
+    "comment",
+    "noter",
+    "flagger",
+    "upvote",
+    "downvote",
+    "age",
+    "updated",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
 /// (`artist:name` searches for `name`).
 const CATEGORY_PREFIXES: &[&str] = &["general", "artist", "copyright", "character", "meta"];
+
+/// Danbooru's short names for the default categories in `gentags:` and
+/// the like; other categories go by their names (`artisttags:`).
+pub const CATEGORY_SHORT_NAMES: &[(&str, &str)] = &[
+    ("gen", "general"),
+    ("art", "artist"),
+    ("copy", "copyright"),
+    ("char", "character"),
+];
+
+/// The category of a `<category>tags` metatag or order name.
+fn tags_category(name: &str) -> Option<&str> {
+    let category = name.strip_suffix("tags")?;
+    let mut chars = category.chars();
+    let valid = chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    valid.then_some(category)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TagTerm {
@@ -127,11 +165,27 @@ pub enum StatusFilter {
     Unmoderated,
     /// Deleted posts with an open appeal.
     Appealed,
+    /// Pending or flagged: waiting for a moderator.
+    Modqueue,
 }
 
 impl StatusFilter {
+    /// The post statuses it stands for, if that's all it takes (not
+    /// `any`, `unmoderated` or `appealed`).
+    pub fn post_statuses(self) -> Option<&'static [PostStatus]> {
+        Some(match self {
+            StatusFilter::Pending => &[PostStatus::Pending],
+            StatusFilter::Active => &[PostStatus::Active],
+            StatusFilter::Flagged => &[PostStatus::Flagged],
+            StatusFilter::Deleted => &[PostStatus::Deleted],
+            StatusFilter::Modqueue => &[PostStatus::Pending, PostStatus::Flagged],
+            StatusFilter::Any | StatusFilter::Unmoderated | StatusFilter::Appealed => return None,
+        })
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
+            StatusFilter::Modqueue => "modqueue",
             StatusFilter::Pending => "pending",
             StatusFilter::Active => "active",
             StatusFilter::Flagged => "flagged",
@@ -168,6 +222,114 @@ pub enum PoolFilter {
     /// Posts in no pool.
     None,
     In(PoolRef),
+}
+
+/// A user, or anyone, or no one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserMatch {
+    Any,
+    None,
+    /// As typed.
+    Name(String),
+}
+
+/// A length of time back from now, as in `age:<2d`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Age {
+    pub amount: i64,
+    pub unit: AgeUnit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgeUnit {
+    Seconds,
+    Minutes,
+    Hours,
+    Days,
+    Weeks,
+    /// 30 days.
+    Months,
+    /// 365 days.
+    Years,
+}
+
+impl AgeUnit {
+    /// Suffixes, canonical first for each unit.
+    const NAMES: &[(&'static str, AgeUnit)] = &[
+        ("s", AgeUnit::Seconds),
+        ("mi", AgeUnit::Minutes),
+        ("min", AgeUnit::Minutes),
+        ("h", AgeUnit::Hours),
+        ("d", AgeUnit::Days),
+        ("w", AgeUnit::Weeks),
+        ("mo", AgeUnit::Months),
+        ("m", AgeUnit::Months),
+        ("y", AgeUnit::Years),
+    ];
+}
+
+impl Age {
+    pub fn seconds(self) -> i64 {
+        let unit = match self.unit {
+            AgeUnit::Seconds => 1,
+            AgeUnit::Minutes => 60,
+            AgeUnit::Hours => 3600,
+            AgeUnit::Days => 86_400,
+            AgeUnit::Weeks => 7 * 86_400,
+            AgeUnit::Months => 30 * 86_400,
+            AgeUnit::Years => 365 * 86_400,
+        };
+        self.amount.saturating_mul(unit)
+    }
+}
+
+impl fmt::Display for Age {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let unit = AgeUnit::NAMES
+            .iter()
+            .find(|(_, unit)| *unit == self.unit)
+            .map_or("s", |(name, _)| name);
+        write!(f, "{}{unit}", self.amount)
+    }
+}
+
+/// `2d`, `12h`, `1mo`, …
+fn age(s: &str) -> Option<Age> {
+    let digits = s.find(|c: char| !c.is_ascii_digit())?;
+    let (amount, unit) = s.split_at(digits);
+    let unit = AgeUnit::NAMES.iter().find(|(name, _)| *name == unit)?.1;
+    Some(Age {
+        amount: amount.parse().ok()?,
+        unit,
+    })
+}
+
+/// Ages compared (`<1w`, `2d..1mo`), without lists.
+fn age_bound(value: &str) -> Option<Bound<Age>> {
+    bound(value, age).filter(|b| !matches!(b, Bound::In(_)))
+}
+
+/// When something happened: a time back from now, or UTC days.
+#[derive(Debug, Clone, PartialEq)]
+pub enum When {
+    Ago(Bound<Age>),
+    /// On or after `from` and before `until`.
+    Dates {
+        from: Option<Date>,
+        until: Option<Date>,
+    },
+}
+
+/// What a post's source must be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceFilter {
+    /// Any source at all.
+    Any,
+    /// No source.
+    None,
+    /// Starts with this, or with `*`, matches this pattern; either way
+    /// regardless of case.
+    Pattern(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -207,17 +369,43 @@ pub enum Filter {
         from: Option<Date>,
         until: Option<Date>,
     },
+    /// Uploaded this long ago.
+    Age(Bound<Age>),
+    /// Last changed then.
+    Updated(When),
     FileType(Vec<String>),
     Md5(Vec<[u8; 16]>),
     Parent(ParentFilter),
+    /// Has children that aren't deleted (`true`), or none.
+    Child(bool),
+    Source(SourceFilter),
     TagCount(Bound<i64>),
+    /// Tags of a category (by name or short name, as typed).
+    CategoryTags {
+        category: String,
+        count: Bound<i64>,
+    },
     /// Favorited by this user (name as typed).
     Fav(String),
+    /// Approved by this user, by anyone, or by no one.
+    Approver(UserMatch),
+    /// Has a comment (not deleted) by this user.
+    Commenter(String),
+    /// Comments that aren't deleted contain these words.
+    Comment(String),
+    /// Has a note written or edited by this user.
+    Noter(String),
+    /// Flagged by this user; only for staff, or the flagger.
+    Flagger(String),
+    /// Voted up by this user; only for staff, or the voter.
+    Upvote(String),
+    /// Voted down by this user; only for staff, or the voter.
+    Downvote(String),
     /// Looks like this post (perceptual hash), the post included.
     Similar(i64),
     Pool(PoolFilter),
-    /// In this favorite group.
-    FavGroup(PoolRef),
+    /// In this favorite group, or in any or none of the viewer's.
+    FavGroup(PoolFilter),
     /// Active notes on the post contain these words.
     Note(String),
     /// Active notes.
@@ -269,6 +457,15 @@ pub enum Order {
     /// Most recently noted first; only posts with notes.
     NoteDesc,
     NoteAsc,
+    /// Popular recent posts first: score, discounted by age; only posts
+    /// from the last [`RANK_DAYS`] days with a positive score.
+    Rank,
+    /// Most recently changed first.
+    ChangeDesc,
+    ChangeAsc,
+    /// Most tags of [`Query::ordcategory`] first (`order:arttags`).
+    CategoryTagsDesc,
+    CategoryTagsAsc,
 }
 
 impl Order {
@@ -304,6 +501,13 @@ impl Order {
         ("note", Order::NoteDesc),
         ("note_desc", Order::NoteDesc),
         ("note_asc", Order::NoteAsc),
+        ("rank", Order::Rank),
+        ("change", Order::ChangeDesc),
+        ("change_desc", Order::ChangeDesc),
+        ("change_asc", Order::ChangeAsc),
+        ("updated", Order::ChangeDesc),
+        ("updated_desc", Order::ChangeDesc),
+        ("updated_asc", Order::ChangeAsc),
     ];
 
     pub fn name(self) -> &'static str {
@@ -311,6 +515,80 @@ impl Order {
             .iter()
             .find(|(_, order)| *order == self)
             .map_or("id", |(name, _)| name)
+    }
+}
+
+/// How many days back `order:rank` looks.
+pub const RANK_DAYS: i32 = 2;
+
+/// Deepest nesting of parentheses a search may use.
+pub const MAX_DEPTH: usize = 10;
+
+/// A term of a nested search (see [`Query::groups`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Tag(TagTerm),
+    Filter(Filter),
+    Not(Box<Expr>),
+    /// Each must match.
+    And(Vec<Expr>),
+    /// At least one must match.
+    Or(Vec<Expr>),
+}
+
+impl Expr {
+    /// Tags and filters in it.
+    pub fn term_count(&self) -> usize {
+        match self {
+            Expr::Tag(_) | Expr::Filter(_) => 1,
+            Expr::Not(inner) => inner.term_count(),
+            Expr::And(items) | Expr::Or(items) => items.iter().map(Expr::term_count).sum(),
+        }
+    }
+
+    /// Adds every filter in it, negated or not, to `out`.
+    pub fn filters<'a>(&'a self, out: &mut Vec<&'a Filter>) {
+        match self {
+            Expr::Tag(_) => {}
+            Expr::Filter(filter) => out.push(filter),
+            Expr::Not(inner) => inner.filters(out),
+            Expr::And(items) | Expr::Or(items) => items.iter().for_each(|e| e.filters(out)),
+        }
+    }
+
+    /// Flattens nested `and`s and `or`s, removes double negation and
+    /// duplicates, and unwraps groups of one.
+    fn simplify(self) -> Expr {
+        match self {
+            Expr::Not(inner) => match inner.simplify() {
+                Expr::Not(inner) => *inner,
+                inner => Expr::Not(Box::new(inner)),
+            },
+            Expr::And(items) => Self::simplify_list(items, true),
+            Expr::Or(items) => Self::simplify_list(items, false),
+            leaf => leaf,
+        }
+    }
+
+    fn simplify_list(items: Vec<Expr>, and: bool) -> Expr {
+        let mut flat: Vec<Expr> = Vec::with_capacity(items.len());
+        for item in items {
+            let nested = match item.simplify() {
+                Expr::And(inner) if and => inner,
+                Expr::Or(inner) if !and => inner,
+                other => vec![other],
+            };
+            for item in nested {
+                if !flat.contains(&item) {
+                    flat.push(item);
+                }
+            }
+        }
+        match (flat.len(), and) {
+            (1, _) => flat.pop().expect("one item"),
+            (_, true) => Expr::And(flat),
+            (_, false) => Expr::Or(flat),
+        }
     }
 }
 
@@ -324,6 +602,8 @@ pub struct Query {
     /// None may match.
     pub none: Vec<TagTerm>,
     pub conditions: Vec<Condition>,
+    /// Groups and `or`s that don't fit the lists above; each must match.
+    pub groups: Vec<Expr>,
     pub order: Option<Order>,
     pub limit: Option<u32>,
     /// With `ordfav:name`: the user whose favorites these are.
@@ -332,6 +612,8 @@ pub struct Query {
     pub ordpool: Option<PoolRef>,
     /// With `ordfavgroup:name`: the favorite group whose order this is.
     pub ordfavgroup: Option<PoolRef>,
+    /// With `order:<category>tags`: the category, as typed.
+    pub ordcategory: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -344,28 +626,255 @@ pub enum SearchError {
     Unsupported(String),
     #[error("`{0}` can't be negated")]
     CantNegate(String),
-    #[error("`{0}`: metatags can't be combined with `~`")]
-    OrMetatag(String),
+    #[error("`{0}` applies to the whole search, so it can't go inside parentheses or `or`")]
+    Nested(String),
     #[error("`{0}`: use either `-` or `~`, not both")]
     NegatedOr(String),
     #[error("`{0}` is missing a tag")]
     Empty(String),
     #[error("`{0}` needs something besides `*`")]
     BareWildcard(String),
+    #[error("a `(` is missing its `)`")]
+    Unclosed,
+    #[error("a `)` has no `(` to close")]
+    Unopened,
+    #[error("`()` is empty")]
+    EmptyGroup,
+    #[error("`or` needs a term on each side")]
+    DanglingOr,
+    #[error("parentheses may be nested at most {MAX_DEPTH} deep")]
+    TooDeep,
+}
+
+/// A piece of a search: see [`tokenize`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Token<'a> {
+    /// `(`, maybe after `-` or `~`.
+    Open {
+        negated: bool,
+        or: bool,
+    },
+    Close,
+    /// The `or` keyword.
+    Or,
+    /// A tag or metatag, with its `-` or `~` still on.
+    Term(&'a str),
+}
+
+/// Splits a search into terms and parentheses. A word's leading `(`
+/// opens a group; its trailing `)` close groups while any are open and
+/// the word has more `)` than `(`, so tags like `ganyu_(genshin_impact)`
+/// keep theirs.
+fn tokenize(input: &str) -> Result<Vec<Token<'_>>, SearchError> {
+    let mut tokens = Vec::new();
+    let mut depth = 0;
+    for word in input.split_whitespace() {
+        if word.eq_ignore_ascii_case("or") {
+            tokens.push(Token::Or);
+            continue;
+        }
+        let mut rest = word;
+        loop {
+            let (negated, after) = rest.strip_prefix('-').map_or((false, rest), |r| (true, r));
+            let (or, after) = after
+                .strip_prefix('~')
+                .map_or((false, after), |r| (true, r));
+            let Some(inner) = after.strip_prefix('(') else {
+                break;
+            };
+            if negated && or {
+                return Err(SearchError::NegatedOr(word.into()));
+            }
+            depth += 1;
+            if depth > MAX_DEPTH {
+                return Err(SearchError::TooDeep);
+            }
+            tokens.push(Token::Open { negated, or });
+            rest = inner;
+        }
+        let mut closes = 0;
+        while closes < depth
+            && rest.ends_with(')')
+            && rest.matches(')').count() > rest.matches('(').count()
+        {
+            rest = &rest[..rest.len() - 1];
+            closes += 1;
+        }
+        if !rest.is_empty() {
+            if rest.chars().all(|c| c == ')') {
+                return Err(SearchError::Unopened);
+            }
+            tokens.push(Token::Term(rest));
+        }
+        depth -= closes;
+        tokens.extend(std::iter::repeat_n(Token::Close, closes));
+    }
+    if depth > 0 {
+        return Err(SearchError::Unclosed);
+    }
+    Ok(tokens)
+}
+
+/// Builds [`Expr`]s from tokens: `or` binds loosest, then terms side by
+/// side, then `-` and `~`.
+struct Parser<'q, 'a> {
+    tokens: &'a [Token<'a>],
+    pos: usize,
+    /// Where `order:`, `limit:` and the like go.
+    query: &'q mut Query,
+    /// Whether the top level has an `or`, so every term is nested.
+    top_or: bool,
+}
+
+impl<'a> Parser<'_, 'a> {
+    fn peek(&self) -> Option<Token<'a>> {
+        self.tokens.get(self.pos).copied()
+    }
+
+    fn or(&mut self, depth: usize) -> Result<Expr, SearchError> {
+        let mut alternatives = vec![self.and(depth)?];
+        while self.peek() == Some(Token::Or) {
+            self.pos += 1;
+            alternatives.push(self.and(depth)?);
+        }
+        Ok(match alternatives.len() {
+            1 => alternatives.pop().expect("one alternative"),
+            _ => Expr::Or(alternatives),
+        })
+    }
+
+    /// Terms side by side; the `~` ones among them form one `or`, which
+    /// comes first.
+    fn and(&mut self, depth: usize) -> Result<Expr, SearchError> {
+        let start = self.pos;
+        let mut items = Vec::new();
+        let mut either = Vec::new();
+        while let Some(token) = self.peek() {
+            let (negated, or, expr) = match token {
+                Token::Or | Token::Close => break,
+                Token::Open { negated, or } => {
+                    self.pos += 1;
+                    if matches!(self.peek(), Some(Token::Close)) {
+                        return Err(SearchError::EmptyGroup);
+                    }
+                    let inner = self.or(depth + 1)?;
+                    // The tokenizer balanced the parentheses.
+                    debug_assert_eq!(self.peek(), Some(Token::Close));
+                    self.pos += 1;
+                    (negated, or, Some(inner))
+                }
+                Token::Term(word) => {
+                    self.pos += 1;
+                    let nested = depth > 0 || self.top_or;
+                    self.query.term(word, nested)?
+                }
+            };
+            let Some(expr) = expr else { continue };
+            let expr = if negated {
+                Expr::Not(Box::new(expr))
+            } else {
+                expr
+            };
+            if or {
+                either.push(expr)
+            } else {
+                items.push(expr)
+            }
+        }
+        if self.pos == start && (depth > 0 || self.top_or) {
+            return Err(SearchError::DanglingOr);
+        }
+        if !either.is_empty() {
+            items.insert(0, Expr::Or(either));
+        }
+        Ok(Expr::And(items))
+    }
 }
 
 impl Query {
     pub fn parse(input: &str) -> Result<Self, SearchError> {
         let mut query = Query::default();
-        for word in input.split_whitespace() {
-            query.add(word)?;
+        let tokens = tokenize(input)?;
+        let mut depth = 0usize;
+        let top_or = tokens.iter().any(|token| {
+            match token {
+                Token::Open { .. } => depth += 1,
+                Token::Close => depth -= 1,
+                _ => {}
+            }
+            depth == 0 && *token == Token::Or
+        });
+        let mut parser = Parser {
+            tokens: &tokens,
+            pos: 0,
+            query: &mut query,
+            top_or,
+        };
+        let expr = parser.or(0)?;
+        match expr.simplify() {
+            Expr::And(items) => items.into_iter().for_each(|item| query.place(item)),
+            expr => query.place(expr),
         }
         Ok(query)
     }
 
+    /// Adds a term of the top level where the planner wants it.
+    fn place(&mut self, expr: Expr) {
+        fn push<T: PartialEq>(list: &mut Vec<T>, item: T) {
+            if !list.contains(&item) {
+                list.push(item);
+            }
+        }
+        let tags = |items: &[Expr]| {
+            items
+                .iter()
+                .map(|item| match item {
+                    Expr::Tag(term) => Some(term.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        };
+        match expr {
+            Expr::Tag(term) => push(&mut self.all, term),
+            Expr::Filter(filter) => push(
+                &mut self.conditions,
+                Condition {
+                    negated: false,
+                    filter,
+                },
+            ),
+            Expr::Not(inner) => match *inner {
+                Expr::Tag(term) => push(&mut self.none, term),
+                Expr::Filter(filter) => push(
+                    &mut self.conditions,
+                    Condition {
+                        negated: true,
+                        filter,
+                    },
+                ),
+                // Neither of them: each excluded.
+                Expr::Or(items) if tags(&items).is_some() => {
+                    for term in tags(&items).expect("checked") {
+                        push(&mut self.none, term);
+                    }
+                }
+                inner => push(&mut self.groups, Expr::Not(Box::new(inner))),
+            },
+            Expr::Or(items) if self.any.is_empty() && tags(&items).is_some() => {
+                self.any = tags(&items).expect("checked");
+            }
+            Expr::And(items) => items.into_iter().for_each(|item| self.place(item)),
+            expr => push(&mut self.groups, expr),
+        }
+    }
+
     /// Tag terms and filters, the measure for query complexity limits.
     pub fn term_count(&self) -> usize {
-        self.all.len() + self.any.len() + self.none.len() + self.conditions.len()
+        self.all.len()
+            + self.any.len()
+            + self.none.len()
+            + self.conditions.len()
+            + self.groups.iter().map(Expr::term_count).sum::<usize>()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -380,12 +889,28 @@ impl Query {
         })
     }
 
-    /// Every tag term, in or out.
+    /// Every tag term of the top level, in or out.
     pub fn tag_terms(&self) -> impl Iterator<Item = &TagTerm> {
         self.all.iter().chain(&self.any).chain(&self.none)
     }
 
-    fn add(&mut self, word: &str) -> Result<(), SearchError> {
+    /// Every filter, nested or not, negated or not.
+    pub fn filters(&self) -> Vec<&Filter> {
+        let mut out: Vec<&Filter> = self.conditions.iter().map(|c| &c.filter).collect();
+        for group in &self.groups {
+            group.filters(&mut out);
+        }
+        out
+    }
+
+    /// A term as typed (with its `-` or `~`): whether it's negated or
+    /// `~`, and what it matches. Terms that set the order or limit apply
+    /// them and match nothing themselves.
+    fn term(
+        &mut self,
+        word: &str,
+        nested: bool,
+    ) -> Result<(bool, bool, Option<Expr>), SearchError> {
         let (negated, rest) = match word.strip_prefix('-') {
             Some(rest) => (true, rest),
             None => (false, word),
@@ -405,10 +930,20 @@ impl Query {
         if let Some((prefix, value)) = rest.split_once(':') {
             let prefix = prefix.to_lowercase();
             if METATAGS.contains(&prefix.as_str()) {
-                if or {
-                    return Err(SearchError::OrMetatag(word.into()));
-                }
-                return self.add_metatag(word, negated, &prefix, &value.to_lowercase());
+                let filter =
+                    self.metatag(word, negated, or || nested, &prefix, &value.to_lowercase())?;
+                return Ok((negated, or, filter.map(Expr::Filter)));
+            }
+            // `arttags:0`; only with a number, so tags that happen to look
+            // like one still work.
+            if let Some(category) = tags_category(&prefix)
+                && let Some(count) = bound(value, int)
+            {
+                let filter = Filter::CategoryTags {
+                    category: category.to_owned(),
+                    count,
+                };
+                return Ok((negated, or, Some(Expr::Filter(filter))));
             }
             if CATEGORY_PREFIXES.contains(&prefix.as_str()) && !value.is_empty() {
                 tag = value;
@@ -416,28 +951,19 @@ impl Query {
                 return Err(SearchError::Unsupported(prefix));
             }
         }
-
-        let term = tag_term(word, tag)?;
-        let list = if negated {
-            &mut self.none
-        } else if or {
-            &mut self.any
-        } else {
-            &mut self.all
-        };
-        if !list.contains(&term) {
-            list.push(term);
-        }
-        Ok(())
+        Ok((negated, or, Some(Expr::Tag(tag_term(word, tag)?))))
     }
 
-    fn add_metatag(
+    /// A metatag's filter, or `None` for those that set the order or
+    /// limit, which can't be `nested`.
+    fn metatag(
         &mut self,
         word: &str,
         negated: bool,
+        nested: bool,
         name: &str,
         value: &str,
-    ) -> Result<(), SearchError> {
+    ) -> Result<Option<Filter>, SearchError> {
         let invalid = |message: &str| SearchError::InvalidValue {
             term: word.into(),
             message: message.into(),
@@ -447,13 +973,16 @@ impl Query {
             "order" | "limit" | "ordfav" | "ordpool" | "ordfavgroup" if negated => {
                 return Err(SearchError::CantNegate(word.into()));
             }
+            "order" | "limit" | "ordfav" | "ordpool" | "ordfavgroup" if nested => {
+                return Err(SearchError::Nested(word.into()));
+            }
             "ordfav" => {
                 if value.is_empty() {
                     return Err(invalid("expected a user name"));
                 }
                 self.ordfav = Some(value.into());
                 self.order = Some(Order::Favorited);
-                return Ok(());
+                return Ok(None);
             }
             "ordpool" => {
                 if value.is_empty() {
@@ -461,7 +990,7 @@ impl Query {
                 }
                 self.ordpool = Some(pool_ref(value));
                 self.order = Some(Order::Pool);
-                return Ok(());
+                return Ok(None);
             }
             "ordfavgroup" => {
                 if value.is_empty() {
@@ -469,25 +998,49 @@ impl Query {
                 }
                 self.ordfavgroup = Some(pool_ref(value));
                 self.order = Some(Order::FavGroup);
-                return Ok(());
+                return Ok(None);
             }
             "ai" => {
                 Filter::Ai(TagName::parse(value).map_err(|e| invalid(&format!("the tag {e}")))?)
             }
-            "note" => {
+            "note" | "comment" => {
                 let words = value.replace('_', " ");
                 if words.trim().is_empty() {
-                    return Err(invalid("expected words to find in notes"));
+                    return Err(invalid(&format!("expected words to find in {name}s")));
                 }
-                Filter::Note(words.trim().to_owned())
+                let words = words.trim().to_owned();
+                if name == "note" {
+                    Filter::Note(words)
+                } else {
+                    Filter::Comment(words)
+                }
+            }
+            "approver" => Filter::Approver(match value {
+                "" => return Err(invalid("expected a user name, any or none")),
+                "any" => UserMatch::Any,
+                "none" => UserMatch::None,
+                name => UserMatch::Name(name.to_owned()),
+            }),
+            "commenter" | "noter" | "flagger" | "upvote" | "downvote" => {
+                if value.is_empty() {
+                    return Err(invalid("expected a user name"));
+                }
+                let value = value.to_owned();
+                match name {
+                    "commenter" => Filter::Commenter(value),
+                    "noter" => Filter::Noter(value),
+                    "flagger" => Filter::Flagger(value),
+                    "upvote" => Filter::Upvote(value),
+                    _ => Filter::Downvote(value),
+                }
             }
             "notecount" => Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
-            "favgroup" => {
-                if value.is_empty() {
-                    return Err(invalid("expected a favorite group name or id"));
-                }
-                Filter::FavGroup(pool_ref(value))
-            }
+            "favgroup" => Filter::FavGroup(match value {
+                "" => return Err(invalid("expected a favorite group name or id, any or none")),
+                "any" => PoolFilter::Any,
+                "none" => PoolFilter::None,
+                value => PoolFilter::In(pool_ref(value)),
+            }),
             "pool" => Filter::Pool(match value {
                 "" => return Err(invalid("expected a pool name or id, any or none")),
                 "any" => PoolFilter::Any,
@@ -508,13 +1061,30 @@ impl Query {
                 Filter::Fav(value.into())
             }
             "order" => {
-                let order = Order::NAMES
+                let named = Order::NAMES
                     .iter()
                     .find(|(n, _)| *n == value)
-                    .map(|(_, order)| *order)
-                    .ok_or_else(|| invalid("unknown order; try id, score, favcount or random"))?;
+                    .map(|(_, order)| *order);
+                let order = match named {
+                    Some(order) => order,
+                    None => {
+                        let (name, ascending) = match value.strip_suffix("_asc") {
+                            Some(name) => (name, true),
+                            None => (value.strip_suffix("_desc").unwrap_or(value), false),
+                        };
+                        let category = tags_category(name).ok_or_else(|| {
+                            invalid("unknown order; try id, score, favcount or random")
+                        })?;
+                        self.ordcategory = Some(category.to_owned());
+                        if ascending {
+                            Order::CategoryTagsAsc
+                        } else {
+                            Order::CategoryTagsDesc
+                        }
+                    }
+                };
                 self.order = Some(order);
-                return Ok(());
+                return Ok(None);
             }
             "limit" => {
                 let limit = value
@@ -523,7 +1093,7 @@ impl Query {
                     .filter(|&n| n > 0)
                     .ok_or_else(|| invalid("expected a positive number"))?;
                 self.limit = Some(limit);
-                return Ok(());
+                return Ok(None);
             }
             "id" => Filter::Id(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "score" => Filter::Score(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
@@ -549,6 +1119,16 @@ impl Query {
                     .ok_or_else(|| invalid("expected a date like 2026-01-31, 2026-01 or 2026"))?;
                 Filter::Date { from, until }
             }
+            "age" => Filter::Age(
+                age_bound(value).ok_or_else(|| invalid("expected an age like <1w or 2d..1mo"))?,
+            ),
+            "updated" => Filter::Updated(match (age_bound(value), date_range(value)) {
+                (Some(ago), _) => When::Ago(ago),
+                (None, Some((from, until))) => When::Dates { from, until },
+                (None, None) => {
+                    return Err(invalid("expected an age like <1d, or a date like 2026-01"));
+                }
+            }),
             "rating" => Filter::Rating(
                 list(value, |v| v.parse().ok())
                     .ok_or_else(|| invalid("expected ratings like g, s, q or e"))?,
@@ -561,9 +1141,11 @@ impl Query {
                 "any" | "all" => StatusFilter::Any,
                 "unmoderated" => StatusFilter::Unmoderated,
                 "appealed" => StatusFilter::Appealed,
+                "modqueue" => StatusFilter::Modqueue,
                 _ => {
                     return Err(invalid(
-                        "expected pending, active, flagged, deleted, unmoderated, appealed or any",
+                        "expected pending, active, flagged, deleted, modqueue, unmoderated, \
+                         appealed or any",
                     ));
                 }
             }),
@@ -583,6 +1165,47 @@ impl Query {
             "md5" => Filter::Md5(
                 list(value, md5).ok_or_else(|| invalid("expected 32 hexadecimal digits"))?,
             ),
+            "source" => Filter::Source(match value {
+                "" => return Err(invalid("expected the start of a source, any or none")),
+                "any" => SourceFilter::Any,
+                "none" => SourceFilter::None,
+                pattern => SourceFilter::Pattern(pattern.to_owned()),
+            }),
+            "child" => Filter::Child(match value {
+                "any" => true,
+                "none" => false,
+                _ => return Err(invalid("expected any or none")),
+            }),
+            // Shorthands for other filters, as on Danbooru.
+            "is" => match value {
+                "parent" => Filter::Child(true),
+                "child" => Filter::Parent(ParentFilter::Any),
+                "sfw" => Filter::Rating(vec![Rating::General, Rating::Sensitive]),
+                "nsfw" => Filter::Rating(vec![Rating::Questionable, Rating::Explicit]),
+                "pending" | "active" | "flagged" | "deleted" | "modqueue" | "unmoderated"
+                | "appealed" => {
+                    return self.metatag(word, negated, nested, "status", value);
+                }
+                value => Filter::Rating(vec![value.parse().map_err(|_| {
+                    invalid(
+                        "expected parent, child, sfw, nsfw, a rating like general, \
+                         or a status like pending",
+                    )
+                })?]),
+            },
+            "has" => match value {
+                "source" => Filter::Source(SourceFilter::Any),
+                "children" => Filter::Child(true),
+                "parent" => Filter::Parent(ParentFilter::Any),
+                "pools" => Filter::Pool(PoolFilter::Any),
+                "notes" => Filter::NoteCount(Bound::Gt(0)),
+                "comments" => Filter::CommentCount(Bound::Gt(0)),
+                _ => {
+                    return Err(invalid(
+                        "expected source, children, parent, pools, notes or comments",
+                    ));
+                }
+            },
             "parent" => Filter::Parent(match value {
                 "none" => ParentFilter::None,
                 "any" => ParentFilter::Any,
@@ -593,11 +1216,7 @@ impl Query {
             }),
             _ => unreachable!("every name in METATAGS is handled"),
         };
-        let condition = Condition { negated, filter };
-        if !self.conditions.contains(&condition) {
-            self.conditions.push(condition);
-        }
-        Ok(())
+        Ok(Some(filter))
     }
 }
 
@@ -773,8 +1392,54 @@ impl fmt::Display for Condition {
         if self.negated {
             f.write_str("-")?;
         }
+        write!(f, "{}", self.filter)
+    }
+}
+
+/// `name:` with a range of days, as [`date_range`] reads it.
+fn write_dates(
+    f: &mut fmt::Formatter<'_>,
+    name: &str,
+    from: Option<Date>,
+    until: Option<Date>,
+) -> fmt::Result {
+    let last = |d: Date| d - Duration::days(1);
+    match (from, until) {
+        (Some(a), Some(b)) if a == last(b) => write!(f, "{name}:{a}"),
+        (Some(a), Some(b)) => write!(f, "{name}:{a}..{}", last(b)),
+        (Some(a), None) => write!(f, "{name}:>={a}"),
+        (None, Some(b)) => write!(f, "{name}:<{b}"),
+        (None, None) => write!(f, "{name}:>=0001-01-01"),
+    }
+}
+
+/// Groups print in parentheses, so they parse back the same.
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let list = |f: &mut fmt::Formatter<'_>, items: &[Expr], separator: &str| {
+            f.write_str("(")?;
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    f.write_str(separator)?;
+                }
+                write!(f, "{item}")?;
+            }
+            f.write_str(")")
+        };
+        match self {
+            Expr::Tag(term) => write!(f, "{term}"),
+            Expr::Filter(filter) => write!(f, "{filter}"),
+            Expr::Not(inner) => write!(f, "-{inner}"),
+            Expr::And(items) => list(f, items, " "),
+            Expr::Or(items) => list(f, items, " or "),
+        }
+    }
+}
+
+impl fmt::Display for Filter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let join = |items: Vec<String>| items.join(",");
-        match &self.filter {
+        match self {
             Filter::Id(b) => write!(f, "id:{b}"),
             Filter::Rating(ratings) => write!(
                 f,
@@ -790,7 +1455,9 @@ impl fmt::Display for Condition {
             Filter::Pool(PoolFilter::None) => f.write_str("pool:none"),
             Filter::Pool(PoolFilter::In(pool)) => write!(f, "pool:{pool}"),
             Filter::Search(label) => write!(f, "search:{label}"),
-            Filter::FavGroup(group) => write!(f, "favgroup:{group}"),
+            Filter::FavGroup(PoolFilter::Any) => f.write_str("favgroup:any"),
+            Filter::FavGroup(PoolFilter::None) => f.write_str("favgroup:none"),
+            Filter::FavGroup(PoolFilter::In(group)) => write!(f, "favgroup:{group}"),
             Filter::Note(words) => write!(f, "note:{}", words.replace(' ', "_")),
             Filter::NoteCount(b) => write!(f, "notecount:{b}"),
             Filter::Ai(tag) => write!(f, "ai:{tag}"),
@@ -800,15 +1467,11 @@ impl fmt::Display for Condition {
             Filter::Ratio(b) => write!(f, "ratio:{b}"),
             Filter::FileSize(b) => write!(f, "filesize:{b}"),
             Filter::Duration(b) => write!(f, "duration:{b}"),
-            Filter::Date { from, until } => {
-                let last = |d: &Date| *d - Duration::days(1);
-                match (from, until) {
-                    (Some(a), Some(b)) if *a == last(b) => write!(f, "date:{a}"),
-                    (Some(a), Some(b)) => write!(f, "date:{a}..{}", last(b)),
-                    (Some(a), None) => write!(f, "date:>={a}"),
-                    (None, Some(b)) => write!(f, "date:<{b}"),
-                    (None, None) => f.write_str("date:>=0001-01-01"),
-                }
+            Filter::Date { from, until } => write_dates(f, "date", *from, *until),
+            Filter::Age(b) => write!(f, "age:{b}"),
+            Filter::Updated(When::Ago(b)) => write!(f, "updated:{b}"),
+            Filter::Updated(When::Dates { from, until }) => {
+                write_dates(f, "updated", *from, *until)
             }
             Filter::FileType(types) => write!(f, "filetype:{}", types.join(",")),
             Filter::Md5(hashes) => {
@@ -817,15 +1480,30 @@ impl fmt::Display for Condition {
             Filter::Parent(ParentFilter::None) => f.write_str("parent:none"),
             Filter::Parent(ParentFilter::Any) => f.write_str("parent:any"),
             Filter::Parent(ParentFilter::Of(id)) => write!(f, "parent:{id}"),
+            Filter::Child(true) => f.write_str("child:any"),
+            Filter::Child(false) => f.write_str("child:none"),
+            Filter::Source(SourceFilter::Any) => f.write_str("source:any"),
+            Filter::Source(SourceFilter::None) => f.write_str("source:none"),
+            Filter::Source(SourceFilter::Pattern(pattern)) => write!(f, "source:{pattern}"),
             Filter::TagCount(b) => write!(f, "tagcount:{b}"),
+            Filter::CategoryTags { category, count } => write!(f, "{category}tags:{count}"),
             Filter::Fav(name) => write!(f, "fav:{name}"),
+            Filter::Approver(UserMatch::Any) => f.write_str("approver:any"),
+            Filter::Approver(UserMatch::None) => f.write_str("approver:none"),
+            Filter::Approver(UserMatch::Name(name)) => write!(f, "approver:{name}"),
+            Filter::Commenter(name) => write!(f, "commenter:{name}"),
+            Filter::Comment(words) => write!(f, "comment:{}", words.replace(' ', "_")),
+            Filter::Noter(name) => write!(f, "noter:{name}"),
+            Filter::Flagger(name) => write!(f, "flagger:{name}"),
+            Filter::Upvote(name) => write!(f, "upvote:{name}"),
+            Filter::Downvote(name) => write!(f, "downvote:{name}"),
             Filter::Similar(id) => write!(f, "similar:{id}"),
         }
     }
 }
 
 /// The normalised query: included tags, `~` tags, excluded tags, filters,
-/// then order and limit.
+/// groups, then order and limit.
 impl fmt::Display for Query {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut terms: Vec<String> = Vec::with_capacity(self.term_count() + 2);
@@ -833,7 +1511,18 @@ impl fmt::Display for Query {
         terms.extend(self.any.iter().map(|t| format!("~{t}")));
         terms.extend(self.none.iter().map(|t| format!("-{t}")));
         terms.extend(self.conditions.iter().map(ToString::to_string));
+        terms.extend(self.groups.iter().map(ToString::to_string));
+        match (self.order, &self.ordcategory) {
+            (Some(Order::CategoryTagsDesc), Some(category)) => {
+                terms.push(format!("order:{category}tags"));
+            }
+            (Some(Order::CategoryTagsAsc), Some(category)) => {
+                terms.push(format!("order:{category}tags_asc"));
+            }
+            _ => {}
+        }
         match (self.order, &self.ordfav, &self.ordpool, &self.ordfavgroup) {
+            (Some(Order::CategoryTagsDesc | Order::CategoryTagsAsc), ..) => {}
             (Some(Order::Favorited), Some(user), ..) => terms.push(format!("ordfav:{user}")),
             (Some(Order::Pool), _, Some(pool), _) => terms.push(format!("ordpool:{pool}")),
             (Some(Order::FavGroup), .., Some(group)) => {
@@ -892,10 +1581,10 @@ mod tests {
 
     #[test]
     fn wildcards() {
-        let query = parse("long_* -*_HAIR ~a*b");
+        let query = parse("long_* -*_HAIR ~a*b ~c");
         assert_eq!(query.all, [TagTerm::Wildcard("long_*".into())]);
         assert_eq!(query.none, [TagTerm::Wildcard("*_hair".into())]);
-        assert_eq!(query.any, [TagTerm::Wildcard("a*b".into())]);
+        assert_eq!(query.any, [TagTerm::Wildcard("a*b".into()), name("c")]);
         assert_eq!(error("*"), "`*` needs something besides `*`");
         assert_eq!(error("-**"), "`-**` needs something besides `*`");
     }
@@ -1063,7 +1752,17 @@ mod tests {
         );
         assert!(error("pool:").contains("expected a pool"));
         assert_eq!(filter("search:Pets"), Filter::Search("pets".into()));
-        assert_eq!(filter("favgroup:3"), Filter::FavGroup(PoolRef::Id(3)));
+        assert_eq!(
+            filter("favgroup:3"),
+            Filter::FavGroup(PoolFilter::In(PoolRef::Id(3)))
+        );
+        assert_eq!(filter("favgroup:any"), Filter::FavGroup(PoolFilter::Any));
+        assert_eq!(parse("-favgroup:none").to_string(), "-favgroup:none");
+        assert_eq!(
+            filter("status:modqueue"),
+            Filter::Status(StatusFilter::Modqueue)
+        );
+        assert_eq!(parse("is:modqueue"), parse("status:modqueue"));
         assert_eq!(
             filter("note:Good_Morning"),
             Filter::Note("good morning".into())
@@ -1120,19 +1819,268 @@ mod tests {
         assert!(error("order:best").contains("unknown order"));
         assert!(error("limit:0").contains("positive number"));
         assert_eq!(
-            error("~rating:e"),
-            "`~rating:e`: metatags can't be combined with `~`"
+            error("~order:score"),
+            "`~order:score` applies to the whole search, so it can't go inside parentheses or `or`"
         );
+        // A lone `~` term is just required.
+        assert_eq!(parse("~rating:e"), parse("rating:e"));
+    }
+
+    #[test]
+    fn shorthands() {
+        assert_eq!(filter("child:any"), Filter::Child(true));
+        assert_eq!(filter("child:none"), Filter::Child(false));
+        assert!(error("child:3").contains("expected any or none"));
+        assert_eq!(parse("is:parent"), parse("child:any"));
+        assert_eq!(parse("has:children"), parse("child:any"));
+        assert_eq!(parse("is:child"), parse("parent:any"));
+        assert_eq!(parse("has:parent"), parse("parent:any"));
+        assert_eq!(parse("-is:sfw"), parse("-rating:g,s"));
+        assert_eq!(parse("is:nsfw"), parse("rating:q,e"));
+        assert_eq!(parse("is:Explicit"), parse("rating:e"));
+        assert_eq!(parse("is:pending"), parse("status:pending"));
+        assert_eq!(parse("-is:deleted"), parse("-status:deleted"));
+        assert_eq!(parse("has:pools"), parse("pool:any"));
+        assert_eq!(parse("has:notes"), parse("notecount:>0"));
+        assert_eq!(parse("has:comments"), parse("commentcount:>0"));
+        assert_eq!(filter("has:source"), Filter::Source(SourceFilter::Any));
+        assert_eq!(
+            parse("-has:source child:none").to_string(),
+            "-source:any child:none"
+        );
+        assert!(error("is:big").contains("expected parent, child"));
+        assert!(error("has:").contains("expected source"));
+    }
+
+    #[test]
+    fn sources() {
+        assert_eq!(filter("source:none"), Filter::Source(SourceFilter::None));
+        assert_eq!(filter("source:any"), Filter::Source(SourceFilter::Any));
+        assert_eq!(
+            filter("source:https://Twitter.com/Foo"),
+            Filter::Source(SourceFilter::Pattern("https://twitter.com/foo".into()))
+        );
+        assert_eq!(
+            parse("-source:*pixiv.net*").to_string(),
+            "-source:*pixiv.net*"
+        );
+        assert!(error("source:").contains("expected the start of a source"));
+    }
+
+    #[test]
+    fn people() {
+        assert_eq!(filter("approver:any"), Filter::Approver(UserMatch::Any));
+        assert_eq!(filter("approver:none"), Filter::Approver(UserMatch::None));
+        assert_eq!(
+            filter("approver:Bob"),
+            Filter::Approver(UserMatch::Name("bob".into()))
+        );
+        assert_eq!(filter("commenter:bob"), Filter::Commenter("bob".into()));
+        assert_eq!(filter("noter:bob"), Filter::Noter("bob".into()));
+        assert_eq!(filter("flagger:bob"), Filter::Flagger("bob".into()));
+        assert_eq!(filter("upvote:Bob"), Filter::Upvote("bob".into()));
+        assert_eq!(parse("-downvote:bob").to_string(), "-downvote:bob");
+        assert_eq!(
+            filter("comment:Nice_Art"),
+            Filter::Comment("nice art".into())
+        );
+        let query = parse("-approver:none commenter:a comment:nice_art noter:b -flagger:c");
+        assert_eq!(parse(&query.to_string()), query);
+        assert!(error("approver:").contains("expected a user name, any or none"));
+        assert!(error("commenter:").contains("expected a user name"));
+        assert!(error("comment:_").contains("expected words to find in comments"));
+    }
+
+    #[test]
+    fn ages() {
+        let days = |amount| Age {
+            amount,
+            unit: AgeUnit::Days,
+        };
+        assert_eq!(
+            filter("age:<1w"),
+            Filter::Age(Bound::Lt(Age {
+                amount: 1,
+                unit: AgeUnit::Weeks
+            }))
+        );
+        let Filter::Age(Bound::Between(a, b)) = filter("age:2d..1m") else {
+            panic!()
+        };
+        assert_eq!((a, b.unit), (days(2), AgeUnit::Months));
+        assert_eq!(b.seconds(), 30 * 86_400);
+        assert_eq!(parse("age:>12MIN").to_string(), "age:>12mi");
+        assert!(error("age:soon").contains("expected an age"));
+        assert!(error("age:1d,2d").contains("expected an age"));
+        assert_eq!(
+            filter("updated:<1d"),
+            Filter::Updated(When::Ago(Bound::Lt(days(1))))
+        );
+        assert_eq!(
+            filter("updated:2026-01"),
+            Filter::Updated(When::Dates {
+                from: Some(date!(2026 - 01 - 01)),
+                until: Some(date!(2026 - 02 - 01)),
+            })
+        );
+        for input in [
+            "updated:2026-01",
+            "updated:>=2026-01-05",
+            "-updated:<3h age:1y",
+        ] {
+            assert_eq!(parse(&parse(input).to_string()), parse(input), "{input}");
+        }
+        assert!(error("updated:x").contains("expected an age"));
+        assert_eq!(parse("order:updated").order, Some(Order::ChangeDesc));
+        assert_eq!(parse("order:change_asc").to_string(), "order:change_asc");
+    }
+
+    #[test]
+    fn category_tags() {
+        let arttags = |count| Filter::CategoryTags {
+            category: "art".into(),
+            count,
+        };
+        assert_eq!(filter("arttags:0"), arttags(Bound::Eq(0)));
+        assert_eq!(filter("ArtTags:>=2"), arttags(Bound::Ge(2)));
+        assert_eq!(
+            filter("character_2tags:1..3"),
+            Filter::CategoryTags {
+                category: "character_2".into(),
+                count: Bound::Between(1, 3),
+            }
+        );
+        // Not a number: a tag after all.
+        assert_eq!(parse("mytags:favourite").all, [name("mytags:favourite")]);
+        assert_eq!(parse("-arttags:0").to_string(), "-arttags:0");
+
+        let query = parse("order:chartags");
+        assert_eq!(
+            (query.order, query.ordcategory.as_deref()),
+            (Some(Order::CategoryTagsDesc), Some("char"))
+        );
+        assert_eq!(query.to_string(), "order:chartags");
+        let query = parse("cat order:generaltags_asc limit:5");
+        assert_eq!(query.order, Some(Order::CategoryTagsAsc));
+        assert_eq!(query.to_string(), "cat order:generaltags_asc limit:5");
+        assert_eq!(parse("order:gentags_desc").to_string(), "order:gentags");
+        assert!(error("order:tags").contains("unknown order"));
+    }
+
+    #[test]
+    fn groups_and_or() {
+        let tag = |s: &str| Expr::Tag(name(s));
+        let not = |e: Expr| Expr::Not(Box::new(e));
+        let rating = |r: Rating| Expr::Filter(Filter::Rating(vec![r]));
+
+        // Only tags on either side: the same as `~`.
+        let query = parse("(cat or dog) -rating:e");
+        assert_eq!(query.any, [name("cat"), name("dog")]);
+        assert!(query.groups.is_empty());
+        assert_eq!(query, parse("~cat ~dog -rating:e"));
+        assert_eq!(parse("cat OR dog").any, [name("cat"), name("dog")]);
+        // Neither: both excluded.
+        assert_eq!(parse("-(cat or dog)").none, [name("cat"), name("dog")]);
+        // Groups that just add terms melt into the top level.
+        assert_eq!(parse("(a (b -c)) d"), parse("a b -c d"));
+
+        let query = parse("(a b) or (c -d) or rating:e");
+        assert_eq!(
+            query.groups,
+            [Expr::Or(vec![
+                Expr::And(vec![tag("a"), tag("b")]),
+                Expr::And(vec![tag("c"), not(tag("d"))]),
+                rating(Rating::Explicit),
+            ])]
+        );
+        // Terms side by side bind tighter than `or`.
+        assert_eq!(parse("a b or c -d"), query_without_rating(&query));
+        assert_eq!(
+            parse("x -(a b)").groups,
+            [not(Expr::And(vec![tag("a"), tag("b")]))]
+        );
+        // `~` terms form an `or` within their group.
+        assert_eq!(
+            parse("x (~a ~rating:s b)").groups,
+            [Expr::Or(vec![tag("a"), rating(Rating::Sensitive)])]
+        );
+        assert_eq!(parse("x (~a ~rating:s b)").all, [name("x"), name("b")]);
+        assert_eq!(parse("-(-a)"), parse("a"));
+        assert_eq!(parse("(a or (b or c)) (a or b or c)").any.len(), 3);
+        assert_eq!(parse("(a or (b or c)) (a or b or c)").groups, []);
+
+        // Parentheses that belong to a tag stay on it.
+        let query = parse("(ganyu_(genshin_impact) or cure_peace_(precure))");
+        assert_eq!(
+            query.any,
+            [name("ganyu_(genshin_impact)"), name("cure_peace_(precure)")]
+        );
+        assert_eq!(parse("foo_(bar)").all, [name("foo_(bar)")]);
+        assert_eq!(parse("( a or b )").any, [name("a"), name("b")]);
+        assert_eq!(parse("-(a or b) ((c))").all, [name("c")]);
+
+        // Printing is stable.
+        for input in [
+            "x (a b) or (c -d) or rating:e",
+            "x -(a b) (~a ~rating:s b) order:score",
+            "((a or b) (c or d)) or e",
+            "-(a (b or rating:e))",
+        ] {
+            let query = parse(input);
+            assert_eq!(parse(&query.to_string()), query, "{input} → {query}");
+        }
+        assert_eq!(
+            parse("x (a b) or (c -d) or rating:e").to_string(),
+            "((x a b) or (c -d) or rating:e)"
+        );
+        assert_eq!(parse("a -(b c) or d").term_count(), 4);
+        assert_eq!(parse("a (b or rating:e)").filters().len(), 1);
+    }
+
+    fn query_without_rating(query: &Query) -> Query {
+        let mut query = query.clone();
+        if let Expr::Or(items) = &mut query.groups[0] {
+            items.pop();
+        }
+        query
+    }
+
+    #[test]
+    fn malformed_groups() {
+        assert_eq!(error("(a b"), "a `(` is missing its `)`");
+        assert_eq!(error("a )"), "a `)` has no `(` to close");
+        assert_eq!(error("() a"), "`()` is empty");
+        assert_eq!(error("or a"), "`or` needs a term on each side");
+        assert_eq!(error("a or"), "`or` needs a term on each side");
+        assert_eq!(error("(a or or b)"), "`or` needs a term on each side");
+        assert_eq!(error("-~(a b)"), "`-~(a`: use either `-` or `~`, not both");
+        assert!(error("(a order:score)").contains("applies to the whole search"));
+        assert!(error("a or limit:5").contains("applies to the whole search"));
+        assert_eq!(
+            error(&format!("{}a{}", "(".repeat(11), ")".repeat(11))),
+            "parentheses may be nested at most 10 deep"
+        );
+        assert_eq!(
+            parse(&format!("{}a{}", "(".repeat(10), ")".repeat(10))),
+            parse("a")
+        );
+        // Metatags inside groups are checked like any other.
+        assert!(error("(a or rating:x)").contains("expected ratings"));
     }
 
     #[test]
     fn malformed_terms() {
         assert_eq!(error("-~a"), "`-~a`: use either `-` or `~`, not both");
         assert_eq!(error("-"), "`-` is missing a tag");
-        assert_eq!(
-            error("approver:12"),
-            "`approver:` searches aren't supported yet"
-        );
+        // Every reserved prefix is a metatag or a category by now.
+        for prefix in RESERVED_PREFIXES {
+            assert!(
+                METATAGS.contains(prefix)
+                    || CATEGORY_PREFIXES.contains(prefix)
+                    || tags_category(prefix).is_some(),
+                "{prefix}"
+            );
+        }
         assert_eq!(filter("similar:12"), Filter::Similar(12));
         assert!(error("similar:x").contains("expected a post id"));
         assert_eq!(

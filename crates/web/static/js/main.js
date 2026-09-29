@@ -4,7 +4,7 @@
 var METATAGS = {
   id: [],
   rating: ["general", "sensitive", "questionable", "explicit"],
-  status: ["pending", "active", "flagged", "deleted", "unmoderated", "appealed", "any"],
+  status: ["pending", "active", "flagged", "deleted", "modqueue", "unmoderated", "appealed", "any"],
   user: [],
   score: [],
   favcount: [],
@@ -39,11 +39,19 @@ var METATAGS = {
     "duration_asc",
     "tagcount",
     "tagcount_asc",
+    "gentags",
+    "arttags",
+    "copytags",
+    "chartags",
+    "metatags",
     "random",
     "comment",
     "comment_asc",
     "note",
-    "note_asc"
+    "note_asc",
+    "rank",
+    "change",
+    "change_asc"
   ],
   limit: [],
   fav: [],
@@ -52,9 +60,43 @@ var METATAGS = {
   pool: ["any", "none"],
   ordpool: [],
   search: ["all"],
-  favgroup: [],
+  favgroup: ["any", "none"],
   ordfavgroup: [],
-  ai: []
+  ai: [],
+  child: ["any", "none"],
+  is: [
+    "parent",
+    "child",
+    "sfw",
+    "nsfw",
+    "general",
+    "sensitive",
+    "questionable",
+    "explicit",
+    "pending",
+    "active",
+    "flagged",
+    "deleted",
+    "modqueue",
+    "unmoderated",
+    "appealed"
+  ],
+  source: ["any", "none"],
+  approver: ["any", "none"],
+  commenter: [],
+  comment: [],
+  noter: [],
+  flagger: [],
+  gentags: [],
+  arttags: [],
+  copytags: [],
+  chartags: [],
+  metatags: [],
+  age: [],
+  updated: [],
+  upvote: [],
+  downvote: [],
+  has: ["source", "children", "parent", "pools", "notes", "comments"]
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];
 
@@ -68,9 +110,14 @@ function target(value, caret, mode) {
   let end = caret;
   while (end < value.length && !/\s/.test(value.charAt(end))) end++;
   let word = value.slice(start, caret);
-  if (mode === "search" && /^[-~]/.test(word)) {
-    start += 1;
-    word = word.slice(1);
+  if (mode === "search") {
+    while (/^[-~(]/.test(word)) {
+      start += 1;
+      word = word.slice(1);
+    }
+    const unbalanced = (s) => s.split(")").length > s.split("(").length;
+    if (word.endsWith(")") && unbalanced(word)) return null;
+    while (end > caret && value.charAt(end - 1) === ")" && unbalanced(value.slice(start, end))) end--;
   }
   const colon = word.indexOf(":");
   if (colon > 0) {

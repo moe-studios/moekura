@@ -23,6 +23,31 @@ Searches follow tag aliases: if `kitty` is aliased to `cat`, searching for
 `kitty` finds posts tagged `cat`. Category prefixes are ignored, so
 `artist:someone` searches for `someone`.
 
+## Groups and `or`
+
+Parentheses group terms, and `or` between two terms or groups means
+either of them. Filters work inside groups too.
+
+| You type | Finds posts that… |
+|---|---|
+| `(cat or dog) -rating:e` | have `cat` or `dog`, and aren't explicit |
+| `(cat cute) or (dog rating:g)` | have `cat` and `cute`, or are general and have `dog` |
+| `-(cat dog)` | don't have both `cat` and `dog` |
+| `cat (user:alice or score:>10)` | have `cat`, and were uploaded by alice or score above 10 |
+
+Terms side by side bind tighter than `or`, so `a b or c` means `(a b) or
+c`. `~` is shorthand for `or`: `~a ~b` is `(a or b)`, and inside a group
+the `~` terms form an `or` of that group. Groups can be nested up to 10
+deep, and every tag and filter in them counts towards the site's limit on
+terms.
+
+A `(` at the start of a word opens a group, and a `)` at the end of a word
+closes one, unless it belongs to the tag: `(ganyu_(genshin_impact) or
+klee_(genshin_impact))` works as expected. To search for a tag that starts
+with `(`, put a category in front of it (`general:(tag)`). `order:`,
+`limit:`, `ordfav:` and the other orders apply to the whole search, so they
+can't go inside a group or next to `or`.
+
 ## Filters
 
 Filters look like `name:value`. Put `-` in front of one to exclude what it
@@ -39,8 +64,14 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
 | `fav:` | `fav:alice` | favorited by this user |
+| `approver:` | `approver:alice`, `approver:any`, `approver:none` | approved by this user, by anyone, or by no one (posts that never waited for approval) |
+| `commenter:` | `commenter:alice` | has a comment by this user |
+| `comment:` | `comment:nice_art` | comments contain these words (underscores for spaces) |
+| `noter:` | `noter:alice` | has a note this user wrote or edited |
+| `upvote:`, `downvote:` | `upvote:alice` | voted up / down by this user; votes are private, so only staff who review posts may search for others' votes, everyone else only for their own |
+| `flagger:` | `flagger:alice` | flagged by this user; only staff who review posts may search for others' flags, everyone else only for their own |
 | `search:` | `search:all`, `search:artists` | the newest posts (500 each) of your [saved searches](account.md#saved-searches), all or those with a label |
-| `favgroup:` | `favgroup:best`, `favgroup:7` | in one of your favorite groups (by name), or any public group (by number) |
+| `favgroup:` | `favgroup:best`, `favgroup:7`, `favgroup:any`, `favgroup:none` | in one of your favorite groups (by name), or any public group (by number); in any or none of your groups |
 | `pool:` | `pool:my_comic`, `pool:12`, `pool:any`, `pool:none` | in this pool (by name or number), in any pool, or in none |
 | `width:`, `height:` | `width:>=1920` | size in pixels |
 | `mpixels:` | `mpixels:>2` | megapixels (width × height ÷ 1,000,000) |
@@ -49,12 +80,30 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `duration:` | `duration:>30` | length of a video, in seconds |
 | `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm` |
 | `date:` | `date:2026-01` | upload date (UTC): a day, month or year |
+| `source:` | `source:https://twitter.com/foo`, `source:*pixiv.net*`, `source:none`, `source:any` | the source starts with this, or matches a pattern with `*`, regardless of case; or posts without / with a source |
+| `age:` | `age:<1w`, `age:2d..1mo` | uploaded this long ago: `<1w` is less than a week ago; units `s`, `mi`, `h`, `d`, `w`, `mo` (30 days; `m` works too) and `y` |
+| `updated:` | `updated:<1d`, `updated:2026-01` | last changed (tags, rating, source, status, …) this long ago, or on these days |
 | `md5:` | `md5:d41d8cd9…` | the file's MD5 hash |
 | `similar:` | `similar:123` | looks like post 123 (the post included); found once files are processed |
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
+| `child:` | `child:any`, `child:none` | posts with children (that aren't deleted), or without |
 | `tagcount:` | `tagcount:<5` | number of tags |
+| `<category>tags:` | `arttags:0`, `gentags:>20` | number of tags in a category: the category's name followed by `tags` (`artisttags:`, `charactertags:`), or Danbooru's `gentags:`, `arttags:`, `copytags:`, `chartags:` and `metatags:`; `arttags:0` finds posts missing an artist |
 | `ai:` | `ai:long_hair` | the [tagger](tags.md#suggestions-from-the-tagger) suggests this tag, and the post doesn't have it yet |
-| `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted`, `unmoderated`, `appealed` or `any` (see below) |
+| `status:` | `status:deleted` | `pending`, `active`, `flagged`, `deleted`, `modqueue`, `unmoderated`, `appealed` or `any` (see below) |
+
+`is:` and `has:` are shorthands for other filters, as on Danbooru:
+
+| Shorthand | Same as |
+|---|---|
+| `is:parent`, `has:children` | `child:any` |
+| `is:child`, `has:parent` | `parent:any` |
+| `is:sfw`, `is:nsfw` | `rating:g,s`, `rating:q,e` |
+| `is:general`, `is:explicit`, … | `rating:g`, `rating:e`, … |
+| `is:pending`, `is:deleted`, … | `status:pending`, `status:deleted`, … |
+| `has:source` | `source:any` |
+| `has:pools` | `pool:any` |
+| `has:notes`, `has:comments` | `notecount:>0`, `commentcount:>0` |
 
 Numbers (and sizes and dates) can be compared:
 
@@ -69,15 +118,29 @@ Numbers (and sizes and dates) can be compared:
 Dates take the same forms: `date:2026-01-31`, `date:>=2026-01`,
 `date:2025..2026` (all of 2025 and 2026).
 
+A site can limit the ratings logged-out visitors see (**Admin →
+Settings → Ratings visitors see**). Their searches, post pages, feeds and
+API results then leave out other ratings, whatever the search asks for.
+
 ### Statuses
 
 Searches show active and flagged posts, plus your own uploads that are
 waiting for approval. Staff who review uploads also see pending posts.
-Deleted posts only appear with `status:deleted` or `status:any`, and only to
-those allowed to see them. For staff who review uploads,
+Deleted posts only appear with `status:deleted` or `status:any` (or with a
+`status:` inside a group, such as `(status:deleted or rating:e)`), and only
+to those allowed to see them. For staff who review uploads,
 `status:unmoderated` finds the pending posts left for them: ones they
 didn't upload and haven't disapproved; `status:appealed` finds deleted
-posts with an open appeal.
+posts with an open appeal. `status:modqueue` finds everything waiting for
+a moderator: pending and flagged posts.
+
+## When nothing is found
+
+If a search finds nothing, tags in it that match no posts get
+suggestions: the tag a retired alias pointed to, or used tags spelled
+almost the same (`long_hiar` → `long_hair`). Each links to the same
+search with the tag swapped. Excluded tags, wildcards and filters get
+none.
 
 ## Order and page size
 
@@ -91,8 +154,11 @@ posts with an open appeal.
 | `order:landscape`, `order:portrait` | widest / tallest first |
 | `order:duration`, `order:duration_asc` | longest / shortest video |
 | `order:tagcount`, `order:tagcount_asc` | most / fewest tags |
+| `order:arttags`, `order:gentags_asc`, … | most / fewest tags in a category |
 | `order:comment`, `order:comment_asc` | most / least recently commented (only posts with comments) |
 | `order:note`, `order:note_asc` | most / least recently noted (only posts with notes) |
+| `order:change`, `order:change_asc` | most / least recently changed, e.g. to follow recent tag edits (`order:updated` works too) |
+| `order:rank` | hot posts: from the last two days with a positive score, highest score first, discounted by age (the **Hot** link) |
 | `order:random` | shuffled |
 | `ordfav:alice` | alice's favorites, most recently favorited first |
 | `ordpool:my_comic` | the pool's posts, in the pool's order |

@@ -98,6 +98,7 @@ pub async fn list(
     sqlx::query_as(select_comments!(
         "JOIN posts p ON p.id = c.post_id
          WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
+           AND p.rating = ANY($8)
            AND ($3 OR NOT c.is_deleted)
            AND ($4::bigint IS NULL OR c.post_id = $4)
            AND ($5::bigint IS NULL OR c.creator_id = $5)
@@ -111,6 +112,7 @@ pub async fn list(
     .bind(filter.creator_id)
     .bind(before)
     .bind(limit)
+    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }
@@ -410,6 +412,7 @@ mod tests {
         let public = Visibility {
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
+            ratings: Vec::new(),
         };
         assert_eq!(
             bodies(
@@ -438,6 +441,7 @@ mod tests {
         };
         let uploader = Visibility {
             viewer: None,
+            ratings: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Pending],
         };
         assert_eq!(

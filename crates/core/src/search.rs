@@ -466,6 +466,21 @@ pub enum Order {
     /// Most tags of [`Query::ordcategory`] first (`order:arttags`).
     CategoryTagsDesc,
     CategoryTagsAsc,
+    UpvotesDesc,
+    UpvotesAsc,
+    DownvotesDesc,
+    DownvotesAsc,
+    /// Most recently bumped by a comment first; only posts with one.
+    CommentBumpedDesc,
+    CommentBumpedAsc,
+    CommentCountDesc,
+    CommentCountAsc,
+    NoteCountDesc,
+    NoteCountAsc,
+    /// In the order of the search's `id:1,2,3` list.
+    Custom,
+    Md5Desc,
+    Md5Asc,
 }
 
 impl Order {
@@ -508,6 +523,29 @@ impl Order {
         ("updated", Order::ChangeDesc),
         ("updated_desc", Order::ChangeDesc),
         ("updated_asc", Order::ChangeAsc),
+        ("upvotes", Order::UpvotesDesc),
+        ("upvotes_desc", Order::UpvotesDesc),
+        ("upvotes_asc", Order::UpvotesAsc),
+        ("downvotes", Order::DownvotesDesc),
+        ("downvotes_desc", Order::DownvotesDesc),
+        ("downvotes_asc", Order::DownvotesAsc),
+        ("comment_bumped", Order::CommentBumpedDesc),
+        ("comment_bumped_desc", Order::CommentBumpedDesc),
+        ("comment_bumped_asc", Order::CommentBumpedAsc),
+        ("comment_count", Order::CommentCountDesc),
+        ("comment_count_desc", Order::CommentCountDesc),
+        ("comment_count_asc", Order::CommentCountAsc),
+        ("note_count", Order::NoteCountDesc),
+        ("note_count_desc", Order::NoteCountDesc),
+        ("note_count_asc", Order::NoteCountAsc),
+        ("custom", Order::Custom),
+        ("md5", Order::Md5Desc),
+        ("md5_desc", Order::Md5Desc),
+        ("md5_asc", Order::Md5Asc),
+        // Danbooru's names for upload order.
+        ("created_at", Order::IdDesc),
+        ("created_at_desc", Order::IdDesc),
+        ("created_at_asc", Order::IdAsc),
     ];
 
     pub fn name(self) -> &'static str {

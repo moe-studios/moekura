@@ -151,14 +151,15 @@ jobs:
             -v samples:/samples:ro moekura:ci /smoke/check.sh
       - run: docker image ls moekura:ci
       # End-to-end tests against the tiny compose stack, reusing the image
-      # built above (compose calls it moekura-app).
+      # built above (compose calls it moekura-app), limited to what a
+      # 1 GB VPS with two cores has.
       - name: Start the tiny stack
         env:
           POSTGRES_PASSWORD: e2e
         run: |
           echo "POSTGRES_PASSWORD=$POSTGRES_PASSWORD" > deploy/.env
           docker tag moekura:ci moekura-app
-          docker compose -f deploy/compose.tiny.yml up -d --no-build --wait
+          docker compose -f deploy/compose.tiny.yml -f e2e/compose.1gb.yml up -d --no-build --wait
           for i in $(seq 60); do curl -fsS http://localhost:8080/readyz && break; sleep 2; done
           curl -fsS http://localhost:8080/readyz
           printf '%s\n' "$E2E_ADMIN_PASSWORD" | docker compose -f deploy/compose.tiny.yml exec -T app \
@@ -194,6 +195,18 @@ jobs:
             echo "::error::moekura serve uses $rss MB, over 150 MB"
             exit 1
           fi
+          docker stats --no-stream
+      - name: Nothing ran out of memory
+        run: |
+          for service in app db; do
+            id=$(docker compose -f deploy/compose.tiny.yml ps -q "$service")
+            state=$(docker inspect -f '{{.State.OOMKilled}} {{.RestartCount}}' "$id")
+            echo "$service: OOM killed, restarts: $state"
+            if [ "$state" != "false 0" ]; then
+              echo "::error::$service ran out of memory or restarted"
+              exit 1
+            fi
+          done
       - name: Server logs
         if: failure()
         run: docker compose -f deploy/compose.tiny.yml logs app

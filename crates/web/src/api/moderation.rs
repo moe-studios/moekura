@@ -84,6 +84,34 @@ pub(crate) async fn reject(
     act(&state, &current, id, PostAction::Reject, &body.reason).await
 }
 
+/// Appeal a deleted post.
+///
+/// Needs `flag`, and either the post is your upload or you can see
+/// deleted posts. Asks staff to restore it; a post has one open appeal at
+/// a time, and appeals are rate limited.
+#[utoipa::path(
+    post,
+    path = "/posts/{id}/appeal",
+    operation_id = "appeal_post",
+    tag = "moderation",
+    params(("id" = i64, Path, description = "Post number")),
+    request_body = Reason,
+    responses(
+        (status = 204, description = "Appealed"),
+        (status = 400, body = ErrorBody, description = "The post isn't deleted, is already appealed, or no reason was given"),
+        (status = 429, body = ErrorBody, description = "Too many appeals lately"),
+    ),
+)]
+pub(crate) async fn appeal(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+    Json(body): Json<Reason>,
+) -> Result<StatusCode, AppError> {
+    crate::moderation::appeal_post(&state, &current, id, &body.reason).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct NewDisapproval {
     /// `breaks_rules`, `poor_quality` or `disinterest`.

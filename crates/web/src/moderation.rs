@@ -12,6 +12,7 @@ use moekura_core::moderation::{ActionKind, DisapprovalReason};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
 use moekura_core::webhooks::Event;
+use moekura_db::appeals::{self, AppealError};
 use moekura_db::flags::{self, FlagError};
 use moekura_db::mod_actions::NewAction;
 use moekura_db::mod_actions::{self, Entry, Filter};
@@ -35,6 +36,10 @@ pub fn routes() -> Router<AppState> {
         .route("/moderation/log", get(log))
         .route("/moderation/queue", get(queue))
         .route("/moderation/flags", get(flag_queue))
+        .route("/moderation/appeals", get(appeal_queue))
+        .route("/posts/{id}/appeal", post(appeal))
+        .route("/posts/{id}/appeals/approve", post(approve_appeal))
+        .route("/posts/{id}/appeals/reject", post(reject_appeal))
         .route("/posts/{id}/flag", post(flag))
         .route("/posts/{id}/flags/dismiss", post(dismiss_flags))
         .route("/posts/{id}/approve", post(approve))
@@ -96,6 +101,10 @@ async fn change_status(
     }
     if to == PostStatus::Deleted {
         flags::resolve(&mut *tx, id, true, actor).await?;
+    }
+    // Restoring a post grants its appeal.
+    if from.contains(&PostStatus::Deleted) {
+        appeals::resolve(&mut *tx, id, true, actor).await?;
     }
     mod_actions::record(
         &mut *tx,
@@ -341,6 +350,185 @@ async fn restore(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Resp
 async fn purge(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
     moderate(page.state(), &page.current, id, PostAction::Purge, "").await?;
     Ok(back_to(jar, "/posts?tags=status%3Adeleted"))
+}
+
+/// Whether `current` may appeal `post`: a deleted post they can see (their
+/// own upload, or any if they see deleted posts), with the right to flag.
+fn may_appeal(current: &CurrentUser, post: &posts::Post) -> bool {
+    let me = current.user.as_ref().map(|u| u.id);
+    post.status == PostStatus::Deleted
+        && me.is_some()
+        && current.can(Permission::Flag)
+        && (post.uploader_id == me || current.can(Permission::ViewDeleted))
+}
+
+/// The appeal form and history for a post page: the form for those who
+/// may appeal, the history for staff and the uploader.
+pub(crate) async fn appeal_context(
+    state: &AppState,
+    current: &CurrentUser,
+    post: &posts::Post,
+) -> Result<Value, AppError> {
+    let me = current.user.as_ref().map(|u| u.id);
+    let staff = current.can(Permission::DeletePosts) || current.can(Permission::ApprovePosts);
+    let own = me.is_some() && post.uploader_id == me;
+    let history = if staff || own {
+        appeals::for_post(state.db.primary(), post.id).await?
+    } else {
+        Vec::new()
+    };
+    let open = history.iter().any(|a| a.status == "open");
+    Ok(context! {
+        can_appeal => may_appeal(current, post) && !open,
+        history => history.iter().map(|a| context! {
+            by => a.creator_name,
+            reason => a.reason,
+            status => a.status,
+            decided_by => a.resolver_name,
+            when => a.created_at.date().to_string(),
+        }).collect::<Vec<_>>(),
+    })
+}
+
+async fn appeal(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    appeal_post(page.state(), &page.current, id, &form.reason()).await?;
+    Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+/// Appeals deleted post `id`, asking staff to restore it.
+pub(crate) async fn appeal_post(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    reason: &str,
+) -> Result<(), AppError> {
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let db = state.db.primary();
+    let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    let visible =
+        crate::posts::visibility(current).allows(&post) || post.uploader_id == Some(user.id);
+    if !visible {
+        return Err(AppError::NotFound);
+    }
+    if !may_appeal(current, &post) {
+        return Err(if post.status == PostStatus::Deleted {
+            AppError::Forbidden
+        } else {
+            AppError::BadRequest("Only deleted posts can be appealed".into())
+        });
+    }
+    let reason = check_reason(reason)?;
+    if reason.is_empty() {
+        return Err(AppError::BadRequest(
+            "Say why the post should come back".into(),
+        ));
+    }
+    state.rate_limits.check_appeal(user.id).await?;
+    let mut tx = db.begin().await?;
+    match appeals::create(&mut tx, id, user.id, reason).await {
+        Ok(_) => {}
+        Err(AppealError::Db(e)) => return Err(e.into()),
+        Err(e) => return Err(AppError::BadRequest(e.to_string())),
+    }
+    tx.commit().await?;
+    tracing::info!(post_id = id, user = user.name, "post appealed");
+    Ok(())
+}
+
+/// Appeals per page of their queue.
+const APPEAL_PAGE: i64 = 30;
+
+async fn appeal_queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Response, AppError> {
+    page.current.require(Permission::DeletePosts)?;
+    let state = page.state();
+    let db = state.db.primary();
+    let open = appeals::open(db, query.after.unwrap_or(0), APPEAL_PAGE).await?;
+    let ids: Vec<i64> = open.iter().map(|a| a.post_id).collect();
+    let uploaders = uploader_names(db, &ids).await?;
+    let cards = review_cards(state, &ids, &uploaders).await?;
+    let mut rows = Vec::new();
+    for card in cards {
+        let Some(id) = card.get_attr("id").ok().and_then(|v| i64::try_from(v).ok()) else {
+            continue;
+        };
+        let Some(appeal) = open.iter().find(|a| a.post_id == id) else {
+            continue;
+        };
+        let deleted = deletion(db, id).await?;
+        rows.push(context! {
+            ..card,
+            ..context! {
+                appeal => context! {
+                    by => appeal.creator_name,
+                    reason => appeal.reason,
+                    when => appeal.created_at.date().to_string(),
+                },
+                deleted => deleted.map(|e| context! {
+                    by => e.actor_name,
+                    reason => e.reason,
+                    when => e.created_at.date().to_string(),
+                }),
+            }
+        });
+    }
+    let more = (open.len() == APPEAL_PAGE as usize)
+        .then(|| open.last())
+        .flatten()
+        .map(|a| url_value(&format!("/moderation/appeals?after={}", a.id)));
+    Ok(page.render(
+        "moderation_appeals.html",
+        context! { posts => rows, more_url => more },
+    ))
+}
+
+async fn approve_appeal(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    // Restoring grants the appeal.
+    moderate(page.state(), &page.current, id, PostAction::Restore, "").await?;
+    Ok(back_to(jar, "/moderation/appeals"))
+}
+
+async fn reject_appeal(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    turn_down_appeal(page.state(), &page.current, id, &form.reason()).await?;
+    Ok(back_to(jar, "/moderation/appeals"))
+}
+
+/// Rejects post `id`'s open appeal, keeping it deleted.
+pub(crate) async fn turn_down_appeal(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    reason: &str,
+) -> Result<(), AppError> {
+    current.require(Permission::DeletePosts)?;
+    let reason = check_reason(reason)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = state.db.primary().begin().await?;
+    if appeals::resolve(&mut *tx, id, false, actor).await? == 0 {
+        return Err(AppError::BadRequest("The post has no open appeal".into()));
+    }
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor, ActionKind::AppealReject)
+            .post(id)
+            .reason(reason),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Posts per page of the approval queue.
@@ -806,10 +994,17 @@ mod tests {
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER);
         assert_eq!(count().await, 0);
-        // Gone for members; explained to staff.
+        // Gone for members but the uploader, who sees why; explained to
+        // staff.
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
         assert_eq!(
-            app.get(&format!("/posts/{id}"), Some(&alice)).await.status,
+            app.get(&format!("/posts/{id}"), Some(&bob)).await.status,
             StatusCode::NOT_FOUND
+        );
+        let own = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(
+            own.contains("“duplicate”") && !own.contains("/restore"),
+            "{own}"
         );
         let page = app
             .get(&format!("/posts/{id}"), Some(&moderator))
@@ -1311,5 +1506,152 @@ mod tests {
             )
             .await;
         assert_eq!(flagged.status, StatusCode::SEE_OTHER);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn uploaders_appeal_deleted_posts(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::posts::routes())
+                .merge(crate::upload::routes(max)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let mut ids = Vec::new();
+        for i in 0..2u32 {
+            let response = app
+                .post_multipart(
+                    "/upload",
+                    Some(&alice),
+                    &[("rating", "g".to_owned())],
+                    Some(("a.png", &crate::test_support::fixture::png(20 + 4 * i, 20))),
+                )
+                .await;
+            let id: i64 = response.location.unwrap()["/posts/".len()..]
+                .parse()
+                .unwrap();
+            app.post_form(
+                &format!("/posts/{id}/delete"),
+                Some(&moderator),
+                &[],
+                "reason=off-topic",
+            )
+            .await;
+            ids.push(id);
+        }
+        let id = ids[0];
+        // The uploader sees why, and may appeal; others don't see it.
+        let page = app.get(&format!("/posts/{id}"), Some(&alice)).await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(page.body.contains("off-topic"), "{}", page.body);
+        assert!(page.body.contains(&format!("/posts/{id}/appeal")));
+        assert!(!page.body.contains("id=\"edit-tags\""), "no editing");
+        assert_eq!(
+            app.get(&format!("/posts/{id}"), Some(&bob)).await.status,
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            app.post_form(&format!("/posts/{id}/appeal"), Some(&bob), &[], "reason=x")
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+        let unexplained = app
+            .post_form(&format!("/posts/{id}/appeal"), Some(&alice), &[], "reason=")
+            .await;
+        assert_eq!(unexplained.status, StatusCode::BAD_REQUEST);
+        for id in &ids {
+            let appealed = app
+                .post_form(
+                    &format!("/posts/{id}/appeal"),
+                    Some(&alice),
+                    &[],
+                    "reason=it+is+on+topic",
+                )
+                .await;
+            assert_eq!(appealed.status, StatusCode::SEE_OTHER, "{}", appealed.body);
+        }
+        let again = app
+            .post_form(
+                &format!("/posts/{id}/appeal"),
+                Some(&alice),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(
+            again.status,
+            StatusCode::BAD_REQUEST,
+            "one open appeal at a time"
+        );
+
+        // Staff see them in their queue, and in searches.
+        assert_eq!(
+            app.get("/moderation/appeals", Some(&alice)).await.status,
+            StatusCode::FORBIDDEN
+        );
+        let queue = app.get("/moderation/appeals", Some(&moderator)).await.body;
+        assert!(queue.contains("it is on topic"), "{queue}");
+        assert!(
+            queue.contains(&format!("/posts/{id}/appeals/approve")),
+            "{queue}"
+        );
+        let search = app
+            .get("/posts?tags=status%3Aappealed", Some(&moderator))
+            .await
+            .body;
+        assert!(search.contains(&format!("/posts/{id}")), "{search}");
+
+        let restored = app
+            .post(
+                &format!("/posts/{id}/appeals/approve"),
+                Some(&moderator),
+                &[],
+            )
+            .await;
+        assert_eq!(restored.status, StatusCode::SEE_OTHER);
+        let kept = app
+            .post_form(
+                &format!("/posts/{}/appeals/reject", ids[1]),
+                Some(&moderator),
+                &[],
+                "reason=still+off-topic",
+            )
+            .await;
+        assert_eq!(kept.status, StatusCode::SEE_OTHER);
+        let statuses: Vec<(String, String)> = sqlx::query_as(
+            "SELECT p.status, a.status FROM post_appeals a JOIN posts p ON p.id = a.post_id ORDER BY a.id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            statuses,
+            [
+                ("active".to_owned(), "approved".to_owned()),
+                ("deleted".to_owned(), "rejected".to_owned())
+            ]
+        );
+        let logged: Vec<String> = sqlx::query_scalar(
+            "SELECT action FROM mod_actions WHERE action LIKE 'appeal.%' OR action = 'post.restore'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(logged, ["post.restore", "appeal.reject"]);
+        // The history stays on the post.
+        let page = app
+            .get(&format!("/posts/{}", ids[1]), Some(&alice))
+            .await
+            .body;
+        assert!(page.contains("rejected"), "{page}");
+        assert!(
+            page.contains(&format!("/posts/{}/appeal", ids[1])),
+            "may appeal again"
+        );
     }
 }

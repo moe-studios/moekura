@@ -4,7 +4,7 @@
 var METATAGS = {
   id: [],
   rating: ["general", "sensitive", "questionable", "explicit"],
-  status: ["pending", "active", "flagged", "deleted", "unmoderated", "any"],
+  status: ["pending", "active", "flagged", "deleted", "unmoderated", "appealed", "any"],
   user: [],
   score: [],
   favcount: [],

@@ -3,6 +3,7 @@
 pub mod account_tokens;
 pub mod accounts;
 pub mod api_keys;
+pub mod appeals;
 pub mod bans;
 pub mod bench;
 pub mod comments;

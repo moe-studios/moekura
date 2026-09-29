@@ -86,6 +86,13 @@ const REPORT_BY_USER: Limit = Limit {
     period: Duration::from_secs(60),
 };
 
+// Appealing deleted posts: each lands in the staff's queue.
+const APPEAL_BY_USER: Limit = Limit {
+    name: "appeal_user",
+    burst: 3,
+    period: Duration::from_secs(4 * 60 * 60),
+};
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -102,6 +109,7 @@ pub struct RateLimits {
     confirm_by_user: DefaultKeyedRateLimiter<i64>,
     comment_by_user: DefaultKeyedRateLimiter<i64>,
     report_by_user: DefaultKeyedRateLimiter<i64>,
+    appeal_by_user: DefaultKeyedRateLimiter<i64>,
     valkey: Option<Valkey>,
 }
 
@@ -124,6 +132,7 @@ impl RateLimits {
             confirm_by_user: RateLimiter::keyed(quota(CONFIRM_BY_USER)),
             comment_by_user: RateLimiter::keyed(quota(COMMENT_BY_USER)),
             report_by_user: RateLimiter::keyed(quota(REPORT_BY_USER)),
+            appeal_by_user: RateLimiter::keyed(quota(APPEAL_BY_USER)),
             valkey,
         }
     }
@@ -207,6 +216,17 @@ impl RateLimits {
         .await
     }
 
+    /// Counts an appeal of a deleted post by user `user_id`.
+    pub async fn check_appeal(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            APPEAL_BY_USER,
+            &self.appeal_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
     /// Forgets keys that are back at full allowance, bounding memory use.
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
@@ -219,6 +239,7 @@ impl RateLimits {
         self.confirm_by_user.retain_recent();
         self.comment_by_user.retain_recent();
         self.report_by_user.retain_recent();
+        self.appeal_by_user.retain_recent();
     }
 
     async fn check<K: std::hash::Hash + Eq + Clone>(

@@ -1,6 +1,7 @@
 <nav class="subnav" aria-label="Moderation">
   <a href="/moderation/queue"{% if path == "/moderation/queue" or path is startingwith("/moderation/queue/") %} aria-current="page"{% endif %}>Approval queue</a>
   <a href="/moderation/flags"{% if path == "/moderation/flags" or path is startingwith("/moderation/flags/") %} aria-current="page"{% endif %}>Flags</a>
+  <a href="/moderation/appeals"{% if path == "/moderation/appeals" or path is startingwith("/moderation/appeals/") %} aria-current="page"{% endif %}>Appeals</a>
   <a href="/moderation/comments"{% if path == "/moderation/comments" or path is startingwith("/moderation/comments/") %} aria-current="page"{% endif %}>Reported comments</a>
   <a href="/posts?tags=status%3Adeleted">Deleted posts</a>
   <a href="/moderation/mass-edit"{% if path == "/moderation/mass-edit" or path is startingwith("/moderation/mass-edit/") %} aria-current="page"{% endif %}>Mass edit</a>

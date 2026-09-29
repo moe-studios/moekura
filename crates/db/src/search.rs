@@ -15,11 +15,12 @@
 
 use std::str::FromStr;
 
+use futures_util::future::BoxFuture;
 use futures_util::{StreamExt, TryStreamExt, stream};
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
-    Bound, Condition, Filter, Order, ParentFilter, PoolFilter, Query, StatusFilter, TagTerm,
+    Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, StatusFilter, TagTerm,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -103,6 +104,223 @@ struct TagSet {
     posts: i64,
 }
 
+/// A filter or group with the names in it looked up, ready for SQL.
+#[derive(Debug, Clone, PartialEq)]
+enum Node {
+    /// Matches every post, or none.
+    Const(bool),
+    /// Has at least one of these tags.
+    Tags(TagSet),
+    /// A filter [`push_filter`] writes as it is.
+    Plain(Filter),
+    Uploader(i64),
+    FavoritedBy(i64),
+    /// One of these posts (`similar:`, `search:`).
+    Posts(Vec<i64>),
+    /// In this pool, or with `None` in any pool that isn't deleted.
+    Pool(Option<i32>),
+    FavGroup(i32),
+    /// The tagger suggests this tag, and the post doesn't have it yet.
+    Suggested(i32),
+    /// Pending, not uploaded by this viewer and not disapproved by them.
+    Unmoderated(Option<i64>),
+    /// Deleted with an open appeal.
+    Appealed,
+    Not(Box<Node>),
+    And(Vec<Node>),
+    Or(Vec<Node>),
+}
+
+impl Node {
+    fn not(self) -> Node {
+        match self {
+            Node::Const(value) => Node::Const(!value),
+            Node::Not(inner) => *inner,
+            node => Node::Not(Box::new(node)),
+        }
+    }
+
+    /// Each of `nodes`, with constants folded.
+    fn and(nodes: Vec<Node>) -> Node {
+        let mut kept = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            match node {
+                Node::Const(true) => {}
+                Node::Const(false) => return Node::Const(false),
+                Node::And(inner) => kept.extend(inner),
+                node => kept.push(node),
+            }
+        }
+        match kept.len() {
+            0 => Node::Const(true),
+            1 => kept.pop().expect("one node"),
+            _ => Node::And(kept),
+        }
+    }
+
+    /// Any of `nodes`, with constants folded and tag sets merged.
+    fn or(nodes: Vec<Node>) -> Node {
+        let mut kept = Vec::with_capacity(nodes.len());
+        let mut tags: Option<TagSet> = None;
+        for node in nodes {
+            match node {
+                Node::Const(false) => {}
+                Node::Const(true) => return Node::Const(true),
+                Node::Or(inner) => kept.extend(inner),
+                Node::Tags(set) => {
+                    let union = tags.get_or_insert(TagSet {
+                        ids: Vec::new(),
+                        posts: 0,
+                    });
+                    union.ids.extend(set.ids);
+                    union.posts += set.posts;
+                }
+                node => kept.push(node),
+            }
+        }
+        if let Some(mut set) = tags {
+            set.ids.sort_unstable();
+            set.ids.dedup();
+            kept.insert(0, Node::Tags(set));
+        }
+        match kept.len() {
+            0 => Node::Const(false),
+            1 => kept.pop().expect("one node"),
+            _ => Node::Or(kept),
+        }
+    }
+
+    /// Whether any filter in it needs `media_assets`.
+    fn uses_media(&self) -> bool {
+        match self {
+            Node::Plain(filter) => matches!(
+                filter,
+                Filter::Width(_)
+                    | Filter::Height(_)
+                    | Filter::Mpixels(_)
+                    | Filter::Ratio(_)
+                    | Filter::FileSize(_)
+                    | Filter::Duration(_)
+                    | Filter::FileType(_)
+                    | Filter::Md5(_)
+            ),
+            Node::Not(inner) => inner.uses_media(),
+            Node::And(nodes) | Node::Or(nodes) => nodes.iter().any(Node::uses_media),
+            _ => false,
+        }
+    }
+
+    /// Whether its SQL can be NULL rather than false (a video's missing
+    /// duration, a post without uploader, …).
+    fn nullable(&self) -> bool {
+        match self {
+            Node::Plain(_) | Node::Uploader(_) => true,
+            Node::Not(inner) => inner.nullable(),
+            Node::And(nodes) | Node::Or(nodes) => nodes.iter().any(Node::nullable),
+            _ => false,
+        }
+    }
+
+    fn push(&self, sql: &mut QueryBuilder<Postgres>) {
+        match self {
+            Node::Const(value) => {
+                sql.push(if *value { "TRUE" } else { "FALSE" });
+            }
+            Node::Tags(set) => {
+                sql.push("p.tag_ids && ")
+                    .push_bind(set.ids.clone())
+                    .push("::int4[]");
+            }
+            Node::Plain(filter) => {
+                sql.push("(");
+                push_filter(sql, filter);
+                sql.push(")");
+            }
+            Node::Uploader(user) => {
+                sql.push("p.uploader_id = ").push_bind(*user);
+            }
+            Node::FavoritedBy(user) => {
+                sql.push(
+                    "EXISTS (SELECT 1 FROM favorites f WHERE f.post_id = p.id AND f.user_id = ",
+                )
+                .push_bind(*user)
+                .push(")");
+            }
+            Node::Posts(ids) => {
+                sql.push("p.id = ANY(").push_bind(ids.clone()).push(")");
+            }
+            Node::Pool(Some(pool)) => {
+                sql.push(
+                    "EXISTS (SELECT 1 FROM pool_posts pp WHERE pp.post_id = p.id AND pp.pool_id = ",
+                )
+                .push_bind(*pool)
+                .push(")");
+            }
+            Node::Pool(None) => {
+                sql.push(
+                    "EXISTS (SELECT 1 FROM pool_posts pp JOIN pools pl ON pl.id = pp.pool_id \
+                     WHERE pp.post_id = p.id AND NOT pl.is_deleted)",
+                );
+            }
+            Node::FavGroup(group) => {
+                sql.push("EXISTS (SELECT 1 FROM favorite_group_posts fg WHERE fg.post_id = p.id AND fg.group_id = ")
+                    .push_bind(*group)
+                    .push(")");
+            }
+            Node::Suggested(tag) => {
+                sql.push("(EXISTS (SELECT 1 FROM tag_suggestions ts WHERE ts.post_id = p.id AND ts.tag_id = ")
+                    .push_bind(*tag)
+                    .push(") AND NOT p.tag_ids @> ARRAY[")
+                    .push_bind(*tag)
+                    .push("]::int4[])");
+            }
+            Node::Unmoderated(viewer) => {
+                sql.push("(p.status = 'pending'");
+                if let Some(viewer) = viewer {
+                    sql.push(" AND p.uploader_id IS DISTINCT FROM ")
+                        .push_bind(*viewer)
+                        .push(
+                            " AND NOT EXISTS (SELECT 1 FROM post_disapprovals d \
+                             WHERE d.post_id = p.id AND d.user_id = ",
+                        )
+                        .push_bind(*viewer)
+                        .push(")");
+                }
+                sql.push(")");
+            }
+            Node::Appealed => {
+                sql.push("EXISTS (SELECT 1 FROM post_appeals x WHERE x.post_id = p.id AND x.status = 'open')");
+            }
+            // NOT would let NULLs through as unknown; IS NOT TRUE counts
+            // them as not matching. Plain NOT keeps anti-joins possible.
+            Node::Not(inner) if inner.nullable() => {
+                sql.push("(");
+                inner.push(sql);
+                sql.push(") IS NOT TRUE");
+            }
+            Node::Not(inner) => {
+                sql.push("NOT ");
+                inner.push(sql);
+            }
+            Node::And(nodes) | Node::Or(nodes) => {
+                let separator = if matches!(self, Node::And(_)) {
+                    " AND "
+                } else {
+                    " OR "
+                };
+                sql.push("(");
+                for (i, node) in nodes.iter().enumerate() {
+                    if i > 0 {
+                        sql.push(separator);
+                    }
+                    node.push(sql);
+                }
+                sql.push(")");
+            }
+        }
+    }
+}
+
 /// How to get posts in order; see the module docs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Strategy {
@@ -123,33 +341,17 @@ pub struct Plan {
     /// Tags of which at least one must be present.
     any: Option<TagSet>,
     excluded: Vec<i32>,
-    conditions: Vec<Condition>,
-    /// `user:` filters resolved to ids.
-    uploaders: Vec<(bool, i64)>,
-    /// `fav:` filters resolved to ids.
-    favorited_by: Vec<(bool, i64)>,
+    /// Filters and groups, each of which must match.
+    filters: Vec<Node>,
     /// `ordfav:`'s user.
     ordfav: Option<i64>,
-    /// `similar:` and `search:` filters resolved to the matching posts.
-    post_sets: Vec<(bool, Vec<i64>)>,
-    /// `pool:` filters: a pool's id, or `None` for any pool.
-    pools: Vec<(bool, Option<i32>)>,
     /// `ordpool:`'s pool.
     ordpool: Option<i32>,
-    /// `favgroup:` filters resolved to group ids.
-    favgroups: Vec<(bool, i32)>,
     /// `ordfavgroup:`'s group.
     ordfavgroup: Option<i32>,
-    /// `ai:` filters resolved to tag ids.
-    suggested: Vec<(bool, i32)>,
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
-    /// `status:unmoderated` (or with `true`, `-status:unmoderated`) for
-    /// the viewer, if any.
-    unmoderated: Vec<(bool, Option<i64>)>,
-    /// `status:appealed`, or with `true` `-status:appealed`.
-    appealed: Vec<bool>,
     order: Order,
     per_page: u32,
     /// Estimated number of posts, for choosing a strategy.
@@ -187,20 +389,12 @@ impl Plan {
             required: Vec::new(),
             any: None,
             excluded: Vec::new(),
-            conditions: Vec::new(),
-            uploaders: Vec::new(),
-            favorited_by: Vec::new(),
+            filters: Vec::new(),
             ordfav: None,
-            post_sets: Vec::new(),
-            pools: Vec::new(),
             ordpool: None,
-            favgroups: Vec::new(),
             ordfavgroup: None,
-            suggested: Vec::new(),
             statuses,
             own_pending,
-            unmoderated: Vec::new(),
-            appealed: Vec::new(),
             order: query.order.unwrap_or_default(),
             per_page: query.limit.unwrap_or(config.per_page),
             total: 0.0,
@@ -235,6 +429,21 @@ impl Plan {
             plan.excluded
                 .extend(expand(db, term, config.wildcard_limit).await?.ids);
         }
+        for condition in &query.conditions {
+            // Already folded into `statuses`, unless it's a condition on
+            // each post.
+            if let Filter::Status(status) = condition.filter
+                && !matches!(status, StatusFilter::Unmoderated | StatusFilter::Appealed)
+            {
+                continue;
+            }
+            let node = resolve_filter(db, &condition.filter, visibility, config).await?;
+            plan.add(if condition.negated { node.not() } else { node });
+        }
+        for group in &query.groups {
+            let node = resolve_expr(db, group, visibility, config).await?;
+            plan.add(node);
+        }
         for set in plan.required.iter_mut().chain(plan.any.as_mut()) {
             set.ids.sort_unstable();
             set.ids.dedup();
@@ -242,98 +451,6 @@ impl Plan {
         plan.excluded.sort_unstable();
         plan.excluded.dedup();
 
-        for condition in &query.conditions {
-            match &condition.filter {
-                Filter::Status(StatusFilter::Unmoderated) => {
-                    plan.unmoderated
-                        .push((condition.negated, visibility.viewer));
-                }
-                Filter::Status(StatusFilter::Appealed) => plan.appealed.push(condition.negated),
-                // Already folded into `statuses`.
-                Filter::Status(_) => {}
-                Filter::User(name) | Filter::Fav(name) => {
-                    let list = if matches!(condition.filter, Filter::User(_)) {
-                        &mut plan.uploaders
-                    } else {
-                        &mut plan.favorited_by
-                    };
-                    match crate::users::by_name(db, name).await? {
-                        Some(user) => list.push((condition.negated, user.id)),
-                        // Nobody by that name uploaded or favorited anything.
-                        None if !condition.negated => plan.nothing = true,
-                        None => {}
-                    }
-                }
-                Filter::Similar(post) => {
-                    let hash = match crate::media::for_post(db, *post).await? {
-                        Some(asset) => asset.phash,
-                        None => None,
-                    };
-                    match hash {
-                        Some(hash) => {
-                            let ids = crate::media::similar(
-                                db,
-                                hash as u64,
-                                crate::media::SIMILAR_MAX_DISTANCE,
-                                None,
-                                SIMILAR_LIMIT,
-                            )
-                            .await?
-                            .into_iter()
-                            .map(|s| s.post_id)
-                            .collect();
-                            plan.post_sets.push((condition.negated, ids));
-                        }
-                        // Unknown or not yet processed: nothing to compare with.
-                        None if !condition.negated => plan.nothing = true,
-                        None => {}
-                    }
-                }
-                Filter::FavGroup(group) => {
-                    match favorite_group(db, group, visibility.viewer).await? {
-                        Some(id) => plan.favgroups.push((condition.negated, id)),
-                        None if !condition.negated => plan.nothing = true,
-                        None => {}
-                    }
-                }
-                Filter::Search(label) => {
-                    let ids = match visibility.viewer {
-                        Some(viewer) => {
-                            saved_search_posts(db, viewer, label, visibility, config).await?
-                        }
-                        None => Vec::new(),
-                    };
-                    if ids.is_empty() && !condition.negated {
-                        plan.nothing = true;
-                    }
-                    plan.post_sets.push((condition.negated, ids));
-                }
-                Filter::Ai(name) => {
-                    let name = crate::tag_relations::aliases_of(db, &[name.as_str()])
-                        .await?
-                        .pop()
-                        .map_or_else(|| name.as_str().to_owned(), |(_, consequent)| consequent);
-                    match crate::tags::by_name(db, &name).await? {
-                        Some(tag) => plan.suggested.push((condition.negated, tag.id)),
-                        None if !condition.negated => plan.nothing = true,
-                        None => {}
-                    }
-                }
-                Filter::Pool(PoolFilter::Any) => plan.pools.push((condition.negated, None)),
-                Filter::Pool(PoolFilter::None) => plan.pools.push((!condition.negated, None)),
-                Filter::Pool(PoolFilter::In(pool)) => {
-                    match crate::pools::find(db, pool)
-                        .await?
-                        .filter(|p| !p.is_deleted)
-                    {
-                        Some(pool) => plan.pools.push((condition.negated, Some(pool.id))),
-                        None if !condition.negated => plan.nothing = true,
-                        None => {}
-                    }
-                }
-                _ => plan.conditions.push(condition.clone()),
-            }
-        }
         if let Some(group) = &query.ordfavgroup
             && plan.order == Order::FavGroup
         {
@@ -375,6 +492,18 @@ impl Plan {
         Ok(plan)
     }
 
+    /// Adds a condition every post must meet.
+    fn add(&mut self, node: Node) {
+        match node {
+            Node::Const(true) => {}
+            Node::Const(false) => self.nothing = true,
+            // Tags on either side of an `or`: served like `~` tags.
+            Node::Tags(set) => self.required.push(set),
+            Node::And(nodes) => nodes.into_iter().for_each(|node| self.add(node)),
+            node => self.filters.push(node),
+        }
+    }
+
     /// Posts per page.
     pub fn per_page(&self) -> u32 {
         self.per_page
@@ -391,12 +520,12 @@ impl Plan {
     /// which `id` still breaks).
     fn orders_by_date(&self) -> bool {
         matches!(self.order, Order::IdDesc | Order::IdAsc)
-            && self.conditions.iter().any(|c| {
-                !c.negated
-                    && matches!(
-                        c.filter,
-                        Filter::Date { from: Some(_), .. } | Filter::Date { until: Some(_), .. }
-                    )
+            && self.filters.iter().any(|node| {
+                matches!(
+                    node,
+                    Node::Plain(Filter::Date { from: Some(_), .. })
+                        | Node::Plain(Filter::Date { until: Some(_), .. })
+                )
             })
     }
 
@@ -408,16 +537,12 @@ impl Plan {
             (
                 self.nothing,
                 &self.statuses,
-                (self.own_pending, &self.unmoderated, &self.appealed),
+                self.own_pending,
                 self.required.iter().map(|s| &s.ids).collect::<Vec<_>>(),
                 self.any.as_ref().map(|s| &s.ids),
                 &self.excluded,
-                &self.conditions,
-                &self.uploaders,
-                &self.favorited_by,
-                self.ordfav,
-                (&self.post_sets, &self.pools, self.ordpool),
-                (&self.favgroups, self.ordfavgroup, &self.suggested),
+                &self.filters,
+                (self.ordfav, self.ordpool, self.ordfavgroup),
             )
         )
     }
@@ -707,20 +832,7 @@ impl Plan {
                 | Order::DurationDesc
                 | Order::DurationAsc
         );
-        media_order
-            || self.conditions.iter().any(|c| {
-                matches!(
-                    c.filter,
-                    Filter::Width(_)
-                        | Filter::Height(_)
-                        | Filter::Mpixels(_)
-                        | Filter::Ratio(_)
-                        | Filter::FileSize(_)
-                        | Filter::Duration(_)
-                        | Filter::FileType(_)
-                        | Filter::Md5(_)
-                )
-            })
+        media_order || self.filters.iter().any(Node::uses_media)
     }
 
     /// Everything after `SELECT … FROM posts p`: joins and the WHERE clause.
@@ -749,29 +861,6 @@ impl Plan {
                 .push(")");
         }
         sql.push(")");
-        for (negated, viewer) in &self.unmoderated {
-            sql.push(if *negated { " AND NOT (" } else { " AND (" })
-                .push("p.status = 'pending'");
-            if let Some(viewer) = viewer {
-                sql.push(" AND p.uploader_id IS DISTINCT FROM ")
-                    .push_bind(*viewer)
-                    .push(
-                        " AND NOT EXISTS (SELECT 1 FROM post_disapprovals d \
-                         WHERE d.post_id = p.id AND d.user_id = ",
-                    )
-                    .push_bind(*viewer)
-                    .push(")");
-            }
-            sql.push(")");
-        }
-        for negated in &self.appealed {
-            sql.push(if *negated {
-                " AND NOT EXISTS"
-            } else {
-                " AND EXISTS"
-            })
-            .push(" (SELECT 1 FROM post_appeals x WHERE x.post_id = p.id AND x.status = 'open')");
-        }
         if self.only_commented() {
             sql.push(" AND p.last_commented_at IS NOT NULL");
         }
@@ -814,70 +903,9 @@ impl Plan {
                 .push_bind(self.excluded.clone())
                 .push("::int4[]");
         }
-        for (negated, uploader) in &self.uploaders {
-            sql.push(if *negated {
-                " AND p.uploader_id IS DISTINCT FROM "
-            } else {
-                " AND p.uploader_id = "
-            })
-            .push_bind(*uploader);
-        }
-        for (negated, ids) in &self.post_sets {
-            sql.push(if *negated {
-                " AND NOT p.id = ANY("
-            } else {
-                " AND p.id = ANY("
-            })
-            .push_bind(ids.clone())
-            .push(")");
-        }
-        for (negated, group) in &self.favgroups {
-            sql.push(if *negated { " AND NOT" } else { " AND" })
-                .push(" EXISTS (SELECT 1 FROM favorite_group_posts fg WHERE fg.post_id = p.id AND fg.group_id = ")
-                .push_bind(*group)
-                .push(")");
-        }
-        for (negated, pool) in &self.pools {
-            sql.push(if *negated { " AND NOT" } else { " AND" });
-            match pool {
-                Some(pool) => {
-                    sql.push(" EXISTS (SELECT 1 FROM pool_posts pp WHERE pp.post_id = p.id AND pp.pool_id = ")
-                        .push_bind(*pool)
-                        .push(")");
-                }
-                None => {
-                    sql.push(
-                        " EXISTS (SELECT 1 FROM pool_posts pp JOIN pools pl ON pl.id = pp.pool_id \
-                         WHERE pp.post_id = p.id AND NOT pl.is_deleted)",
-                    );
-                }
-            }
-        }
-        // Suggested, and not on the post yet.
-        for (negated, tag) in &self.suggested {
-            sql.push(if *negated { " AND NOT (" } else { " AND (" })
-                .push("EXISTS (SELECT 1 FROM tag_suggestions ts WHERE ts.post_id = p.id AND ts.tag_id = ")
-                .push_bind(*tag)
-                .push(") AND NOT p.tag_ids @> ARRAY[")
-                .push_bind(*tag)
-                .push("]::int4[])");
-        }
-        for (negated, user) in &self.favorited_by {
-            sql.push(if *negated { " AND NOT" } else { " AND" })
-                .push(" EXISTS (SELECT 1 FROM favorites f WHERE f.post_id = p.id AND f.user_id = ")
-                .push_bind(*user)
-                .push(")");
-        }
-        for condition in &self.conditions {
-            sql.push(" AND (");
-            push_filter(sql, &condition.filter);
-            // NOT would let NULLs (videos' missing durations, …) through as
-            // unknown; IS NOT TRUE counts them as not matching.
-            sql.push(if condition.negated {
-                ") IS NOT TRUE"
-            } else {
-                ")"
-            });
+        for node in &self.filters {
+            sql.push(" AND ");
+            node.push(sql);
         }
     }
 
@@ -909,16 +937,10 @@ impl Plan {
     /// anyway: the table size, or a lone tag's post count.
     fn count_shortcut(&self) -> Option<i64> {
         let limit = i64::from(self.count_limit);
-        let unfiltered = self.conditions.is_empty()
-            && self.uploaders.is_empty()
-            && self.favorited_by.is_empty()
-            && self.post_sets.is_empty()
+        let unfiltered = self.filters.is_empty()
             && self.ordfav.is_none()
-            && self.pools.is_empty()
             && self.ordpool.is_none()
-            && self.favgroups.is_empty()
             && self.ordfavgroup.is_none()
-            && self.suggested.is_empty()
             && !self.only_commented()
             && !self.only_noted()
             && self.excluded.is_empty()
@@ -978,6 +1000,125 @@ impl Plan {
     }
 }
 
+/// A group of a search, resolved.
+fn resolve_expr<'a>(
+    db: &'a PgPool,
+    expr: &'a Expr,
+    visibility: &'a Visibility,
+    config: &'a SearchConfig,
+) -> BoxFuture<'a, Result<Node, SearchError>> {
+    Box::pin(async move {
+        Ok(match expr {
+            Expr::Tag(term) => {
+                let set = expand(db, term, config.wildcard_limit).await?;
+                if set.ids.is_empty() {
+                    Node::Const(false)
+                } else {
+                    Node::Tags(set)
+                }
+            }
+            Expr::Filter(filter) => resolve_filter(db, filter, visibility, config).await?,
+            Expr::Not(inner) => resolve_expr(db, inner, visibility, config).await?.not(),
+            Expr::And(items) | Expr::Or(items) => {
+                let mut nodes = Vec::with_capacity(items.len());
+                for item in items {
+                    nodes.push(resolve_expr(db, item, visibility, config).await?);
+                }
+                if matches!(expr, Expr::And(_)) {
+                    Node::and(nodes)
+                } else {
+                    Node::or(nodes)
+                }
+            }
+        })
+    })
+}
+
+/// A filter with the users, pools, groups and posts it names looked up;
+/// what can't be found matches nothing.
+async fn resolve_filter(
+    db: &PgPool,
+    filter: &Filter,
+    visibility: &Visibility,
+    config: &SearchConfig,
+) -> Result<Node, SearchError> {
+    let found = |id: Option<Node>| id.unwrap_or(Node::Const(false));
+    Ok(match filter {
+        Filter::Status(StatusFilter::Any) => Node::Const(true),
+        Filter::Status(StatusFilter::Unmoderated) => Node::Unmoderated(visibility.viewer),
+        Filter::Status(StatusFilter::Appealed) => Node::Appealed,
+        Filter::User(name) => found(
+            crate::users::by_name(db, name)
+                .await?
+                .map(|user| Node::Uploader(user.id)),
+        ),
+        Filter::Fav(name) => found(
+            crate::users::by_name(db, name)
+                .await?
+                .map(|user| Node::FavoritedBy(user.id)),
+        ),
+        Filter::Similar(post) => {
+            let hash = match crate::media::for_post(db, *post).await? {
+                Some(asset) => asset.phash,
+                None => None,
+            };
+            match hash {
+                Some(hash) => Node::Posts(
+                    crate::media::similar(
+                        db,
+                        hash as u64,
+                        crate::media::SIMILAR_MAX_DISTANCE,
+                        None,
+                        SIMILAR_LIMIT,
+                    )
+                    .await?
+                    .into_iter()
+                    .map(|s| s.post_id)
+                    .collect(),
+                ),
+                // Unknown or not yet processed: nothing to compare with.
+                None => Node::Const(false),
+            }
+        }
+        Filter::FavGroup(group) => found(
+            favorite_group(db, group, visibility.viewer)
+                .await?
+                .map(Node::FavGroup),
+        ),
+        Filter::Search(label) => {
+            let ids = match visibility.viewer {
+                Some(viewer) => saved_search_posts(db, viewer, label, visibility, config).await?,
+                None => Vec::new(),
+            };
+            if ids.is_empty() {
+                Node::Const(false)
+            } else {
+                Node::Posts(ids)
+            }
+        }
+        Filter::Ai(name) => {
+            let name = crate::tag_relations::aliases_of(db, &[name.as_str()])
+                .await?
+                .pop()
+                .map_or_else(|| name.as_str().to_owned(), |(_, consequent)| consequent);
+            found(
+                crate::tags::by_name(db, &name)
+                    .await?
+                    .map(|tag| Node::Suggested(tag.id)),
+            )
+        }
+        Filter::Pool(PoolFilter::Any) => Node::Pool(None),
+        Filter::Pool(PoolFilter::None) => Node::Pool(None).not(),
+        Filter::Pool(PoolFilter::In(pool)) => found(
+            crate::pools::find(db, pool)
+                .await?
+                .filter(|p| !p.is_deleted)
+                .map(|pool| Node::Pool(Some(pool.id))),
+        ),
+        filter => Node::Plain(filter.clone()),
+    })
+}
+
 /// The favorite group `group` names for `viewer`: by id, if it's public
 /// or theirs; by name, one of theirs.
 async fn favorite_group(
@@ -1021,9 +1162,9 @@ async fn saved_search_posts(
         .filter_map(|text| Query::parse(text).ok())
         .filter(|query| {
             !query
-                .conditions
+                .filters()
                 .iter()
-                .any(|c| matches!(c.filter, Filter::Search(_)))
+                .any(|filter| matches!(filter, Filter::Search(_)))
         })
         .map(|mut query| {
             // The newest posts, whatever order the search was saved with.
@@ -1058,7 +1199,18 @@ async fn saved_search_posts(
 /// out even for those who may see them.
 fn statuses(query: &Query, visibility: &Visibility) -> (Vec<&'static str>, Option<i64>) {
     let visible = &visibility.statuses;
+    // `status:` inside a group decides for each post.
+    let nested_status = query
+        .groups
+        .iter()
+        .flat_map(|group| {
+            let mut filters = Vec::new();
+            group.filters(&mut filters);
+            filters
+        })
+        .any(|filter| matches!(filter, Filter::Status(_)));
     let mut wanted: Vec<PostStatus> = match query.status() {
+        None if nested_status => visible.clone(),
         None => visible
             .iter()
             .copied()
@@ -1194,6 +1346,16 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
                 .push_bind(*id)
                 .push(" OR p.id = ")
                 .push_bind(*id);
+        }
+        // Inside groups; at the top level, statuses are folded into the
+        // statuses searched.
+        Filter::Status(
+            status @ (StatusFilter::Pending
+            | StatusFilter::Active
+            | StatusFilter::Flagged
+            | StatusFilter::Deleted),
+        ) => {
+            sql.push("p.status = ").push_bind(status.as_str());
         }
         Filter::Status(_)
         | Filter::User(_)
@@ -1448,6 +1610,115 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(search(&pool, "kitty").await, [both, cat]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn groups(pool: PgPool) {
+        let alice: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let cat = seed(
+            &pool,
+            Seed {
+                tags: &["cat", "cute"],
+                rating: "e",
+                ..Seed::default()
+            },
+        )
+        .await;
+        let dog = seed(
+            &pool,
+            Seed {
+                tags: &["dog", "cute"],
+                uploader: Some(alice),
+                ..Seed::default()
+            },
+        )
+        .await;
+        let both = seed(
+            &pool,
+            Seed {
+                tags: &["cat", "dog"],
+                score: 5,
+                ..Seed::default()
+            },
+        )
+        .await;
+        let clip = seed(
+            &pool,
+            Seed {
+                media_type: "webm",
+                duration_ms: Some(5000),
+                ..Seed::default()
+            },
+        )
+        .await;
+        let deleted = seed(
+            &pool,
+            Seed {
+                tags: &["cat"],
+                status: "deleted",
+                ..Seed::default()
+            },
+        )
+        .await;
+
+        let cases: &[(&str, &[i64])] = &[
+            ("(cat or dog) -rating:e", &[both, dog]),
+            ("(cat dog) or (cute rating:e)", &[both, cat]),
+            ("-(cat dog)", &[clip, dog, cat]),
+            ("-(cat or dog)", &[clip]),
+            ("cat or user:alice", &[both, dog, cat]),
+            ("cat or user:nobody", &[both, cat]),
+            ("-(dog user:nobody)", &[clip, both, dog, cat]),
+            ("dog (user:alice or score:>0)", &[both, dog]),
+            ("(missing or cute) -dog", &[cat]),
+            ("missing or nothing_*", &[]),
+            ("(filetype:webm or rating:e)", &[clip, cat]),
+            ("-(duration:>1 or cat)", &[dog]),
+            ("(cat or dog) (cute or score:5)", &[both, dog, cat]),
+            // status: inside a group decides for each post.
+            ("cat (status:deleted or rating:e)", &[cat]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(&search(&pool, input).await, expected, "{input}");
+        }
+        let staff = Visibility {
+            statuses: vec![PostStatus::Active, PostStatus::Deleted],
+            viewer: None,
+        };
+        assert_eq!(
+            search_as(&pool, "cat (status:deleted or rating:e)", &staff).await,
+            [deleted, cat]
+        );
+
+        // Counting agrees.
+        let query = Query::parse("(cat dog) or (cute rating:e)").unwrap();
+        let plan = Plan::resolve(&pool, &query, &public(), &SearchConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(plan.count(&pool).await.unwrap(), Count::Exact(2));
+        // Nested terms count towards the limit.
+        let config = SearchConfig {
+            max_terms: 3,
+            ..SearchConfig::default()
+        };
+        let query = Query::parse("a (b or (c d))").unwrap();
+        assert!(matches!(
+            Plan::resolve(&pool, &query, &public(), &config).await,
+            Err(SearchError::Invalid(_))
+        ));
+        // Or-ed tags are a tag set, as with `~`.
+        let query = Query::parse("(cat or dog) (cute or missing)").unwrap();
+        let plan = Plan::resolve(&pool, &query, &public(), &SearchConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(plan.required.len(), 1);
+        assert_eq!(plan.any.as_ref().map(|set| set.ids.len()), Some(2));
+        assert!(plan.filters.is_empty());
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
@@ -2282,20 +2553,12 @@ mod tests {
                 .collect(),
             any: None,
             excluded: Vec::new(),
-            conditions: Vec::new(),
-            uploaders: Vec::new(),
-            favorited_by: Vec::new(),
+            filters: Vec::new(),
             ordfav: None,
-            post_sets: Vec::new(),
-            pools: Vec::new(),
             ordpool: None,
-            favgroups: Vec::new(),
             ordfavgroup: None,
-            suggested: Vec::new(),
             statuses: vec!["active"],
             own_pending: None,
-            unmoderated: Vec::new(),
-            appealed: Vec::new(),
             order,
             per_page: 40,
             total,

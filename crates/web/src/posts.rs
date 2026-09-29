@@ -1269,6 +1269,27 @@ mod tests {
         assert!(bad.body.contains("expected ratings"), "{}", bad.body);
         let nothing = app.get("/posts?tags=nonexistent", None).await;
         assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
+
+        // Groups and `or`.
+        let page = app.get("/posts?tags=(cat+cute)+or+(dog+-cute)", None).await;
+        assert!(
+            page.body.contains(&format!("/posts/{cat}?")),
+            "{}",
+            page.body
+        );
+        assert!(!page.body.contains(&format!("/posts/{dog}?")));
+        assert!(page.body.contains("value=\"((cat cute) or (dog -cute))\""));
+        let bad = app.get("/posts?tags=(cat+or", None).await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+        assert!(bad.body.contains("is missing its"), "{}", bad.body);
+        // No "without the last term" that would break the group.
+        let nothing = app.get("/posts?tags=dog+(cat+or+rating:e)", None).await;
+        assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
+        assert!(
+            !nothing.body.contains("without the last term"),
+            "{}",
+            nothing.body
+        );
         assert_eq!(
             app.get("/posts?page=x", None).await.status,
             StatusCode::BAD_REQUEST

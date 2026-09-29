@@ -23,6 +23,31 @@ Searches follow tag aliases: if `kitty` is aliased to `cat`, searching for
 `kitty` finds posts tagged `cat`. Category prefixes are ignored, so
 `artist:someone` searches for `someone`.
 
+## Groups and `or`
+
+Parentheses group terms, and `or` between two terms or groups means
+either of them. Filters work inside groups too.
+
+| You type | Finds posts that… |
+|---|---|
+| `(cat or dog) -rating:e` | have `cat` or `dog`, and aren't explicit |
+| `(cat cute) or (dog rating:g)` | have `cat` and `cute`, or are general and have `dog` |
+| `-(cat dog)` | don't have both `cat` and `dog` |
+| `cat (user:alice or score:>10)` | have `cat`, and were uploaded by alice or score above 10 |
+
+Terms side by side bind tighter than `or`, so `a b or c` means `(a b) or
+c`. `~` is shorthand for `or`: `~a ~b` is `(a or b)`, and inside a group
+the `~` terms form an `or` of that group. Groups can be nested up to 10
+deep, and every tag and filter in them counts towards the site's limit on
+terms.
+
+A `(` at the start of a word opens a group, and a `)` at the end of a word
+closes one, unless it belongs to the tag: `(ganyu_(genshin_impact) or
+klee_(genshin_impact))` works as expected. To search for a tag that starts
+with `(`, put a category in front of it (`general:(tag)`). `order:`,
+`limit:`, `ordfav:` and the other orders apply to the whole search, so they
+can't go inside a group or next to `or`.
+
 ## Filters
 
 Filters look like `name:value`. Put `-` in front of one to exclude what it
@@ -73,8 +98,9 @@ Dates take the same forms: `date:2026-01-31`, `date:>=2026-01`,
 
 Searches show active and flagged posts, plus your own uploads that are
 waiting for approval. Staff who review uploads also see pending posts.
-Deleted posts only appear with `status:deleted` or `status:any`, and only to
-those allowed to see them. For staff who review uploads,
+Deleted posts only appear with `status:deleted` or `status:any` (or with a
+`status:` inside a group, such as `(status:deleted or rating:e)`), and only
+to those allowed to see them. For staff who review uploads,
 `status:unmoderated` finds the pending posts left for them: ones they
 didn't upload and haven't disapproved; `status:appealed` finds deleted
 posts with an open appeal.

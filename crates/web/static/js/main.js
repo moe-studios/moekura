@@ -68,9 +68,14 @@ function target(value, caret, mode) {
   let end = caret;
   while (end < value.length && !/\s/.test(value.charAt(end))) end++;
   let word = value.slice(start, caret);
-  if (mode === "search" && /^[-~]/.test(word)) {
-    start += 1;
-    word = word.slice(1);
+  if (mode === "search") {
+    while (/^[-~(]/.test(word)) {
+      start += 1;
+      word = word.slice(1);
+    }
+    const unbalanced = (s) => s.split(")").length > s.split("(").length;
+    if (word.endsWith(")") && unbalanced(word)) return null;
+    while (end > caret && value.charAt(end - 1) === ")" && unbalanced(value.slice(start, end))) end--;
   }
   const colon = word.indexOf(":");
   if (colon > 0) {

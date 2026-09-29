@@ -9,6 +9,13 @@
 //! - `name:value` terms are filters on post properties (metatags), e.g.
 //!   `rating:e,q`, `score:>=10`, `width:1920..`, `date:2026-01`; most can
 //!   be negated with `-`
+//! - parentheses group terms, and `or` between terms or groups means
+//!   either side: `(cat or dog) -rating:e`, `-(a b)`, `(a b) or (c d)`.
+//!   Terms side by side bind tighter than `or`
+//!
+//! Plain terms at the top level land in [`Query`]'s lists, which the
+//! planner has fast paths for; anything nested is kept as an [`Expr`] in
+//! [`Query::groups`].
 //!
 //! [`Query::parse`] only checks syntax; resolving tags and users is the
 //! planner's job.
@@ -314,6 +321,77 @@ impl Order {
     }
 }
 
+/// Deepest nesting of parentheses a search may use.
+pub const MAX_DEPTH: usize = 10;
+
+/// A term of a nested search (see [`Query::groups`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expr {
+    Tag(TagTerm),
+    Filter(Filter),
+    Not(Box<Expr>),
+    /// Each must match.
+    And(Vec<Expr>),
+    /// At least one must match.
+    Or(Vec<Expr>),
+}
+
+impl Expr {
+    /// Tags and filters in it.
+    pub fn term_count(&self) -> usize {
+        match self {
+            Expr::Tag(_) | Expr::Filter(_) => 1,
+            Expr::Not(inner) => inner.term_count(),
+            Expr::And(items) | Expr::Or(items) => items.iter().map(Expr::term_count).sum(),
+        }
+    }
+
+    /// Adds every filter in it, negated or not, to `out`.
+    pub fn filters<'a>(&'a self, out: &mut Vec<&'a Filter>) {
+        match self {
+            Expr::Tag(_) => {}
+            Expr::Filter(filter) => out.push(filter),
+            Expr::Not(inner) => inner.filters(out),
+            Expr::And(items) | Expr::Or(items) => items.iter().for_each(|e| e.filters(out)),
+        }
+    }
+
+    /// Flattens nested `and`s and `or`s, removes double negation and
+    /// duplicates, and unwraps groups of one.
+    fn simplify(self) -> Expr {
+        match self {
+            Expr::Not(inner) => match inner.simplify() {
+                Expr::Not(inner) => *inner,
+                inner => Expr::Not(Box::new(inner)),
+            },
+            Expr::And(items) => Self::simplify_list(items, true),
+            Expr::Or(items) => Self::simplify_list(items, false),
+            leaf => leaf,
+        }
+    }
+
+    fn simplify_list(items: Vec<Expr>, and: bool) -> Expr {
+        let mut flat: Vec<Expr> = Vec::with_capacity(items.len());
+        for item in items {
+            let nested = match item.simplify() {
+                Expr::And(inner) if and => inner,
+                Expr::Or(inner) if !and => inner,
+                other => vec![other],
+            };
+            for item in nested {
+                if !flat.contains(&item) {
+                    flat.push(item);
+                }
+            }
+        }
+        match (flat.len(), and) {
+            (1, _) => flat.pop().expect("one item"),
+            (_, true) => Expr::And(flat),
+            (_, false) => Expr::Or(flat),
+        }
+    }
+}
+
 /// A parsed search.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Query {
@@ -324,6 +402,8 @@ pub struct Query {
     /// None may match.
     pub none: Vec<TagTerm>,
     pub conditions: Vec<Condition>,
+    /// Groups and `or`s that don't fit the lists above; each must match.
+    pub groups: Vec<Expr>,
     pub order: Option<Order>,
     pub limit: Option<u32>,
     /// With `ordfav:name`: the user whose favorites these are.
@@ -344,28 +424,255 @@ pub enum SearchError {
     Unsupported(String),
     #[error("`{0}` can't be negated")]
     CantNegate(String),
-    #[error("`{0}`: metatags can't be combined with `~`")]
-    OrMetatag(String),
+    #[error("`{0}` applies to the whole search, so it can't go inside parentheses or `or`")]
+    Nested(String),
     #[error("`{0}`: use either `-` or `~`, not both")]
     NegatedOr(String),
     #[error("`{0}` is missing a tag")]
     Empty(String),
     #[error("`{0}` needs something besides `*`")]
     BareWildcard(String),
+    #[error("a `(` is missing its `)`")]
+    Unclosed,
+    #[error("a `)` has no `(` to close")]
+    Unopened,
+    #[error("`()` is empty")]
+    EmptyGroup,
+    #[error("`or` needs a term on each side")]
+    DanglingOr,
+    #[error("parentheses may be nested at most {MAX_DEPTH} deep")]
+    TooDeep,
+}
+
+/// A piece of a search: see [`tokenize`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Token<'a> {
+    /// `(`, maybe after `-` or `~`.
+    Open {
+        negated: bool,
+        or: bool,
+    },
+    Close,
+    /// The `or` keyword.
+    Or,
+    /// A tag or metatag, with its `-` or `~` still on.
+    Term(&'a str),
+}
+
+/// Splits a search into terms and parentheses. A word's leading `(`
+/// opens a group; its trailing `)` close groups while any are open and
+/// the word has more `)` than `(`, so tags like `ganyu_(genshin_impact)`
+/// keep theirs.
+fn tokenize(input: &str) -> Result<Vec<Token<'_>>, SearchError> {
+    let mut tokens = Vec::new();
+    let mut depth = 0;
+    for word in input.split_whitespace() {
+        if word.eq_ignore_ascii_case("or") {
+            tokens.push(Token::Or);
+            continue;
+        }
+        let mut rest = word;
+        loop {
+            let (negated, after) = rest.strip_prefix('-').map_or((false, rest), |r| (true, r));
+            let (or, after) = after
+                .strip_prefix('~')
+                .map_or((false, after), |r| (true, r));
+            let Some(inner) = after.strip_prefix('(') else {
+                break;
+            };
+            if negated && or {
+                return Err(SearchError::NegatedOr(word.into()));
+            }
+            depth += 1;
+            if depth > MAX_DEPTH {
+                return Err(SearchError::TooDeep);
+            }
+            tokens.push(Token::Open { negated, or });
+            rest = inner;
+        }
+        let mut closes = 0;
+        while closes < depth
+            && rest.ends_with(')')
+            && rest.matches(')').count() > rest.matches('(').count()
+        {
+            rest = &rest[..rest.len() - 1];
+            closes += 1;
+        }
+        if !rest.is_empty() {
+            if rest.chars().all(|c| c == ')') {
+                return Err(SearchError::Unopened);
+            }
+            tokens.push(Token::Term(rest));
+        }
+        depth -= closes;
+        tokens.extend(std::iter::repeat_n(Token::Close, closes));
+    }
+    if depth > 0 {
+        return Err(SearchError::Unclosed);
+    }
+    Ok(tokens)
+}
+
+/// Builds [`Expr`]s from tokens: `or` binds loosest, then terms side by
+/// side, then `-` and `~`.
+struct Parser<'q, 'a> {
+    tokens: &'a [Token<'a>],
+    pos: usize,
+    /// Where `order:`, `limit:` and the like go.
+    query: &'q mut Query,
+    /// Whether the top level has an `or`, so every term is nested.
+    top_or: bool,
+}
+
+impl<'a> Parser<'_, 'a> {
+    fn peek(&self) -> Option<Token<'a>> {
+        self.tokens.get(self.pos).copied()
+    }
+
+    fn or(&mut self, depth: usize) -> Result<Expr, SearchError> {
+        let mut alternatives = vec![self.and(depth)?];
+        while self.peek() == Some(Token::Or) {
+            self.pos += 1;
+            alternatives.push(self.and(depth)?);
+        }
+        Ok(match alternatives.len() {
+            1 => alternatives.pop().expect("one alternative"),
+            _ => Expr::Or(alternatives),
+        })
+    }
+
+    /// Terms side by side; the `~` ones among them form one `or`, which
+    /// comes first.
+    fn and(&mut self, depth: usize) -> Result<Expr, SearchError> {
+        let start = self.pos;
+        let mut items = Vec::new();
+        let mut either = Vec::new();
+        while let Some(token) = self.peek() {
+            let (negated, or, expr) = match token {
+                Token::Or | Token::Close => break,
+                Token::Open { negated, or } => {
+                    self.pos += 1;
+                    if matches!(self.peek(), Some(Token::Close)) {
+                        return Err(SearchError::EmptyGroup);
+                    }
+                    let inner = self.or(depth + 1)?;
+                    // The tokenizer balanced the parentheses.
+                    debug_assert_eq!(self.peek(), Some(Token::Close));
+                    self.pos += 1;
+                    (negated, or, Some(inner))
+                }
+                Token::Term(word) => {
+                    self.pos += 1;
+                    let nested = depth > 0 || self.top_or;
+                    self.query.term(word, nested)?
+                }
+            };
+            let Some(expr) = expr else { continue };
+            let expr = if negated {
+                Expr::Not(Box::new(expr))
+            } else {
+                expr
+            };
+            if or {
+                either.push(expr)
+            } else {
+                items.push(expr)
+            }
+        }
+        if self.pos == start && (depth > 0 || self.top_or) {
+            return Err(SearchError::DanglingOr);
+        }
+        if !either.is_empty() {
+            items.insert(0, Expr::Or(either));
+        }
+        Ok(Expr::And(items))
+    }
 }
 
 impl Query {
     pub fn parse(input: &str) -> Result<Self, SearchError> {
         let mut query = Query::default();
-        for word in input.split_whitespace() {
-            query.add(word)?;
+        let tokens = tokenize(input)?;
+        let mut depth = 0usize;
+        let top_or = tokens.iter().any(|token| {
+            match token {
+                Token::Open { .. } => depth += 1,
+                Token::Close => depth -= 1,
+                _ => {}
+            }
+            depth == 0 && *token == Token::Or
+        });
+        let mut parser = Parser {
+            tokens: &tokens,
+            pos: 0,
+            query: &mut query,
+            top_or,
+        };
+        let expr = parser.or(0)?;
+        match expr.simplify() {
+            Expr::And(items) => items.into_iter().for_each(|item| query.place(item)),
+            expr => query.place(expr),
         }
         Ok(query)
     }
 
+    /// Adds a term of the top level where the planner wants it.
+    fn place(&mut self, expr: Expr) {
+        fn push<T: PartialEq>(list: &mut Vec<T>, item: T) {
+            if !list.contains(&item) {
+                list.push(item);
+            }
+        }
+        let tags = |items: &[Expr]| {
+            items
+                .iter()
+                .map(|item| match item {
+                    Expr::Tag(term) => Some(term.clone()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        };
+        match expr {
+            Expr::Tag(term) => push(&mut self.all, term),
+            Expr::Filter(filter) => push(
+                &mut self.conditions,
+                Condition {
+                    negated: false,
+                    filter,
+                },
+            ),
+            Expr::Not(inner) => match *inner {
+                Expr::Tag(term) => push(&mut self.none, term),
+                Expr::Filter(filter) => push(
+                    &mut self.conditions,
+                    Condition {
+                        negated: true,
+                        filter,
+                    },
+                ),
+                // Neither of them: each excluded.
+                Expr::Or(items) if tags(&items).is_some() => {
+                    for term in tags(&items).expect("checked") {
+                        push(&mut self.none, term);
+                    }
+                }
+                inner => push(&mut self.groups, Expr::Not(Box::new(inner))),
+            },
+            Expr::Or(items) if self.any.is_empty() && tags(&items).is_some() => {
+                self.any = tags(&items).expect("checked");
+            }
+            Expr::And(items) => items.into_iter().for_each(|item| self.place(item)),
+            expr => push(&mut self.groups, expr),
+        }
+    }
+
     /// Tag terms and filters, the measure for query complexity limits.
     pub fn term_count(&self) -> usize {
-        self.all.len() + self.any.len() + self.none.len() + self.conditions.len()
+        self.all.len()
+            + self.any.len()
+            + self.none.len()
+            + self.conditions.len()
+            + self.groups.iter().map(Expr::term_count).sum::<usize>()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -380,12 +687,28 @@ impl Query {
         })
     }
 
-    /// Every tag term, in or out.
+    /// Every tag term of the top level, in or out.
     pub fn tag_terms(&self) -> impl Iterator<Item = &TagTerm> {
         self.all.iter().chain(&self.any).chain(&self.none)
     }
 
-    fn add(&mut self, word: &str) -> Result<(), SearchError> {
+    /// Every filter, nested or not, negated or not.
+    pub fn filters(&self) -> Vec<&Filter> {
+        let mut out: Vec<&Filter> = self.conditions.iter().map(|c| &c.filter).collect();
+        for group in &self.groups {
+            group.filters(&mut out);
+        }
+        out
+    }
+
+    /// A term as typed (with its `-` or `~`): whether it's negated or
+    /// `~`, and what it matches. Terms that set the order or limit apply
+    /// them and match nothing themselves.
+    fn term(
+        &mut self,
+        word: &str,
+        nested: bool,
+    ) -> Result<(bool, bool, Option<Expr>), SearchError> {
         let (negated, rest) = match word.strip_prefix('-') {
             Some(rest) => (true, rest),
             None => (false, word),
@@ -405,10 +728,9 @@ impl Query {
         if let Some((prefix, value)) = rest.split_once(':') {
             let prefix = prefix.to_lowercase();
             if METATAGS.contains(&prefix.as_str()) {
-                if or {
-                    return Err(SearchError::OrMetatag(word.into()));
-                }
-                return self.add_metatag(word, negated, &prefix, &value.to_lowercase());
+                let filter =
+                    self.metatag(word, negated, or || nested, &prefix, &value.to_lowercase())?;
+                return Ok((negated, or, filter.map(Expr::Filter)));
             }
             if CATEGORY_PREFIXES.contains(&prefix.as_str()) && !value.is_empty() {
                 tag = value;
@@ -416,28 +738,19 @@ impl Query {
                 return Err(SearchError::Unsupported(prefix));
             }
         }
-
-        let term = tag_term(word, tag)?;
-        let list = if negated {
-            &mut self.none
-        } else if or {
-            &mut self.any
-        } else {
-            &mut self.all
-        };
-        if !list.contains(&term) {
-            list.push(term);
-        }
-        Ok(())
+        Ok((negated, or, Some(Expr::Tag(tag_term(word, tag)?))))
     }
 
-    fn add_metatag(
+    /// A metatag's filter, or `None` for those that set the order or
+    /// limit, which can't be `nested`.
+    fn metatag(
         &mut self,
         word: &str,
         negated: bool,
+        nested: bool,
         name: &str,
         value: &str,
-    ) -> Result<(), SearchError> {
+    ) -> Result<Option<Filter>, SearchError> {
         let invalid = |message: &str| SearchError::InvalidValue {
             term: word.into(),
             message: message.into(),
@@ -447,13 +760,16 @@ impl Query {
             "order" | "limit" | "ordfav" | "ordpool" | "ordfavgroup" if negated => {
                 return Err(SearchError::CantNegate(word.into()));
             }
+            "order" | "limit" | "ordfav" | "ordpool" | "ordfavgroup" if nested => {
+                return Err(SearchError::Nested(word.into()));
+            }
             "ordfav" => {
                 if value.is_empty() {
                     return Err(invalid("expected a user name"));
                 }
                 self.ordfav = Some(value.into());
                 self.order = Some(Order::Favorited);
-                return Ok(());
+                return Ok(None);
             }
             "ordpool" => {
                 if value.is_empty() {
@@ -461,7 +777,7 @@ impl Query {
                 }
                 self.ordpool = Some(pool_ref(value));
                 self.order = Some(Order::Pool);
-                return Ok(());
+                return Ok(None);
             }
             "ordfavgroup" => {
                 if value.is_empty() {
@@ -469,7 +785,7 @@ impl Query {
                 }
                 self.ordfavgroup = Some(pool_ref(value));
                 self.order = Some(Order::FavGroup);
-                return Ok(());
+                return Ok(None);
             }
             "ai" => {
                 Filter::Ai(TagName::parse(value).map_err(|e| invalid(&format!("the tag {e}")))?)
@@ -514,7 +830,7 @@ impl Query {
                     .map(|(_, order)| *order)
                     .ok_or_else(|| invalid("unknown order; try id, score, favcount or random"))?;
                 self.order = Some(order);
-                return Ok(());
+                return Ok(None);
             }
             "limit" => {
                 let limit = value
@@ -523,7 +839,7 @@ impl Query {
                     .filter(|&n| n > 0)
                     .ok_or_else(|| invalid("expected a positive number"))?;
                 self.limit = Some(limit);
-                return Ok(());
+                return Ok(None);
             }
             "id" => Filter::Id(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "score" => Filter::Score(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
@@ -593,11 +909,7 @@ impl Query {
             }),
             _ => unreachable!("every name in METATAGS is handled"),
         };
-        let condition = Condition { negated, filter };
-        if !self.conditions.contains(&condition) {
-            self.conditions.push(condition);
-        }
-        Ok(())
+        Ok(Some(filter))
     }
 }
 
@@ -773,8 +1085,37 @@ impl fmt::Display for Condition {
         if self.negated {
             f.write_str("-")?;
         }
+        write!(f, "{}", self.filter)
+    }
+}
+
+/// Groups print in parentheses, so they parse back the same.
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let list = |f: &mut fmt::Formatter<'_>, items: &[Expr], separator: &str| {
+            f.write_str("(")?;
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    f.write_str(separator)?;
+                }
+                write!(f, "{item}")?;
+            }
+            f.write_str(")")
+        };
+        match self {
+            Expr::Tag(term) => write!(f, "{term}"),
+            Expr::Filter(filter) => write!(f, "{filter}"),
+            Expr::Not(inner) => write!(f, "-{inner}"),
+            Expr::And(items) => list(f, items, " "),
+            Expr::Or(items) => list(f, items, " or "),
+        }
+    }
+}
+
+impl fmt::Display for Filter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let join = |items: Vec<String>| items.join(",");
-        match &self.filter {
+        match self {
             Filter::Id(b) => write!(f, "id:{b}"),
             Filter::Rating(ratings) => write!(
                 f,
@@ -825,7 +1166,7 @@ impl fmt::Display for Condition {
 }
 
 /// The normalised query: included tags, `~` tags, excluded tags, filters,
-/// then order and limit.
+/// groups, then order and limit.
 impl fmt::Display for Query {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut terms: Vec<String> = Vec::with_capacity(self.term_count() + 2);
@@ -833,6 +1174,7 @@ impl fmt::Display for Query {
         terms.extend(self.any.iter().map(|t| format!("~{t}")));
         terms.extend(self.none.iter().map(|t| format!("-{t}")));
         terms.extend(self.conditions.iter().map(ToString::to_string));
+        terms.extend(self.groups.iter().map(ToString::to_string));
         match (self.order, &self.ordfav, &self.ordpool, &self.ordfavgroup) {
             (Some(Order::Favorited), Some(user), ..) => terms.push(format!("ordfav:{user}")),
             (Some(Order::Pool), _, Some(pool), _) => terms.push(format!("ordpool:{pool}")),
@@ -892,10 +1234,10 @@ mod tests {
 
     #[test]
     fn wildcards() {
-        let query = parse("long_* -*_HAIR ~a*b");
+        let query = parse("long_* -*_HAIR ~a*b ~c");
         assert_eq!(query.all, [TagTerm::Wildcard("long_*".into())]);
         assert_eq!(query.none, [TagTerm::Wildcard("*_hair".into())]);
-        assert_eq!(query.any, [TagTerm::Wildcard("a*b".into())]);
+        assert_eq!(query.any, [TagTerm::Wildcard("a*b".into()), name("c")]);
         assert_eq!(error("*"), "`*` needs something besides `*`");
         assert_eq!(error("-**"), "`-**` needs something besides `*`");
     }
@@ -1120,9 +1462,112 @@ mod tests {
         assert!(error("order:best").contains("unknown order"));
         assert!(error("limit:0").contains("positive number"));
         assert_eq!(
-            error("~rating:e"),
-            "`~rating:e`: metatags can't be combined with `~`"
+            error("~order:score"),
+            "`~order:score` applies to the whole search, so it can't go inside parentheses or `or`"
         );
+        // A lone `~` term is just required.
+        assert_eq!(parse("~rating:e"), parse("rating:e"));
+    }
+
+    #[test]
+    fn groups_and_or() {
+        let tag = |s: &str| Expr::Tag(name(s));
+        let not = |e: Expr| Expr::Not(Box::new(e));
+        let rating = |r: Rating| Expr::Filter(Filter::Rating(vec![r]));
+
+        // Only tags on either side: the same as `~`.
+        let query = parse("(cat or dog) -rating:e");
+        assert_eq!(query.any, [name("cat"), name("dog")]);
+        assert!(query.groups.is_empty());
+        assert_eq!(query, parse("~cat ~dog -rating:e"));
+        assert_eq!(parse("cat OR dog").any, [name("cat"), name("dog")]);
+        // Neither: both excluded.
+        assert_eq!(parse("-(cat or dog)").none, [name("cat"), name("dog")]);
+        // Groups that just add terms melt into the top level.
+        assert_eq!(parse("(a (b -c)) d"), parse("a b -c d"));
+
+        let query = parse("(a b) or (c -d) or rating:e");
+        assert_eq!(
+            query.groups,
+            [Expr::Or(vec![
+                Expr::And(vec![tag("a"), tag("b")]),
+                Expr::And(vec![tag("c"), not(tag("d"))]),
+                rating(Rating::Explicit),
+            ])]
+        );
+        // Terms side by side bind tighter than `or`.
+        assert_eq!(parse("a b or c -d"), query_without_rating(&query));
+        assert_eq!(
+            parse("x -(a b)").groups,
+            [not(Expr::And(vec![tag("a"), tag("b")]))]
+        );
+        // `~` terms form an `or` within their group.
+        assert_eq!(
+            parse("x (~a ~rating:s b)").groups,
+            [Expr::Or(vec![tag("a"), rating(Rating::Sensitive)])]
+        );
+        assert_eq!(parse("x (~a ~rating:s b)").all, [name("x"), name("b")]);
+        assert_eq!(parse("-(-a)"), parse("a"));
+        assert_eq!(parse("(a or (b or c)) (a or b or c)").any.len(), 3);
+        assert_eq!(parse("(a or (b or c)) (a or b or c)").groups, []);
+
+        // Parentheses that belong to a tag stay on it.
+        let query = parse("(ganyu_(genshin_impact) or cure_peace_(precure))");
+        assert_eq!(
+            query.any,
+            [name("ganyu_(genshin_impact)"), name("cure_peace_(precure)")]
+        );
+        assert_eq!(parse("foo_(bar)").all, [name("foo_(bar)")]);
+        assert_eq!(parse("( a or b )").any, [name("a"), name("b")]);
+        assert_eq!(parse("-(a or b) ((c))").all, [name("c")]);
+
+        // Printing is stable.
+        for input in [
+            "x (a b) or (c -d) or rating:e",
+            "x -(a b) (~a ~rating:s b) order:score",
+            "((a or b) (c or d)) or e",
+            "-(a (b or rating:e))",
+        ] {
+            let query = parse(input);
+            assert_eq!(parse(&query.to_string()), query, "{input} → {query}");
+        }
+        assert_eq!(
+            parse("x (a b) or (c -d) or rating:e").to_string(),
+            "((x a b) or (c -d) or rating:e)"
+        );
+        assert_eq!(parse("a -(b c) or d").term_count(), 4);
+        assert_eq!(parse("a (b or rating:e)").filters().len(), 1);
+    }
+
+    fn query_without_rating(query: &Query) -> Query {
+        let mut query = query.clone();
+        if let Expr::Or(items) = &mut query.groups[0] {
+            items.pop();
+        }
+        query
+    }
+
+    #[test]
+    fn malformed_groups() {
+        assert_eq!(error("(a b"), "a `(` is missing its `)`");
+        assert_eq!(error("a )"), "a `)` has no `(` to close");
+        assert_eq!(error("() a"), "`()` is empty");
+        assert_eq!(error("or a"), "`or` needs a term on each side");
+        assert_eq!(error("a or"), "`or` needs a term on each side");
+        assert_eq!(error("(a or or b)"), "`or` needs a term on each side");
+        assert_eq!(error("-~(a b)"), "`-~(a`: use either `-` or `~`, not both");
+        assert!(error("(a order:score)").contains("applies to the whole search"));
+        assert!(error("a or limit:5").contains("applies to the whole search"));
+        assert_eq!(
+            error(&format!("{}a{}", "(".repeat(11), ")".repeat(11))),
+            "parentheses may be nested at most 10 deep"
+        );
+        assert_eq!(
+            parse(&format!("{}a{}", "(".repeat(10), ")".repeat(10))),
+            parse("a")
+        );
+        // Metatags inside groups are checked like any other.
+        assert!(error("(a or rating:x)").contains("expected ratings"));
     }
 
     #[test]

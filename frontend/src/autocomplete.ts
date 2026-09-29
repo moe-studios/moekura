@@ -51,9 +51,16 @@ export function target(value: string, caret: number, mode: Mode): Target | null 
   while (end < value.length && !/\s/.test(value.charAt(end))) end++;
   let word = value.slice(start, caret);
 
-  if (mode === "search" && /^[-~]/.test(word)) {
-    start += 1;
-    word = word.slice(1);
+  if (mode === "search") {
+    // `-`, `~` and the `(` of groups, in any mix: `-(`, `(~`, `((`.
+    while (/^[-~(]/.test(word)) {
+      start += 1;
+      word = word.slice(1);
+    }
+    // A `)` closing a group isn't part of the tag (`ganyu_(genshin_impact)`'s is).
+    const unbalanced = (s: string) => s.split(")").length > s.split("(").length;
+    if (word.endsWith(")") && unbalanced(word)) return null;
+    while (end > caret && value.charAt(end - 1) === ")" && unbalanced(value.slice(start, end))) end--;
   }
   const colon = word.indexOf(":");
   if (colon > 0) {

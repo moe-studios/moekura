@@ -717,6 +717,7 @@ pub(crate) async fn render_post(
             && page.current.can(Permission::Flag)
             && matches!(post.status, PostStatus::Active | PostStatus::Flagged),
         flags => flag_history,
+        can_review => page.current.can(Permission::ApprovePosts) && post.status == PostStatus::Pending,
         can_delete => page.current.can(Permission::DeletePosts) && post.status != PostStatus::Deleted,
         can_restore => page.current.can(Permission::DeletePosts) && post.status == PostStatus::Deleted,
         can_purge => page.current.can(Permission::PurgePosts) && post.status == PostStatus::Deleted,

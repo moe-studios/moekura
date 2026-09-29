@@ -35,6 +35,7 @@ ipnet = { version = "2.12.2", features = ["serde"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }
 http-body-util = "0.1.5"
 # SMTP over rustls/ring, like the other TLS clients.
+jiff = { version = "0.2.37", default-features = false, features = ["std", "tzdb-bundle-always"] }
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
 md-5 = "0.11.0"
 # ONNX Runtime for the tagger, loaded at run time (libonnxruntime.so), so

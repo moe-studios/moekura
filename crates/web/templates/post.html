@@ -202,6 +202,9 @@
     {% endif %}
     <section id="comments" class="comments" aria-labelledby="comments-heading">
       <h2 id="comments-heading">Comments{% if comments.count %} <span class="count">{{ comments.count }}</span>{% endif %}</h2>
+      {% if comments.hidden %}
+      <p class="hint">Your settings hide comments. <a href="{{ comments.all_url }}">Read them</a></p>
+      {% else %}
       {% if comments.older %}<p><a href="{{ comments.all_url }}">{{ comments.older }} older comment{% if comments.older != 1 %}s{% endif %}</a></p>{% endif %}
       {% for comment in comments.comments %}{% include "comment.html" %}{% else %}<p class="hint">No comments yet.</p>{% endfor %}
       {% if comments.error %}<p class="form-error" role="alert">{{ comments.error }}</p>{% endif %}
@@ -218,6 +221,7 @@
       </form>
       {% elif comments.login_needed %}
       <p class="hint"><a href="/login?next=%2Fposts%2F{{ post.id }}">Log in</a> to comment.</p>
+      {% endif %}
       {% endif %}
     </section>
   </section>

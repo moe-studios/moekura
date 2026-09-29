@@ -462,7 +462,7 @@ pub(crate) async fn appeal_context(
             reason => a.reason,
             status => a.status,
             decided_by => a.resolver_name,
-            when => a.created_at.date().to_string(),
+            when => crate::dates::day(a.created_at),
         }).collect::<Vec<_>>(),
     })
 }
@@ -544,12 +544,12 @@ async fn appeal_queue(page: Page, Query(query): Query<QueueQuery>) -> Result<Res
                 appeal => context! {
                     by => appeal.creator_name,
                     reason => appeal.reason,
-                    when => appeal.created_at.date().to_string(),
+                    when => crate::dates::day(appeal.created_at),
                 },
                 deleted => deleted.map(|e| context! {
                     by => e.actor_name,
                     reason => e.reason,
-                    when => e.created_at.date().to_string(),
+                    when => crate::dates::day(e.created_at),
                 }),
             }
         });
@@ -801,7 +801,7 @@ pub(crate) async fn disapprovals(
                     by => d.user_name,
                     reason => reason,
                     message => d.message,
-                    when => d.created_at.date().to_string(),
+                    when => crate::dates::day(d.created_at),
                 },
             )
         })
@@ -1123,8 +1123,8 @@ pub(crate) fn entry_context(entry: &Entry) -> Value {
         .unwrap_or_default();
     context! {
         id => entry.id,
-        when => entry.created_at.date().to_string(),
-        time => format!("{:02}:{:02}", entry.created_at.hour(), entry.created_at.minute()),
+        when => crate::dates::day(entry.created_at),
+        time => crate::dates::clock(entry.created_at),
         actor => entry.actor_name,
         label => kind.map_or_else(|| entry.action.clone(), |k| k.label().to_owned()),
         post_id => entry.post_id,

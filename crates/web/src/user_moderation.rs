@@ -100,7 +100,7 @@ pub(crate) async fn notes(
                 context! {
                     id => note.id,
                     by => note.creator_name,
-                    when => note.created_at.date().to_string(),
+                    when => crate::dates::day(note.created_at),
                     html => Value::from_safe_string(markup::render(&note.body)),
                     can_delete => may_delete_note(current, note),
                 }
@@ -230,8 +230,8 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 )),
                 role => site.role(user.role_id).map(|r| r.name.clone()),
                 status => user.status.as_str(),
-                joined => user.created_at.date().to_string(),
-                last_seen => user.last_seen_at.map(|t| t.date().to_string()),
+                joined => crate::dates::day(user.created_at),
+                last_seen => user.last_seen_at.map(crate::dates::day),
                 email => page.current.can(Permission::ManageUsers).then_some(user.email.clone()).flatten(),
                 email_verified => user.email_verified_at.is_some(),
                 two_factor => account.two_factor,
@@ -254,15 +254,15 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 rejected => d.action.as_deref() == Some("post.reject"),
                 reason => d.reason,
                 by => d.actor_name,
-                when => d.deleted_at.map(|t| t.date().to_string()),
+                when => d.deleted_at.map(crate::dates::day),
             }).collect::<Vec<_>>(),
             show_addresses => page.current.can(Permission::BanUsers),
             addresses => addresses.iter().map(|a| {
                 let range = network_of(a.ip.addr());
                 context! {
                     ip => a.ip.addr().to_string(),
-                    first => a.first_seen_at.date().to_string(),
-                    last => a.last_seen_at.date().to_string(),
+                    first => crate::dates::day(a.first_seen_at),
+                    last => crate::dates::day(a.last_seen_at),
                     ban_url => ban_url(&a.ip.addr().to_string()),
                     range => range.to_string(),
                     ban_range_url => ban_url(&range.to_string()),
@@ -272,7 +272,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 name => r.name,
                 url => url_value(&url(&r.name)),
                 ip => r.ip.addr().to_string(),
-                last => r.last_seen_at.date().to_string(),
+                last => crate::dates::day(r.last_seen_at),
             }).collect::<Vec<_>>(),
             flags_received => tally_context(&flags_received, &flag_statuses),
             recent_flags => recent_flags.iter().map(|f| context! {
@@ -280,7 +280,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 by => f.creator_name,
                 reason => f.reason,
                 status => f.status,
-                when => f.created_at.date().to_string(),
+                when => crate::dates::day(f.created_at),
             }).collect::<Vec<_>>(),
             flags_filed => tally_context(&flags_filed, &flag_statuses),
             disapprovals => tally_context(
@@ -293,7 +293,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 post_id => c.post_id,
                 body => c.body,
                 reports => c.reports,
-                when => c.created_at.date().to_string(),
+                when => crate::dates::day(c.created_at),
             }).collect::<Vec<_>>(),
         },
     ))

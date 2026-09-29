@@ -43,8 +43,8 @@ pub struct CurrentUser {
     /// They changed something moments ago, so their reads go to the
     /// primary rather than a replica that may not have it yet.
     pub recent_write: bool,
-    /// The only ratings they may see; empty for all. Only visitors are
-    /// limited, by the site's `visitor_ratings`.
+    /// The only ratings they may see; empty for all. Visitors are limited
+    /// by the site's `visitor_ratings`, users by their safe mode.
     pub ratings: Vec<moekura_core::posts::Rating>,
 }
 
@@ -69,12 +69,18 @@ impl CurrentUser {
                 .cloned()
                 .unwrap_or_else(|| anonymous_role(site)),
         };
+        let safe_mode =
+            moekura_core::user_settings::UserSettings::from_json(&user.settings).safe_mode;
         Self {
             user: Some(user),
             role,
             ban,
             recent_write: false,
-            ratings: Vec::new(),
+            ratings: if safe_mode {
+                vec![moekura_core::posts::Rating::General]
+            } else {
+                Vec::new()
+            },
         }
     }
 
@@ -254,7 +260,7 @@ pub async fn resolve_session(
     let mut current = current;
     current.recent_write = jar.get(RECENT_WRITE_COOKIE).is_some();
     request.extensions_mut().insert(current.clone());
-    let mut response = next.run(request).await;
+    let mut response = crate::dates::scope(&current, next.run(request)).await;
     remember_address(&state, &current, ip, changes, &response);
 
     // With replicas, whoever just changed something reads from the primary

@@ -120,7 +120,7 @@ fn update_context(u: &mass_updates::MassUpdate) -> Value {
         seen => u.seen,
         changed => u.changed,
         error => u.error,
-        when => u.created_at.date().to_string(),
+        when => crate::dates::day(u.created_at),
     }
 }
 

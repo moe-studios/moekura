@@ -149,10 +149,20 @@ pub(crate) fn render(
         mode_choice => user_settings.as_ref().map(|s| s.mode.as_str()),
         modes => Mode::ALL.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
         themes => crate::themes::choices(&state.assets),
+        // Display settings; visitors get the defaults.
+        prefs => {
+            let prefs = user_settings.clone().unwrap_or_default();
+            context! {
+                large_thumbnails => prefs.large_thumbnails,
+                autocomplete => prefs.autocomplete,
+                shortcuts => prefs.shortcuts,
+                custom_css => crate::users::custom_css_url(&prefs).map(|url| crate::templates::url_value(&url)),
+            }
+        },
         flash => flash.map(Flash::text),
         banned => current.and_then(|c| c.ban.as_ref()).map(|ban| context! {
             reason => ban.reason,
-            until => ban.expires_at.map(|t| t.date().to_string()),
+            until => ban.expires_at.map(crate::dates::day),
         }),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
         can_admin => current.is_some_and(|c| {

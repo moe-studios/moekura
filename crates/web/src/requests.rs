@@ -107,7 +107,7 @@ async fn discussion(
                 id => c.id,
                 author => c.creator_name,
                 html => Value::from_safe_string(markup::render(&c.body)),
-                date => c.created_at.date().to_string(),
+                date => crate::dates::day(c.created_at),
                 can_delete => current.is_logged_in() && (moderate || (me.is_some() && c.creator_id == me)),
             }
         })
@@ -310,7 +310,7 @@ async fn show_relation(page: Page, kind: Kind, id: i32) -> Result<Response, AppE
                 creator => relation.creator_name,
                 approver => relation.approver_name,
                 score => relation.score,
-                created => relation.created_at.date().to_string(),
+                created => crate::dates::day(relation.created_at),
             },
             list_url => Value::from_safe_string(list.to_owned()),
             can_approve => manage && pending,
@@ -336,7 +336,7 @@ fn summary(request: &BulkRequest) -> Value {
         creator => request.creator_name,
         approver => request.approver_name,
         score => request.score,
-        created => request.created_at.date().to_string(),
+        created => crate::dates::day(request.created_at),
     }
 }
 

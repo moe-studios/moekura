@@ -20,13 +20,16 @@ import { enableUpload } from "./upload.ts";
 // Lets styles tell whether scripts run.
 document.documentElement.classList.add("js");
 
+// What the user turned off in their settings.
+const off = (feature: string) => document.documentElement.dataset[feature] === "off";
+
 enableToasts();
 enableConfirm();
 enableAutosubmit();
 enableLayout();
-attachAll();
+if (!off("autocomplete")) attachAll();
 enhanceReactions();
-enableShortcuts();
+if (!off("shortcuts")) enableShortcuts();
 enablePoolOrder();
 enableReader();
 enableNotes();

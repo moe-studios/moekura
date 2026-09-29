@@ -160,7 +160,7 @@ async fn index(page: Page, Query(query): Query<VersionQuery>) -> Result<Response
         .flatten()
         .map(|c| url_value(&query.url(Some(c.version.id))));
     let undo =
-        (!query.user.trim().is_empty() && page.current.can(Permission::MassEditTags)).then(|| {
+        (!query.user.trim().is_empty() && page.current.can(Permission::UndoEdits)).then(|| {
             context! {
                 user => query.user.trim(),
                 since => query.since.trim(),
@@ -233,7 +233,7 @@ async fn undo(
     jar: CookieJar,
     Form(form): Form<UndoForm>,
 ) -> Result<Response, AppError> {
-    page.current.require(Permission::MassEditTags)?;
+    page.current.require(Permission::UndoEdits)?;
     let db = page.state().db.primary();
     let user = users::by_name(db, form.user.trim())
         .await?
@@ -385,6 +385,32 @@ mod tests {
         session_for(&pool, "mod2", SystemRole::Moderator).await;
         assert_eq!(
             app.post_form("/post_versions/undo", Some(&moderator), &[], "user=mod2")
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn undoing_takes_its_own_permission(pool: PgPool) {
+        // Moderators who may mass edit tags but not undo edits.
+        sqlx::query(
+            "UPDATE roles SET permissions = permissions & ~(1::bigint << 23)
+             WHERE system_key = 'moderator'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        session_for(&pool, "vandal", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let page = app
+            .get("/post_versions?user=vandal", Some(&moderator))
+            .await
+            .body;
+        assert!(!page.contains("/post_versions/undo"), "{page}");
+        assert_eq!(
+            app.post_form("/post_versions/undo", Some(&moderator), &[], "user=vandal")
                 .await
                 .status,
             StatusCode::FORBIDDEN

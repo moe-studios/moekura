@@ -84,6 +84,26 @@ pub enum AdminCommand {
         #[arg(long)]
         explain: Option<String>,
     },
+    /// Time pages and API responses from a running server over HTTP, as
+    /// visitors wait for them, with what to load picked from this database.
+    /// Fails if any response isn't 200 OK.
+    BenchHttp {
+        /// The server
+        #[arg(long, default_value = "http://localhost:8080")]
+        url: String,
+        /// Timed requests per page
+        #[arg(long, default_value_t = 50)]
+        runs: usize,
+        /// Requests in flight at once
+        #[arg(long, default_value_t = 1)]
+        concurrency: usize,
+        /// Only pages whose names contain this
+        #[arg(long)]
+        only: Option<String>,
+        /// Fail if a page's p95 is above this many milliseconds
+        #[arg(long)]
+        check_ms: Option<u64>,
+    },
     /// Fill a test database with synthetic posts for load testing. Refuses
     /// to touch a database with real posts unless forced.
     Seed {
@@ -255,6 +275,25 @@ pub async fn run(
             check,
             explain,
         } => bench(db, &config.search, runs, check, explain.as_deref()).await?,
+        AdminCommand::BenchHttp {
+            url,
+            runs,
+            concurrency,
+            only,
+            check_ms,
+        } => {
+            crate::bench_http::run(
+                db,
+                crate::bench_http::Options {
+                    url: &url,
+                    runs,
+                    concurrency,
+                    only: only.as_deref(),
+                    check: check_ms.map(Duration::from_millis),
+                },
+            )
+            .await?;
+        }
         AdminCommand::Seed {
             posts,
             tags,

@@ -20,7 +20,9 @@ moekura-tagger = { workspace = true, optional = true }
 anyhow.workspace = true
 clap.workspace = true
 figment.workspace = true
+futures-util.workspace = true
 rpassword.workspace = true
+reqwest.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

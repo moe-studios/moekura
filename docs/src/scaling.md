@@ -100,6 +100,49 @@ searches, and `--check` fails if a search that should be selective reads
 more than half as many pages as the posts table has (CI runs that check on
 200,000 posts).
 
+## How fast are pages?
+
+Searches are only part of a page: it also loads the posts, their tags,
+comments and notes, and renders. `moekura admin bench-http` times whole
+responses from a running server, picking what to load from its database:
+the busiest posts (with comments, notes and a pool), common and rare tags,
+the biggest pools. Point it at a server using the seeded database:
+
+```sh
+MOEKURA_DATABASE__URL=postgres://…/moekura_bench moekura serve &
+MOEKURA_DATABASE__URL=postgres://…/moekura_bench moekura admin bench-http --url http://localhost:8080
+```
+
+Requests are anonymous, one at a time (`--concurrency` for more); a
+target with several posts or tags loads them in turn. `--check-ms 100`
+fails if a p95 is above 100 ms, and any response other than 200 OK fails
+the run.
+
+On the same 5,000,000 posts and machine, with the server (a release
+build) and the benchmark on it too, p95 in milliseconds, for one request
+at a time and for 16:
+
+| Page | Path | 1 | 16 |
+|---|---|---|---|
+| front page | `/` | 3.3 | 8.5 |
+| a common tag | `/posts?tags=red_red` | 4.2 | 10 |
+| two common tags | `/posts?tags=red_red+blue_red` | 4 | 9.7 |
+| rare tags | `/posts?tags=detailed_back_3` | 4.9 | 12 |
+| posts with 20–33 comments, notes and a pool | `/posts/67561` | 3.6 | 9.6 |
+| pools | `/pools/23` | 2.7 | 6.5 |
+| newest comments | `/comments` | 4.4 | 9.8 |
+| tag list | `/tags` | 0.6 | 1.8 |
+| API search, with a tag | `/api/v1/posts?tags=red_red` | 3.6 | 11 |
+| API post | `/api/v1/posts/67561` | 1.1 | 4.2 |
+| Danbooru search, with a tag | `/posts.json?tags=red_red` | 3.4 | 9.5 |
+| Danbooru post | `/posts/67561.json` | 2.5 | 9.3 |
+| autocomplete (site, API, Danbooru) | `/tags/autocomplete?q=re` | 1.9 | 3.6 |
+| feed, with a tag | `/posts.atom?tags=red_red` | 3.8 | 10 |
+
+Common tags come out faster than in the search table because counts
+that reach the count limit are reused for `cache.count_ttl_secs` (30
+seconds); one visitor in that time pays for the count.
+
 ## Tuning PostgreSQL
 
 The defaults of a stock PostgreSQL are sized for a small machine. For a

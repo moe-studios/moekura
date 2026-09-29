@@ -3,6 +3,7 @@
 //! private sites they pass a user's feed token (`?token=…`), which
 //! reads as that user and does nothing else.
 
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use axum::extract::{Query, State};
@@ -233,6 +234,22 @@ async fn posts_feed(
     let box_size = sizes.first().copied().unwrap_or(250);
     let kind = format!("thumb-{box_size}");
     let cards = posts::cards(db, &ids, (&kind, &kind)).await?;
+    // Every entry's tags and uploader, looked up at once.
+    let mut tag_ids: Vec<i32> = found.iter().flat_map(|p| p.tag_ids.clone()).collect();
+    tag_ids.sort_unstable();
+    tag_ids.dedup();
+    let tag_names: HashMap<i32, String> = tags::by_ids(db, &tag_ids)
+        .await?
+        .into_iter()
+        .map(|t| (t.id, t.name))
+        .collect();
+    let mut uploader_ids: Vec<i64> = found.iter().filter_map(|p| p.uploader_id).collect();
+    uploader_ids.sort_unstable();
+    uploader_ids.dedup();
+    let uploaders: HashMap<i64, String> = moekura_db::users::names(db, &uploader_ids)
+        .await?
+        .into_iter()
+        .collect();
     let mut entries = Vec::new();
     for id in &ids {
         let Some(post) = found.iter().find(|p| p.id == *id) else {
@@ -244,12 +261,12 @@ async fn posts_feed(
         {
             continue;
         }
-        let mut names: Vec<String> = tags::by_ids(db, &post.tag_ids)
-            .await?
-            .into_iter()
-            .map(|t| t.name)
+        let mut names: Vec<&str> = post
+            .tag_ids
+            .iter()
+            .filter_map(|id| tag_names.get(id).map(String::as_str))
             .collect();
-        names.sort();
+        names.sort_unstable();
         let url = absolute_url(&state, &format!("/posts/{id}"));
         let thumb = cards
             .iter()
@@ -271,10 +288,9 @@ async fn posts_feed(
             escape(&names.join(" ")),
             post.rating.label()
         );
-        let uploader = match post.uploader_id {
-            Some(user) => moekura_db::users::by_id(db, user).await?.map(|u| u.name),
-            None => None,
-        };
+        let uploader = post
+            .uploader_id
+            .and_then(|user| uploaders.get(&user).cloned());
         entries.push(Entry {
             url,
             title: format!("Post #{id}"),

@@ -227,7 +227,7 @@ textarea {
 }
 input[type="file"] { padding: 6px; }
 
-fieldset.ratings {
+fieldset.ratings, fieldset.locks {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 16px;
@@ -235,7 +235,9 @@ fieldset.ratings {
   padding: 0;
   border: 0;
 }
-fieldset.ratings legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+fieldset.ratings legend, fieldset.locks legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
+fieldset.group { display: flex; flex-direction: column; margin: 16px 0 0; padding: 4px 14px 14px; border: 1px solid var(--border); border-radius: var(--radius); }
+fieldset.group legend { font-weight: 600; padding: 0 4px; }
 label.choice { display: flex; align-items: center; gap: 6px; font-weight: normal; margin: 0; }
 
 /* Post grid */
@@ -647,10 +649,12 @@ form.vote button[type="submit"], form.favorite button[type="submit"] { margin: 0
 .review { list-style: none; margin: 0; padding: 0; }
 .review > li { display: flex; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .review > li > input[type="checkbox"] { align-self: flex-start; margin-top: 4px; }
-.bulk-review { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 12px; margin-bottom: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.bulk-review { display: flex; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: center; gap: 6px 12px; padding: 10px 12px; margin-bottom: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
 .bulk-review .hint { flex-basis: 100%; margin: 0; }
 .bulk-review label.choice { margin: 0; }
 .bulk-review button { margin-top: 0; }
+.bulk-review select, .bulk-review input:not([type="checkbox"]) { width: auto; }
+
 html:not(.js) .select-all { display: none; }
 .review-thumb img { display: block; max-width: 180px; max-height: 180px; width: auto; height: auto; border-radius: var(--radius); }
 .review-body { flex: 1; min-width: 0; }

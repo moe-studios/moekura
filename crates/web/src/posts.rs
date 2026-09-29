@@ -864,6 +864,7 @@ pub(crate) async fn render_post(
             &crate::previews::post_title(id, &names),
             &description,
             image,
+            crate::previews::post_video(state, &asset, post.rating),
             true,
         )
     } else {

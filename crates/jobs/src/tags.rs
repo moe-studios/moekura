@@ -365,9 +365,10 @@ impl TagJobs {
                         .ok_or_else(|| {
                             CommandError::Refused(format!("there's no category `{category}`"))
                         })?;
-                let mut conn = self.db.acquire().await?;
+                let mut tx = self.db.begin().await?;
+                moekura_db::post_versions::attribute(&mut tx, Some(approver), None).await?;
                 let found = tags::ensure(
-                    &mut conn,
+                    &mut tx,
                     &[WantedTag {
                         name: tag.as_str(),
                         category_id: Some(category.id),
@@ -375,9 +376,16 @@ impl TagJobs {
                     false,
                 )
                 .await?;
-                drop(conn);
+                tx.commit().await?;
                 if let Some(found) = found.first() {
-                    tags::update(&self.db, found.id, category.id, found.is_deprecated).await?;
+                    tags::update(
+                        &self.db,
+                        found.id,
+                        category.id,
+                        found.is_deprecated,
+                        Some(approver),
+                    )
+                    .await?;
                 }
                 Ok(())
             }

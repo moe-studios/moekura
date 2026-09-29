@@ -1,5 +1,5 @@
 //! `/tags.json`, `/autocomplete.json`, `/tag_aliases.json`,
-//! `/tag_implications.json` and `/related_tag.json`.
+//! `/tag_implications.json`, `/tag_versions.json` and `/related_tag.json`.
 
 use std::collections::HashMap;
 
@@ -12,6 +12,7 @@ use moekura_core::search::{Query as SearchQuery, TagTerm};
 use moekura_core::tags::normalize;
 use moekura_db::search::{PageRef, Plan};
 use moekura_db::tag_relations::{self, Kind, Relation, Status};
+use moekura_db::tag_versions::{self, Change};
 use moekura_db::tags::{self, Category, ListOrder, Tag, TagFilter};
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/autocomplete", get(autocomplete))
         .route("/tag_aliases", get(aliases))
         .route("/tag_implications", get(implications))
+        .route("/tag_versions", get(versions))
         .route("/related_tag", get(related))
 }
 
@@ -309,6 +311,88 @@ async fn implications(
     relations(&state, &current, Kind::Implication, params).await
 }
 
+/// A tag version as Danbooru describes it.
+#[derive(Debug, Serialize)]
+struct DanbooruTagVersion {
+    id: i64,
+    tag_id: i32,
+    updater_id: Option<i64>,
+    previous_version_id: Option<i64>,
+    version: i32,
+    name: String,
+    category: i16,
+    is_deprecated: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<Change> for DanbooruTagVersion {
+    fn from(v: Change) -> Self {
+        let at = super::timestamp(v.created_at);
+        Self {
+            id: v.id,
+            tag_id: v.tag_id,
+            updater_id: v.updater_id,
+            previous_version_id: v.previous_id,
+            version: v.version,
+            name: v.name,
+            category: v.category_id,
+            is_deprecated: v.is_deprecated,
+            updated_at: at.clone(),
+            created_at: at,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct VersionParams {
+    #[serde(rename = "search[tag_id]", default)]
+    tag_id: String,
+    #[serde(rename = "search[name]", default)]
+    name: String,
+    #[serde(rename = "search[updater_id]", default)]
+    updater_id: String,
+    #[serde(rename = "search[updater_name]", default)]
+    updater_name: String,
+    #[serde(flatten)]
+    list: ListParams,
+}
+
+/// Tag versions, newest first, of one tag or by one user if asked.
+async fn versions(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Query(params): Query<VersionParams>,
+) -> Result<Response, AppError> {
+    current.require(Permission::ViewPosts)?;
+    let db = state.reader(&current);
+    let (offset, limit) = window(&params.list, 1000)?;
+    // Something that doesn't parse or exist matches nothing.
+    let tag_id = match (params.tag_id.trim(), normalize(&params.name).as_str()) {
+        ("", "") => None,
+        ("", name) => Some(tags::by_name(db, name).await?.map_or(-1, |t| t.id)),
+        (id, _) => Some(id.parse().unwrap_or(-1)),
+    };
+    let updater_id = match (params.updater_id.trim(), params.updater_name.trim()) {
+        ("", "") => None,
+        ("", name) => Some(
+            moekura_db::users::by_name(db, name)
+                .await?
+                .map_or(-1, |u| u.id),
+        ),
+        (id, _) => Some(id.parse().unwrap_or(-1)),
+    };
+    let filter = tag_versions::Filter {
+        tag_id,
+        updater_id,
+        before: None,
+        offset,
+    };
+    let found = tag_versions::search(db, &filter, limit).await?;
+    let found: Vec<DanbooruTagVersion> = found.into_iter().map(DanbooruTagVersion::from).collect();
+    json(found, &params.list.only)
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct RelatedParams {
     #[serde(rename = "search[query]", default)]
@@ -475,6 +559,42 @@ mod tests {
         assert_eq!(names(&suggestions, "value"), ["long_hair"]);
         assert_eq!(suggestions[0]["label"], json!("long hair"));
         assert_eq!(suggestions[0]["type"], json!("tag"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn tag_versions(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        upload(&app, &alice, 20, "cat dog").await;
+        let cat = moekura_db::tags::by_name(&pool, "cat")
+            .await
+            .unwrap()
+            .unwrap();
+        let admin: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        moekura_db::tags::update(&pool, cat.id, 5, false, Some(admin))
+            .await
+            .unwrap();
+
+        let versions = get(&app, "/tag_versions.json?search[name]=cat").await;
+        assert_eq!(versions.as_array().unwrap().len(), 2);
+        assert_eq!(versions[0]["category"], json!(5));
+        assert_eq!(versions[0]["version"], json!(2));
+        assert_eq!(versions[0]["previous_version_id"], versions[1]["id"]);
+        assert_eq!(versions[1]["previous_version_id"], json!(null));
+        assert_eq!(versions[1]["updater_id"], json!(admin));
+        let by_id = get(
+            &app,
+            &format!("/tag_versions.json?search[tag_id]={}&limit=1", cat.id),
+        )
+        .await;
+        assert_eq!(by_id.as_array().unwrap().len(), 1);
+        let theirs = get(&app, "/tag_versions.json?search[updater_name]=alice").await;
+        assert_eq!(theirs.as_array().unwrap().len(), 3);
+        let nobody = get(&app, "/tag_versions.json?search[updater_name]=bob").await;
+        assert_eq!(nobody, json!([]));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

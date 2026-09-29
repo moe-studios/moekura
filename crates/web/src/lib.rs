@@ -41,6 +41,7 @@ mod requests;
 mod saved_searches;
 pub mod shared;
 mod suggestions;
+mod tag_history;
 mod tag_relations;
 mod tags;
 mod templates;
@@ -261,6 +262,7 @@ pub fn router(state: AppState) -> Router {
         .merge(requests::routes())
         .merge(saved_searches::routes())
         .merge(tags::routes())
+        .merge(tag_history::routes())
         .merge(tag_relations::routes())
         .merge(two_factor::routes())
         .merge(user_moderation::routes())

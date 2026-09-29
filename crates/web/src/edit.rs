@@ -201,6 +201,9 @@ pub(crate) async fn apply(
     if wanted.len() > POST_MAX_TAGS {
         return Err(too_many().into());
     }
+    // Before the tags, so tags this creates or recategorises are credited.
+    moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
+        .await?;
     let tag_ids: Vec<i32> = tags::for_post(&mut tx, &wanted, current.can(Permission::ManageTags))
         .await?
         .iter()
@@ -215,8 +218,6 @@ pub(crate) async fn apply(
             return Err(Refused::Invalid(crate::posts::locked_message(lock)));
         }
     }
-    moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
-        .await?;
     posts::update(
         &mut *tx,
         id,

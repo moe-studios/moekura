@@ -148,20 +148,24 @@ pub async fn for_post(
     Ok(tags)
 }
 
-/// Changes a tag's category and deprecation. Returns false if there is no
-/// such tag.
+/// Changes a tag's category and deprecation, crediting `updater_id` in
+/// the tag's history. Returns false if there is no such tag.
 pub async fn update(
-    db: impl PgExecutor<'_>,
+    db: &PgPool,
     id: i32,
     category_id: i16,
     is_deprecated: bool,
+    updater_id: Option<i64>,
 ) -> sqlx::Result<bool> {
+    let mut tx = db.begin().await?;
+    crate::post_versions::attribute(&mut tx, updater_id, None).await?;
     let result = sqlx::query("UPDATE tags SET category_id = $2, is_deprecated = $3 WHERE id = $1")
         .bind(id)
         .bind(category_id)
         .bind(is_deprecated)
-        .execute(db)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -882,10 +886,10 @@ pub(crate) mod tests {
             ),
             Vec::<String>::new()
         );
-        assert!(update(&pool, ids[3], 4, true).await.unwrap());
+        assert!(update(&pool, ids[3], 4, true, None).await.unwrap());
         let hat = by_id(&pool, ids[3]).await.unwrap().unwrap();
         assert_eq!((hat.category_id, hat.is_deprecated), (4, true));
-        assert!(!update(&pool, 12345, 0, false).await.unwrap());
+        assert!(!update(&pool, 12345, 0, false, None).await.unwrap());
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

@@ -2085,7 +2085,9 @@ mod tests {
         // Moving tags to the artist category recounts their posts.
         for name in ["alice_(artist)", "bob_(artist)"] {
             let tag = crate::tags::by_name(&pool, name).await.unwrap().unwrap();
-            crate::tags::update(&pool, tag.id, 1, false).await.unwrap();
+            crate::tags::update(&pool, tag.id, 1, false, None)
+                .await
+                .unwrap();
         }
         let cases: &[(&str, &[i64])] = &[
             ("arttags:0", &[c]),

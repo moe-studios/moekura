@@ -125,6 +125,12 @@ pub struct Visibility {
 }
 
 impl Visibility {
+    /// Whether the viewer reviews uploads (and so sees pending posts):
+    /// staff, who may also see who flagged what.
+    pub fn reviews_posts(&self) -> bool {
+        self.statuses.contains(&PostStatus::Pending)
+    }
+
     pub fn allows(&self, post: &Post) -> bool {
         self.statuses.contains(&post.status)
             || (post.status == PostStatus::Pending
@@ -228,6 +234,20 @@ pub async fn set_status(
     .execute(db)
     .await?;
     Ok(result.rows_affected() == 1)
+}
+
+/// Records who approved a post.
+pub async fn set_approver(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    approver_id: Option<i64>,
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE posts SET approver_id = $2 WHERE id = $1")
+        .bind(id)
+        .bind(approver_id)
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Deletes a post row and everything hanging off it (media records,

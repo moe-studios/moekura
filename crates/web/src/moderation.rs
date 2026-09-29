@@ -104,6 +104,9 @@ async fn change_status(
     if to == PostStatus::Deleted {
         flags::resolve(&mut *tx, id, true, actor).await?;
     }
+    if kind == ActionKind::PostApprove {
+        posts::set_approver(&mut *tx, id, actor).await?;
+    }
     // Restoring a post grants its appeal.
     if from.contains(&PostStatus::Deleted) {
         appeals::resolve(&mut *tx, id, true, actor).await?;
@@ -1371,6 +1374,16 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(statuses, ["active", "deleted"]);
+        // approver: searches find who let it in.
+        let approvers: Vec<Option<i64>> =
+            sqlx::query_scalar("SELECT approver_id FROM posts ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(
+            approvers[0].is_some() && approvers[1].is_none(),
+            "{approvers:?}"
+        );
         assert!(
             !app.get("/moderation/queue", Some(&janitor))
                 .await

@@ -74,6 +74,11 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
     "appealed",
   ],
   source: ["any", "none"],
+  approver: ["any", "none"],
+  commenter: [],
+  comment: [],
+  noter: [],
+  flagger: [],
   has: ["source", "children", "parent", "pools", "notes", "comments"],
 };
 

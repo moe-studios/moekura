@@ -21,7 +21,7 @@ use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
     Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, SourceFilter, StatusFilter,
-    TagTerm,
+    TagTerm, UserMatch,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -105,6 +105,19 @@ struct TagSet {
     posts: i64,
 }
 
+/// What a user did to a post, in a [`Node::ByUser`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Link {
+    Uploaded,
+    Approved,
+    Favorited,
+    /// Wrote a comment that isn't deleted.
+    Commented,
+    /// Wrote or edited a note.
+    Noted,
+    Flagged,
+}
+
 /// A filter or group with the names in it looked up, ready for SQL.
 #[derive(Debug, Clone, PartialEq)]
 enum Node {
@@ -114,8 +127,8 @@ enum Node {
     Tags(TagSet),
     /// A filter [`push_filter`] writes as it is.
     Plain(Filter),
-    Uploader(i64),
-    FavoritedBy(i64),
+    /// This user did something to the post.
+    ByUser(Link, i64),
     /// One of these posts (`similar:`, `search:`).
     Posts(Vec<i64>),
     /// In this pool, or with `None` in any pool that isn't deleted.
@@ -215,7 +228,9 @@ impl Node {
     /// duration, a post without uploader, …).
     fn nullable(&self) -> bool {
         match self {
-            Node::Plain(_) | Node::Uploader(_) => true,
+            Node::Plain(_) | Node::ByUser(Link::Uploaded, _) | Node::ByUser(Link::Approved, _) => {
+                true
+            }
             Node::Not(inner) => inner.nullable(),
             Node::And(nodes) | Node::Or(nodes) => nodes.iter().any(Node::nullable),
             _ => false,
@@ -237,15 +252,31 @@ impl Node {
                 push_filter(sql, filter);
                 sql.push(")");
             }
-            Node::Uploader(user) => {
-                sql.push("p.uploader_id = ").push_bind(*user);
-            }
-            Node::FavoritedBy(user) => {
-                sql.push(
-                    "EXISTS (SELECT 1 FROM favorites f WHERE f.post_id = p.id AND f.user_id = ",
-                )
-                .push_bind(*user)
-                .push(")");
+            Node::ByUser(link, user) => {
+                let (before, after) = match link {
+                    Link::Uploaded => ("p.uploader_id = ", ""),
+                    Link::Approved => ("p.approver_id = ", ""),
+                    Link::Favorited => (
+                        "EXISTS (SELECT 1 FROM favorites f WHERE f.post_id = p.id AND f.user_id = ",
+                        ")",
+                    ),
+                    Link::Commented => (
+                        "EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id \
+                         AND NOT c.is_deleted AND c.creator_id = ",
+                        ")",
+                    ),
+                    Link::Noted => (
+                        "EXISTS (SELECT 1 FROM note_versions nv WHERE nv.post_id = p.id \
+                         AND nv.updater_id = ",
+                        ")",
+                    ),
+                    Link::Flagged => (
+                        "EXISTS (SELECT 1 FROM post_flags pf WHERE pf.post_id = p.id \
+                         AND pf.creator_id = ",
+                        ")",
+                    ),
+                };
+                sql.push(before).push_bind(*user).push(after);
             }
             Node::Posts(ids) => {
                 sql.push("p.id = ANY(").push_bind(ids.clone()).push(")");
@@ -1048,16 +1079,30 @@ async fn resolve_filter(
         Filter::Status(StatusFilter::Any) => Node::Const(true),
         Filter::Status(StatusFilter::Unmoderated) => Node::Unmoderated(visibility.viewer),
         Filter::Status(StatusFilter::Appealed) => Node::Appealed,
-        Filter::User(name) => found(
-            crate::users::by_name(db, name)
-                .await?
-                .map(|user| Node::Uploader(user.id)),
-        ),
-        Filter::Fav(name) => found(
-            crate::users::by_name(db, name)
-                .await?
-                .map(|user| Node::FavoritedBy(user.id)),
-        ),
+        Filter::User(name)
+        | Filter::Fav(name)
+        | Filter::Approver(UserMatch::Name(name))
+        | Filter::Commenter(name)
+        | Filter::Noter(name)
+        | Filter::Flagger(name) => {
+            let link = match filter {
+                Filter::User(_) => Link::Uploaded,
+                Filter::Fav(_) => Link::Favorited,
+                Filter::Approver(_) => Link::Approved,
+                Filter::Commenter(_) => Link::Commented,
+                Filter::Noter(_) => Link::Noted,
+                _ => Link::Flagged,
+            };
+            let user = crate::users::by_name(db, name).await?.map(|user| user.id);
+            // Who flagged what is for staff, and for the flaggers
+            // themselves.
+            let user = user.filter(|&user| {
+                link != Link::Flagged
+                    || visibility.reviews_posts()
+                    || visibility.viewer == Some(user)
+            });
+            found(user.map(|user| Node::ByUser(link, user)))
+        }
         Filter::Similar(post) => {
             let hash = match crate::media::for_post(db, *post).await? {
                 Some(asset) => asset.phash,
@@ -1344,6 +1389,20 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
                 "EXISTS (SELECT 1 FROM posts c WHERE c.parent_id = p.id AND c.status <> 'deleted')",
             );
         }
+        Filter::Approver(UserMatch::Any) => {
+            sql.push("p.approver_id IS NOT NULL");
+        }
+        Filter::Approver(UserMatch::None) => {
+            sql.push("p.approver_id IS NULL");
+        }
+        Filter::Comment(words) => {
+            sql.push(
+                "EXISTS (SELECT 1 FROM comments c WHERE c.post_id = p.id AND NOT c.is_deleted \
+                 AND to_tsvector('simple', c.body) @@ plainto_tsquery('simple', ",
+            )
+            .push_bind(words.clone())
+            .push("))");
+        }
         Filter::Source(SourceFilter::Any) => {
             sql.push("p.source <> ''");
         }
@@ -1380,6 +1439,10 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         Filter::Status(_)
         | Filter::User(_)
         | Filter::Fav(_)
+        | Filter::Approver(UserMatch::Name(_))
+        | Filter::Commenter(_)
+        | Filter::Noter(_)
+        | Filter::Flagger(_)
         | Filter::Similar(_)
         | Filter::Search(_)
         | Filter::FavGroup(_)
@@ -1739,6 +1802,91 @@ mod tests {
         assert_eq!(plan.required.len(), 1);
         assert_eq!(plan.any.as_ref().map(|set| set.ids.len()), Some(2));
         assert!(plan.filters.is_empty());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn people(pool: PgPool) {
+        let user = |name: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO users (name, role_id) SELECT $1, id FROM roles WHERE system_key = 'member' RETURNING id",
+                )
+                .bind(name)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let (alice, bob) = (user("alice").await, user("bob").await);
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(seed(&pool, Seed::default()).await);
+        }
+        crate::posts::set_approver(&pool, ids[0], Some(alice))
+            .await
+            .unwrap();
+        crate::comments::create(&pool, ids[0], bob, "Nice art, love the colours")
+            .await
+            .unwrap();
+        let hidden = crate::comments::create(&pool, ids[1], bob, "nice try")
+            .await
+            .unwrap();
+        crate::comments::set_deleted(&pool, hidden, true)
+            .await
+            .unwrap();
+        let note_box = moekura_core::notes::NoteBox {
+            x: 0,
+            y: 0,
+            width: 5,
+            height: 5,
+        };
+        crate::notes::create(&pool, ids[1], note_box, "hi", Some(alice))
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        crate::flags::create(&mut conn, ids[2], bob, "off-topic")
+            .await
+            .unwrap();
+        drop(conn);
+
+        let cases: &[(&str, &[i64])] = &[
+            ("approver:alice", &[ids[0]]),
+            ("approver:any", &[ids[0]]),
+            ("approver:none", &[ids[2], ids[1]]),
+            ("-approver:alice", &[ids[2], ids[1]]),
+            ("approver:nobody", &[]),
+            ("commenter:bob", &[ids[0]]),
+            ("comment:nice", &[ids[0]]),
+            ("comment:love_the_colours", &[ids[0]]),
+            ("-comment:nice", &[ids[2], ids[1]]),
+            ("noter:alice", &[ids[1]]),
+            ("noter:bob", &[]),
+            // Flaggers are hidden from visitors.
+            ("flagger:bob", &[]),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(&search(&pool, input).await, expected, "{input}");
+        }
+        let as_user = |viewer| Visibility {
+            viewer: Some(viewer),
+            ..public()
+        };
+        // The flagger sees their own flags; others don't.
+        assert_eq!(
+            search_as(&pool, "flagger:bob", &as_user(bob)).await,
+            [ids[2]]
+        );
+        assert!(
+            search_as(&pool, "flagger:bob", &as_user(alice))
+                .await
+                .is_empty()
+        );
+        let staff = Visibility {
+            statuses: vec![PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
+            viewer: Some(alice),
+        };
+        assert_eq!(search_as(&pool, "flagger:bob", &staff).await, [ids[2]]);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

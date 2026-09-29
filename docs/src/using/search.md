@@ -64,6 +64,11 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
 | `fav:` | `fav:alice` | favorited by this user |
+| `approver:` | `approver:alice`, `approver:any`, `approver:none` | approved by this user, by anyone, or by no one (posts that never waited for approval) |
+| `commenter:` | `commenter:alice` | has a comment by this user |
+| `comment:` | `comment:nice_art` | comments contain these words (underscores for spaces) |
+| `noter:` | `noter:alice` | has a note this user wrote or edited |
+| `flagger:` | `flagger:alice` | flagged by this user; only staff who review posts may search for others' flags, everyone else only for their own |
 | `search:` | `search:all`, `search:artists` | the newest posts (500 each) of your [saved searches](account.md#saved-searches), all or those with a label |
 | `favgroup:` | `favgroup:best`, `favgroup:7` | in one of your favorite groups (by name), or any public group (by number) |
 | `pool:` | `pool:my_comic`, `pool:12`, `pool:any`, `pool:none` | in this pool (by name or number), in any pool, or in none |

@@ -73,6 +73,11 @@ var METATAGS = {
     "appealed"
   ],
   source: ["any", "none"],
+  approver: ["any", "none"],
+  commenter: [],
+  comment: [],
+  noter: [],
+  flagger: [],
   has: ["source", "children", "parent", "pools", "notes", "comments"]
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];

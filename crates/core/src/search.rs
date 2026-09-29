@@ -68,6 +68,11 @@ pub const METATAGS: &[&str] = &[
     "is",
     "has",
     "source",
+    "approver",
+    "commenter",
+    "comment",
+    "noter",
+    "flagger",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -181,6 +186,15 @@ pub enum PoolFilter {
     In(PoolRef),
 }
 
+/// A user, or anyone, or no one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UserMatch {
+    Any,
+    None,
+    /// As typed.
+    Name(String),
+}
+
 /// What a post's source must be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceFilter {
@@ -239,6 +253,16 @@ pub enum Filter {
     TagCount(Bound<i64>),
     /// Favorited by this user (name as typed).
     Fav(String),
+    /// Approved by this user, by anyone, or by no one.
+    Approver(UserMatch),
+    /// Has a comment (not deleted) by this user.
+    Commenter(String),
+    /// Comments that aren't deleted contain these words.
+    Comment(String),
+    /// Has a note written or edited by this user.
+    Noter(String),
+    /// Flagged by this user; only for staff, or the flagger.
+    Flagger(String),
     /// Looks like this post (perceptual hash), the post included.
     Similar(i64),
     Pool(PoolFilter),
@@ -809,12 +833,34 @@ impl Query {
             "ai" => {
                 Filter::Ai(TagName::parse(value).map_err(|e| invalid(&format!("the tag {e}")))?)
             }
-            "note" => {
+            "note" | "comment" => {
                 let words = value.replace('_', " ");
                 if words.trim().is_empty() {
-                    return Err(invalid("expected words to find in notes"));
+                    return Err(invalid(&format!("expected words to find in {name}s")));
                 }
-                Filter::Note(words.trim().to_owned())
+                let words = words.trim().to_owned();
+                if name == "note" {
+                    Filter::Note(words)
+                } else {
+                    Filter::Comment(words)
+                }
+            }
+            "approver" => Filter::Approver(match value {
+                "" => return Err(invalid("expected a user name, any or none")),
+                "any" => UserMatch::Any,
+                "none" => UserMatch::None,
+                name => UserMatch::Name(name.to_owned()),
+            }),
+            "commenter" | "noter" | "flagger" => {
+                if value.is_empty() {
+                    return Err(invalid("expected a user name"));
+                }
+                let value = value.to_owned();
+                match name {
+                    "commenter" => Filter::Commenter(value),
+                    "noter" => Filter::Noter(value),
+                    _ => Filter::Flagger(value),
+                }
             }
             "notecount" => Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "favgroup" => {
@@ -1224,6 +1270,13 @@ impl fmt::Display for Filter {
             Filter::Source(SourceFilter::Pattern(pattern)) => write!(f, "source:{pattern}"),
             Filter::TagCount(b) => write!(f, "tagcount:{b}"),
             Filter::Fav(name) => write!(f, "fav:{name}"),
+            Filter::Approver(UserMatch::Any) => f.write_str("approver:any"),
+            Filter::Approver(UserMatch::None) => f.write_str("approver:none"),
+            Filter::Approver(UserMatch::Name(name)) => write!(f, "approver:{name}"),
+            Filter::Commenter(name) => write!(f, "commenter:{name}"),
+            Filter::Comment(words) => write!(f, "comment:{}", words.replace(' ', "_")),
+            Filter::Noter(name) => write!(f, "noter:{name}"),
+            Filter::Flagger(name) => write!(f, "flagger:{name}"),
             Filter::Similar(id) => write!(f, "similar:{id}"),
         }
     }
@@ -1575,6 +1628,28 @@ mod tests {
     }
 
     #[test]
+    fn people() {
+        assert_eq!(filter("approver:any"), Filter::Approver(UserMatch::Any));
+        assert_eq!(filter("approver:none"), Filter::Approver(UserMatch::None));
+        assert_eq!(
+            filter("approver:Bob"),
+            Filter::Approver(UserMatch::Name("bob".into()))
+        );
+        assert_eq!(filter("commenter:bob"), Filter::Commenter("bob".into()));
+        assert_eq!(filter("noter:bob"), Filter::Noter("bob".into()));
+        assert_eq!(filter("flagger:bob"), Filter::Flagger("bob".into()));
+        assert_eq!(
+            filter("comment:Nice_Art"),
+            Filter::Comment("nice art".into())
+        );
+        let query = parse("-approver:none commenter:a comment:nice_art noter:b -flagger:c");
+        assert_eq!(parse(&query.to_string()), query);
+        assert!(error("approver:").contains("expected a user name, any or none"));
+        assert!(error("commenter:").contains("expected a user name"));
+        assert!(error("comment:_").contains("expected words to find in comments"));
+    }
+
+    #[test]
     fn groups_and_or() {
         let tag = |s: &str| Expr::Tag(name(s));
         let not = |e: Expr| Expr::Not(Box::new(e));
@@ -1680,8 +1755,8 @@ mod tests {
         assert_eq!(error("-~a"), "`-~a`: use either `-` or `~`, not both");
         assert_eq!(error("-"), "`-` is missing a tag");
         assert_eq!(
-            error("approver:12"),
-            "`approver:` searches aren't supported yet"
+            error("upvote:bob"),
+            "`upvote:` searches aren't supported yet"
         );
         assert_eq!(filter("similar:12"), Filter::Similar(12));
         assert!(error("similar:x").contains("expected a post id"));

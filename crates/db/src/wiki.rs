@@ -88,6 +88,45 @@ pub async fn versions(db: impl PgExecutor<'_>, page_id: i32) -> sqlx::Result<Vec
     .await
 }
 
+/// A version in the sitewide list, with the length of the text before it.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Change {
+    pub id: i64,
+    pub title: String,
+    pub version: i32,
+    pub updater_name: Option<String>,
+    pub length: i32,
+    /// None for a page's first version.
+    pub previous_length: Option<i32>,
+    pub created_at: OffsetDateTime,
+}
+
+/// Versions of every page, newest first, optionally only one user's,
+/// older than version id `before`.
+pub async fn recent_versions(
+    db: impl PgExecutor<'_>,
+    updater_id: Option<i64>,
+    before: Option<i64>,
+    limit: i64,
+) -> sqlx::Result<Vec<Change>> {
+    sqlx::query_as(
+        "SELECT v.id, p.title::text AS title, v.version, u.name::text AS updater_name,
+                length(v.body) AS length, length(pv.body) AS previous_length, v.created_at
+         FROM wiki_page_versions v
+         JOIN wiki_pages p ON p.id = v.wiki_page_id
+         LEFT JOIN wiki_page_versions pv
+             ON pv.wiki_page_id = v.wiki_page_id AND pv.version = v.version - 1
+         LEFT JOIN users u ON u.id = v.updater_id
+         WHERE ($1::bigint IS NULL OR v.updater_id = $1) AND ($2::bigint IS NULL OR v.id < $2)
+         ORDER BY v.id DESC LIMIT $3",
+    )
+    .bind(updater_id)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn version(
     db: impl PgExecutor<'_>,
     page_id: i32,

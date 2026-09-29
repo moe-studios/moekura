@@ -148,7 +148,7 @@ none.
 
 | Filter | Order |
 |---|---|
-| `order:id` (default), `order:id_asc` | newest / oldest first |
+| `order:id` (default), `order:id_asc` | newest / oldest first (`order:created_at` works too) |
 | `order:score`, `order:score_asc` | highest / lowest score |
 | `order:favcount`, `order:favcount_asc` | most / fewest favourites |
 | `order:mpixels`, `order:mpixels_asc` | largest / smallest image |
@@ -161,6 +161,11 @@ none.
 | `order:note`, `order:note_asc` | most / least recently noted (only posts with notes) |
 | `order:change`, `order:change_asc` | most / least recently changed, e.g. to follow recent tag edits (`order:updated` works too) |
 | `order:rank` | hot posts: from the last two days with a positive score, highest score first, discounted by age (the **Hot** link) |
+| `order:upvotes`, `order:downvotes` (and `_asc`) | most / fewest up or down votes |
+| `order:comment_bumped`, `order:comment_bumped_asc` | like `order:comment`, leaving out comments posted with **Don't bump the post** |
+| `order:comment_count`, `order:note_count` (and `_asc`) | most / fewest comments or notes |
+| `order:custom` | in the order of the search's `id:` list: `id:3,1,2 order:custom` |
+| `order:md5`, `order:md5_asc` | by the file's MD5, for a stable order that isn't upload order |
 | `order:random` | shuffled |
 | `ordfav:alice` | alice's favorites, most recently favorited first |
 | `ordpool:my_comic` | the pool's posts, in the pool's order |

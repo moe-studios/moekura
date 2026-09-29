@@ -899,6 +899,20 @@ function enableReader(root = document) {
   }
 }
 
+// src/select-all.ts
+function controlled(master) {
+  const form = master.dataset.selectAll;
+  if (!form) return [];
+  return Array.from(document.querySelectorAll(`input[type=checkbox][form="${CSS.escape(form)}"]`));
+}
+function enableSelectAll() {
+  for (const master of document.querySelectorAll("input[data-select-all]")) {
+    master.addEventListener("change", () => {
+      for (const box of controlled(master)) box.checked = master.checked;
+    });
+  }
+}
+
 // src/suggestions.ts
 function withTag(tags, tag) {
   const words = tags.split(/\s+/).filter((word) => word !== "");
@@ -1034,3 +1048,4 @@ enableNotes();
 enableNoteEditor();
 enableTagScript();
 enableSuggestions();
+enableSelectAll();

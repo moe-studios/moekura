@@ -18,6 +18,14 @@ page lists them). The queue holds the posts found by `status:unmoderated`:
 pending posts the approver didn't upload and hasn't disapproved. A user's
 moderation record counts the posts they disapproved.
 
+The queue has a search box, which takes the usual
+[search syntax](../using/search.md) (tags, `user:name`, `rating:e` and so
+on, but not `status:`), and a choice of order: oldest first (the
+default), newest first, score, favorites, fewest tags or size. Tick posts
+to approve or reject them together (up to 100 at once, with one reason
+for the rejections); any that someone else dealt with meanwhile are
+skipped.
+
 ## Flags
 
 Members flag posts that should go, with a reason. Flagged posts stay

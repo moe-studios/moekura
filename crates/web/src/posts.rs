@@ -851,7 +851,6 @@ pub(crate) async fn render_post(
     let favorite_groups = crate::favorite_groups::for_post(state, &page.current, post.id).await?;
     // Link previews only for posts visitors may see.
     let preview = if matches!(post.status, PostStatus::Active | PostStatus::Flagged) {
-        let names: Vec<String> = tag_names.iter().map(|n| (*n).to_owned()).collect();
         let description = if post.description.is_empty() {
             tag_string.replace('_', " ")
         } else {
@@ -861,7 +860,7 @@ pub(crate) async fn render_post(
         crate::previews::meta(
             state,
             &format!("/posts/{id}"),
-            &crate::previews::post_title(id, &names),
+            &crate::previews::post_title(id),
             &description,
             image,
             crate::previews::post_video(state, &asset, post.rating),

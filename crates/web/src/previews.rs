@@ -157,14 +157,9 @@ pub(crate) async fn post_image(
     }))
 }
 
-/// A post's preview title: `Post #12: tag tag tag`.
-pub(crate) fn post_title(id: i64, tags: &[String]) -> String {
-    let shown: Vec<&str> = tags.iter().take(8).map(String::as_str).collect();
-    if shown.is_empty() {
-        format!("Post #{id}")
-    } else {
-        format!("Post #{id}: {}", shown.join(" ").replace('_', " "))
-    }
+/// A post's preview title: `Post #12`.
+pub(crate) fn post_title(id: i64) -> String {
+    format!("Post #{id}")
 }
 
 #[derive(Debug, Deserialize)]
@@ -201,12 +196,6 @@ async fn oembed(
         .await?
         .filter(|p| matches!(p.status, PostStatus::Active | PostStatus::Flagged))
         .ok_or(AppError::NotFound)?;
-    let mut tags: Vec<String> = moekura_db::tags::by_ids(db, &post.tag_ids)
-        .await?
-        .into_iter()
-        .map(|t| t.name)
-        .collect();
-    tags.sort();
     let author = match post.uploader_id {
         Some(user) => users::by_id(db, user).await?.map(|u| u.name),
         None => None,
@@ -215,7 +204,7 @@ async fn oembed(
     let mut body = json!({
         "version": "1.0",
         "type": "link",
-        "title": post_title(id, &tags),
+        "title": post_title(id),
         "provider_name": site,
         "provider_url": absolute_url(&state, "/"),
         "author_name": author,
@@ -305,7 +294,7 @@ mod tests {
         let page = app.get(&format!("/posts/{safe}"), None).await;
         assert!(
             page.body.contains(&format!(
-                "<meta property=\"og:title\" content=\"Post #{safe}: cat ears solo\">"
+                "<meta property=\"og:title\" content=\"Post #{safe}\">"
             )),
             "{}",
             page.body
@@ -318,6 +307,9 @@ mod tests {
             "{head}"
         );
         assert!(page.body.contains("application/json+oembed"));
+        assert!(head.contains(&format!(
+            "<meta name=\"twitter:title\" content=\"Post #{safe}\">"
+        )));
         assert!(head.contains("<meta property=\"og:type\" content=\"website\">"));
         assert!(!head.contains("og:video"));
         let page = app.get(&format!("/posts/{explicit}"), None).await;
@@ -331,6 +323,7 @@ mod tests {
             format!("/oembed?url=http%3A%2F%2Flocalhost%3A8080%2Fposts%2F{id}&maxwidth=10")
         };
         let body: Value = serde_json::from_str(&app.get(&oembed(safe), None).await.body).unwrap();
+        assert_eq!(body["title"], format!("Post #{safe}"));
         assert_eq!(
             (&body["type"], &body["width"], &body["height"]),
             (

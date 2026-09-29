@@ -3,6 +3,7 @@
 {% block content %}
 <p class="back"><a href="{{ pool.url }}">« {{ pool.name }}</a></p>
 <h1>History of {{ pool.name }}</h1>
+<p class="hint"><a href="/pool_versions">All pool changes</a>, with a filter by user.</p>
 <ol class="history">
   {% for v in versions %}
   <li>

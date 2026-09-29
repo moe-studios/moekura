@@ -37,6 +37,7 @@ mod post_history;
 mod posts;
 mod previews;
 pub mod rate_limit;
+mod recent_changes;
 pub mod remote_import;
 mod requests;
 mod saved_searches;
@@ -260,6 +261,7 @@ pub fn router(state: AppState) -> Router {
         .merge(pools::routes())
         .merge(post_history::routes())
         .merge(previews::routes())
+        .merge(recent_changes::routes())
         .merge(requests::routes())
         .merge(saved_searches::routes())
         .merge(tags::routes())

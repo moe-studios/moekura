@@ -13,6 +13,7 @@
       {% if can_edit %} · <a href="{{ url }}/edit">{% if wiki %}Edit{% else %}Start this page{% endif %}</a>{% endif %}
     </p>
   </header>
+  {% if other_names %}<p class="other-names"><span class="hint">Other names:</span> {% for name in other_names %}{{ name }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
   {% if alias_of %}<p class="notice">This tag is an alias of <a href="{{ alias_of.url }}">{{ alias_of.title }}</a>.</p>{% endif %}
   {% if old_version %}<p class="notice">This is an old version ({{ old_version }}) of the page. <a href="{{ url }}">See the current one</a>.</p>{% endif %}
   {% if html %}

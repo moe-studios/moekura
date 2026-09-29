@@ -50,6 +50,33 @@
   {% endif %}
 </section>
 
+{% if show_addresses %}
+<section class="card">
+  <h2>Addresses</h2>
+  {% if addresses %}
+  <table class="tag-table">
+    <thead><tr><th scope="col">Address</th><th scope="col">First seen</th><th scope="col">Last seen</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+      {% for a in addresses %}
+      <tr><td><code>{{ a.ip }}</code></td><td>{{ a.first }}</td><td>{{ a.last }}</td>
+        <td><a href="{{ a.ban_url }}">Ban address</a> · <a href="{{ a.ban_range_url }}">Ban {{ a.range }}</a></td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">No addresses recorded.</p>
+  {% endif %}
+  {% if related %}
+  <h3>Other accounts on these addresses</h3>
+  <ul class="plain">
+    {% for r in related %}
+    <li><a href="{{ r.url }}">{{ r.name }}</a> <span class="hint">on <code>{{ r.ip }}</code>, last {{ r.last }}</span></li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+
 <section class="card">
   <h2>Uploads</h2>
   <p><a href="{{ uploads_url }}">{{ uploads.total }} uploads</a>:

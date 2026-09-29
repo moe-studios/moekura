@@ -35,7 +35,7 @@
   <h2>Ban a network</h2>
   <form method="post" action="/moderation/ip-bans">
     <label for="ban-network">Address or range</label>
-    <input id="ban-network" name="network" placeholder="203.0.113.7 or 203.0.113.0/24" required>
+    <input id="ban-network" name="network" value="{{ network }}" placeholder="203.0.113.7 or 203.0.113.0/24" required>
     <label for="ban-network-reason">Reason</label>
     <input id="ban-network-reason" name="reason" maxlength="2000" required>
     <label for="ban-network-days">For</label>

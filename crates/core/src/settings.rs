@@ -33,7 +33,13 @@ pub struct SiteSettings {
     /// What the tagger's suggestions are used for (see
     /// [`crate::tagger::TaggerSettings`]).
     pub tagger: crate::tagger::TaggerSettings,
+    /// Days an account's addresses are kept after they were last seen
+    /// (for staff looking for ban evasion); 0 keeps none.
+    pub ip_history_days: u32,
 }
+
+/// The longest [`SiteSettings::ip_history_days`].
+pub const MAX_IP_HISTORY_DAYS: u32 = 3650;
 
 impl Default for SiteSettings {
     fn default() -> Self {
@@ -53,6 +59,7 @@ impl Default for SiteSettings {
             preview_all_ratings: false,
             default_blacklist: String::new(),
             tagger: crate::tagger::TaggerSettings::default(),
+            ip_history_days: 365,
         }
     }
 }
@@ -141,6 +148,11 @@ impl SiteSettings {
         }
         crate::blacklist::Blacklist::parse(&self.default_blacklist).map_err(|e| e.to_string())?;
         self.tagger.validate()?;
+        if self.ip_history_days > MAX_IP_HISTORY_DAYS {
+            return Err(format!(
+                "keep addresses for at most {MAX_IP_HISTORY_DAYS} days"
+            ));
+        }
         Ok(())
     }
 }
@@ -159,6 +171,7 @@ mod tests {
                 "auto_promotion",
                 "default_blacklist",
                 "email_verification",
+                "ip_history_days",
                 "preview_all_ratings",
                 "promotion_rules",
                 "registration_mode",

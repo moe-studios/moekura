@@ -8,7 +8,7 @@ use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Filter};
 use moekura_db::user_record::{self, Tally};
-use moekura_db::{bans, users};
+use moekura_db::{bans, user_ips, users};
 
 use crate::AppState;
 use crate::error::AppError;
@@ -17,6 +17,9 @@ use crate::templates::url_value;
 
 /// Entries of each list the page shows.
 const RECENT: i64 = 20;
+
+/// Addresses, and other accounts on them, the page shows.
+const ADDRESSES: i64 = 50;
 
 pub fn routes() -> Router<AppState> {
     Router::new().route("/moderation/users/{name}", get(page))
@@ -48,6 +51,25 @@ fn log_url(key: &str, name: &str) -> Value {
         "/moderation/log?{}",
         url::form_urlencoded::Serializer::new(String::new())
             .append_pair(key, name)
+            .finish()
+    ))
+}
+
+/// The network an address is usually one of many in: its /24, or /64
+/// for IPv6.
+fn network_of(ip: std::net::IpAddr) -> ipnet::IpNet {
+    let prefix = if ip.is_ipv4() { 24 } else { 64 };
+    ipnet::IpNet::new(ip, prefix)
+        .map(|net| net.trunc())
+        .unwrap_or_else(|_| ip.into())
+}
+
+/// The bans page with its network form filled in with `network`.
+fn ban_url(network: &str) -> Value {
+    url_value(&format!(
+        "/moderation/bans?{}",
+        url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("network", network)
             .finish()
     ))
 }
@@ -89,6 +111,15 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     let reports = user_record::reports_received(db, user.id).await?;
     let hidden = user_record::hidden_comments(db, user.id, RECENT).await?;
     let flag_statuses = ["open", "upheld", "dismissed"];
+    // Addresses are for those who can ban them.
+    let (addresses, related) = if page.current.can(Permission::BanUsers) {
+        (
+            user_ips::for_user(db, user.id, ADDRESSES).await?,
+            user_ips::related(db, user.id, ADDRESSES).await?,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     Ok(page.render(
         "moderation_user.html",
         context! {
@@ -124,6 +155,24 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 reason => d.reason,
                 by => d.actor_name,
                 when => d.deleted_at.map(|t| t.date().to_string()),
+            }).collect::<Vec<_>>(),
+            show_addresses => page.current.can(Permission::BanUsers),
+            addresses => addresses.iter().map(|a| {
+                let range = network_of(a.ip.addr());
+                context! {
+                    ip => a.ip.addr().to_string(),
+                    first => a.first_seen_at.date().to_string(),
+                    last => a.last_seen_at.date().to_string(),
+                    ban_url => ban_url(&a.ip.addr().to_string()),
+                    range => range.to_string(),
+                    ban_range_url => ban_url(&range.to_string()),
+                }
+            }).collect::<Vec<_>>(),
+            related => related.iter().map(|r| context! {
+                name => r.name,
+                url => url_value(&url(&r.name)),
+                ip => r.ip.addr().to_string(),
+                last => r.last_seen_at.date().to_string(),
             }).collect::<Vec<_>>(),
             flags_received => tally_context(&flags_received, &flag_statuses),
             recent_flags => recent_flags.iter().map(|f| context! {
@@ -244,5 +293,62 @@ mod tests {
         assert!(!member_view.contains("/moderation/users/"));
         let log = app.get("/moderation/log", Some(&moderator)).await.body;
         assert!(log.contains("href=\"/moderation/users/alice\""), "{log}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn addresses_and_the_accounts_sharing_them(pool: PgPool) {
+        let peer: std::net::SocketAddr = "203.0.113.7:4000".parse().unwrap();
+        let app = TestApp::with_peer(
+            test_state(&pool).await,
+            super::routes().merge(crate::users::routes()),
+            peer,
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        for who in [&alice, &bob] {
+            let saved = app
+                .post_form("/settings/theme", Some(who), &[], "theme=dark")
+                .await;
+            assert_eq!(saved.status, StatusCode::SEE_OTHER);
+        }
+        // Recorded in the background.
+        for _ in 0..100 {
+            let n: i64 = sqlx::query_scalar("SELECT count(*) FROM user_ips")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            if n == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let page = app
+            .get("/moderation/users/alice", Some(&moderator))
+            .await
+            .body;
+        assert!(page.contains("<code>203.0.113.7</code>"), "{page}");
+        assert!(page.contains("href=\"/moderation/users/bob\""), "{page}");
+        assert!(
+            page.contains("/moderation/bans?network=203.0.113.0%2F24"),
+            "{page}"
+        );
+        // Not recorded when the site keeps none.
+        moekura_db::settings::set(&pool, "ip_history_days", serde_json::json!(0))
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM user_ips")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = TestApp::with_peer(test_state(&pool).await, crate::users::routes(), peer);
+        app.post_form("/settings/theme", Some(&alice), &[], "theme=light")
+            .await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM user_ips")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
     }
 }

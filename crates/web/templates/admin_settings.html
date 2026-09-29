@@ -34,6 +34,9 @@
     <label for="default_blacklist">Default blacklist</label>
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>
     <p class="hint">For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.</p>
+    <label for="ip_history_days">Keep the addresses accounts use for this many days</label>
+    <input id="ip_history_days" name="ip_history_days" type="number" min="0" max="3650" value="{{ settings.ip_history_days }}">
+    <p class="hint">Staff who can ban users see them on a user's moderation record, with other accounts seen on the same addresses. 0 keeps none.</p>
     <fieldset class="limits">
       <legend>Tagger</legend>
       {% if not tagger_enabled %}<p class="hint">The tagger isn't set up (<code>[tagger]</code> in the server configuration), so these only matter once it is.</p>{% endif %}

@@ -33,6 +33,9 @@ pub struct SiteSettings {
     /// The only ratings logged-out visitors see, anywhere: searches, post
     /// pages, feeds and the APIs. Empty: all of them.
     pub visitor_ratings: Vec<crate::posts::Rating>,
+    /// Colour theme for visitors and for users who haven't picked one. A
+    /// theme the site doesn't have falls back to the built-in default.
+    pub default_theme: String,
     /// What the tagger's suggestions are used for (see
     /// [`crate::tagger::TaggerSettings`]).
     pub tagger: crate::tagger::TaggerSettings,
@@ -68,6 +71,7 @@ impl Default for SiteSettings {
             preview_all_ratings: false,
             default_blacklist: String::new(),
             visitor_ratings: Vec::new(),
+            default_theme: crate::user_settings::DEFAULT_THEME.to_owned(),
             tagger: crate::tagger::TaggerSettings::default(),
             ip_history_days: 365,
             email_domains: crate::spam::EmailDomains::default(),
@@ -160,6 +164,9 @@ impl SiteSettings {
             return Err(format!("must be at most {SITE_NAME_MAX_LEN} characters"));
         }
         crate::blacklist::Blacklist::parse(&self.default_blacklist).map_err(|e| e.to_string())?;
+        if !crate::user_settings::is_theme_name(&self.default_theme) {
+            return Err("must be a theme's name".into());
+        }
         self.tagger.validate()?;
         self.email_domains.validate()?;
         self.post_reasons.validate()?;
@@ -186,6 +193,7 @@ mod tests {
                 "auto_promotion",
                 "captcha",
                 "default_blacklist",
+                "default_theme",
                 "email_domains",
                 "email_verification",
                 "ip_history_days",
@@ -233,6 +241,10 @@ mod tests {
         ));
         assert!(matches!(
             defaults.with_value("site_name", json!("   ")),
+            Err(SettingError::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            defaults.with_value("default_theme", json!("../css/main")),
             Err(SettingError::InvalidValue { .. })
         ));
         let thresholds = json!({ "thresholds": { "general": 0 } });

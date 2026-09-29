@@ -340,6 +340,15 @@ function attachAll(root = document) {
   }
 }
 
+// src/autosubmit.ts
+function enableAutosubmit() {
+  document.addEventListener("change", (event) => {
+    const target2 = event.target;
+    if (!(target2 instanceof HTMLSelectElement)) return;
+    target2.closest("form[data-autosubmit]")?.requestSubmit();
+  });
+}
+
 // src/confirm.ts
 function questionFor(form, submitter) {
   return submitter?.getAttribute("data-confirm") ?? form.getAttribute("data-confirm");
@@ -1085,6 +1094,7 @@ function enableTagScript(root = document) {
 document.documentElement.classList.add("js");
 enableToasts();
 enableConfirm();
+enableAutosubmit();
 enableLayout();
 attachAll();
 enhanceReactions();

@@ -412,7 +412,7 @@ mod tests {
         let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
         for who in [&alice, &bob] {
             let saved = app
-                .post_form("/settings/theme", Some(who), &[], "theme=dark")
+                .post_form("/settings/theme", Some(who), &[], "mode=dark")
                 .await;
             assert_eq!(saved.status, StatusCode::SEE_OTHER);
         }
@@ -446,7 +446,7 @@ mod tests {
             .await
             .unwrap();
         let app = TestApp::with_peer(test_state(&pool).await, crate::users::routes(), peer);
-        app.post_form("/settings/theme", Some(&alice), &[], "theme=light")
+        app.post_form("/settings/theme", Some(&alice), &[], "mode=light")
             .await;
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         let n: i64 = sqlx::query_scalar("SELECT count(*) FROM user_ips")

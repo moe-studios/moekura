@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::blacklist::Blacklist;
 use moekura_core::permissions::Permission;
-use moekura_core::user_settings::{PER_PAGE_CHOICES, Theme, UserSettings};
+use moekura_core::user_settings::{Mode, PER_PAGE_CHOICES, UserSettings};
 use moekura_db::users::{self, UserStatus};
 use moekura_db::{favorites, posts};
 use serde::Deserialize;
@@ -197,8 +197,13 @@ fn render_settings(
             per_page => settings.per_page,
             default_per_page => page.state().config.search.per_page,
             per_page_choices => PER_PAGE_CHOICES.iter().filter(|&&n| n <= max).collect::<Vec<_>>(),
-            current_theme => settings.theme.as_str(),
-            themes => Theme::ALL.iter().map(|t| t.as_str()).collect::<Vec<_>>(),
+            current_mode => settings.mode.as_str(),
+            current_theme => settings.theme,
+            site_theme => crate::themes::label(crate::themes::resolve(
+                &page.state().assets,
+                None,
+                &page.state().site.get().settings.default_theme,
+            )),
         },
     )
 }
@@ -209,9 +214,27 @@ struct SettingsForm {
     #[serde(default)]
     per_page: String,
     #[serde(default)]
+    mode: String,
+    /// Empty for the site default.
+    #[serde(default)]
     theme: String,
     #[serde(default)]
     blacklist: String,
+}
+
+fn parse_mode(text: &str) -> Result<Mode, AppError> {
+    Mode::parse(text).ok_or_else(|| AppError::BadRequest("Unknown mode".into()))
+}
+
+/// A theme the site has, or `None` for an empty field: the site default.
+fn parse_theme(page: &Page, text: &str) -> Result<Option<String>, AppError> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    crate::themes::names(&page.state().assets)
+        .contains(&text)
+        .then(|| Some(text.to_owned()))
+        .ok_or_else(|| AppError::BadRequest("Unknown theme".into()))
 }
 
 async fn save_settings(
@@ -230,11 +253,12 @@ async fn save_settings(
                 .ok_or_else(|| AppError::BadRequest("Unknown page size".into()))?,
         ),
     };
-    let theme =
-        Theme::parse(&form.theme).ok_or_else(|| AppError::BadRequest("Unknown theme".into()))?;
+    let mode = parse_mode(&form.mode)?;
+    let theme = parse_theme(&page, &form.theme)?;
     let blacklist = form.blacklist.replace("\r\n", "\n");
     let settings = UserSettings {
         per_page,
+        mode,
         theme,
         blacklist: Some(blacklist.trim().to_owned()),
     };
@@ -260,20 +284,23 @@ async fn save_settings(
 
 #[derive(Debug, Deserialize)]
 struct ThemeForm {
-    theme: String,
+    mode: Option<String>,
+    theme: Option<String>,
     /// The page to go back to.
     back: Option<String>,
 }
 
-/// Changes only the theme, from the switcher in every page's footer.
+/// Changes only the mode or theme, from the switcher in every page's
+/// footer.
 async fn set_theme(page: Page, Form(form): Form<ThemeForm>) -> Result<Response, AppError> {
     let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
-    let theme =
-        Theme::parse(&form.theme).ok_or_else(|| AppError::BadRequest("Unknown theme".into()))?;
-    let settings = UserSettings {
-        theme,
-        ..UserSettings::from_json(&user.settings)
-    };
+    let mut settings = UserSettings::from_json(&user.settings);
+    if let Some(mode) = &form.mode {
+        settings.mode = parse_mode(mode)?;
+    }
+    if let Some(theme) = &form.theme {
+        settings.theme = parse_theme(&page, theme)?;
+    }
     users::set_settings(
         page.state().db.primary(),
         user.id,
@@ -317,11 +344,22 @@ mod tests {
         let visitor = app.get("/settings", None).await;
         assert_eq!(visitor.location.as_deref(), Some("/login?next=%2Fsettings"));
         let response = app
-            .post_form("/settings", Some(&alice), &[], "per_page=100&theme=dark")
+            .post_form(
+                "/settings",
+                Some(&alice),
+                &[],
+                "per_page=100&mode=dark&theme=ocean",
+            )
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER);
         let page = app.get("/settings", Some(&alice)).await;
-        assert!(page.body.contains("data-theme=\"dark\""), "{}", page.body);
+        assert!(
+            page.body
+                .contains("data-theme=\"ocean\" data-mode=\"dark\""),
+            "{}",
+            page.body
+        );
+        assert!(page.body.contains("/static/themes/ocean."), "{}", page.body);
         assert!(
             page.body.contains("value=\"100\" selected"),
             "{}",
@@ -330,6 +368,11 @@ mod tests {
         // The page size applies to searches.
         let grid = app.get("/", Some(&alice)).await;
         assert_eq!(grid.status, StatusCode::OK);
+        // Only themes the site has.
+        let unknown = app
+            .post_form("/settings", Some(&alice), &[], "mode=dark&theme=nope")
+            .await;
+        assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
 
         // The blacklist starts as the site default.
         let bob = session_for(&pool, "bob", SystemRole::Member).await;
@@ -340,7 +383,7 @@ mod tests {
                 "/settings",
                 Some(&bob),
                 &[],
-                "theme=system&blacklist=score%3A1",
+                "mode=system&blacklist=score%3A1",
             )
             .await;
         assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -351,23 +394,37 @@ mod tests {
         );
 
         let bad = app
-            .post_form("/settings", Some(&alice), &[], "per_page=7&theme=dark")
+            .post_form("/settings", Some(&alice), &[], "per_page=7&mode=dark")
             .await;
         assert_eq!(bad.status, StatusCode::BAD_REQUEST);
 
-        // The footer switcher changes the theme alone and goes back.
+        // The footer switcher changes the mode or theme alone and goes back.
         let switched = app
             .post_form(
                 "/settings/theme",
                 Some(&alice),
                 &[],
-                "theme=light&back=%2Ftags%3Fname%3Dx",
+                "mode=light&back=%2Ftags%3Fname%3Dx",
             )
             .await;
         assert_eq!(switched.status, StatusCode::SEE_OTHER);
         assert_eq!(switched.location.as_deref(), Some("/tags?name=x"));
         let page = app.get("/settings", Some(&alice)).await;
-        assert!(page.body.contains("data-theme=\"light\""), "{}", page.body);
+        assert!(
+            page.body
+                .contains("data-theme=\"ocean\" data-mode=\"light\""),
+            "{}",
+            page.body
+        );
+        app.post_form("/settings/theme", Some(&alice), &[], "theme=sakura")
+            .await;
+        let page = app.get("/settings", Some(&alice)).await;
+        assert!(
+            page.body
+                .contains("data-theme=\"sakura\" data-mode=\"light\""),
+            "{}",
+            page.body
+        );
         assert!(
             page.body.contains("value=\"100\" selected"),
             "{}",
@@ -378,7 +435,7 @@ mod tests {
                 "/settings/theme",
                 Some(&alice),
                 &[],
-                "theme=dark&back=%2F%2Fevil.example",
+                "mode=dark&back=%2F%2Fevil.example",
             )
             .await;
         assert_eq!(offsite.location.as_deref(), Some("/"));

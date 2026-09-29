@@ -67,6 +67,11 @@
     <label for="ip_history_days">Keep the addresses accounts use for this many days</label>
     <input id="ip_history_days" name="ip_history_days" type="number" min="0" max="3650" value="{{ settings.ip_history_days }}">
     <p class="hint">Staff who can ban users see them on a user's moderation record, with other accounts seen on the same addresses. 0 keeps none.</p>
+    <label for="default_theme">Default theme</label>
+    <select id="default_theme" name="default_theme">
+      {% for t in themes %}<option value="{{ t.name }}"{% if settings.default_theme == t.name %} selected{% endif %}>{{ t.label }}</option>{% endfor %}
+    </select>
+    <p class="hint">For visitors, and users who haven't picked one. To add a theme, put <code>themes/&lt;name&gt;.css</code> in the <code>static_override</code> directory and restart.</p>
     <fieldset class="limits">
       <legend>Tagger</legend>
       {% if not tagger_enabled %}<p class="hint">The tagger isn't set up (<code>[tagger]</code> in the server configuration), so these only matter once it is.</p>{% endif %}

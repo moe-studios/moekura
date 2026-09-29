@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="en"{% if theme %} data-theme="{{ theme }}"{% endif %}>
+<html lang="en" data-theme="{{ theme }}"{% if mode %} data-mode="{{ mode }}"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ site.name }}{% endblock %}</title>
   <link rel="stylesheet" href="{{ asset('css/main.css') }}">
+  {% if theme_css %}<link rel="stylesheet" href="{{ asset(theme_css) }}">{% endif %}
   <link rel="icon" href="{{ asset('favicon.svg') }}" type="image/svg+xml">
   <script type="module" src="{{ asset('js/main.js') }}"></script>
   {% block head %}{% endblock %}
@@ -47,14 +48,26 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
-    <p>Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> · <a href="/api/docs">API</a>
+    <p>Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> {{ build_version }} · <a href="/api/docs">API</a>
       <span data-shortcuts-link hidden>· <button type="button" class="link">Keyboard shortcuts</button> <kbd>?</kbd></span></p>
-    {% if theme_choice %}
-    <form method="post" action="/settings/theme" aria-label="Theme">
-      <input type="hidden" name="back" value="{{ target }}">
-      Theme:
-      {% for t in themes %}<button type="submit" class="link" name="theme" value="{{ t }}" aria-pressed="{{ 'true' if t == theme_choice else 'false' }}">{{ t|capitalize }}</button>{% endfor %}
-    </form>
+    {% if mode_choice %}
+    <div class="appearance">
+      <form method="post" action="/settings/theme" aria-label="Mode">
+        <input type="hidden" name="back" value="{{ target }}">
+        Mode:
+        {% for m in modes %}<button type="submit" class="link" name="mode" value="{{ m }}" aria-pressed="{{ 'true' if m == mode_choice else 'false' }}">{{ m|capitalize }}</button>{% endfor %}
+      </form>
+      {% if themes|length > 1 %}
+      <form method="post" action="/settings/theme" data-autosubmit>
+        <input type="hidden" name="back" value="{{ target }}">
+        <label for="footer-theme">Theme:</label>
+        <select id="footer-theme" name="theme">
+          {% for t in themes %}<option value="{{ t.name }}"{% if t.name == theme %} selected{% endif %}>{{ t.label }}</option>{% endfor %}
+        </select>
+        <button type="submit" class="secondary">Change</button>
+      </form>
+      {% endif %}
+    </div>
     {% endif %}
   </footer>
 </body>

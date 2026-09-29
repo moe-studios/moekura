@@ -31,6 +31,25 @@ npm test          # unit tests
 npm run build     # or npm run watch
 ```
 
+## Build version
+
+The footer embeds the version when the Rust binary is compiled. A checkout
+at the release tag matching `Cargo.toml` shows that semver; other commits
+show `git-` followed by the first seven characters of the commit hash.
+`MOEKURA_BUILD_VERSION` overrides detection, so CI can distinguish release
+builds from main builds even when they share a commit.
+
+For a local Docker build, pass the version explicitly because `.git` is
+excluded from the build context:
+
+```sh
+docker build --build-arg MOEKURA_BUILD_VERSION="git-$(git rev-parse --short=7 HEAD)" -t moekura .
+```
+
+For a release build, pass its semver instead. Source archives without Git
+metadata also need `MOEKURA_BUILD_VERSION`; without it, the footer displays
+`git-unknown` and the build emits a warning.
+
 ## End-to-end tests
 
 `e2e/` has [Playwright](https://playwright.dev/) tests that drive a real

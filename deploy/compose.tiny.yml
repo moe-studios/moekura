@@ -1,6 +1,7 @@
 # Smallest setup: the app plus Postgres on one machine.
 #
 #   echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" > deploy/.env
+#   export MOEKURA_BUILD_VERSION="git-$(git rev-parse --short=7 HEAD)"
 #   docker compose -f deploy/compose.tiny.yml up -d
 #
 # Then open http://localhost:8080. Migrations run automatically on start.
@@ -11,6 +12,8 @@ services:
   app:
     build:
       context: ..
+      args:
+        MOEKURA_BUILD_VERSION: ${MOEKURA_BUILD_VERSION:-}
     restart: unless-stopped
     ports:
       - "8080:8080"

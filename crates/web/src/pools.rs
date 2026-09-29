@@ -270,6 +270,7 @@ async fn show(
             &PoolName::display(&pool.name),
             &description,
             image,
+            None,
             false,
         )
     };

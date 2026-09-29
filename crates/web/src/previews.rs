@@ -1,7 +1,7 @@
 //! Link previews: OpenGraph and Twitter card tags on post, pool and wiki
 //! pages, so links unfurl in chat apps and social networks, and oEmbed for
 //! posts. Private sites show none, and questionable and explicit posts
-//! show no image unless the site allows it.
+//! show no media unless the site allows it.
 
 use axum::Json;
 use axum::Router;
@@ -30,7 +30,7 @@ pub(crate) fn enabled(state: &AppState) -> bool {
     !state.is_private()
 }
 
-/// Whether a post of `rating` may show its image in a preview.
+/// Whether a post of `rating` may show its image or video in a preview.
 pub(crate) fn shows_image(state: &AppState, rating: Rating) -> bool {
     matches!(rating, Rating::General | Rating::Sensitive)
         || state.site.get().settings.preview_all_ratings
@@ -53,6 +53,32 @@ pub(crate) struct Image {
     pub height: i32,
 }
 
+pub(crate) struct Video {
+    pub url: String,
+    pub content_type: &'static str,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Use the original video, even while its poster is still being generated.
+pub(crate) fn post_video(state: &AppState, asset: &media::Asset, rating: Rating) -> Option<Video> {
+    if !enabled(state) || !shows_image(state, rating) {
+        return None;
+    }
+    let content_type = match asset.media_type.as_str() {
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        _ => return None,
+    };
+    let key = moekura_storage::Key::parse(&asset.storage_key)?;
+    Some(Video {
+        url: absolute_url(state, &state.file_url(&key)),
+        content_type,
+        width: asset.width,
+        height: asset.height,
+    })
+}
+
 /// The tags a preview puts in the page head, or `None` on private sites.
 pub(crate) fn meta(
     state: &AppState,
@@ -60,6 +86,7 @@ pub(crate) fn meta(
     title: &str,
     description: &str,
     image: Option<Image>,
+    video: Option<Video>,
     oembed: bool,
 ) -> Option<Value> {
     if !enabled(state) {
@@ -82,6 +109,13 @@ pub(crate) fn meta(
         title => title,
         description => shorten(description),
         image => image.map(|i| context! { url => safe(&i.url), width => i.width, height => i.height }),
+        video => video.map(|v| context! {
+            url => safe(&v.url),
+            secure_url => v.url.starts_with("https://").then(|| safe(&v.url)),
+            content_type => Value::from_safe_string(v.content_type.to_owned()),
+            width => v.width,
+            height => v.height,
+        }),
         oembed_url => oembed_url.as_deref().map(safe),
     })
 }
@@ -123,14 +157,9 @@ pub(crate) async fn post_image(
     }))
 }
 
-/// A post's preview title: `Post #12: tag tag tag`.
-pub(crate) fn post_title(id: i64, tags: &[String]) -> String {
-    let shown: Vec<&str> = tags.iter().take(8).map(String::as_str).collect();
-    if shown.is_empty() {
-        format!("Post #{id}")
-    } else {
-        format!("Post #{id}: {}", shown.join(" ").replace('_', " "))
-    }
+/// A post's preview title: `Post #12`.
+pub(crate) fn post_title(id: i64) -> String {
+    format!("Post #{id}")
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,12 +196,6 @@ async fn oembed(
         .await?
         .filter(|p| matches!(p.status, PostStatus::Active | PostStatus::Flagged))
         .ok_or(AppError::NotFound)?;
-    let mut tags: Vec<String> = moekura_db::tags::by_ids(db, &post.tag_ids)
-        .await?
-        .into_iter()
-        .map(|t| t.name)
-        .collect();
-    tags.sort();
     let author = match post.uploader_id {
         Some(user) => users::by_id(db, user).await?.map(|u| u.name),
         None => None,
@@ -181,11 +204,14 @@ async fn oembed(
     let mut body = json!({
         "version": "1.0",
         "type": "link",
-        "title": post_title(id, &tags),
+        "title": post_title(id),
         "provider_name": site,
         "provider_url": absolute_url(&state, "/"),
         "author_name": author,
     });
+    let video = media::for_post(db, id)
+        .await?
+        .and_then(|asset| post_video(&state, &asset, post.rating));
     if let Some(image) = post_image(&state, db, id, post.rating).await? {
         // Scaled down to fit maxwidth and maxheight, keeping its shape.
         let scale = [
@@ -199,10 +225,18 @@ async fn oembed(
         .into_iter()
         .flatten()
         .fold(1.0_f64, f64::min);
-        body["type"] = json!("photo");
-        body["url"] = json!(image.url);
-        body["width"] = json!((f64::from(image.width) * scale).round() as i64);
-        body["height"] = json!((f64::from(image.height) * scale).round() as i64);
+        if video.is_some() {
+            // Keep video posts as links with thumbnails. Advertising the
+            // poster as a photo can override the page's OpenGraph video.
+            body["thumbnail_url"] = json!(image.url);
+            body["thumbnail_width"] = json!((f64::from(image.width) * scale).round() as i64);
+            body["thumbnail_height"] = json!((f64::from(image.height) * scale).round() as i64);
+        } else {
+            body["type"] = json!("photo");
+            body["url"] = json!(image.url);
+            body["width"] = json!((f64::from(image.width) * scale).round() as i64);
+            body["height"] = json!((f64::from(image.height) * scale).round() as i64);
+        }
     }
     Ok(Json(body).into_response())
 }
@@ -211,10 +245,15 @@ async fn oembed(
 mod tests {
     use axum::http::StatusCode;
     use moekura_core::permissions::SystemRole;
+    use moekura_core::posts::{PostStatus, Rating};
+    use moekura_db::{media, posts};
+    use moekura_storage::Key;
     use serde_json::Value;
     use sqlx::PgPool;
 
-    use crate::test_support::{TestApp, fixture, session_for, test_state};
+    use crate::test_support::{
+        TestApp, fixture, session_for, test_config, test_state, test_state_with,
+    };
 
     async fn app(pool: &PgPool) -> TestApp {
         let state = test_state(pool).await;
@@ -255,7 +294,7 @@ mod tests {
         let page = app.get(&format!("/posts/{safe}"), None).await;
         assert!(
             page.body.contains(&format!(
-                "<meta property=\"og:title\" content=\"Post #{safe}: cat ears solo\">"
+                "<meta property=\"og:title\" content=\"Post #{safe}\">"
             )),
             "{}",
             page.body
@@ -268,6 +307,11 @@ mod tests {
             "{head}"
         );
         assert!(page.body.contains("application/json+oembed"));
+        assert!(head.contains(&format!(
+            "<meta name=\"twitter:title\" content=\"Post #{safe}\">"
+        )));
+        assert!(head.contains("<meta property=\"og:type\" content=\"website\">"));
+        assert!(!head.contains("og:video"));
         let page = app.get(&format!("/posts/{explicit}"), None).await;
         assert!(page.body.contains("og:title"));
         assert!(
@@ -279,6 +323,7 @@ mod tests {
             format!("/oembed?url=http%3A%2F%2Flocalhost%3A8080%2Fposts%2F{id}&maxwidth=10")
         };
         let body: Value = serde_json::from_str(&app.get(&oembed(safe), None).await.body).unwrap();
+        assert_eq!(body["title"], format!("Post #{safe}"));
         assert_eq!(
             (&body["type"], &body["width"], &body["height"]),
             (
@@ -311,6 +356,169 @@ mod tests {
                 .body
                 .contains("og:image")
         );
+    }
+
+    async fn video_post(pool: &PgPool, format: &str) -> (i64, i64, Key, Key) {
+        let id = posts::insert(
+            pool,
+            posts::NewPost {
+                uploader_id: None,
+                rating: Rating::General,
+                status: PostStatus::Active,
+                source: "",
+                description: "A video",
+                tag_ids: &[],
+            },
+        )
+        .await
+        .unwrap();
+        let hash = [id as u8; 32];
+        let key = Key::original(&hex::encode(hash), format);
+        let poster = Key::variant("poster", &hex::encode(hash), "jpg");
+        let asset_id = media::insert(
+            pool,
+            media::NewAsset {
+                post_id: id,
+                sha256: &hash,
+                md5: &[id as u8; 16],
+                media_type: format,
+                width: 640,
+                height: 360,
+                duration_ms: Some(1000),
+                frames: 30,
+                has_audio: true,
+                file_size: 1000,
+                storage_key: key.as_str(),
+            },
+        )
+        .await
+        .unwrap();
+        (id, asset_id, key, poster)
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn videos_unfurl_with_and_without_posters(pool: PgPool) {
+        let mut config = test_config();
+        config.storage.public_base_url = Some("https://cdn.example/media/".parse().unwrap());
+        let state = test_state_with(&pool, config).await;
+        let app = TestApp::new(state, super::routes().merge(crate::posts::routes()));
+        for format in ["mp4", "webm"] {
+            let (id, asset_id, key, poster) = video_post(&pool, format).await;
+            for with_poster in [false, true] {
+                if with_poster {
+                    media::save_variant(
+                        &pool,
+                        &media::Variant {
+                            asset_id,
+                            kind: "poster".into(),
+                            format: "jpg".into(),
+                            width: 320,
+                            height: 180,
+                            file_size: 100,
+                            storage_key: poster.as_str().into(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                }
+                let page = app.get(&format!("/posts/{id}"), None).await;
+                assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+                let head = page.body.split_once("</head>").unwrap().0;
+                let video_url = format!("https://cdn.example/media/{}", key.as_str());
+                for (property, content) in [
+                    ("og:type", "video.other".to_owned()),
+                    ("og:video", video_url.clone()),
+                    ("og:video:url", video_url.clone()),
+                    ("og:video:secure_url", video_url),
+                    ("og:video:type", format!("video/{format}")),
+                    ("og:video:width", "640".into()),
+                    ("og:video:height", "360".into()),
+                ] {
+                    assert!(
+                        head.contains(&format!(
+                            "<meta property=\"{property}\" content=\"{content}\">"
+                        )),
+                        "{head}"
+                    );
+                }
+                assert_eq!(head.contains("og:image"), with_poster, "{head}");
+                let response = app
+                    .get(
+                        &format!(
+                            "/oembed?url=http%3A%2F%2Flocalhost%3A8080%2Fposts%2F{id}&maxwidth=160"
+                        ),
+                        None,
+                    )
+                    .await;
+                let body: Value = serde_json::from_str(&response.body).unwrap();
+                assert_eq!(body["type"], "link");
+                assert!(body.get("url").is_none(), "{body}");
+                if with_poster {
+                    assert_eq!(
+                        body["thumbnail_url"],
+                        format!("https://cdn.example/media/{}", poster.as_str())
+                    );
+                    assert_eq!(body["thumbnail_width"], 160);
+                    assert_eq!(body["thumbnail_height"], 90);
+                } else {
+                    assert!(body.get("thumbnail_url").is_none(), "{body}");
+                }
+            }
+        }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn video_previews_respect_visibility(pool: PgPool) {
+        let (id, _, _, _) = video_post(&pool, "mp4").await;
+        let app = app(&pool).await;
+        for (rating, shown) in [("g", true), ("s", true), ("q", false), ("e", false)] {
+            sqlx::query("UPDATE posts SET rating = $1 WHERE id = $2")
+                .bind(rating)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let page = app.get(&format!("/posts/{id}"), None).await;
+            assert_eq!(page.body.contains("og:video"), shown, "{}", page.body);
+            assert!(
+                !page.body.contains("og:video:secure_url"),
+                "HTTP URLs aren't secure URLs"
+            );
+        }
+        moekura_db::settings::set(&pool, "preview_all_ratings", serde_json::json!(true))
+            .await
+            .unwrap();
+        let app = self::app(&pool).await;
+        assert!(
+            app.get(&format!("/posts/{id}"), None)
+                .await
+                .body
+                .contains("og:video")
+        );
+
+        let admin = session_for(&pool, "admin", SystemRole::Admin).await;
+        for (status, shown) in [("flagged", true), ("pending", false), ("deleted", false)] {
+            sqlx::query("UPDATE posts SET status = $1 WHERE id = $2")
+                .bind(status)
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let page = app.get(&format!("/posts/{id}"), Some(&admin)).await;
+            assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+            assert_eq!(page.body.contains("og:video"), shown, "{}", page.body);
+        }
+        sqlx::query("UPDATE posts SET status = 'active' WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE roles SET permissions = permissions & ~1::bigint WHERE system_key = 'anonymous'")
+            .execute(&pool).await.unwrap();
+        let app = self::app(&pool).await;
+        let page = app.get(&format!("/posts/{id}"), Some(&admin)).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+        assert!(!page.body.contains("og:video"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

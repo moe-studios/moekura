@@ -243,6 +243,7 @@ async fn show(
             &format!("{} · Wiki", display_title(&p.title)),
             &markup::excerpt(&p.body),
             None,
+            None,
             false,
         )),
     };

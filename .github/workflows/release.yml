@@ -1,12 +1,17 @@
 name: Release
 
-# Pushing a tag like v0.1.0 publishes the container images (amd64 and
-# arm64) to GHCR, the app's and the tagger's (0.1.0-tagger), and a GitHub
-# release with Linux binaries, its notes taken from CHANGELOG.md.
+# Main publishes edge and commit-tagged app and tagger images (amd64 and
+# arm64). Tags like v0.1.0 also publish semver images and a GitHub release
+# with Linux binaries, its notes taken from CHANGELOG.md.
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -17,9 +22,12 @@ env:
 jobs:
   check:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
       - name: The tag matches the version, and the changelog has it
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           version="${GITHUB_REF_NAME#v}"
           crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
@@ -29,6 +37,15 @@ jobs:
           if echo "$heading" | grep -q Unreleased; then
             echo "Give the $version section in CHANGELOG.md its release date"; exit 1
           fi
+      - name: Version embedded in the binary
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="git-${GITHUB_SHA:0:7}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   image:
     needs: check
@@ -57,6 +74,7 @@ jobs:
         with:
           context: .
           target: app
+          build-args: MOEKURA_BUILD_VERSION=${{ needs.check.outputs.version }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.runner }}
@@ -67,6 +85,7 @@ jobs:
         with:
           context: .
           target: tagger
+          build-args: MOEKURA_BUILD_VERSION=${{ needs.check.outputs.version }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.runner }}
@@ -99,8 +118,9 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # 0.1.0, 0.1 and latest (not for pre-releases like 0.2.0-rc.1), and
-      # the same with -tagger for the tagger's image.
+      # Releases get semver tags (latest only for stable releases), main
+      # gets edge, and both get short and full commit tags. The tagger
+      # gets the same tags with -tagger appended.
       - id: app
         uses: docker/metadata-action@v6
         with:
@@ -108,6 +128,9 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=edge,branch=main
+            type=sha,prefix=git-
+            type=sha,prefix=git-,format=long
       - id: tagger
         uses: docker/metadata-action@v6
         with:
@@ -116,6 +139,9 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=edge,branch=main
+            type=sha,prefix=git-
+            type=sha,prefix=git-,format=long
       - name: Publish one tag for both architectures, for each image
         working-directory: ${{ runner.temp }}/digests
         env:
@@ -128,11 +154,14 @@ jobs:
               $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$tags") \
               $(cd "$image" && printf "$IMAGE@sha256:%s " *)
           done
-          docker buildx imagetools inspect "$IMAGE:${GITHUB_REF_NAME#v}"
-          docker buildx imagetools inspect "$IMAGE:${GITHUB_REF_NAME#v}-tagger"
+          docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$APP_TAGS")"
+          docker buildx imagetools inspect "$(jq -r '.tags[0]' <<< "$TAGGER_TAGS")"
 
   binaries:
+    if: startsWith(github.ref, 'refs/tags/')
     needs: check
+    env:
+      MOEKURA_BUILD_VERSION: ${{ needs.check.outputs.version }}
     strategy:
       matrix:
         include:
@@ -159,6 +188,7 @@ jobs:
           path: moekura-*.tar.gz*
 
   release:
+    if: startsWith(github.ref, 'refs/tags/')
     needs: [manifest, binaries]
     runs-on: ubuntu-latest
     permissions:

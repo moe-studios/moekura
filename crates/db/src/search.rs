@@ -1347,6 +1347,14 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         Filter::Source(SourceFilter::Any) => {
             sql.push("p.source <> ''");
         }
+        Filter::Source(SourceFilter::None) => {
+            sql.push("p.source = ''");
+        }
+        // Posts without a source are left out of the index.
+        Filter::Source(SourceFilter::Pattern(pattern)) => {
+            sql.push("p.source <> '' AND p.source ILIKE ")
+                .push_bind(crate::tags::like_pattern(pattern));
+        }
         Filter::Parent(ParentFilter::None) => {
             sql.push("p.parent_id IS NULL");
         }
@@ -1779,11 +1787,17 @@ mod tests {
         )
         .await;
 
-        sqlx::query("UPDATE posts SET source = 'https://example.com/1' WHERE id = $1")
-            .bind(clip)
-            .execute(&pool)
-            .await
-            .unwrap();
+        for (post, source) in [
+            (clip, "https://Example.com/1"),
+            (wide, "https://example.org/a?from=example.com"),
+        ] {
+            sqlx::query("UPDATE posts SET source = $2 WHERE id = $1")
+                .bind(post)
+                .bind(source)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
         let cases: &[(&str, &[i64])] = &[
             ("rating:e", &[wide]),
             ("rating:q,e", &[tall, wide]),
@@ -1818,8 +1832,16 @@ mod tests {
             ("child:any", &[wide]),
             ("child:none", &[clip, tall]),
             ("is:parent -is:sfw", &[wide]),
-            ("has:source", &[clip]),
-            ("-has:source", &[tall, wide]),
+            ("has:source", &[clip, wide]),
+            ("-has:source", &[tall]),
+            ("source:none", &[tall]),
+            ("source:https://example.com/", &[clip]),
+            ("source:HTTPS://EXAMPLE.COM/", &[clip]),
+            ("source:*example.com*", &[clip, wide]),
+            ("-source:*example.com*", &[tall]),
+            ("source:*.org/*", &[wide]),
+            ("source:example", &[]),
+            ("source:https://example.com/1_", &[]),
             // Date searches follow upload time, which is id order for
             // posts uploaded normally; `tall` is backdated here.
             ("date:>=2000", &[clip, wide, tall]),

@@ -67,6 +67,7 @@ pub const METATAGS: &[&str] = &[
     "child",
     "is",
     "has",
+    "source",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -185,6 +186,11 @@ pub enum PoolFilter {
 pub enum SourceFilter {
     /// Any source at all.
     Any,
+    /// No source.
+    None,
+    /// Starts with this, or with `*`, matches this pattern; either way
+    /// regardless of case.
+    Pattern(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -912,6 +918,12 @@ impl Query {
             "md5" => Filter::Md5(
                 list(value, md5).ok_or_else(|| invalid("expected 32 hexadecimal digits"))?,
             ),
+            "source" => Filter::Source(match value {
+                "" => return Err(invalid("expected the start of a source, any or none")),
+                "any" => SourceFilter::Any,
+                "none" => SourceFilter::None,
+                pattern => SourceFilter::Pattern(pattern.to_owned()),
+            }),
             "child" => Filter::Child(match value {
                 "any" => true,
                 "none" => false,
@@ -1207,7 +1219,9 @@ impl fmt::Display for Filter {
             Filter::Parent(ParentFilter::Of(id)) => write!(f, "parent:{id}"),
             Filter::Child(true) => f.write_str("child:any"),
             Filter::Child(false) => f.write_str("child:none"),
-            Filter::Source(SourceFilter::Any) => f.write_str("has:source"),
+            Filter::Source(SourceFilter::Any) => f.write_str("source:any"),
+            Filter::Source(SourceFilter::None) => f.write_str("source:none"),
+            Filter::Source(SourceFilter::Pattern(pattern)) => write!(f, "source:{pattern}"),
             Filter::TagCount(b) => write!(f, "tagcount:{b}"),
             Filter::Fav(name) => write!(f, "fav:{name}"),
             Filter::Similar(id) => write!(f, "similar:{id}"),
@@ -1539,10 +1553,25 @@ mod tests {
         assert_eq!(filter("has:source"), Filter::Source(SourceFilter::Any));
         assert_eq!(
             parse("-has:source child:none").to_string(),
-            "-has:source child:none"
+            "-source:any child:none"
         );
         assert!(error("is:big").contains("expected parent, child"));
         assert!(error("has:").contains("expected source"));
+    }
+
+    #[test]
+    fn sources() {
+        assert_eq!(filter("source:none"), Filter::Source(SourceFilter::None));
+        assert_eq!(filter("source:any"), Filter::Source(SourceFilter::Any));
+        assert_eq!(
+            filter("source:https://Twitter.com/Foo"),
+            Filter::Source(SourceFilter::Pattern("https://twitter.com/foo".into()))
+        );
+        assert_eq!(
+            parse("-source:*pixiv.net*").to_string(),
+            "-source:*pixiv.net*"
+        );
+        assert!(error("source:").contains("expected the start of a source"));
     }
 
     #[test]

@@ -74,6 +74,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `duration:` | `duration:>30` | length of a video, in seconds |
 | `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm` |
 | `date:` | `date:2026-01` | upload date (UTC): a day, month or year |
+| `source:` | `source:https://twitter.com/foo`, `source:*pixiv.net*`, `source:none`, `source:any` | the source starts with this, or matches a pattern with `*`, regardless of case; or posts without / with a source |
 | `md5:` | `md5:d41d8cd9…` | the file's MD5 hash |
 | `similar:` | `similar:123` | looks like post 123 (the post included); found once files are processed |
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
@@ -91,7 +92,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `is:sfw`, `is:nsfw` | `rating:g,s`, `rating:q,e` |
 | `is:general`, `is:explicit`, … | `rating:g`, `rating:e`, … |
 | `is:pending`, `is:deleted`, … | `status:pending`, `status:deleted`, … |
-| `has:source` | posts with a source |
+| `has:source` | `source:any` |
 | `has:pools` | `pool:any` |
 | `has:notes`, `has:comments` | `notecount:>0`, `commentcount:>0` |
 

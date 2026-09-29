@@ -72,6 +72,7 @@ var METATAGS = {
     "unmoderated",
     "appealed"
   ],
+  source: ["any", "none"],
   has: ["source", "children", "parent", "pools", "notes", "comments"]
 };
 var CATEGORIES = ["artist", "copyright", "character", "general", "meta"];

@@ -98,6 +98,12 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
                     .finish()
             )),
             comments_url => crate::templates::url_value(&comments_url),
+            changes_url => crate::templates::url_value(&format!(
+                "/post_versions?{}",
+                url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("user", &user.name)
+                    .finish()
+            )),
             bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
             can_ban => can_ban,
             banned => banned,

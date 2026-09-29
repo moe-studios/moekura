@@ -46,7 +46,8 @@ pub enum Permission {
     EditPools = 19,
     /// Add, change and delete notes on posts.
     EditNotes = 20,
-    /// Add and remove tags on every post matching a search at once.
+    /// Add and remove tags on every post matching a search at once, and
+    /// undo all of a user's post edits.
     MassEditTags = 21,
     /// Lock posts' rating, tags, notes and status, and change locked
     /// posts.
@@ -137,7 +138,7 @@ impl Permission {
             Permission::ModerateComments => "Hide comments and handle reports about them",
             Permission::EditPools => "Create and edit pools",
             Permission::EditNotes => "Edit notes",
-            Permission::MassEditTags => "Mass edit tags",
+            Permission::MassEditTags => "Mass edit tags and undo a user's edits",
             Permission::LockPosts => "Lock posts and change locked ones",
         }
     }

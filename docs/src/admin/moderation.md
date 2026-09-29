@@ -189,6 +189,23 @@ implication, category and mass edit changes; approving one applies them
 in order, and approving or rejecting it is logged. See
 [Tags](../using/tags.md#bulk-update-requests).
 
+## Post changes and undoing vandalism
+
+**Moderation → Post changes** (`/post_versions`, also linked from each
+post's history and each profile) lists every change to posts across the
+site, newest first, for anyone: tags added and removed, rating, source,
+parent, description and locks. Filter it by who made the change, the
+post, a tag added or removed, and a range of days.
+
+Filtered to one user, it offers those with *Mass edit tags* (moderators,
+by default) **Undo their edits**, for users ranked below them: in the
+background, every post edit the user made in the range is taken back.
+Tags they added come off and tags they removed go back; a rating,
+source, description or parent they set is put back where nobody changed
+it since, and locked tags and ratings are left alone. Uploads aren't
+edits and stay. Each post's history credits whoever started the undo,
+and the log records it.
+
 ## The moderation log
 
 **Moderation → Log** lists every staff action: approvals, deletions,

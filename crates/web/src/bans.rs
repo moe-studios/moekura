@@ -319,7 +319,14 @@ pub(crate) async fn lift_network(
     Ok(())
 }
 
-async fn index(page: Page) -> Result<Response, AppError> {
+#[derive(Debug, Default, Deserialize)]
+struct IndexQuery {
+    /// Fills in the form to ban a network.
+    #[serde(default)]
+    network: String,
+}
+
+async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::BanUsers)?;
     let db = page.state().db.primary();
     let users = bans::active(db, 200).await?;
@@ -336,6 +343,7 @@ async fn index(page: Page) -> Result<Response, AppError> {
                 until => n.expires_at.map(|t| t.date().to_string()),
             }).collect::<Vec<_>>(),
             durations => durations(),
+            network => query.network,
         },
     ))
 }

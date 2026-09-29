@@ -64,6 +64,16 @@ impl Job for PromoteUsers {
     const MAX_ATTEMPTS: i32 = 3;
 }
 
+/// Forget the addresses accounts haven't used for longer than the
+/// `ip_history_days` site setting; scheduled daily.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PruneIpHistory {}
+
+impl Job for PruneIpHistory {
+    const KIND: &'static str = "users.prune_ips";
+    const MAX_ATTEMPTS: i32 = 3;
+}
+
 /// Apply a mass tag edit (`mass_updates` row `id`) to every post matching
 /// its search.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

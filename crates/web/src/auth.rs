@@ -172,9 +172,13 @@ async fn refuse_key(path: &str) -> Response {
 pub async fn resolve_session(
     State(state): State<AppState>,
     jar: CookieJar,
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Response {
+    let (parts, body) = request.into_parts();
+    let ip = client_ip(&parts, &state.config.server.trusted_proxies);
+    let mut request = Request::from_parts(parts, body);
+    let changes = !request.method().is_safe();
     // Danbooru clients send a name and API key their own way.
     if request
         .extensions()
@@ -199,8 +203,10 @@ pub async fn resolve_session(
             }
             Err(error) => return AppError::from(error).into_response(),
         };
-        request.extensions_mut().insert(current);
-        return next.run(request).await;
+        request.extensions_mut().insert(current.clone());
+        let response = next.run(request).await;
+        remember_address(&state, &current, ip, changes, &response);
+        return response;
     }
     if let Some(token) = bearer_token(request.headers()) {
         let current = match key_user(&state, token).await {
@@ -208,8 +214,10 @@ pub async fn resolve_session(
             Ok(None) => return refuse_key(request.uri().path()).await,
             Err(error) => return AppError::from(error).into_response(),
         };
-        request.extensions_mut().insert(current);
-        return next.run(request).await;
+        request.extensions_mut().insert(current.clone());
+        let response = next.run(request).await;
+        remember_address(&state, &current, ip, changes, &response);
+        return response;
     }
 
     let site = state.site.get();
@@ -240,9 +248,9 @@ pub async fn resolve_session(
 
     let mut current = current;
     current.recent_write = jar.get(RECENT_WRITE_COOKIE).is_some();
-    let changes = !request.method().is_safe();
-    request.extensions_mut().insert(current);
+    request.extensions_mut().insert(current.clone());
     let mut response = next.run(request).await;
+    remember_address(&state, &current, ip, changes, &response);
 
     // With replicas, whoever just changed something reads from the primary
     // for a while, so they see their change.
@@ -269,6 +277,34 @@ pub async fn resolve_session(
         }
     }
     response
+}
+
+/// Adds the address a logged-in user changed something from to their IP
+/// history, in the background (it's written at most hourly per address).
+fn remember_address(
+    state: &AppState,
+    current: &CurrentUser,
+    ip: Option<IpAddr>,
+    changes: bool,
+    response: &Response,
+) {
+    let status = response.status();
+    if !changes || !(status.is_success() || status.is_redirection()) {
+        return;
+    }
+    let (Some(user), Some(ip)) = (current.user.as_ref(), ip) else {
+        return;
+    };
+    if state.site.get().settings.ip_history_days == 0 {
+        return;
+    }
+    let db = state.db.primary().clone();
+    let user_id = user.id;
+    tokio::spawn(async move {
+        if let Err(error) = moekura_db::user_ips::record(&db, user_id, ip).await {
+            tracing::warn!(%error, "could not record the address of a change");
+        }
+    });
 }
 
 fn sets_session_cookie(response: &Response) -> bool {
@@ -319,6 +355,11 @@ pub async fn log_in(
         ip: parts.ip,
     };
     let token = sessions::create(state.db.primary(), session, lifetime(state)).await?;
+    if let Some(ip) = parts.ip
+        && state.site.get().settings.ip_history_days > 0
+    {
+        moekura_db::user_ips::record(state.db.primary(), user.id, ip).await?;
+    }
     Ok(jar.add(session_cookie(state, token)))
 }
 

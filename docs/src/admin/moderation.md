@@ -59,6 +59,24 @@ dismissed; reports about their comments and their hidden comments; and,
 for those who read the log, what was logged about them and what they
 did themselves.
 
+### Addresses
+
+For staff who can ban users, the record also lists the addresses the
+account used, when each was first and last seen, and the other accounts
+seen on the same addresses, which is how ban evaders usually show. Each
+address has shortcuts to ban it, or its `/24` (IPv4) or `/64` (IPv6)
+network, under **Moderation → Bans**.
+
+What's stored, for your privacy policy: for each account, each address it
+logged in or changed something from (posting, editing, voting, changing
+settings and so on; merely reading pages isn't recorded), with the first
+and last time it was seen, at most hourly. Addresses are kept for 365 days
+after they were last seen, then forgotten by a daily job; change that
+under **Admin → Settings** (**Keep the addresses accounts use**), where 0
+keeps none and stops recording them. Deleting an account deletes its
+addresses. Sessions separately keep the address they were started from
+until they end.
+
 ## Tag aliases and implications
 
 Members request them under **Tags → Aliases** or **Implications**; people

@@ -155,6 +155,7 @@ fn render_settings(
                     max_recent_deletions => current.promotion_rules.max_recent_deletions,
                 },
                 default_blacklist => current.default_blacklist,
+                ip_history_days => current.ip_history_days,
                 tagger => context! {
                     thresholds => thresholds,
                     auto_apply => current.tagger.auto_apply,
@@ -210,6 +211,7 @@ struct SettingsForm {
     promotion_max_recent_deletions: String,
     #[serde(default)]
     default_blacklist: String,
+    ip_history_days: Option<String>,
     /// Present when ticked.
     tagger_auto_apply: Option<String>,
     tagger_auto_threshold: Option<String>,
@@ -292,6 +294,12 @@ async fn save_settings(
         (
             "default_blacklist",
             json!(form.default_blacklist.replace("\r\n", "\n").trim()),
+        ),
+        (
+            "ip_history_days",
+            form.ip_history_days
+                .as_deref()
+                .map_or_else(|| json!(before.ip_history_days), number),
         ),
         (
             "tagger",

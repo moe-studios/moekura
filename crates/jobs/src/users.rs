@@ -1,16 +1,20 @@
-//! The `users.promote` job: promoting members whose record meets the
-//! site's rules, when automatic promotion is on.
+//! Scheduled jobs about accounts: `users.promote` promotes members whose
+//! record meets the site's rules, when automatic promotion is on, and
+//! `users.prune_ips` forgets old addresses.
 
 use std::time::Duration;
 
-use moekura_core::jobs::PromoteUsers;
-use moekura_db::{promotion, settings};
+use moekura_core::jobs::{PromoteUsers, PruneIpHistory};
+use moekura_db::{promotion, settings, user_ips};
 use sqlx::PgPool;
 
 use crate::{JobError, Registry};
 
 /// How often members are checked.
 pub const PROMOTION_EVERY: Duration = Duration::from_secs(60 * 60);
+
+/// How often old addresses are forgotten.
+pub const PRUNE_IPS_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 #[derive(Clone)]
 pub struct UserJobs {
@@ -19,12 +23,30 @@ pub struct UserJobs {
 
 impl UserJobs {
     pub fn register(self, registry: &mut Registry) {
+        let jobs = self.clone();
         registry
             .register(move |_: PromoteUsers| {
-                let jobs = self.clone();
+                let jobs = jobs.clone();
                 async move { jobs.promote().await.map(|_| ()) }
             })
             .every::<PromoteUsers>(PROMOTION_EVERY);
+        registry
+            .register(move |_: PruneIpHistory| {
+                let jobs = self.clone();
+                async move { jobs.prune_ips().await.map(|_| ()) }
+            })
+            .every::<PruneIpHistory>(PRUNE_IPS_EVERY);
+    }
+
+    /// Forgets addresses unused for longer than the site keeps them;
+    /// returns how many.
+    pub async fn prune_ips(&self) -> Result<u64, JobError> {
+        let days = settings::load(&self.db).await?.ip_history_days;
+        let pruned = user_ips::prune(&self.db, days).await?;
+        if pruned > 0 {
+            tracing::info!(pruned, "forgot old addresses");
+        }
+        Ok(pruned)
     }
 
     /// Promotes every member who qualifies; returns how many.
@@ -74,6 +96,32 @@ mod tests {
             .unwrap();
         assert_eq!(jobs.promote().await.unwrap(), 1);
         assert_eq!(jobs.promote().await.unwrap(), 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn old_addresses_are_forgotten(pool: PgPool) {
+        let user: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles
+             WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO user_ips (user_id, ip, last_seen_at)
+             VALUES ($1, '203.0.113.1', now() - interval '400 days'),
+                    ($1, '203.0.113.2', now() - interval '2 days')",
+        )
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let jobs = UserJobs { db: pool.clone() };
+        assert_eq!(jobs.prune_ips().await.unwrap(), 1, "kept for a year");
+        settings::set(&pool, "ip_history_days", json!(0))
+            .await
+            .unwrap();
+        assert_eq!(jobs.prune_ips().await.unwrap(), 1, "none kept");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

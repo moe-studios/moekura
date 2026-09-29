@@ -317,26 +317,30 @@ fn sets_session_cookie(response: &Response) -> bool {
 }
 
 /// Middleware: refuses changes (anything but GET and HEAD, and logging
-/// out) from banned networks.
+/// out) from banned networks, and everything from fully banned ones.
 pub async fn block_banned_networks(
     State(state): State<AppState>,
     request: Request,
     next: Next,
 ) -> Response {
-    if request.method().is_safe() || request.uri().path() == "/logout" {
-        return next.run(request).await;
-    }
     let (parts, body) = request.into_parts();
     if let Some(ip) = client_ip(&parts, &state.config.server.trusted_proxies) {
-        match moekura_db::bans::network_ban(state.db.primary(), ip).await {
-            Ok(Some(reason)) => {
+        let site = state.site.get();
+        if let Some(ban) = site.network_ban(ip) {
+            if ban.full {
                 return AppError::Blocked(format!(
-                    "Your network is banned from making changes: {reason}"
+                    "Your network is banned from this site: {}",
+                    ban.reason
                 ))
                 .into_response();
             }
-            Ok(None) => {}
-            Err(error) => return AppError::from(error).into_response(),
+            if !parts.method.is_safe() && parts.uri.path() != "/logout" {
+                return AppError::Blocked(format!(
+                    "Your network is banned from making changes: {}",
+                    ban.reason
+                ))
+                .into_response();
+            }
         }
     }
     next.run(Request::from_parts(parts, body)).await

@@ -41,10 +41,19 @@ why they're banned, and can't change anything; their API keys are limited
 the same way. Banning someone who's already banned replaces their ban
 with the new reason and length. Timed bans last up to 3650 days.
 
-Networks (an address or a CIDR range such as `203.0.113.0/24`) are banned
-under **Moderation → Bans**. Requests from them can read, but not
-register, log in or change anything. The range may not include your own
-address, or be wider than a `/8` (IPv4) or `/16` (IPv6).
+Networks (an address or a CIDR range such as `203.0.113.0/24`, or
+`2001:db8::/64` for IPv6, where one household usually has a whole `/64`)
+are banned under **Moderation → Bans**, partly or fully:
+
+- a **partial** ban lets requests from the network read, but not
+  register, log in or change anything;
+- a **full** ban keeps the network from seeing the site at all: every
+  page and API call answers that the network is banned, with the reason.
+
+The range may not include your own address, or be wider than a `/8`
+(IPv4) or `/16` (IPv6). Network bans are kept in memory on every node,
+so checking them costs nothing per request; changes reach other nodes
+within moments.
 
 ## A user's record
 

@@ -136,60 +136,98 @@ pub struct IpBan {
     pub banner_name: Option<String>,
     pub expires_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
+    /// The network can't see the site at all, rather than only not
+    /// change anything.
+    pub full: bool,
 }
 
+/// Tells every node's site cache that network bans changed; call it in
+/// the transaction making the change.
+async fn announce(conn: &mut PgConnection) -> sqlx::Result<()> {
+    sqlx::query("SELECT pg_notify($1, 'ip_bans')")
+        .bind(crate::site_cache::CHANNEL)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Bans a network: fully (it can't see the site) or partly (it can't
+/// register, log in or change anything).
 pub async fn ban_network(
-    db: impl PgExecutor<'_>,
+    conn: &mut PgConnection,
     network: IpNet,
     reason: &str,
     expires_at: Option<OffsetDateTime>,
+    full: bool,
     banner_id: Option<i64>,
 ) -> sqlx::Result<i64> {
-    sqlx::query_scalar(
-        "INSERT INTO ip_bans (network, reason, expires_at, banner_id) VALUES ($1, $2, $3, $4)
-         RETURNING id",
+    let id = sqlx::query_scalar(
+        "INSERT INTO ip_bans (network, reason, expires_at, full_ban, banner_id)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(network.trunc())
     .bind(reason)
     .bind(expires_at)
+    .bind(full)
     .bind(banner_id)
-    .fetch_one(db)
-    .await
+    .fetch_one(&mut *conn)
+    .await?;
+    announce(conn).await?;
+    Ok(id)
 }
 
 /// Lifts network ban `id`, returning its network; `None` if it was lifted
 /// already.
 pub async fn lift_network(
-    db: impl PgExecutor<'_>,
+    conn: &mut PgConnection,
     id: i64,
     lifter_id: Option<i64>,
 ) -> sqlx::Result<Option<IpNet>> {
-    sqlx::query_scalar(
+    let network = sqlx::query_scalar(
         "UPDATE ip_bans SET lifted_at = now(), lifter_id = $2
          WHERE id = $1 AND lifted_at IS NULL RETURNING network",
     )
     .bind(id)
     .bind(lifter_id)
-    .fetch_optional(db)
-    .await
+    .fetch_optional(&mut *conn)
+    .await?;
+    announce(conn).await?;
+    Ok(network)
 }
 
-/// The reason `ip` is banned, if it is.
-pub async fn network_ban(db: impl PgExecutor<'_>, ip: IpAddr) -> sqlx::Result<Option<String>> {
-    sqlx::query_scalar(
-        "SELECT reason FROM ip_bans
-         WHERE network >>= $1 AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
-         ORDER BY id DESC LIMIT 1",
+/// A network ban in force, as the site cache keeps them.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct NetworkBan {
+    pub network: IpNet,
+    pub reason: String,
+    /// `None` until lifted.
+    pub expires_at: Option<OffsetDateTime>,
+    pub full: bool,
+}
+
+impl NetworkBan {
+    /// Whether it covers `ip` at `now`.
+    pub fn covers(&self, ip: IpAddr, now: OffsetDateTime) -> bool {
+        self.network.contains(&ip) && self.expires_at.is_none_or(|t| t > now)
+    }
+}
+
+/// The network bans in force.
+pub async fn networks_in_force(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<NetworkBan>> {
+    sqlx::query_as(
+        "SELECT network, reason, expires_at, full_ban AS full FROM ip_bans
+         WHERE lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
+         ORDER BY id DESC",
     )
-    .bind(IpNet::from(ip))
-    .fetch_optional(db)
+    .fetch_all(db)
     .await
 }
 
 /// IP bans in force, newest first.
 pub async fn active_networks(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<IpBan>> {
     sqlx::query_as(
-        "SELECT i.id, i.network, i.reason, x.name::text AS banner_name, i.expires_at, i.created_at
+        "SELECT i.id, i.network, i.reason, x.name::text AS banner_name, i.expires_at, i.created_at,
+                i.full_ban AS full
          FROM ip_bans i LEFT JOIN users x ON x.id = i.banner_id
          WHERE i.lifted_at IS NULL AND (i.expires_at IS NULL OR i.expires_at > now())
          ORDER BY i.id DESC LIMIT 500",
@@ -253,37 +291,37 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn network_bans(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
         let range: IpNet = "203.0.113.7/24".parse().unwrap();
-        let id = ban_network(&pool, range, "abuse", None, None)
+        let id = ban_network(&mut conn, range, "abuse", None, false, None)
             .await
             .unwrap();
-        assert_eq!(
-            network_ban(&pool, "203.0.113.200".parse().unwrap())
-                .await
-                .unwrap()
-                .as_deref(),
-            Some("abuse")
-        );
-        assert!(
-            network_ban(&pool, "203.0.114.1".parse().unwrap())
-                .await
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            network_ban(&pool, "2001:db8::1".parse().unwrap())
-                .await
-                .unwrap()
-                .is_none()
-        );
+        let week = OffsetDateTime::now_utc() + time::Duration::days(7);
+        let v6: IpNet = "2001:db8::/64".parse().unwrap();
+        ban_network(&mut conn, v6, "worse", Some(week), true, None)
+            .await
+            .unwrap();
+        let in_force = networks_in_force(&pool).await.unwrap();
+        let now = OffsetDateTime::now_utc();
+        let covering = |ip: &str| {
+            let ip: IpAddr = ip.parse().unwrap();
+            in_force
+                .iter()
+                .find(|b| b.covers(ip, now))
+                .map(|b| (b.reason.as_str(), b.full))
+        };
+        assert_eq!(covering("203.0.113.200"), Some(("abuse", false)));
+        assert_eq!(covering("203.0.114.1"), None);
+        assert_eq!(covering("2001:db8::1:2"), Some(("worse", true)));
+        assert!(!in_force[0].covers("2001:db8::1".parse().unwrap(), week));
         // Stored normalised.
         assert_eq!(
-            active_networks(&pool).await.unwrap()[0].network.to_string(),
+            active_networks(&pool).await.unwrap()[1].network.to_string(),
             "203.0.113.0/24"
         );
         let lifter = user(&pool, "mod").await;
         assert!(
-            lift_network(&pool, id, Some(lifter))
+            lift_network(&mut conn, id, Some(lifter))
                 .await
                 .unwrap()
                 .is_some()
@@ -295,12 +333,7 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(lifted_by, Some(lifter));
-        assert!(lift_network(&pool, id, None).await.unwrap().is_none());
-        assert!(
-            network_ban(&pool, "203.0.113.200".parse().unwrap())
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(lift_network(&mut conn, id, None).await.unwrap().is_none());
+        assert_eq!(networks_in_force(&pool).await.unwrap().len(), 1);
     }
 }

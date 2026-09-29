@@ -8,6 +8,8 @@ pub struct WikiPage {
     pub id: i32,
     pub title: String,
     pub body: String,
+    /// What the tag is called elsewhere (moekura_core::wiki).
+    pub other_names: Vec<String>,
     pub version: i32,
     pub updater_name: Option<String>,
     pub created_at: OffsetDateTime,
@@ -18,6 +20,7 @@ pub struct WikiPage {
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Summary {
     pub title: String,
+    pub other_names: Vec<String>,
     pub version: i32,
     pub updater_name: Option<String>,
     pub updated_at: OffsetDateTime,
@@ -28,12 +31,13 @@ pub struct Version {
     pub version: i32,
     pub updater_name: Option<String>,
     pub body: String,
+    pub other_names: Vec<String>,
     pub created_at: OffsetDateTime,
 }
 
 pub async fn by_title(db: impl PgExecutor<'_>, title: &str) -> sqlx::Result<Option<WikiPage>> {
     sqlx::query_as(
-        "SELECT p.id, p.title, p.body, p.version, u.name::text AS updater_name,
+        "SELECT p.id, p.title, p.body, p.other_names, p.version, u.name::text AS updater_name,
                 p.created_at, p.updated_at
          FROM wiki_pages p LEFT JOIN users u ON u.id = p.updater_id
          WHERE p.title = $1",
@@ -45,7 +49,7 @@ pub async fn by_title(db: impl PgExecutor<'_>, title: &str) -> sqlx::Result<Opti
 
 pub async fn by_id(db: impl PgExecutor<'_>, id: i32) -> sqlx::Result<Option<WikiPage>> {
     sqlx::query_as(
-        "SELECT p.id, p.title, p.body, p.version, u.name::text AS updater_name,
+        "SELECT p.id, p.title, p.body, p.other_names, p.version, u.name::text AS updater_name,
                 p.created_at, p.updated_at
          FROM wiki_pages p LEFT JOIN users u ON u.id = p.updater_id
          WHERE p.id = $1",
@@ -55,23 +59,59 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i32) -> sqlx::Result<Option<Wiki
     .await
 }
 
-/// Pages whose title matches `pattern` (see [`crate::tags::like_pattern`]),
+/// Where [`list`] looks for its pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Match {
+    Title,
+    OtherNames,
+    /// The title or any other name.
+    Either,
+}
+
+/// Pages whose title or other names (as `matching` says) match `pattern`
+/// (see [`crate::tags::like_pattern`]; other names regardless of case),
 /// most recently changed first.
 pub async fn list(
     db: impl PgExecutor<'_>,
     pattern: &str,
+    matching: Match,
     offset: i64,
     limit: i64,
 ) -> sqlx::Result<Vec<Summary>> {
+    let like = crate::tags::like_pattern(pattern);
+    let (title, other) = match matching {
+        Match::Title => (true, false),
+        Match::OtherNames => (false, true),
+        Match::Either => (true, true),
+    };
     sqlx::query_as(
-        "SELECT p.title, p.version, u.name::text AS updater_name, p.updated_at
+        "SELECT p.title, p.other_names, p.version, u.name::text AS updater_name, p.updated_at
          FROM wiki_pages p LEFT JOIN users u ON u.id = p.updater_id
-         WHERE $1 = '%' OR p.title LIKE $1
-         ORDER BY p.updated_at DESC, p.id DESC OFFSET $2 LIMIT $3",
+         WHERE ($1 = '%' AND $2)
+            OR ($2 AND p.title LIKE $1)
+            OR ($3 AND EXISTS (SELECT 1 FROM unnest(p.other_names) AS n WHERE lower(n) LIKE lower($1)))
+         ORDER BY p.updated_at DESC, p.id DESC OFFSET $4 LIMIT $5",
     )
-    .bind(crate::tags::like_pattern(pattern))
+    .bind(like)
+    .bind(title)
+    .bind(other)
     .bind(offset)
     .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// Titles of the pages with any of `names` among their other names
+/// (exactly), by title.
+pub async fn titles_for_other_names(
+    db: impl PgExecutor<'_>,
+    names: &[String],
+) -> sqlx::Result<Vec<(String, Vec<String>)>> {
+    sqlx::query_as(
+        "SELECT title::text, other_names FROM wiki_pages
+         WHERE other_names && $1::text[] ORDER BY title",
+    )
+    .bind(names)
     .fetch_all(db)
     .await
 }
@@ -79,7 +119,7 @@ pub async fn list(
 /// A page's versions, newest first (at most the latest 500).
 pub async fn versions(db: impl PgExecutor<'_>, page_id: i32) -> sqlx::Result<Vec<Version>> {
     sqlx::query_as(
-        "SELECT v.version, u.name::text AS updater_name, v.body, v.created_at
+        "SELECT v.version, u.name::text AS updater_name, v.body, v.other_names, v.created_at
          FROM wiki_page_versions v LEFT JOIN users u ON u.id = v.updater_id
          WHERE v.wiki_page_id = $1 ORDER BY v.version DESC LIMIT 500",
     )
@@ -133,7 +173,7 @@ pub async fn version(
     version: i32,
 ) -> sqlx::Result<Option<Version>> {
     sqlx::query_as(
-        "SELECT v.version, u.name::text AS updater_name, v.body, v.created_at
+        "SELECT v.version, u.name::text AS updater_name, v.body, v.other_names, v.created_at
          FROM wiki_page_versions v LEFT JOIN users u ON u.id = v.updater_id
          WHERE v.wiki_page_id = $1 AND v.version = $2",
     )
@@ -153,40 +193,70 @@ pub enum SaveError {
     Db(#[from] sqlx::Error),
 }
 
-/// Saves `body` as the text of the page `title` (already normalised),
-/// creating it if needed, and returns the page's version afterwards.
+/// What a save writes to a page.
+#[derive(Debug, Clone, Copy)]
+pub struct Text<'a> {
+    pub body: &'a str,
+    /// Normalised (moekura_core::wiki); `None` keeps the page's.
+    pub other_names: Option<&'a [String]>,
+}
+
+impl<'a> From<&'a str> for Text<'a> {
+    /// Just the text, keeping the page's other names.
+    fn from(body: &'a str) -> Self {
+        Self {
+            body,
+            other_names: None,
+        }
+    }
+}
+
+/// Saves `text` to the page `title` (already normalised), creating it if
+/// needed, and returns the page's version afterwards.
 ///
 /// `base` is the version the editor started from, 0 for a new page; a
 /// different current version is a [`SaveError::Conflict`]. `None` saves
 /// over whatever is there. Saving unchanged text records no new version.
-pub async fn save(
+pub async fn save<'a>(
     db: &PgPool,
     title: &str,
-    body: &str,
+    text: impl Into<Text<'a>>,
     updater_id: Option<i64>,
     base: Option<i32>,
 ) -> Result<i32, SaveError> {
+    let text = text.into();
+    let body = text.body;
     let mut tx = db.begin().await?;
-    let existing: Option<(i32, i32, String)> =
-        sqlx::query_as("SELECT id, version, body FROM wiki_pages WHERE title = $1 FOR UPDATE")
-            .bind(title)
-            .fetch_optional(&mut *tx)
-            .await?;
-    let current = existing.as_ref().map_or(0, |(_, version, _)| *version);
+    let existing: Option<(i32, i32, String, Vec<String>)> = sqlx::query_as(
+        "SELECT id, version, body, other_names FROM wiki_pages WHERE title = $1 FOR UPDATE",
+    )
+    .bind(title)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let current = existing.as_ref().map_or(0, |(_, version, _, _)| *version);
     if let Some(base) = base
         && base != current
     {
         return Err(SaveError::Conflict { base, current });
     }
+    let other_names: Vec<String> = match (text.other_names, &existing) {
+        (Some(names), _) => names.to_vec(),
+        (None, Some((_, _, _, names))) => names.clone(),
+        (None, None) => Vec::new(),
+    };
     let (id, version) = match existing {
-        Some((_, version, old)) if old == body => return Ok(version),
-        Some((id, version, _)) => {
+        Some((_, version, old, old_names)) if old == body && old_names == other_names => {
+            return Ok(version);
+        }
+        Some((id, version, _, _)) => {
             sqlx::query(
-                "UPDATE wiki_pages SET body = $2, version = $3, updater_id = $4, updated_at = now()
+                "UPDATE wiki_pages SET body = $2, other_names = $3, version = $4, updater_id = $5,
+                                       updated_at = now()
                  WHERE id = $1",
             )
             .bind(id)
             .bind(body)
+            .bind(&other_names)
             .bind(version + 1)
             .bind(updater_id)
             .execute(&mut *tx)
@@ -196,11 +266,12 @@ pub async fn save(
         None => {
             // Someone creating the same page at the same moment wins.
             let id: Option<i32> = sqlx::query_scalar(
-                "INSERT INTO wiki_pages (title, body, updater_id) VALUES ($1, $2, $3)
+                "INSERT INTO wiki_pages (title, body, other_names, updater_id) VALUES ($1, $2, $3, $4)
                  ON CONFLICT (title) DO NOTHING RETURNING id",
             )
             .bind(title)
             .bind(body)
+            .bind(&other_names)
             .bind(updater_id)
             .fetch_optional(&mut *tx)
             .await?;
@@ -212,13 +283,14 @@ pub async fn save(
         }
     };
     sqlx::query(
-        "INSERT INTO wiki_page_versions (wiki_page_id, version, updater_id, body)
-         VALUES ($1, $2, $3, $4)",
+        "INSERT INTO wiki_page_versions (wiki_page_id, version, updater_id, body, other_names)
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id)
     .bind(version)
     .bind(updater_id)
     .bind(body)
+    .bind(&other_names)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -318,11 +390,63 @@ mod tests {
         }
         let titles = |found: Vec<Summary>| found.into_iter().map(|s| s.title).collect::<Vec<_>>();
         assert_eq!(
-            titles(list(&pool, "cat", 0, 10).await.unwrap()),
+            titles(list(&pool, "cat", Match::Title, 0, 10).await.unwrap()),
             ["cat", "cat_ears"]
         );
-        assert_eq!(titles(list(&pool, "*og", 0, 10).await.unwrap()), ["dog"]);
-        assert_eq!(list(&pool, "", 0, 10).await.unwrap().len(), 3);
-        assert_eq!(titles(list(&pool, "", 1, 1).await.unwrap()), ["cat"]);
+        assert_eq!(
+            titles(list(&pool, "*og", Match::Title, 0, 10).await.unwrap()),
+            ["dog"]
+        );
+        assert_eq!(list(&pool, "", Match::Title, 0, 10).await.unwrap().len(), 3);
+        assert_eq!(
+            titles(list(&pool, "", Match::Title, 1, 1).await.unwrap()),
+            ["cat"]
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn other_names(pool: PgPool) {
+        let names = vec!["猫".to_owned(), "Neko".to_owned()];
+        let text = Text {
+            body: "A cat.",
+            other_names: Some(&names),
+        };
+        assert_eq!(save(&pool, "cat", text, None, Some(0)).await.unwrap(), 1);
+        save(&pool, "dog", "A dog.", None, None).await.unwrap();
+        // Saving just the text keeps them; changing only them is a version.
+        assert_eq!(save(&pool, "cat", "A cat.", None, None).await.unwrap(), 1);
+        let page = by_title(&pool, "cat").await.unwrap().unwrap();
+        assert_eq!(page.other_names, names);
+        let fewer = vec!["Neko".to_owned()];
+        let text = Text {
+            body: "A cat.",
+            other_names: Some(&fewer),
+        };
+        assert_eq!(save(&pool, "cat", text, None, None).await.unwrap(), 2);
+        let history = versions(&pool, page.id).await.unwrap();
+        assert_eq!(history[0].other_names, fewer);
+        assert_eq!(history[1].other_names, names);
+
+        let titles = |found: Vec<Summary>| found.into_iter().map(|s| s.title).collect::<Vec<_>>();
+        assert_eq!(
+            titles(list(&pool, "neko", Match::Either, 0, 10).await.unwrap()),
+            ["cat"]
+        );
+        assert_eq!(
+            titles(list(&pool, "d", Match::Either, 0, 10).await.unwrap()),
+            ["dog"]
+        );
+        assert!(
+            list(&pool, "cat", Match::OtherNames, 0, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            titles_for_other_names(&pool, &["Neko".to_owned(), "犬".to_owned()])
+                .await
+                .unwrap(),
+            [("cat".to_owned(), fewer)]
+        );
     }
 }

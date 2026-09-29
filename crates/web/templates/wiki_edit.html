@@ -14,6 +14,9 @@
     <code>[[tag|text]]</code> for another wiki page, <code>{{ '{{' }}search{{ '}}' }}</code> for search
     results, <code>post #123</code>, and plain links.
   </p>
+  <label for="wiki-other-names">Other names</label>
+  <input id="wiki-other-names" name="other_names" value="{{ other_names }}" autocomplete="off" autocapitalize="none" spellcheck="false">
+  <p class="hint">What the tag is called elsewhere, such as its Japanese name or a romanisation, separated by spaces (underscores within a name).</p>
   <button type="submit">Save</button>
 </form>
 {% endblock %}

@@ -55,7 +55,7 @@ engine, then log in with your name and your API key.
 | `/tags.json`, `/autocomplete.json`, `/related_tag.json` | related tags are estimated from a search's newest 200 posts |
 | `/tag_aliases.json`, `/tag_implications.json` | |
 | `/tag_versions.json` | by `search[tag_id]`, `search[name]`, `search[updater_id]` or `search[updater_name]` |
-| `/wiki_pages.json`, `/wiki_pages/{title or id}.json` | |
+| `/wiki_pages.json`, `/wiki_pages/{title or id}.json` | by `search[title]`, `search[other_names_match]` (`*` wildcards; without one, the whole name) or `search[other_names_include_any]` |
 | `/profile.json`, `/users.json`, `/users/{id}.json` | levels follow roles: Member 20, Contributor 35, Janitor 37, Moderator 40, Admin 50 |
 | `/favorites.json`, `/favorites/{post_id}.json`, `/posts/{id}/favorites.json` | |
 | `/posts/{id}/votes.json`, `/post_votes.json` | only your own votes are listed |

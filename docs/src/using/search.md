@@ -81,6 +81,8 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm` |
 | `date:` | `date:2026-01` | upload date (UTC): a day, month or year |
 | `source:` | `source:https://twitter.com/foo`, `source:*pixiv.net*`, `source:none`, `source:any` | the source starts with this, or matches a pattern with `*`, regardless of case; or posts without / with a source |
+| `age:` | `age:<1w`, `age:2d..1mo` | uploaded this long ago: `<1w` is less than a week ago; units `s`, `mi`, `h`, `d`, `w`, `mo` (30 days; `m` works too) and `y` |
+| `updated:` | `updated:<1d`, `updated:2026-01` | last changed (tags, rating, source, status, …) this long ago, or on these days |
 | `md5:` | `md5:d41d8cd9…` | the file's MD5 hash |
 | `similar:` | `similar:123` | looks like post 123 (the post included); found once files are processed |
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
@@ -142,6 +144,7 @@ posts with an open appeal.
 | `order:arttags`, `order:gentags_asc`, … | most / fewest tags in a category |
 | `order:comment`, `order:comment_asc` | most / least recently commented (only posts with comments) |
 | `order:note`, `order:note_asc` | most / least recently noted (only posts with notes) |
+| `order:change`, `order:change_asc` | most / least recently changed, e.g. to follow recent tag edits (`order:updated` works too) |
 | `order:random` | shuffled |
 | `ordfav:alice` | alice's favorites, most recently favorited first |
 | `ordpool:my_comic` | the pool's posts, in the pool's order |

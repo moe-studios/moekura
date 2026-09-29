@@ -48,7 +48,9 @@ var METATAGS = {
     "comment",
     "comment_asc",
     "note",
-    "note_asc"
+    "note_asc",
+    "change",
+    "change_asc"
   ],
   limit: [],
   fav: [],
@@ -88,6 +90,8 @@ var METATAGS = {
   copytags: [],
   chartags: [],
   metatags: [],
+  age: [],
+  updated: [],
   upvote: [],
   downvote: [],
   has: ["source", "children", "parent", "pools", "notes", "comments"]

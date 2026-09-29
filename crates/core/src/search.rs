@@ -75,6 +75,8 @@ pub const METATAGS: &[&str] = &[
     "flagger",
     "upvote",
     "downvote",
+    "age",
+    "updated",
 ];
 
 /// Category names accepted, and ignored, in front of a search tag
@@ -215,6 +217,93 @@ pub enum UserMatch {
     Name(String),
 }
 
+/// A length of time back from now, as in `age:<2d`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Age {
+    pub amount: i64,
+    pub unit: AgeUnit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgeUnit {
+    Seconds,
+    Minutes,
+    Hours,
+    Days,
+    Weeks,
+    /// 30 days.
+    Months,
+    /// 365 days.
+    Years,
+}
+
+impl AgeUnit {
+    /// Suffixes, canonical first for each unit.
+    const NAMES: &[(&'static str, AgeUnit)] = &[
+        ("s", AgeUnit::Seconds),
+        ("mi", AgeUnit::Minutes),
+        ("min", AgeUnit::Minutes),
+        ("h", AgeUnit::Hours),
+        ("d", AgeUnit::Days),
+        ("w", AgeUnit::Weeks),
+        ("mo", AgeUnit::Months),
+        ("m", AgeUnit::Months),
+        ("y", AgeUnit::Years),
+    ];
+}
+
+impl Age {
+    pub fn seconds(self) -> i64 {
+        let unit = match self.unit {
+            AgeUnit::Seconds => 1,
+            AgeUnit::Minutes => 60,
+            AgeUnit::Hours => 3600,
+            AgeUnit::Days => 86_400,
+            AgeUnit::Weeks => 7 * 86_400,
+            AgeUnit::Months => 30 * 86_400,
+            AgeUnit::Years => 365 * 86_400,
+        };
+        self.amount.saturating_mul(unit)
+    }
+}
+
+impl fmt::Display for Age {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let unit = AgeUnit::NAMES
+            .iter()
+            .find(|(_, unit)| *unit == self.unit)
+            .map_or("s", |(name, _)| name);
+        write!(f, "{}{unit}", self.amount)
+    }
+}
+
+/// `2d`, `12h`, `1mo`, …
+fn age(s: &str) -> Option<Age> {
+    let digits = s.find(|c: char| !c.is_ascii_digit())?;
+    let (amount, unit) = s.split_at(digits);
+    let unit = AgeUnit::NAMES.iter().find(|(name, _)| *name == unit)?.1;
+    Some(Age {
+        amount: amount.parse().ok()?,
+        unit,
+    })
+}
+
+/// Ages compared (`<1w`, `2d..1mo`), without lists.
+fn age_bound(value: &str) -> Option<Bound<Age>> {
+    bound(value, age).filter(|b| !matches!(b, Bound::In(_)))
+}
+
+/// When something happened: a time back from now, or UTC days.
+#[derive(Debug, Clone, PartialEq)]
+pub enum When {
+    Ago(Bound<Age>),
+    /// On or after `from` and before `until`.
+    Dates {
+        from: Option<Date>,
+        until: Option<Date>,
+    },
+}
+
 /// What a post's source must be.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceFilter {
@@ -264,6 +353,10 @@ pub enum Filter {
         from: Option<Date>,
         until: Option<Date>,
     },
+    /// Uploaded this long ago.
+    Age(Bound<Age>),
+    /// Last changed then.
+    Updated(When),
     FileType(Vec<String>),
     Md5(Vec<[u8; 16]>),
     Parent(ParentFilter),
@@ -348,6 +441,9 @@ pub enum Order {
     /// Most recently noted first; only posts with notes.
     NoteDesc,
     NoteAsc,
+    /// Most recently changed first.
+    ChangeDesc,
+    ChangeAsc,
     /// Most tags of [`Query::ordcategory`] first (`order:arttags`).
     CategoryTagsDesc,
     CategoryTagsAsc,
@@ -386,6 +482,12 @@ impl Order {
         ("note", Order::NoteDesc),
         ("note_desc", Order::NoteDesc),
         ("note_asc", Order::NoteAsc),
+        ("change", Order::ChangeDesc),
+        ("change_desc", Order::ChangeDesc),
+        ("change_asc", Order::ChangeAsc),
+        ("updated", Order::ChangeDesc),
+        ("updated_desc", Order::ChangeDesc),
+        ("updated_asc", Order::ChangeAsc),
     ];
 
     pub fn name(self) -> &'static str {
@@ -994,6 +1096,16 @@ impl Query {
                     .ok_or_else(|| invalid("expected a date like 2026-01-31, 2026-01 or 2026"))?;
                 Filter::Date { from, until }
             }
+            "age" => Filter::Age(
+                age_bound(value).ok_or_else(|| invalid("expected an age like <1w or 2d..1mo"))?,
+            ),
+            "updated" => Filter::Updated(match (age_bound(value), date_range(value)) {
+                (Some(ago), _) => When::Ago(ago),
+                (None, Some((from, until))) => When::Dates { from, until },
+                (None, None) => {
+                    return Err(invalid("expected an age like <1d, or a date like 2026-01"));
+                }
+            }),
             "rating" => Filter::Rating(
                 list(value, |v| v.parse().ok())
                     .ok_or_else(|| invalid("expected ratings like g, s, q or e"))?,
@@ -1258,6 +1370,23 @@ impl fmt::Display for Condition {
     }
 }
 
+/// `name:` with a range of days, as [`date_range`] reads it.
+fn write_dates(
+    f: &mut fmt::Formatter<'_>,
+    name: &str,
+    from: Option<Date>,
+    until: Option<Date>,
+) -> fmt::Result {
+    let last = |d: Date| d - Duration::days(1);
+    match (from, until) {
+        (Some(a), Some(b)) if a == last(b) => write!(f, "{name}:{a}"),
+        (Some(a), Some(b)) => write!(f, "{name}:{a}..{}", last(b)),
+        (Some(a), None) => write!(f, "{name}:>={a}"),
+        (None, Some(b)) => write!(f, "{name}:<{b}"),
+        (None, None) => write!(f, "{name}:>=0001-01-01"),
+    }
+}
+
 /// Groups print in parentheses, so they parse back the same.
 impl fmt::Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1310,15 +1439,11 @@ impl fmt::Display for Filter {
             Filter::Ratio(b) => write!(f, "ratio:{b}"),
             Filter::FileSize(b) => write!(f, "filesize:{b}"),
             Filter::Duration(b) => write!(f, "duration:{b}"),
-            Filter::Date { from, until } => {
-                let last = |d: &Date| *d - Duration::days(1);
-                match (from, until) {
-                    (Some(a), Some(b)) if *a == last(b) => write!(f, "date:{a}"),
-                    (Some(a), Some(b)) => write!(f, "date:{a}..{}", last(b)),
-                    (Some(a), None) => write!(f, "date:>={a}"),
-                    (None, Some(b)) => write!(f, "date:<{b}"),
-                    (None, None) => f.write_str("date:>=0001-01-01"),
-                }
+            Filter::Date { from, until } => write_dates(f, "date", *from, *until),
+            Filter::Age(b) => write!(f, "age:{b}"),
+            Filter::Updated(When::Ago(b)) => write!(f, "updated:{b}"),
+            Filter::Updated(When::Dates { from, until }) => {
+                write_dates(f, "updated", *from, *until)
             }
             Filter::FileType(types) => write!(f, "filetype:{}", types.join(",")),
             Filter::Md5(hashes) => {
@@ -1726,6 +1851,50 @@ mod tests {
         assert!(error("approver:").contains("expected a user name, any or none"));
         assert!(error("commenter:").contains("expected a user name"));
         assert!(error("comment:_").contains("expected words to find in comments"));
+    }
+
+    #[test]
+    fn ages() {
+        let days = |amount| Age {
+            amount,
+            unit: AgeUnit::Days,
+        };
+        assert_eq!(
+            filter("age:<1w"),
+            Filter::Age(Bound::Lt(Age {
+                amount: 1,
+                unit: AgeUnit::Weeks
+            }))
+        );
+        let Filter::Age(Bound::Between(a, b)) = filter("age:2d..1m") else {
+            panic!()
+        };
+        assert_eq!((a, b.unit), (days(2), AgeUnit::Months));
+        assert_eq!(b.seconds(), 30 * 86_400);
+        assert_eq!(parse("age:>12MIN").to_string(), "age:>12mi");
+        assert!(error("age:soon").contains("expected an age"));
+        assert!(error("age:1d,2d").contains("expected an age"));
+        assert_eq!(
+            filter("updated:<1d"),
+            Filter::Updated(When::Ago(Bound::Lt(days(1))))
+        );
+        assert_eq!(
+            filter("updated:2026-01"),
+            Filter::Updated(When::Dates {
+                from: Some(date!(2026 - 01 - 01)),
+                until: Some(date!(2026 - 02 - 01)),
+            })
+        );
+        for input in [
+            "updated:2026-01",
+            "updated:>=2026-01-05",
+            "-updated:<3h age:1y",
+        ] {
+            assert_eq!(parse(&parse(input).to_string()), parse(input), "{input}");
+        }
+        assert!(error("updated:x").contains("expected an age"));
+        assert_eq!(parse("order:updated").order, Some(Order::ChangeDesc));
+        assert_eq!(parse("order:change_asc").to_string(), "order:change_asc");
     }
 
     #[test]

@@ -20,8 +20,8 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
-    Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, SourceFilter, StatusFilter,
-    TagTerm, UserMatch,
+    Age, Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, SourceFilter, StatusFilter,
+    TagTerm, UserMatch, When,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -582,6 +582,7 @@ impl Plan {
                     node,
                     Node::Plain(Filter::Date { from: Some(_), .. })
                         | Node::Plain(Filter::Date { until: Some(_), .. })
+                        | Node::Plain(Filter::Age(_))
                 )
             })
     }
@@ -864,6 +865,12 @@ impl Plan {
             }
             Order::Pool => {
                 sql.push("po.position ASC");
+            }
+            Order::ChangeDesc => {
+                sql.push("p.updated_at DESC, p.id DESC");
+            }
+            Order::ChangeAsc => {
+                sql.push("p.updated_at ASC, p.id ASC");
             }
             Order::CategoryTagsDesc | Order::CategoryTagsAsc => {
                 let direction = if self.order == Order::CategoryTagsDesc {
@@ -1433,15 +1440,11 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
             let hashes: Vec<Vec<u8>> = hashes.iter().map(|h| h.to_vec()).collect();
             sql.push("a.md5 = ANY(").push_bind(hashes).push(")");
         }
-        Filter::Date { from, until } => {
-            let midnight = |d: &time::Date| d.midnight().assume_utc();
-            sql.push("TRUE");
-            if let Some(from) = from {
-                sql.push(" AND p.created_at >= ").push_bind(midnight(from));
-            }
-            if let Some(until) = until {
-                sql.push(" AND p.created_at < ").push_bind(midnight(until));
-            }
+        Filter::Date { from, until } => push_dates(sql, "p.created_at", *from, *until),
+        Filter::Age(ago) => push_ago(sql, "p.created_at", ago),
+        Filter::Updated(When::Ago(ago)) => push_ago(sql, "p.updated_at", ago),
+        Filter::Updated(When::Dates { from, until }) => {
+            push_dates(sql, "p.updated_at", *from, *until);
         }
         Filter::Child(any) => {
             if !any {
@@ -1514,6 +1517,50 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
         | Filter::Ai(_)
         | Filter::Pool(_) => {
             unreachable!("resolved in Plan::resolve")
+        }
+    }
+}
+
+/// `column` on or after `from` and before `until` (UTC days).
+fn push_dates(
+    sql: &mut QueryBuilder<Postgres>,
+    column: &str,
+    from: Option<time::Date>,
+    until: Option<time::Date>,
+) {
+    let midnight = |d: time::Date| d.midnight().assume_utc();
+    sql.push("TRUE");
+    if let Some(from) = from {
+        sql.push(format!(" AND {column} >= "))
+            .push_bind(midnight(from));
+    }
+    if let Some(until) = until {
+        sql.push(format!(" AND {column} < "))
+            .push_bind(midnight(until));
+    }
+}
+
+/// `column` (a time) `ago` back from now: `<1w` is newer than a week ago.
+fn push_ago(sql: &mut QueryBuilder<Postgres>, column: &str, ago: &Bound<Age>) {
+    let compare = |sql: &mut QueryBuilder<Postgres>, op: &str, age: &Age| {
+        sql.push(format!("{column} {op} now() - make_interval(secs => "))
+            .push_bind(age.seconds() as f64)
+            .push(")");
+    };
+    match ago {
+        Bound::Lt(age) => compare(sql, ">", age),
+        // `age:1d`: within a day.
+        Bound::Le(age) | Bound::Eq(age) => compare(sql, ">=", age),
+        Bound::Gt(age) => compare(sql, "<", age),
+        Bound::Ge(age) => compare(sql, "<=", age),
+        Bound::Between(newest, oldest) => {
+            compare(sql, ">=", oldest);
+            sql.push(" AND ");
+            compare(sql, "<=", newest);
+        }
+        // The parser doesn't make these.
+        Bound::In(_) => {
+            sql.push("FALSE");
         }
     }
 }
@@ -1867,6 +1914,55 @@ mod tests {
         assert_eq!(plan.required.len(), 1);
         assert_eq!(plan.any.as_ref().map(|set| set.ids.len()), Some(2));
         assert!(plan.filters.is_empty());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn ages_and_changes(pool: PgPool) {
+        let mut ids = Vec::new();
+        for days_ago in [40, 10, 3, 0] {
+            ids.push(
+                seed(
+                    &pool,
+                    Seed {
+                        days_ago,
+                        ..Seed::default()
+                    },
+                )
+                .await,
+            );
+        }
+        // Changed: the oldest a day ago, the newest ten days ago.
+        for (post, days) in [(ids[0], 1), (ids[3], 10)] {
+            sqlx::query(
+                "UPDATE posts SET updated_at = now() - make_interval(days => $2) WHERE id = $1",
+            )
+            .bind(post)
+            .bind(days)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let by = |order: &[usize]| order.iter().map(|&i| ids[i]).collect::<Vec<_>>();
+        let cases: &[(&str, Vec<i64>)] = &[
+            ("age:<1w", by(&[3, 2])),
+            ("age:1d", by(&[3])),
+            ("age:>1w", by(&[1, 0])),
+            ("age:2d..2w", by(&[2, 1])),
+            ("age:1mo..", by(&[0])),
+            ("-age:<1w", by(&[1, 0])),
+            ("updated:<2d", by(&[2, 1, 0])),
+            ("updated:>1w", by(&[3])),
+            ("order:change", by(&[2, 1, 0, 3])),
+            ("order:change_asc", by(&[3, 0, 1, 2])),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(&search(&pool, input).await, expected, "{input}");
+        }
+        let today = time::OffsetDateTime::now_utc().date();
+        assert_eq!(
+            search(&pool, &format!("updated:{today}")).await,
+            by(&[2, 1])
+        );
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

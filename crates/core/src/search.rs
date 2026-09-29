@@ -441,6 +441,9 @@ pub enum Order {
     /// Most recently noted first; only posts with notes.
     NoteDesc,
     NoteAsc,
+    /// Popular recent posts first: score, discounted by age; only posts
+    /// from the last [`RANK_DAYS`] days with a positive score.
+    Rank,
     /// Most recently changed first.
     ChangeDesc,
     ChangeAsc,
@@ -482,6 +485,7 @@ impl Order {
         ("note", Order::NoteDesc),
         ("note_desc", Order::NoteDesc),
         ("note_asc", Order::NoteAsc),
+        ("rank", Order::Rank),
         ("change", Order::ChangeDesc),
         ("change_desc", Order::ChangeDesc),
         ("change_asc", Order::ChangeAsc),
@@ -497,6 +501,9 @@ impl Order {
             .map_or("id", |(name, _)| name)
     }
 }
+
+/// How many days back `order:rank` looks.
+pub const RANK_DAYS: i32 = 2;
 
 /// Deepest nesting of parentheses a search may use.
 pub const MAX_DEPTH: usize = 10;

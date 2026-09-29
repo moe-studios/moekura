@@ -1270,6 +1270,14 @@ mod tests {
         let nothing = app.get("/posts?tags=nonexistent", None).await;
         assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
 
+        // Hot posts have their own link.
+        let hot = app.get("/posts?tags=order%3Arank", None).await.body;
+        assert!(
+            hot.contains("href=\"/posts?tags=order%3Arank\" aria-current=\"page\">Hot<"),
+            "{hot}"
+        );
+        assert!(!page.body.contains("aria-current=\"page\">Hot<"));
+
         // Groups and `or`.
         let page = app.get("/posts?tags=(cat+cute)+or+(dog+-cute)", None).await;
         assert!(

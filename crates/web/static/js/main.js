@@ -49,6 +49,7 @@ var METATAGS = {
     "comment_asc",
     "note",
     "note_asc",
+    "rank",
     "change",
     "change_asc"
   ],

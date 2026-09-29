@@ -20,8 +20,8 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
-    Age, Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, SourceFilter, StatusFilter,
-    TagTerm, UserMatch, When,
+    Age, Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, RANK_DAYS, SourceFilter,
+    StatusFilter, TagTerm, UserMatch, When,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -610,6 +610,12 @@ impl Plan {
         matches!(self.order, Order::CommentDesc | Order::CommentAsc)
     }
 
+    /// Whether the order leaves out older posts and those without a
+    /// positive score.
+    fn only_ranked(&self) -> bool {
+        self.order == Order::Rank
+    }
+
     /// Whether the order leaves out posts without notes.
     fn only_noted(&self) -> bool {
         matches!(self.order, Order::NoteDesc | Order::NoteAsc)
@@ -866,6 +872,13 @@ impl Plan {
             Order::Pool => {
                 sql.push("po.position ASC");
             }
+            // Like Danbooru's: each tripling of the score is worth about
+            // ten hours of age.
+            Order::Rank => {
+                sql.push(
+                    "ln(p.score) / ln(3) + extract(epoch FROM p.created_at) / 35000 DESC, p.id DESC",
+                );
+            }
             Order::ChangeDesc => {
                 sql.push("p.updated_at DESC, p.id DESC");
             }
@@ -939,6 +952,11 @@ impl Plan {
         }
         if self.only_noted() {
             sql.push(" AND p.last_noted_at IS NOT NULL");
+        }
+        if self.only_ranked() {
+            sql.push(format!(
+                " AND p.score > 0 AND p.created_at > now() - interval '{RANK_DAYS} days'"
+            ));
         }
 
         // Walks must not use the tag index: `IS TRUE` makes the condition
@@ -1016,6 +1034,7 @@ impl Plan {
             && self.ordfavgroup.is_none()
             && !self.only_commented()
             && !self.only_noted()
+            && !self.only_ranked()
             && self.excluded.is_empty()
             && self.any.is_none();
         let shortcut = match &self.required[..] {
@@ -1963,6 +1982,50 @@ mod tests {
             search(&pool, &format!("updated:{today}")).await,
             by(&[2, 1])
         );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn hot_posts(pool: PgPool) {
+        let post = |score, hours_ago: i32| {
+            let pool = pool.clone();
+            async move {
+                let id = seed(
+                    &pool,
+                    Seed {
+                        score,
+                        ..Seed::default()
+                    },
+                )
+                .await;
+                sqlx::query(
+                    "UPDATE posts SET created_at = now() - make_interval(hours => $2) WHERE id = $1",
+                )
+                .bind(id)
+                .bind(hours_ago)
+                .execute(&pool)
+                .await
+                .unwrap();
+                id
+            }
+        };
+        let new_ok = post(3, 1).await;
+        let old_great = post(30, 20).await;
+        let new_great = post(27, 2).await;
+        let zero = post(0, 1).await;
+        let too_old = post(100, 60).await;
+        // 27 is three triplings of 1, worth about 29 hours: two hours old
+        // beats 20 hours old at slightly more.
+        assert_eq!(
+            search(&pool, "order:rank").await,
+            [new_great, old_great, new_ok]
+        );
+        assert!(!search(&pool, "order:rank").await.contains(&zero));
+        assert!(!search(&pool, "order:rank").await.contains(&too_old));
+        let query = Query::parse("order:rank").unwrap();
+        let plan = Plan::resolve(&pool, &query, &public(), &SearchConfig::default())
+            .await
+            .unwrap();
+        assert_eq!(plan.count(&pool).await.unwrap(), Count::Exact(3));
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

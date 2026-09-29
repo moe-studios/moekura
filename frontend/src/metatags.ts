@@ -50,6 +50,7 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
     "comment_asc",
     "note",
     "note_asc",
+    "rank",
     "change",
     "change_asc",
   ],

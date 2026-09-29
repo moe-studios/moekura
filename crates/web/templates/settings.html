@@ -12,10 +12,17 @@
       <option value="{{ n }}"{% if per_page == n %} selected{% endif %}>{{ n }}</option>
       {% endfor %}
     </select>
-    <fieldset class="ratings">
-      <legend>Theme</legend>
+    <label for="theme">Theme</label>
+    <select id="theme" name="theme">
+      <option value="">Site default ({{ site_theme }})</option>
       {% for t in themes %}
-      <label class="choice"><input type="radio" name="theme" value="{{ t }}"{% if current_theme == t %} checked{% endif %}> {{ t|capitalize }}</label>
+      <option value="{{ t.name }}"{% if current_theme == t.name %} selected{% endif %}>{{ t.label }}</option>
+      {% endfor %}
+    </select>
+    <fieldset class="ratings">
+      <legend>Mode</legend>
+      {% for m in modes %}
+      <label class="choice"><input type="radio" name="mode" value="{{ m }}"{% if current_mode == m %} checked{% endif %}> {{ {"system": "Match your device", "light": "Light", "dark": "Dark"}[m] }}</label>
       {% endfor %}
     </fieldset>
     <label for="blacklist">Blacklist</label>

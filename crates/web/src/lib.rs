@@ -46,6 +46,7 @@ mod tags;
 mod templates;
 #[cfg(test)]
 mod test_support;
+mod themes;
 mod two_factor;
 mod upload;
 mod user_moderation;

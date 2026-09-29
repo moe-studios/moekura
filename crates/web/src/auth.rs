@@ -626,7 +626,7 @@ mod tests {
             moekura_core::permissions::SystemRole::Member,
         )
         .await;
-        let form = "per_page=&theme=dark";
+        let form = "per_page=&mode=dark";
 
         let app = TestApp::new(test_state_with_replica(&pool).await, crate::users::routes());
         let saved = app.post_form("/settings", Some(&alice), &[], form).await;

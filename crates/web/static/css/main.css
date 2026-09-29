@@ -1,66 +1,36 @@
 /* Moekura base styles. Override by placing css/main.css in
-   paths.static_override. Colours are tokens so themes can swap them. */
+   paths.static_override. Colours are tokens so themes can swap them.
+
+   The tokens here are the default theme. Other themes are files in
+   themes/ that set the same tokens again; the page loads the chosen one
+   after this file. Each colour is light-dark(<light>, <dark>): the
+   browser's preference picks one unless the user chose a mode
+   (data-mode on <html>). */
 
 :root {
   color-scheme: light dark;
-  --bg: #fbfafc;
-  --surface: #ffffff;
-  --text: #1f1d24;
-  --muted: #6b6775;
-  --border: #e4e1ea;
-  --accent: #c42a61;
-  --accent-text: #ffffff;
-  --danger: #c92a2a;
+  --bg: light-dark(#f7f7f8, #141416);
+  --surface: light-dark(#ffffff, #1c1c1f);
+  --text: light-dark(#1b1b1f, #ececef);
+  --muted: light-dark(#63636b, #a1a1aa);
+  --border: light-dark(#e2e2e6, #323238);
+  --accent: light-dark(#3451b2, #8fa3f0);
+  --accent-text: light-dark(#ffffff, #141416);
+  --danger: light-dark(#c92a2a, #ff8787);
   /* Tag colours, each at least 4.5:1 against --bg and --surface. */
-  --tag-general: #0068e0;
-  --tag-artist: #c00004;
-  --tag-copyright: #a800aa;
-  --tag-character: #008527;
-  --tag-meta: #ad5c00;
+  --tag-general: light-dark(#0068e0, #4fa3ff);
+  --tag-artist: light-dark(#c00004, #ff8a8b);
+  --tag-copyright: light-dark(#a800aa, #d98cff);
+  --tag-character: light-dark(#007e25, #35c64a);
+  --tag-meta: light-dark(#ad5c00, #ffb54a);
   --radius: 8px;
   --gutter: 16px;
   --max-width: 1200px;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   line-height: 1.5;
 }
-
-/* Dark colours: from the browser's preference unless the user picked a
-   theme (data-theme on <html>). CSS can't share one block between a media
-   query and a selector, so keep these two blocks the same. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #16141a;
-    --surface: #1f1c24;
-    --text: #ece9f1;
-    --muted: #a39fad;
-    --border: #34303b;
-    --accent: #f06595;
-    --accent-text: #16141a;
-    --danger: #ff8787;
-    --tag-general: #4fa3ff;
-    --tag-artist: #ff8a8b;
-    --tag-copyright: #d98cff;
-    --tag-character: #35c64a;
-    --tag-meta: #ffb54a;
-  }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #16141a;
-  --surface: #1f1c24;
-  --text: #ece9f1;
-  --muted: #a39fad;
-  --border: #34303b;
-  --accent: #f06595;
-  --accent-text: #16141a;
-  --danger: #ff8787;
-  --tag-general: #4fa3ff;
-  --tag-artist: #ff8a8b;
-  --tag-copyright: #d98cff;
-  --tag-character: #35c64a;
-  --tag-meta: #ffb54a;
-}
-:root[data-theme="light"] { color-scheme: light; }
+:root[data-mode="light"] { color-scheme: light; }
+:root[data-mode="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 
@@ -724,5 +694,9 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 /* Footer */
 
 .site-footer p { margin: 4px 0; }
-.site-footer form { display: inline-flex; flex-direction: row; gap: 8px; margin: 0; }
+.site-footer .appearance { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 24px; }
+.site-footer form { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; }
+.site-footer label { font-weight: normal; margin: 0; }
+.site-footer select { padding: 2px 6px; font-size: inherit; }
+.js .site-footer [data-autosubmit] button { display: none; }
 .site-footer button.link[aria-pressed="true"] { color: var(--text); font-weight: 600; }

@@ -86,6 +86,21 @@ keeps none and stops recording them. Deleting an account deletes its
 addresses. Sessions separately keep the address they were started from
 until they end.
 
+## Spam accounts
+
+Besides rate limits, email confirmation and approval of new accounts
+(**Admin → Settings → Registration**), two settings under **Admin →
+Settings → Spam** keep spam accounts out:
+
+- **Email domains**: a list of domains whose addresses are refused (such
+  as disposable-mail services), or the only ones accepted (such as a
+  school's). Each domain covers its subdomains. It applies when signing up
+  and changing an address; accounts made through single sign-on simply
+  don't take a refused address.
+- **Captcha**: with a service set up (see
+  [`[auth.captcha]`](../configuration.md#authcaptcha)), ask for it when
+  signing up, and on comments by accounts younger than a number of days.
+
 ## Tag aliases and implications
 
 Members request them under **Tags → Aliases** or **Implications**; people

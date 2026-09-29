@@ -36,6 +36,10 @@ pub struct SiteSettings {
     /// Days an account's addresses are kept after they were last seen
     /// (for staff looking for ban evasion); 0 keeps none.
     pub ip_history_days: u32,
+    /// Email domains accounts may, or may not, use.
+    pub email_domains: crate::spam::EmailDomains,
+    /// Where the captcha is asked for, if one is configured.
+    pub captcha: crate::spam::CaptchaSettings,
 }
 
 /// The longest [`SiteSettings::ip_history_days`].
@@ -60,6 +64,8 @@ impl Default for SiteSettings {
             default_blacklist: String::new(),
             tagger: crate::tagger::TaggerSettings::default(),
             ip_history_days: 365,
+            email_domains: crate::spam::EmailDomains::default(),
+            captcha: crate::spam::CaptchaSettings::default(),
         }
     }
 }
@@ -148,6 +154,7 @@ impl SiteSettings {
         }
         crate::blacklist::Blacklist::parse(&self.default_blacklist).map_err(|e| e.to_string())?;
         self.tagger.validate()?;
+        self.email_domains.validate()?;
         if self.ip_history_days > MAX_IP_HISTORY_DAYS {
             return Err(format!(
                 "keep addresses for at most {MAX_IP_HISTORY_DAYS} days"
@@ -169,7 +176,9 @@ mod tests {
             SiteSettings::keys(),
             [
                 "auto_promotion",
+                "captcha",
                 "default_blacklist",
+                "email_domains",
                 "email_verification",
                 "ip_history_days",
                 "preview_all_ratings",

@@ -471,6 +471,9 @@ async fn change_email(
     if let Err(e) = accounts::check_email(email) {
         return failed(format!("The address {e}."));
     }
+    if !unchanged && !state.site.get().settings.email_domains.allows(email) {
+        return failed(crate::account::DOMAIN_REFUSED.into());
+    }
     if unchanged && (user.email_verified_at.is_some() || !mail_enabled(state)) {
         return saved(Flash::Saved);
     }
@@ -947,5 +950,43 @@ mod tests {
             .await;
         let user = users::by_id(&pool, alice.id).await.unwrap().unwrap();
         assert_eq!(user.email, None);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn refused_domains_cant_be_used(pool: PgPool) {
+        moekura_db::settings::set(
+            &pool,
+            "email_domains",
+            serde_json::json!({ "mode": "block", "domains": ["spam.example"] }),
+        )
+        .await
+        .unwrap();
+        let app = app(&pool, false).await;
+        let refused = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &signup("carol", "carol@mail.spam.example"),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("that domain"), "{}", refused.body);
+        let fine = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &signup("carol", "carol@example.com"),
+            )
+            .await;
+        assert_eq!(fine.status, StatusCode::SEE_OTHER, "{}", fine.body);
+
+        let (_, session) = member(&pool, "alice", "alice@example.com").await;
+        let change = form(&[("email", "a@spam.example"), ("password", "correct horse")]);
+        let refused = app
+            .post_form("/settings/account/email", Some(&session), &[], &change)
+            .await;
+        assert!(refused.body.contains("that domain"), "{}", refused.body);
     }
 }

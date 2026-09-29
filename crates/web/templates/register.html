@@ -26,6 +26,11 @@
     <input id="invite" name="invite" value="{{ form.invite }}" required autocomplete="off">
     {{ field_error(errors.invite) }}
     {% endif %}
+    {% if captcha %}
+    <script src="{{ captcha.script }}" async defer></script>
+    <div class="{{ captcha.class }}" data-sitekey="{{ captcha.site_key }}"></div>
+    {{ field_error(errors.captcha) }}
+    {% endif %}
     <button type="submit">Register</button>
   </form>
   <p class="aside">Already registered? <a href="/login">Log in</a></p>

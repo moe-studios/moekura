@@ -166,6 +166,10 @@
         <label for="comment-body">Add a comment</label>
         <textarea id="comment-body" name="body" rows="4" maxlength="{{ comments.max_len }}" required>{{ comments.draft }}</textarea>
         {% include "comment_help.html" %}
+        {% if comments.captcha %}
+        <script src="{{ comments.captcha.script }}" async defer></script>
+        <div class="{{ comments.captcha.class }}" data-sitekey="{{ comments.captcha.site_key }}"></div>
+        {% endif %}
         <button type="submit">Post comment</button>
       </form>
       {% elif comments.login_needed %}

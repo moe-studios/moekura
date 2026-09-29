@@ -184,7 +184,7 @@ async fn autocomplete(
         return json(Vec::<Suggestion>::new(), "");
     }
     let word = params.query.split_whitespace().last().unwrap_or_default();
-    let prefix = normalize(word.trim_start_matches(['-', '~']));
+    let prefix = normalize(word.trim_start_matches(['-', '~', '(']));
     if prefix.is_empty() {
         return json(Vec::<Suggestion>::new(), "");
     }

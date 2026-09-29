@@ -143,6 +143,7 @@ pub async fn search(
          LEFT JOIN users u ON u.id = v.updater_id
          LEFT JOIN tag_relations r ON r.id = v.relation_id
          WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
+           AND p.rating = ANY($11)
            AND ($3::bigint IS NULL OR v.updater_id = $3)
            AND ($4::bigint IS NULL OR v.post_id = $4)
            AND ($5::int IS NULL OR v.added_tag_ids @> ARRAY[$5::int])
@@ -162,6 +163,7 @@ pub async fn search(
     .bind(filter.until)
     .bind(filter.before)
     .bind(limit)
+    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }
@@ -437,6 +439,7 @@ mod tests {
         let everyone = Visibility {
             statuses: vec![PostStatus::Active],
             viewer: None,
+            ratings: Vec::new(),
         };
         let by_vandal = Filter {
             updater_id: Some(vandal),
@@ -471,6 +474,7 @@ mod tests {
         let hidden = Visibility {
             statuses: vec![PostStatus::Deleted],
             viewer: None,
+            ratings: Vec::new(),
         };
         assert!(
             search(&pool, &Filter::default(), &hidden, 10)

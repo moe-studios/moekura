@@ -19,7 +19,9 @@
     </form>
     <nav class="primary" aria-label="Main">
       {% macro item(name, url, label) %}<a href="{{ url }}"{% if section == name %} aria-current="{{ 'page' if path == url else 'true' }}"{% endif %}>{{ label }}</a>{% endmacro %}
-      {{ item("posts", "/", "Posts") }}
+      {% set hot = search and search.tags == "order:rank" %}
+      {% if hot %}<a href="/">Posts</a>{% else %}{{ item("posts", "/", "Posts") }}{% endif %}
+      <a href="/posts?tags=order%3Arank"{% if hot %} aria-current="page"{% endif %}>Hot</a>
       {{ item("tags", "/tags", "Tags") }}
       {{ item("pools", "/pools", "Pools") }}
       {{ item("comments", "/comments", "Comments") }}

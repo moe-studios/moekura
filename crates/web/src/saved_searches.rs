@@ -48,9 +48,9 @@ pub(crate) fn clean_query(text: &str) -> Result<String, AppError> {
         return Err(AppError::Unprocessable("The search is empty.".into()));
     }
     if query
-        .conditions
+        .filters()
         .iter()
-        .any(|c| matches!(c.filter, Filter::Search(_)))
+        .any(|filter| matches!(filter, Filter::Search(_)))
     {
         return Err(AppError::Unprocessable(
             "A saved search can't use search: itself.".into(),

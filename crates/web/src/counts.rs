@@ -139,6 +139,7 @@ mod tests {
         let visible = Visibility {
             statuses: vec![PostStatus::Active],
             viewer: None,
+            ratings: Vec::new(),
         };
         let search = async |input: &str| {
             let query = Query::parse(input).unwrap();

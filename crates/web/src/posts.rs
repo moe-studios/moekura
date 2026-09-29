@@ -8,7 +8,7 @@ use axum::routing::get;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::{PostStatus, Rating};
-use moekura_core::search::{Order, Query as SearchQuery};
+use moekura_core::search::{Order, Query as SearchQuery, TagTerm};
 use moekura_core::user_settings::UserSettings;
 use moekura_db::media::{self, Variant};
 use moekura_db::posts::{self, Card, Post, Visibility};
@@ -70,6 +70,7 @@ pub fn visibility(current: &CurrentUser) -> Visibility {
     Visibility {
         statuses,
         viewer: current.user.as_ref().map(|u| u.id),
+        ratings: current.ratings.clone(),
     }
 }
 
@@ -86,6 +87,12 @@ struct IndexQuery {
 
 /// Tags listed beside search results.
 const SIDEBAR_TAGS: usize = 25;
+
+/// Tags of a search that found nothing checked for "did you mean".
+const DID_YOU_MEAN_TERMS: usize = 6;
+
+/// Replacements offered for each tag.
+const DID_YOU_MEAN_EACH: i64 = 3;
 
 /// Search results; the front page is the empty search.
 async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response, AppError> {
@@ -190,6 +197,12 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
     let shown: Vec<Card> = shown.into_iter().cloned().collect();
     let sidebar = sidebar_tags(db, &shown, &normalized).await?;
     let wiki = crate::wiki::search_excerpt(db, &query).await?;
+    // Only for searches that found nothing, so the rest pay nothing.
+    let did_you_mean = if ids.is_empty() {
+        did_you_mean(db, &query, &normalized).await?
+    } else {
+        Vec::new()
+    };
     let pager = Pager {
         query: &normalized,
         page: page_ref,
@@ -219,9 +232,60 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             count => count_text(count),
             sidebar => sidebar,
             wiki => wiki,
+            did_you_mean => did_you_mean,
             pager => pager.context(),
         },
     ))
+}
+
+/// For a search that found nothing: its plain tags that match no posts,
+/// each with searches that swap it for a tag likely meant instead.
+async fn did_you_mean(
+    db: &sqlx::PgPool,
+    query: &SearchQuery,
+    normalized: &str,
+) -> Result<Vec<Value>, AppError> {
+    // Negated terms, wildcards and metatags aren't tag names to fix.
+    let terms = query
+        .all
+        .iter()
+        .map(|term| (term, ""))
+        .chain(query.any.iter().map(|term| (term, "~")))
+        .filter_map(|(term, prefix)| match term {
+            TagTerm::Name(name) => Some((name.as_str(), prefix)),
+            TagTerm::Wildcard(_) => None,
+        })
+        .take(DID_YOU_MEAN_TERMS);
+    let mut found = Vec::new();
+    for (name, prefix) in terms {
+        let replacements = tags::replacements(db, name, DID_YOU_MEAN_EACH).await?;
+        if replacements.is_empty() {
+            continue;
+        }
+        // Top-level tags print as words of their own.
+        let typed = format!("{prefix}{name}");
+        let links: Vec<Value> = replacements
+            .iter()
+            .map(|replacement| {
+                let replaced: Vec<String> = normalized
+                    .split(' ')
+                    .map(|word| {
+                        if word == typed {
+                            format!("{prefix}{replacement}")
+                        } else {
+                            word.to_owned()
+                        }
+                    })
+                    .collect();
+                context! {
+                    name => replacement,
+                    url => Value::from_safe_string(search_url(&replaced.join(" "))),
+                }
+            })
+            .collect();
+        found.push(context! { term => name, replacements => links });
+    }
+    Ok(found)
 }
 
 /// The most used tags among `cards`, grouped as on post pages, each with
@@ -955,6 +1019,7 @@ async fn similar_context(
             let status: Option<PostStatus> = card.status.parse().ok();
             let rating = card.rating.parse().unwrap_or(Rating::Explicit);
             status.is_some_and(|s| visible.statuses.contains(&s))
+                && visible.allows_rating(rating)
                 && blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
         })
         .map(|card| card_context(state, card, box_size, None))
@@ -1269,9 +1334,80 @@ mod tests {
         assert!(bad.body.contains("expected ratings"), "{}", bad.body);
         let nothing = app.get("/posts?tags=nonexistent", None).await;
         assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
+
+        // Hot posts have their own link.
+        let hot = app.get("/posts?tags=order%3Arank", None).await.body;
+        assert!(
+            hot.contains("href=\"/posts?tags=order%3Arank\" aria-current=\"page\">Hot<"),
+            "{hot}"
+        );
+        assert!(!page.body.contains("aria-current=\"page\">Hot<"));
+
+        // Groups and `or`.
+        let page = app.get("/posts?tags=(cat+cute)+or+(dog+-cute)", None).await;
+        assert!(
+            page.body.contains(&format!("/posts/{cat}?")),
+            "{}",
+            page.body
+        );
+        assert!(!page.body.contains(&format!("/posts/{dog}?")));
+        assert!(page.body.contains("value=\"((cat cute) or (dog -cute))\""));
+        let bad = app.get("/posts?tags=(cat+or", None).await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST);
+        assert!(bad.body.contains("is missing its"), "{}", bad.body);
+        // No "without the last term" that would break the group.
+        // Likely typos get replacements.
+        let typo = app.get("/posts?tags=rating:g+cuet", None).await.body;
+        assert!(
+            typo.contains(
+                "Did you mean <a href=\"/posts?tags=cute+rating%3Ag\"><strong>cute</strong></a>"
+            ) && typo.contains(" instead of cuet?"),
+            "{typo}"
+        );
+        let typo = app.get("/posts?tags=dgo", None).await.body;
+        assert!(typo.contains("<strong>dog</strong></a>?"), "{typo}");
+        assert!(!typo.contains("Look for tags starting with"));
+        let nothing = app.get("/posts?tags=dog+(cat+or+rating:e)", None).await;
+        assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
+        assert!(
+            !nothing.body.contains("without the last term"),
+            "{}",
+            nothing.body
+        );
         assert_eq!(
             app.get("/posts?page=x", None).await.status,
             StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn visitors_see_only_allowed_ratings(pool: PgPool) {
+        moekura_db::settings::set(&pool, "visitor_ratings", serde_json::json!(["g", "s"]))
+            .await
+            .unwrap();
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let explicit = upload(&app, &alice, &fixture::png(20, 20), &[("rating", "e")]).await;
+        let general = upload(&app, &alice, &fixture::png(24, 20), &[("rating", "g")]).await;
+
+        let grid = app.get("/", None).await.body;
+        assert!(grid.contains(&format!("/posts/{general}?")), "{grid}");
+        assert!(!grid.contains(&format!("/posts/{explicit}")), "{grid}");
+        assert!(grid.contains("1 post"), "{grid}");
+        let searched = app.get("/posts?tags=rating:e", None).await.body;
+        assert!(searched.contains("Nothing found"), "{searched}");
+        assert_eq!(
+            app.get(&format!("/posts/{explicit}"), None).await.status,
+            StatusCode::NOT_FOUND
+        );
+        // Members see everything.
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(grid.contains(&format!("/posts/{explicit}?")), "{grid}");
+        assert_eq!(
+            app.get(&format!("/posts/{explicit}"), Some(&alice))
+                .await
+                .status,
+            StatusCode::OK
         );
     }
 

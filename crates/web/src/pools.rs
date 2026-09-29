@@ -242,6 +242,7 @@ async fn show(
         let public = moekura_db::posts::Visibility {
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
+            ratings: Vec::new(),
         };
         let image = match pools::visible_post_ids(db, id, &public, 0, 1)
             .await?

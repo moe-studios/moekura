@@ -20,7 +20,7 @@ test("draw a note, move it and change it", async ({ page }) => {
   await page.locator("input[name=rating][value=g]").check();
   await page.locator("#tags").fill("notes_test");
   await page.getByRole("button", { name: "Upload" }).click();
-  await expect(page).toHaveURL(/\/posts\/\d+$/);
+  await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
   postPath = new URL(page.url()).pathname;
 
   // Draw a box over the image.

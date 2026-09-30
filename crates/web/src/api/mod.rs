@@ -355,7 +355,12 @@ pub(crate) mod test_support {
         let location = response
             .location
             .unwrap_or_else(|| panic!("upload failed: {}", response.body));
-        location["/posts/".len()..].parse().unwrap()
+        location["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
     }
 
     pub fn json(body: &str) -> serde_json::Value {

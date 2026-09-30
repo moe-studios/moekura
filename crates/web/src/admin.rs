@@ -148,6 +148,7 @@ fn render_settings(
                 upload_limit_scaling => current.upload_limit_scaling,
                 auto_promotion => current.auto_promotion,
                 preview_all_ratings => current.preview_all_ratings,
+                request_tags => current.request_tags,
                 // Every rating ticked when visitors aren't limited.
                 visitor_ratings => moekura_core::posts::Rating::ALL
                     .iter()
@@ -242,6 +243,8 @@ struct SettingsForm {
     auto_promotion: Option<String>,
     /// Present when ticked.
     preview_all_ratings: Option<String>,
+    /// Present when ticked.
+    request_tags: Option<String>,
     /// Ratings visitors see, each present when ticked.
     visitor_rating_g: Option<String>,
     visitor_rating_s: Option<String>,
@@ -344,6 +347,7 @@ async fn save_settings(
             "preview_all_ratings",
             json!(form.preview_all_ratings.is_some()),
         ),
+        ("request_tags", json!(form.request_tags.is_some())),
         (
             "promotion_rules",
             json!({

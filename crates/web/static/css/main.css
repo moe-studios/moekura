@@ -454,6 +454,8 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .family-cards .current img { outline: 2px solid var(--accent); outline-offset: 2px; }
 .edit { margin-top: 16px; max-width: 640px; }
 .edit summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+.tag-warnings p, .tag-warnings ul { margin: 0; }
+.tag-warnings ul { padding-left: 20px; }
 .suggestions { margin-top: 20px; }
 .suggestions h3 { margin: 0 0 6px; font-size: 0.95rem; }
 .suggested-tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }

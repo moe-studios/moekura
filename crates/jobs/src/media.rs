@@ -182,6 +182,37 @@ impl MediaJobs {
             self.render_variant(&asset, &source, source_type, &kind, size, work.path())
                 .await?;
         }
+        // Square thumbnails, of the chosen region (unless the file changed
+        // size since) or the most interesting part.
+        let crop = media::crop(&self.db, asset.id)
+            .await?
+            .and_then(|[x, y, side]| {
+                let fits = x + side <= asset.width && y + side <= asset.height;
+                fits.then(|| [x, y, side].map(|n| u32::try_from(n).unwrap_or(0)))
+            });
+        // Never larger than the picture's (or the region's) short side.
+        let shortest = crop.map_or_else(
+            || u32::try_from(asset.width.min(asset.height)).unwrap_or(1),
+            |[_, _, side]| side,
+        );
+        for &size in &config.thumbnail_sizes {
+            let kind = format!("crop-{size}");
+            let format = self.media.variant_format();
+            let out = work.path().join(format!("{kind}.{format}"));
+            let rendition = self
+                .media
+                .square(
+                    &source,
+                    source_type,
+                    size.min(shortest).max(1),
+                    crop,
+                    &out,
+                    work.path(),
+                )
+                .await
+                .map_err(media_error)?;
+            self.store_rendition(&asset, &kind, &rendition).await?;
+        }
         let phash = self
             .media
             .perceptual_hash(&source, source_type, work.path())
@@ -200,6 +231,32 @@ impl MediaJobs {
         }
         tx.commit().await?;
         tracing::info!(asset_id, post_id = asset.post_id, "media processed");
+        Ok(())
+    }
+
+    /// Stores a rendition made in the work directory as variant `kind`.
+    async fn store_rendition(
+        &self,
+        asset: &Asset,
+        kind: &str,
+        rendition: &moekura_media::Rendition,
+    ) -> Result<(), JobError> {
+        let format = self.media.variant_format();
+        let key = Key::variant(kind, &asset.sha256_hex(), format);
+        self.storage
+            .put_file(&key, &rendition.path)
+            .await
+            .map_err(|e| JobError::retry(format!("storing {kind}: {e}")))?;
+        let variant = Variant {
+            asset_id: asset.id,
+            kind: kind.to_owned(),
+            format: format.to_owned(),
+            width: i32::try_from(rendition.width).unwrap_or(i32::MAX),
+            height: i32::try_from(rendition.height).unwrap_or(i32::MAX),
+            file_size: i64::try_from(rendition.size).unwrap_or(i64::MAX),
+            storage_key: key.as_str().to_owned(),
+        };
+        media::save_variant(&self.db, &variant).await?;
         Ok(())
     }
 
@@ -243,22 +300,7 @@ impl MediaJobs {
             .fit_within(source, source_type, size, &out)
             .await
             .map_err(media_error)?;
-        let key = Key::variant(kind, &asset.sha256_hex(), format);
-        self.storage
-            .put_file(&key, &rendition.path)
-            .await
-            .map_err(|e| JobError::retry(format!("storing {kind}: {e}")))?;
-        let variant = Variant {
-            asset_id: asset.id,
-            kind: kind.to_owned(),
-            format: format.to_owned(),
-            width: i32::try_from(rendition.width).unwrap_or(i32::MAX),
-            height: i32::try_from(rendition.height).unwrap_or(i32::MAX),
-            file_size: i64::try_from(rendition.size).unwrap_or(i64::MAX),
-            storage_key: key.as_str().to_owned(),
-        };
-        media::save_variant(&self.db, &variant).await?;
-        Ok(())
+        self.store_rendition(asset, kind, &rendition).await
     }
 }
 
@@ -406,6 +448,8 @@ mod tests {
         assert_eq!(
             summary(&variants),
             [
+                ("crop-250".to_owned(), 250, 250),
+                ("crop-500".to_owned(), 500, 500),
                 ("sample".to_owned(), 1600, 1200),
                 ("thumb-250".to_owned(), 250, 188),
                 ("thumb-500".to_owned(), 500, 375),
@@ -432,7 +476,7 @@ mod tests {
 
         // Running again is harmless.
         jobs.process(asset_id).await.unwrap();
-        assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 3);
+        assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 5);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
@@ -541,6 +585,8 @@ mod tests {
         assert_eq!(
             summary(&variants),
             [
+                ("crop-250".to_owned(), 240, 240),
+                ("crop-500".to_owned(), 240, 240),
                 ("poster".to_owned(), 320, 240),
                 ("thumb-250".to_owned(), 250, 188),
                 ("thumb-500".to_owned(), 320, 240),

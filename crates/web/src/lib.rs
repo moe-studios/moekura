@@ -60,6 +60,7 @@ mod templates;
 #[cfg(test)]
 mod test_support;
 mod themes;
+mod thumbnail_crop;
 mod two_factor;
 mod upload;
 mod user_moderation;
@@ -294,6 +295,7 @@ pub fn router(state: AppState) -> Router {
         .merge(tags::routes())
         .merge(tag_history::routes())
         .merge(tag_relations::routes())
+        .merge(thumbnail_crop::routes())
         .merge(two_factor::routes())
         .merge(user_moderation::routes())
         .merge(users::routes())

@@ -587,6 +587,8 @@ tr.is-deleted td { opacity: 0.6; }
 .note-box { fill: rgb(255 255 238 / 0.25); stroke: rgb(0 0 0 / 0.6); stroke-width: 1; pointer-events: all; cursor: help; }
 .note-box:hover, .note-box.active { fill: rgb(255 255 238 / 0.45); stroke: var(--accent); }
 .notes-hidden .notes, .notes-hidden .note-embedded, .editing-notes .note-embedded { display: none; }
+.crop-outline { position: absolute; outline: 2px dashed var(--accent); background: rgb(255 255 255 / 0.15); pointer-events: none; }
+.crop-outline[hidden] { display: none; }
 .note-embedded { position: absolute; overflow: auto; padding: 2px 4px; background: rgb(255 255 238 / 0.92); color: #111; font-size: 0.8125rem; line-height: 1.25; pointer-events: none; }
 .note-embedded .markup > :first-child { margin-top: 0; }
 .note-embedded .markup > :last-child { margin-bottom: 0; }

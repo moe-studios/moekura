@@ -14,6 +14,9 @@
   to the original. **Show original images** always shows the original.
 - **Include deleted posts in searches**, for those allowed to see them.
 - **Large thumbnails** use the site's second thumbnail size in grids.
+- **Square thumbnails** crop grids' thumbnails to squares of each
+  picture's most interesting part (see
+  [Square thumbnails](posts.md#square-thumbnails)).
 - **Hide comments** leaves comments off post pages, with a link to read
   them.
 - **Suggest tags while typing** and **Keyboard shortcuts** can be turned

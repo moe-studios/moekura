@@ -79,6 +79,9 @@ pub struct UserSettings {
     pub show_deleted: bool,
     /// Grids use the larger thumbnails.
     pub large_thumbnails: bool,
+    /// Grids use square thumbnails, cropped to the picture's most
+    /// interesting part (or the part staff chose).
+    pub square_thumbnails: bool,
     /// Blacklisted posts stay in grids, blurred, rather than being left out.
     pub blur_blacklisted: bool,
     /// For displayed dates; `None` for UTC.
@@ -104,6 +107,7 @@ impl Default for UserSettings {
             original_images: false,
             show_deleted: false,
             large_thumbnails: false,
+            square_thumbnails: false,
             blur_blacklisted: false,
             time_zone: None,
             hide_comments: false,
@@ -164,6 +168,7 @@ impl UserSettings {
             original_images: flag("original_images"),
             show_deleted: flag("show_deleted"),
             large_thumbnails: flag("large_thumbnails"),
+            square_thumbnails: flag("square_thumbnails"),
             blur_blacklisted: flag("blur_blacklisted"),
             time_zone,
             hide_comments: flag("hide_comments"),
@@ -195,6 +200,7 @@ impl UserSettings {
             ("original_images", self.original_images),
             ("show_deleted", self.show_deleted),
             ("large_thumbnails", self.large_thumbnails),
+            ("square_thumbnails", self.square_thumbnails),
             ("blur_blacklisted", self.blur_blacklisted),
             ("hide_comments", self.hide_comments),
             ("autocomplete", self.autocomplete),

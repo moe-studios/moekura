@@ -550,14 +550,20 @@ impl Thumbs {
         let sizes = &state.media.config().thumbnail_sizes;
         let small = sizes.first().copied().unwrap_or(250);
         let large = sizes.get(1).copied().unwrap_or(small);
-        let wants_large = current
+        let prefs = current
             .user
             .as_ref()
-            .is_some_and(|u| UserSettings::from_json(&u.settings).large_thumbnails);
-        let size = if wants_large { large } else { small };
+            .map(|u| UserSettings::from_json(&u.settings))
+            .unwrap_or_default();
+        let size = if prefs.large_thumbnails { large } else { small };
+        let kind = if prefs.square_thumbnails {
+            "crop"
+        } else {
+            "thumb"
+        };
         Self {
             size,
-            kinds: (format!("thumb-{size}"), format!("thumb-{large}")),
+            kinds: (format!("{kind}-{size}"), format!("{kind}-{large}")),
         }
     }
 
@@ -666,7 +672,11 @@ pub(crate) async fn displays(
 /// page can lead back to the search.
 fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option<&str>) -> Value {
     let url = |key: &Option<String>| key.as_deref().and_then(|k| file_url(state, k));
-    let (width, height) = fit(card.width, card.height, box_size);
+    let (width, height) = if card.square {
+        (box_size, box_size)
+    } else {
+        fit(card.width, card.height, box_size)
+    };
     let href = match post_query {
         Some(query) => format!("/posts/{}?{query}", card.id),
         None => format!("/posts/{}", card.id),
@@ -1097,6 +1107,11 @@ pub(crate) async fn render_post(
         .map(|r| context! { code => r.code(), label => r.label() })
         .collect();
     let commentary = crate::commentary::for_post(db, id, edit.is_some()).await?;
+    let crop = if page.current.can(Permission::ApprovePosts) {
+        media::crop(db, asset.id).await?
+    } else {
+        None
+    };
     let comments =
         crate::comments::thread(state, &page.current, &post, extra.comment.as_ref()).await?;
     let pools = crate::pools::for_post(
@@ -1154,6 +1169,10 @@ pub(crate) async fn render_post(
             notes => notes,
             preview => preview,
             can_replace => page.current.can(Permission::ReplacePosts),
+            crop => page.current.can(Permission::ApprovePosts).then(|| {
+                let [left, top, side] = crop.unwrap_or([0, 0, asset.width.min(asset.height)]);
+                context! { left => left, top => top, side => side, chosen => crop.is_some() }
+            }),
             can_edit_notes => !video
                 && page.current.is_logged_in()
                 && page.current.can(Permission::EditNotes)
@@ -1747,6 +1766,51 @@ mod tests {
             .body;
         assert!(post.contains("Your settings hide comments"), "{post}");
         assert!(!post.contains("id=\"new-comment\""));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn square_thumbnails(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let with = upload(&app, &alice, &fixture::png(40, 20), &[]).await;
+        let without = upload(&app, &alice, &fixture::png(24, 20), &[]).await;
+        // As processing leaves them: thumbnails for both, squares for one.
+        for (post, kinds) in [
+            (with, &["thumb-250", "crop-250"][..]),
+            (without, &["thumb-250"][..]),
+        ] {
+            let asset = media::for_post(&pool, post).await.unwrap().unwrap();
+            for kind in kinds {
+                media::save_variant(
+                    &pool,
+                    &Variant {
+                        asset_id: asset.id,
+                        kind: (*kind).to_owned(),
+                        format: "webp".into(),
+                        width: 20,
+                        height: 20,
+                        file_size: 1,
+                        storage_key: format!("{kind}/aa/bb/aabb{post:04}.webp"),
+                    },
+                )
+                .await
+                .unwrap();
+            }
+        }
+        set_user_settings(
+            &pool,
+            "alice",
+            serde_json::json!({ "square_thumbnails": true }),
+        )
+        .await;
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(
+            grid.contains(&format!("crop-250/aa/bb/aabb{with:04}")),
+            "{grid}"
+        );
+        // Older posts keep their usual thumbnails.
+        assert!(grid.contains(&format!("aabb{without:04}")), "{grid}");
+        assert!(grid.contains("width=\"250\" height=\"250\""), "{grid}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

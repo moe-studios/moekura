@@ -29,6 +29,12 @@
     <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
            width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
     {% else %}
+    {% if file.resized %}
+    <p class="notice resized" data-resized data-percent="{{ file.resized.percent }}" data-sample="{{ file.resized.sample }}" data-original="{{ file.original }}">
+      <span>{% if file.resized.showing_original %}Showing the original.{% else %}Resized to {{ file.resized.percent }}% of the original.{% endif %}</span>
+      <a href="{{ file.resized.toggle_url }}">{% if file.resized.showing_original %}Show the resized image{% else %}View the original{% endif %}</a>
+    </p>
+    {% endif %}
     <div class="note-layer" data-notes{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
       <a href="{{ file.original }}">
         <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">
@@ -202,6 +208,9 @@
     {% endif %}
     <section id="comments" class="comments" aria-labelledby="comments-heading">
       <h2 id="comments-heading">Comments{% if comments.count %} <span class="count">{{ comments.count }}</span>{% endif %}</h2>
+      {% if comments.hidden %}
+      <p class="hint">Your settings hide comments. <a href="{{ comments.all_url }}">Read them</a></p>
+      {% else %}
       {% if comments.older %}<p><a href="{{ comments.all_url }}">{{ comments.older }} older comment{% if comments.older != 1 %}s{% endif %}</a></p>{% endif %}
       {% for comment in comments.comments %}{% include "comment.html" %}{% else %}<p class="hint">No comments yet.</p>{% endfor %}
       {% if comments.error %}<p class="form-error" role="alert">{{ comments.error }}</p>{% endif %}
@@ -210,6 +219,7 @@
         <label for="comment-body">Add a comment</label>
         <textarea id="comment-body" name="body" rows="4" maxlength="{{ comments.max_len }}" required>{{ comments.draft }}</textarea>
         {% include "comment_help.html" %}
+        <label class="choice"><input type="checkbox" name="do_not_bump" value="1"> Don't bump the post</label>
         {% if comments.captcha %}
         <script src="{{ comments.captcha.script }}" async defer></script>
         <div class="{{ comments.captcha.class }}" data-sitekey="{{ comments.captcha.site_key }}"></div>
@@ -218,6 +228,7 @@
       </form>
       {% elif comments.login_needed %}
       <p class="hint"><a href="/login?next=%2Fposts%2F{{ post.id }}">Log in</a> to comment.</p>
+      {% endif %}
       {% endif %}
     </section>
   </section>

@@ -97,7 +97,7 @@ fn summary_context(pool: &Pool) -> Value {
         post_count => pool.post_count,
         deleted => pool.is_deleted,
         updater => pool.updater_name,
-        date => pool.updated_at.date().to_string(),
+        date => crate::dates::day(pool.updated_at),
     }
 }
 
@@ -243,6 +243,7 @@ async fn show(
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         let image = match pools::visible_post_ids(db, id, &public, 0, 1)
             .await?
@@ -575,7 +576,7 @@ async fn history(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> 
             };
             context! {
                 version => v.version,
-                date => v.created_at.date().to_string(),
+                date => crate::dates::day(v.created_at),
                 updater => v.updater_name,
                 name => previous.is_none_or(|p| p.name != v.name).then(|| PoolName::display(&v.name)),
                 category => previous.is_some_and(|p| p.category != v.category).then_some(&v.category),

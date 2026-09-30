@@ -47,7 +47,21 @@ pub fn is_theme_name(name: &str) -> bool {
         && Mode::parse(name).is_none()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Longest custom stylesheet a user may save, in bytes.
+pub const MAX_CUSTOM_CSS: usize = 64 * 1024;
+
+/// Whether `name` can name a time zone: an IANA name such as
+/// `Europe/Berlin` or `UTC`. Whether the zone exists is checked where the
+/// time zone database is.
+pub fn is_time_zone_name(name: &str) -> bool {
+    (1..=64).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'_' | b'-' | b'+'))
+        && !name.split('/').any(|part| part.is_empty() || part == "..")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserSettings {
     /// `None` uses the site's default.
     pub per_page: Option<u32>,
@@ -57,7 +71,52 @@ pub struct UserSettings {
     pub theme: Option<String>,
     /// `None` until the user saves one: the site's default applies.
     pub blacklist: Option<String>,
+    /// Only general-rated posts, everywhere.
+    pub safe_mode: bool,
+    /// Post pages show the original image rather than the resized sample.
+    pub original_images: bool,
+    /// Searches include deleted posts, for those who may see them.
+    pub show_deleted: bool,
+    /// Grids use the larger thumbnails.
+    pub large_thumbnails: bool,
+    /// Blacklisted posts stay in grids, blurred, rather than being left out.
+    pub blur_blacklisted: bool,
+    /// For displayed dates; `None` for UTC.
+    pub time_zone: Option<String>,
+    /// Post pages leave out comments.
+    pub hide_comments: bool,
+    /// Tag autocomplete in search and tag fields.
+    pub autocomplete: bool,
+    /// Keyboard shortcuts.
+    pub shortcuts: bool,
+    /// A stylesheet applied after the site's; empty for none.
+    pub custom_css: String,
 }
+
+impl Default for UserSettings {
+    fn default() -> Self {
+        Self {
+            per_page: None,
+            mode: Mode::default(),
+            theme: None,
+            blacklist: None,
+            safe_mode: false,
+            original_images: false,
+            show_deleted: false,
+            large_thumbnails: false,
+            blur_blacklisted: false,
+            time_zone: None,
+            hide_comments: false,
+            autocomplete: true,
+            shortcuts: true,
+            custom_css: String::new(),
+        }
+    }
+}
+
+/// Boolean settings that are on unless turned off. The rest are off
+/// unless turned on.
+const ON_BY_DEFAULT: [&str; 2] = ["autocomplete", "shortcuts"];
 
 impl UserSettings {
     pub fn from_json(value: &Value) -> Self {
@@ -79,11 +138,38 @@ impl UserSettings {
             .get("blacklist")
             .and_then(Value::as_str)
             .map(str::to_owned);
+        let flag = |key: &str| {
+            value
+                .get(key)
+                .and_then(Value::as_bool)
+                .unwrap_or(ON_BY_DEFAULT.contains(&key))
+        };
+        let time_zone = value
+            .get("time_zone")
+            .and_then(Value::as_str)
+            .filter(|name| is_time_zone_name(name))
+            .map(str::to_owned);
+        let custom_css = value
+            .get("custom_css")
+            .and_then(Value::as_str)
+            .filter(|css| css.len() <= MAX_CUSTOM_CSS)
+            .unwrap_or_default()
+            .to_owned();
         Self {
             per_page,
             mode,
             theme,
             blacklist,
+            safe_mode: flag("safe_mode"),
+            original_images: flag("original_images"),
+            show_deleted: flag("show_deleted"),
+            large_thumbnails: flag("large_thumbnails"),
+            blur_blacklisted: flag("blur_blacklisted"),
+            time_zone,
+            hide_comments: flag("hide_comments"),
+            autocomplete: flag("autocomplete"),
+            shortcuts: flag("shortcuts"),
+            custom_css,
         }
     }
 
@@ -104,6 +190,32 @@ impl UserSettings {
             Some(text) => map.insert("blacklist".into(), text.as_str().into()),
             None => map.remove("blacklist"),
         };
+        for (key, on) in [
+            ("safe_mode", self.safe_mode),
+            ("original_images", self.original_images),
+            ("show_deleted", self.show_deleted),
+            ("large_thumbnails", self.large_thumbnails),
+            ("blur_blacklisted", self.blur_blacklisted),
+            ("hide_comments", self.hide_comments),
+            ("autocomplete", self.autocomplete),
+            ("shortcuts", self.shortcuts),
+        ] {
+            // Defaults aren't stored, so they can change.
+            if on == ON_BY_DEFAULT.contains(&key) {
+                map.remove(key);
+            } else {
+                map.insert(key.into(), on.into());
+            }
+        }
+        match &self.time_zone {
+            Some(name) => map.insert("time_zone".into(), name.as_str().into()),
+            None => map.remove("time_zone"),
+        };
+        if self.custom_css.is_empty() {
+            map.remove("custom_css");
+        } else {
+            map.insert("custom_css".into(), self.custom_css.as_str().into());
+        }
         Value::Object(map)
     }
 }
@@ -139,7 +251,7 @@ mod tests {
                 per_page: Some(100),
                 mode: Mode::Dark,
                 theme: Some("sakura".into()),
-                blacklist: None,
+                ..UserSettings::default()
             }
         );
     }
@@ -154,10 +266,8 @@ mod tests {
     fn writes_over_the_previous_value() {
         let previous = json!({ "per_page": 60, "theme": "dark", "future": true });
         let settings = UserSettings {
-            per_page: None,
             mode: Mode::Light,
-            theme: None,
-            blacklist: None,
+            ..UserSettings::default()
         };
         assert_eq!(
             settings.to_json(&previous),
@@ -172,6 +282,49 @@ mod tests {
             ..settings
         };
         assert_eq!(UserSettings::from_json(&themed.to_json(&previous)), themed);
+    }
+
+    #[test]
+    fn stores_only_changed_flags() {
+        let settings = UserSettings {
+            safe_mode: true,
+            shortcuts: false,
+            time_zone: Some("Europe/Berlin".into()),
+            custom_css: "body { color: red }".into(),
+            ..UserSettings::default()
+        };
+        let stored = settings.to_json(&json!({ "autocomplete": false }));
+        assert_eq!(
+            stored,
+            json!({
+                "mode": "system",
+                "safe_mode": true,
+                "shortcuts": false,
+                "time_zone": "Europe/Berlin",
+                "custom_css": "body { color: red }",
+            })
+        );
+        assert_eq!(UserSettings::from_json(&stored), settings);
+        assert!(UserSettings::from_json(&json!({})).autocomplete);
+        assert_eq!(
+            UserSettings::from_json(&json!({ "time_zone": "../etc/passwd" })).time_zone,
+            None
+        );
+    }
+
+    #[test]
+    fn checks_time_zone_names() {
+        for good in [
+            "UTC",
+            "Europe/Berlin",
+            "America/Argentina/Buenos_Aires",
+            "Etc/GMT+9",
+        ] {
+            assert!(is_time_zone_name(good), "{good}");
+        }
+        for bad in ["", "a b", "Europe//Berlin", "../x", "/UTC", &"a".repeat(65)] {
+            assert!(!is_time_zone_name(bad), "{bad}");
+        }
     }
 
     #[test]

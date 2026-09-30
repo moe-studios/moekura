@@ -353,6 +353,7 @@ fn visibility(viewer: Option<i64>) -> Visibility {
         statuses: vec![PostStatus::Active, PostStatus::Flagged],
         viewer,
         ratings: Vec::new(),
+        deleted_by_default: false,
     }
 }
 

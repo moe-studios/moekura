@@ -149,6 +149,7 @@ impl TagJobs {
             ],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         let plan = Plan::resolve(&self.db, &query, &visibility, &config)
             .await

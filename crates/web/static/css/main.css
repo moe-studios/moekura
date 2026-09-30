@@ -237,6 +237,8 @@ label.choice { display: flex; align-items: center; gap: 6px; font-weight: normal
 .post-grid .pending-media { background: var(--border); object-fit: none; }
 .post-grid .is-pending { border-style: dashed; }
 .post-grid .is-deleted { opacity: 0.5; }
+.post-grid .is-blacklisted .thumb { filter: blur(16px); }
+[data-thumbs="large"] .post-grid { grid-template-columns: repeat(auto-fill, minmax(min(400px, 90vw), 1fr)); }
 .badge {
   position: absolute;
   top: 8px;
@@ -373,6 +375,7 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .status-active { color: var(--tag-character); }
 .status-pending { color: var(--tag-meta); }
 .status-rejected, .status-deleted { color: var(--muted); }
+.status-sticky { color: var(--accent); }
 
 /* Search */
 
@@ -476,6 +479,7 @@ form .suggestions button[type="submit"] { background: var(--border); color: var(
 .wiki-head h1 { margin: 0; overflow-wrap: anywhere; }
 .wiki-head .hint { margin-bottom: 16px; }
 .wiki .notice { margin: 0 0 16px; }
+.notice.resized { margin: 0 0 8px; }
 .markup { overflow-wrap: anywhere; }
 .markup > :first-child { margin-top: 0; }
 .markup > :last-child { margin-bottom: 0; }

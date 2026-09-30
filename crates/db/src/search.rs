@@ -411,6 +411,8 @@ pub struct Plan {
     ordfavgroup: Option<i32>,
     /// `order:<category>tags`'s category.
     ordcategory: Option<i16>,
+    /// `order:custom`'s posts, in order: the search's `id:` list.
+    custom: Vec<i64>,
     statuses: Vec<&'static str>,
     /// The viewer, if their own pending posts are included.
     own_pending: Option<i64>,
@@ -458,6 +460,7 @@ impl Plan {
             ordpool: None,
             ordfavgroup: None,
             ordcategory: None,
+            custom: Vec::new(),
             statuses,
             own_pending,
             ratings: if visibility.ratings.is_empty() {
@@ -546,6 +549,22 @@ impl Plan {
             }
         }
 
+        if plan.order == Order::Custom {
+            plan.custom = query
+                .conditions
+                .iter()
+                .find_map(|condition| match (&condition.filter, condition.negated) {
+                    (Filter::Id(Bound::In(ids)), false) => Some(ids.clone()),
+                    (Filter::Id(Bound::Eq(id)), false) => Some(vec![*id]),
+                    _ => None,
+                })
+                .ok_or_else(|| {
+                    SearchError::Invalid(
+                        "order:custom needs a list of posts, like id:3,1,2.".into(),
+                    )
+                })?;
+        }
+
         if let Some(name) = &query.ordfav
             && plan.order == Order::Favorited
         {
@@ -632,6 +651,14 @@ impl Plan {
     /// positive score.
     fn only_ranked(&self) -> bool {
         self.order == Order::Rank
+    }
+
+    /// Whether the order leaves out posts no comment bumped.
+    fn only_bumped(&self) -> bool {
+        matches!(
+            self.order,
+            Order::CommentBumpedDesc | Order::CommentBumpedAsc
+        )
     }
 
     /// Whether the order leaves out posts without notes.
@@ -915,6 +942,47 @@ impl Plan {
             Order::FavGroup => {
                 sql.push("fgo.position ASC");
             }
+            Order::UpvotesDesc => {
+                sql.push("p.up_score DESC, p.id DESC");
+            }
+            Order::UpvotesAsc => {
+                sql.push("p.up_score ASC, p.id ASC");
+            }
+            Order::DownvotesDesc => {
+                sql.push("p.down_score DESC, p.id DESC");
+            }
+            Order::DownvotesAsc => {
+                sql.push("p.down_score ASC, p.id ASC");
+            }
+            Order::CommentBumpedDesc => {
+                sql.push("p.last_comment_bumped_at DESC, p.id DESC");
+            }
+            Order::CommentBumpedAsc => {
+                sql.push("p.last_comment_bumped_at ASC, p.id ASC");
+            }
+            Order::CommentCountDesc => {
+                sql.push("p.comment_count DESC, p.id DESC");
+            }
+            Order::CommentCountAsc => {
+                sql.push("p.comment_count ASC, p.id ASC");
+            }
+            Order::NoteCountDesc => {
+                sql.push("p.note_count DESC, p.id DESC");
+            }
+            Order::NoteCountAsc => {
+                sql.push("p.note_count ASC, p.id ASC");
+            }
+            Order::Custom => {
+                sql.push("array_position(")
+                    .push_bind(self.custom.clone())
+                    .push("::bigint[], p.id)");
+            }
+            Order::Md5Desc => {
+                sql.push("a.md5 DESC, p.id DESC");
+            }
+            Order::Md5Asc => {
+                sql.push("a.md5 ASC, p.id ASC");
+            }
         }
         sql.push(" LIMIT ").push_bind(i64::from(self.per_page));
         if offset > 0 {
@@ -935,6 +1003,8 @@ impl Plan {
                 | Order::Portrait
                 | Order::DurationDesc
                 | Order::DurationAsc
+                | Order::Md5Desc
+                | Order::Md5Asc
         );
         media_order || self.filters.iter().any(Node::uses_media)
     }
@@ -975,6 +1045,9 @@ impl Plan {
         }
         if self.only_noted() {
             sql.push(" AND p.last_noted_at IS NOT NULL");
+        }
+        if self.only_bumped() {
+            sql.push(" AND p.last_comment_bumped_at IS NOT NULL");
         }
         if self.only_ranked() {
             sql.push(format!(
@@ -1359,7 +1432,7 @@ async fn saved_search_posts(
 
 /// The statuses a search covers, and the viewer if their own pending
 /// posts are included. Without a `status:` filter, deleted posts are left
-/// out even for those who may see them.
+/// out even for those who may see them, unless they chose otherwise.
 fn statuses(query: &Query, visibility: &Visibility) -> (Vec<&'static str>, Option<i64>) {
     let visible = &visibility.statuses;
     // `status:` inside a group decides for each post.
@@ -1373,7 +1446,7 @@ fn statuses(query: &Query, visibility: &Visibility) -> (Vec<&'static str>, Optio
         })
         .any(|filter| matches!(filter, Filter::Status(_)));
     let mut wanted: Vec<PostStatus> = match query.status() {
-        None if nested_status => visible.clone(),
+        None if nested_status || visibility.deleted_by_default => visible.clone(),
         None => visible
             .iter()
             .copied()
@@ -1783,6 +1856,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         }
     }
 
@@ -1938,6 +2012,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Deleted],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         assert_eq!(
             search_as(&pool, "cat (status:deleted or rating:e)", &staff).await,
@@ -2149,10 +2224,10 @@ mod tests {
         crate::posts::set_approver(&pool, ids[0], Some(alice))
             .await
             .unwrap();
-        crate::comments::create(&pool, ids[0], bob, "Nice art, love the colours")
+        crate::comments::create(&pool, ids[0], bob, "Nice art, love the colours", true)
             .await
             .unwrap();
-        let hidden = crate::comments::create(&pool, ids[1], bob, "nice try")
+        let hidden = crate::comments::create(&pool, ids[1], bob, "nice try", true)
             .await
             .unwrap();
         crate::comments::set_deleted(&pool, hidden, true)
@@ -2209,6 +2284,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
             viewer: Some(alice),
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         assert_eq!(search_as(&pool, "flagger:bob", &staff).await, [ids[2]]);
 
@@ -2507,6 +2583,7 @@ mod tests {
             ],
             viewer: None,
             ratings: Vec::new(),
+            deleted_by_default: false,
         };
         // Deleted posts only when asked for.
         assert_eq!(
@@ -2602,7 +2679,7 @@ mod tests {
         .unwrap();
         // Post 0 gets two comments, then post 2 one.
         for post in [ids[0], ids[0], ids[2]] {
-            crate::comments::create(&pool, post, user, "hi")
+            crate::comments::create(&pool, post, user, "hi", true)
                 .await
                 .unwrap();
         }
@@ -2617,6 +2694,99 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(plan.count(&pool).await.unwrap(), Count::Exact(2));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn vote_comment_note_custom_and_md5_orders(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(
+                seed(
+                    &pool,
+                    Seed {
+                        tags: &["x"],
+                        ..Seed::default()
+                    },
+                )
+                .await,
+            );
+        }
+        let mut users = Vec::new();
+        for name in ["ann", "bob", "cat"] {
+            users.push(
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO users (name, role_id)
+                     SELECT $1, id FROM roles WHERE system_key = 'member' RETURNING id",
+                )
+                .bind(name)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            );
+        }
+        // Post 0: two up, one down. Post 1: one up. Post 2: two down.
+        for (user, post, score) in [
+            (0, 0, 1),
+            (1, 0, 1),
+            (2, 0, -1),
+            (0, 1, 1),
+            (0, 2, -1),
+            (1, 2, -1),
+        ] {
+            sqlx::query("INSERT INTO post_votes (user_id, post_id, score) VALUES ($1, $2, $3)")
+                .bind(users[user])
+                .bind(ids[post])
+                .bind(score as i16)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        // A changed vote moves between the counts.
+        sqlx::query("UPDATE post_votes SET score = 1 WHERE user_id = $1 AND post_id = $2")
+            .bind(users[1])
+            .bind(ids[2])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let by = |order: &[usize]| order.iter().map(|&i| ids[i]).collect::<Vec<_>>();
+        assert_eq!(search(&pool, "order:upvotes").await, by(&[0, 2, 1]));
+        assert_eq!(search(&pool, "order:upvotes_asc").await, by(&[1, 2, 0]));
+        assert_eq!(search(&pool, "order:downvotes").await, by(&[2, 0, 1]));
+
+        // Post 1 is commented on last, but without bumping.
+        for (post, bump) in [(0, true), (2, true), (2, true), (1, false)] {
+            crate::comments::create(&pool, ids[post], users[0], "hi", bump)
+                .await
+                .unwrap();
+        }
+        assert_eq!(search(&pool, "order:comment").await, by(&[1, 2, 0]));
+        assert_eq!(search(&pool, "order:comment_bumped").await, by(&[2, 0]));
+        assert_eq!(search(&pool, "order:comment_bumped_asc").await, by(&[0, 2]));
+        assert_eq!(search(&pool, "order:comment_count").await, by(&[2, 1, 0]));
+
+        sqlx::query("UPDATE posts SET note_count = 3 WHERE id = $1")
+            .bind(ids[1])
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(search(&pool, "order:note_count").await, by(&[1, 2, 0]));
+        assert_eq!(search(&pool, "order:note_count_asc").await, by(&[0, 2, 1]));
+
+        let custom = format!("id:{},{},{} order:custom", ids[1], ids[2], ids[0]);
+        assert_eq!(search(&pool, &custom).await, by(&[1, 2, 0]));
+        let query = Query::parse("x order:custom").unwrap();
+        assert!(matches!(
+            Plan::resolve(&pool, &query, &public(), &SearchConfig::default()).await,
+            Err(SearchError::Invalid(_))
+        ));
+
+        let by_md5: Vec<i64> =
+            sqlx::query_scalar("SELECT post_id FROM media_assets ORDER BY md5 DESC")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(search(&pool, "order:md5").await, by_md5);
+        assert_eq!(search(&pool, "order:created_at_asc").await, ids);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
@@ -3135,6 +3305,7 @@ mod tests {
             ordpool: None,
             ordfavgroup: None,
             ordcategory: None,
+            custom: Vec::new(),
             statuses: vec!["active"],
             own_pending: None,
             ratings: Vec::new(),

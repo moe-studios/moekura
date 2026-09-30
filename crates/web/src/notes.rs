@@ -187,7 +187,7 @@ async fn history(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> 
             context! {
                 note_id => v.note_id,
                 version => v.version,
-                date => v.created_at.date().to_string(),
+                date => crate::dates::day(v.created_at),
                 updater => v.updater_name,
                 box => format!("{}×{} at {},{}", v.width, v.height, v.x, v.y),
                 body => v.body,

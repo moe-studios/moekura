@@ -53,6 +53,7 @@ pub fn routes() -> Router<AppState> {
         .route("/comments/{id}/report", post(report))
         .route("/comments/{id}/hide", post(hide))
         .route("/comments/{id}/restore", post(restore))
+        .route("/comments/{id}/sticky", post(sticky))
         .route("/comments/{id}/reports/dismiss", post(dismiss_reports))
         .route("/moderation/comments", get(report_queue))
         .route("/posts/{id}/comments", post(create))
@@ -176,7 +177,7 @@ fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value
             url_value(&format!("/users/{}", url::form_urlencoded::byte_serialize(name.as_bytes()).collect::<String>()))
         }),
         html => Value::from_safe_string(markup::render(&comment.body)),
-        date => comment.created_at.date().to_string(),
+        date => crate::dates::day(comment.created_at),
         created_iso => comment.created_at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         edited => comment.edited_at.is_some(),
         deleted => comment.is_deleted,
@@ -187,6 +188,8 @@ fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value
         can_edit => own && may_comment && !comment.is_deleted,
         can_reply => may_comment && current.is_logged_in() && !comment.is_deleted,
         can_report => current.is_logged_in() && current.can(Permission::Flag) && !own && !comment.is_deleted,
+        sticky => comment.is_sticky,
+        can_stick => moderate && !comment.is_deleted,
         can_hide => moderate && !comment.is_deleted,
         can_restore => moderate && comment.is_deleted,
     }
@@ -200,6 +203,17 @@ pub(crate) async fn thread(
     post: &Post,
     draft: Option<&CommentDraft>,
 ) -> Result<Value, AppError> {
+    let hidden = current.user.as_ref().is_some_and(|u| {
+        moekura_core::user_settings::UserSettings::from_json(&u.settings).hide_comments
+    });
+    // A refused comment is shown again even so.
+    if hidden && draft.is_none() {
+        return Ok(context! {
+            hidden => true,
+            count => post.comment_count,
+            all_url => url_value(&format!("/comments?post_id={}", post.id)),
+        });
+    }
     let db = state.db.primary();
     let with_deleted = sees_deleted(current);
     let shown = comments::for_post(db, post.id, with_deleted, THREAD_SIZE).await?;
@@ -248,6 +262,8 @@ pub(crate) async fn reply_draft(
 #[derive(Debug, Deserialize)]
 struct CommentForm {
     body: String,
+    /// Present to leave the post's place in `order:comment_bumped` alone.
+    do_not_bump: Option<String>,
     /// The captcha widget's token, for new accounts when asked for.
     #[serde(default, alias = "cf-turnstile-response", alias = "h-captcha-response")]
     captcha: String,
@@ -305,7 +321,8 @@ async fn create(
             .await;
         }
     };
-    let comment_id = comments::create(state.db.primary(), post.id, user, &body).await?;
+    let bump = form.do_not_bump.is_none();
+    let comment_id = comments::create(state.db.primary(), post.id, user, &body, bump).await?;
     tracing::info!(post = post.id, comment = comment_id, "comment posted");
     crate::webhooks::emit_comment(state, comment_id).await;
     Ok(Redirect::to(&format!("/posts/{}#comment-{comment_id}", post.id)).into_response())
@@ -565,6 +582,40 @@ async fn hide(
 
 async fn restore(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
     let comment = moderate(page.state(), &page.current, id, false, "").await?;
+    Ok((flash::set(jar, Flash::Saved), Redirect::to(&url(&comment))).into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct StickyForm {
+    /// `1` pins the comment to the top of its post's comments, `0` unpins it.
+    sticky: String,
+}
+
+/// Pins a comment to the top of its post's comments, or unpins it.
+async fn sticky(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<StickyForm>,
+) -> Result<Response, AppError> {
+    let state = page.state();
+    page.current.require(Permission::ModerateComments)?;
+    let sticky = form.sticky == "1";
+    let (comment, _) = visible_comment(state, &page.current, id).await?;
+    if comment.is_deleted {
+        return Err(AppError::BadRequest("The comment is hidden".into()));
+    }
+    let mut tx = state.db.primary().begin().await?;
+    if comments::set_sticky(&mut *tx, id, sticky).await? {
+        let kind = if sticky {
+            ActionKind::CommentSticky
+        } else {
+            ActionKind::CommentUnsticky
+        };
+        let actor = page.current.user.as_ref().map(|u| u.id);
+        mod_actions::record(&mut *tx, comment_action(actor, kind, &comment, 0)).await?;
+    }
+    tx.commit().await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&url(&comment))).into_response())
 }
 
@@ -874,7 +925,7 @@ mod tests {
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
         let bob = session_for(&pool, "bob", SystemRole::Member).await;
         let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
-        let id = comments::create(&pool, post, user_id(&pool, "alice").await, "Hello")
+        let id = comments::create(&pool, post, user_id(&pool, "alice").await, "Hello", true)
             .await
             .unwrap();
         let vote = format!("/comments/{id}/vote");
@@ -1024,6 +1075,67 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn quiet_and_pinned_comments(pool: PgPool) {
+        let app = app(&pool).await;
+        let post = post(&pool, "active").await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let posted = app
+            .post_form(
+                &format!("/posts/{post}/comments"),
+                Some(&alice),
+                &[],
+                "body=Quietly&do_not_bump=1",
+            )
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+        let quiet: (i64, bool) =
+            sqlx::query_as("SELECT id, do_not_bump FROM comments WHERE body = 'Quietly'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(quiet.1);
+        let bumped: Option<time::OffsetDateTime> =
+            sqlx::query_scalar("SELECT last_comment_bumped_at FROM posts WHERE id = $1")
+                .bind(post)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(bumped, None);
+        app.post_form(
+            &format!("/posts/{post}/comments"),
+            Some(&alice),
+            &[],
+            "body=Loudly",
+        )
+        .await;
+
+        let pin = format!("/comments/{}/sticky", quiet.0);
+        assert_eq!(
+            app.post_form(&pin, Some(&alice), &[], "sticky=1")
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        let page = app.get(&format!("/posts/{post}"), Some(&jan)).await.body;
+        assert!(page.contains("Pin to top"), "{page}");
+        let pinned = app.post_form(&pin, Some(&jan), &[], "sticky=1").await;
+        assert_eq!(pinned.status, StatusCode::SEE_OTHER, "{}", pinned.body);
+        let page = app.get(&format!("/posts/{post}"), Some(&alice)).await.body;
+        assert!(page.contains(">pinned</span>"), "{page}");
+        assert!(
+            page.find("Quietly").unwrap() < page.find("Loudly").unwrap(),
+            "{page}"
+        );
+        let logged: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM mod_actions WHERE action = 'comment.sticky'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(logged, 1);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn banned_users_cant_comment(pool: PgPool) {
         let app = app(&pool).await;
         let post = post(&pool, "active").await;
@@ -1096,11 +1208,11 @@ mod tests {
             .await
             .unwrap();
         for i in 0..30 {
-            comments::create(&pool, visible, alice_id, &format!("number {i}."))
+            comments::create(&pool, visible, alice_id, &format!("number {i}."), true)
                 .await
                 .unwrap();
         }
-        comments::create(&pool, pending, alice_id, "secret")
+        comments::create(&pool, pending, alice_id, "secret", true)
             .await
             .unwrap();
 
@@ -1130,7 +1242,7 @@ mod tests {
 
         // The post page shows the latest 50 and links to the rest.
         for i in 30..55 {
-            comments::create(&pool, visible, alice_id, &format!("number {i}."))
+            comments::create(&pool, visible, alice_id, &format!("number {i}."), true)
                 .await
                 .unwrap();
         }

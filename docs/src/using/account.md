@@ -1,6 +1,29 @@
 # Your account
 
-Everything here is under **Settings → Your email address and password**.
+## Settings
+
+**Settings**, at the top of every page, holds how the site looks to you:
+
+- **Posts per page**, the **theme** and light or dark **mode**.
+- **Blacklist**: posts matching a line are left out of grids, with a
+  count and a link to show them. Tick **Blur blacklisted posts** to keep
+  them in grids, blurred, instead.
+- **Safe mode** shows only general-rated posts, everywhere: searches,
+  post pages, pools and the API.
+- Post pages show large images resized, saying so above them with a link
+  to the original. **Show original images** always shows the original.
+- **Include deleted posts in searches**, for those allowed to see them.
+- **Large thumbnails** use the site's second thumbnail size in grids.
+- **Hide comments** leaves comments off post pages, with a link to read
+  them.
+- **Suggest tags while typing** and **Keyboard shortcuts** can be turned
+  off.
+- **Time zone** is used for the dates pages show. Otherwise they're in
+  UTC.
+- **Custom CSS** is applied after the site's styles, for you alone.
+
+The rest of this page is under **Settings → Your email address and
+password**.
 
 ## Email address and password
 

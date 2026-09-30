@@ -68,6 +68,11 @@ pub fn visibility(current: &CurrentUser) -> Visibility {
         statuses.push(PostStatus::Deleted);
     }
     Visibility {
+        deleted_by_default: statuses.contains(&PostStatus::Deleted)
+            && current
+                .user
+                .as_ref()
+                .is_some_and(|u| UserSettings::from_json(&u.settings).show_deleted),
         statuses,
         viewer: current.user.as_ref().map(|u| u.id),
         ratings: current.ratings.clone(),
@@ -146,13 +151,8 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         (_, Err(SearchError::Invalid(message))) => return Ok(failed(message)),
     };
 
-    let sizes = &state.media.config().thumbnail_sizes;
-    let box_size = sizes.first().copied().unwrap_or(250);
-    let kinds = (
-        format!("thumb-{box_size}"),
-        format!("thumb-{}", sizes.get(1).copied().unwrap_or(box_size)),
-    );
-    let cards = posts::cards(db, &ids, (&kinds.0, &kinds.1)).await?;
+    let thumbs = Thumbs::for_viewer(state, &page.current);
+    let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
     let normalized = query.to_string();
     // Even the empty search, so the post page can step through it.
     let post_query = Some(
@@ -160,17 +160,25 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             .append_pair("q", &normalized)
             .finish(),
     );
-    // Blacklisted posts are left out of the page entirely, with a count
-    // and a link to show them.
+    // Blacklisted posts are left out of the page entirely, or blurred,
+    // with a count and a link to show them.
     let show_all = params.blacklist == "off";
     let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
-    let (shown, hidden): (Vec<&Card>, Vec<&Card>) = cards.iter().partition(|card| {
-        show_all
-            || blacklist.as_ref().is_none_or(|list| {
+    let blur = blur_blacklisted(&page.current);
+    let is_blacklisted = |card: &Card| {
+        !show_all
+            && blacklist.as_ref().is_some_and(|list| {
                 let rating = card.rating.parse().unwrap_or(Rating::Explicit);
-                list.matching(rating, &card.tag_ids).is_none()
+                list.matching(rating, &card.tag_ids).is_some()
             })
-    });
+    };
+    let (shown, hidden): (Vec<&Card>, Vec<&Card>) =
+        cards.iter().partition(|card| blur || !is_blacklisted(card));
+    let blurred = if blur {
+        cards.iter().filter(|card| is_blacklisted(card)).count()
+    } else {
+        0
+    };
     let blacklist_url = |off: bool| {
         let mut query = url::form_urlencoded::Serializer::new(String::new());
         if !normalized.is_empty() {
@@ -186,15 +194,29 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
     };
     let blacklisted = context! {
         hidden => hidden.len(),
-        show_url => (!hidden.is_empty()).then(|| blacklist_url(true)),
+        blurred => blurred,
+        show_url => (!hidden.is_empty() || blurred > 0).then(|| blacklist_url(true)),
         hide_url => (show_all && blacklist.is_some()).then(|| blacklist_url(false)),
     };
     let card_values: Vec<Value> = shown
         .iter()
-        .map(|card| card_context(state, card, box_size, post_query.as_deref()))
+        .map(|card| {
+            let value = card_context(state, card, thumbs.size, post_query.as_deref());
+            if is_blacklisted(card) {
+                with_blur(value)
+            } else {
+                value
+            }
+        })
         .collect();
 
-    let shown: Vec<Card> = shown.into_iter().cloned().collect();
+    // Blurred posts' tags stay out of the sidebar, as left out ones do.
+    let shown: Vec<Card> = shown
+        .into_iter()
+        .filter(|card| !is_blacklisted(card))
+        .cloned()
+        .collect();
+    let deleted = deleted_hidden(&page, db, &query, &normalized, config).await?;
     let sidebar = sidebar_tags(db, &shown, &normalized).await?;
     let wiki = crate::wiki::search_excerpt(db, &query).await?;
     // Only for searches that found nothing, so the rest pay nothing.
@@ -229,6 +251,7 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             can_tag_script => page.current.is_logged_in() && page.current.can(Permission::EditPosts),
             cards => card_values,
             blacklisted => blacklisted,
+            deleted => deleted,
             count => count_text(count),
             sidebar => sidebar,
             wiki => wiki,
@@ -236,6 +259,43 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
             pager => pager.context(),
         },
     ))
+}
+
+/// How many deleted posts a search left out, with a link to include
+/// them, for viewers who may see deleted posts but didn't ask for them.
+async fn deleted_hidden(
+    page: &Page,
+    db: &sqlx::PgPool,
+    query: &SearchQuery,
+    normalized: &str,
+    config: &moekura_core::config::SearchConfig,
+) -> Result<Option<Value>, AppError> {
+    let visible = visibility(&page.current);
+    // A `status:` anywhere, groups included, already decides.
+    if !visible.statuses.contains(&PostStatus::Deleted)
+        || visible.deleted_by_default
+        || query.status().is_some()
+        || !query.groups.is_empty()
+    {
+        return Ok(None);
+    }
+    let Ok(deleted) = SearchQuery::parse(&format!("{normalized} status:deleted")) else {
+        return Ok(None);
+    };
+    let plan = match Plan::resolve(db, &deleted, &visible, config).await {
+        Ok(plan) => plan,
+        Err(SearchError::Invalid(_)) => return Ok(None),
+        Err(SearchError::Db(error)) => return Err(error.into()),
+    };
+    let count = match page.state().counts.count(&plan, db, &page.current).await {
+        Ok(Count::Exact(0)) | Err(SearchError::Invalid(_)) => return Ok(None),
+        Ok(count) => count,
+        Err(SearchError::Db(error)) => return Err(error.into()),
+    };
+    Ok(Some(context! {
+        count => count_text(count).replacen(" post", " deleted post", 1),
+        show_url => Value::from_safe_string(search_url(format!("{normalized} status:any").trim_start())),
+    }))
 }
 
 /// For a search that found nothing: its plain tags that match no posts,
@@ -458,9 +518,52 @@ fn file_url(state: &AppState, key: &str) -> Option<Value> {
     Key::parse(key).map(|k| url_value(&state.file_url(&k)))
 }
 
+/// The thumbnails grids show a viewer: the smallest size, or the next
+/// one up for those who chose large thumbnails.
+pub(crate) struct Thumbs {
+    /// The box they fit in, in pixels.
+    pub size: u32,
+    /// Renditions for 1x and 2x screens.
+    kinds: (String, String),
+}
+
+impl Thumbs {
+    pub fn for_viewer(state: &AppState, current: &CurrentUser) -> Self {
+        let sizes = &state.media.config().thumbnail_sizes;
+        let small = sizes.first().copied().unwrap_or(250);
+        let large = sizes.get(1).copied().unwrap_or(small);
+        let wants_large = current
+            .user
+            .as_ref()
+            .is_some_and(|u| UserSettings::from_json(&u.settings).large_thumbnails);
+        let size = if wants_large { large } else { small };
+        Self {
+            size,
+            kinds: (format!("thumb-{size}"), format!("thumb-{large}")),
+        }
+    }
+
+    pub fn kinds(&self) -> (&str, &str) {
+        (&self.kinds.0, &self.kinds.1)
+    }
+}
+
+/// Whether `current` sees blacklisted posts blurred rather than left out.
+fn blur_blacklisted(current: &CurrentUser) -> bool {
+    current
+        .user
+        .as_ref()
+        .is_some_and(|u| UserSettings::from_json(&u.settings).blur_blacklisted)
+}
+
+/// A card marked as blacklisted, to be shown blurred.
+fn with_blur(card: Value) -> Value {
+    context! { ..card, ..context! { blacklisted => true } }
+}
+
 /// Grid cards for posts `ids` (their ids and contexts, in order), leaving
-/// out posts the viewer's blacklist hides. `post_query` is added to the
-/// post links, as for [`card_context`].
+/// out posts the viewer's blacklist hides, or blurring them if they chose
+/// that. `post_query` is added to the post links, as for [`card_context`].
 pub(crate) async fn grid(
     page: &Page,
     db: &sqlx::PgPool,
@@ -468,23 +571,24 @@ pub(crate) async fn grid(
     post_query: Option<&str>,
 ) -> Result<Vec<(i64, Value)>, AppError> {
     let state = page.state();
-    let sizes = &state.media.config().thumbnail_sizes;
-    let box_size = sizes.first().copied().unwrap_or(250);
-    let kinds = (
-        format!("thumb-{box_size}"),
-        format!("thumb-{}", sizes.get(1).copied().unwrap_or(box_size)),
-    );
-    let cards = posts::cards(db, ids, (&kinds.0, &kinds.1)).await?;
+    let thumbs = Thumbs::for_viewer(state, &page.current);
+    let cards = posts::cards(db, ids, thumbs.kinds()).await?;
     let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
+    let blur = blur_blacklisted(&page.current);
     Ok(cards
         .iter()
-        .filter(|card| {
-            blacklist.as_ref().is_none_or(|list| {
+        .filter_map(|card| {
+            let blacklisted = blacklist.as_ref().is_some_and(|list| {
                 let rating = card.rating.parse().unwrap_or(Rating::Explicit);
-                list.matching(rating, &card.tag_ids).is_none()
-            })
+                list.matching(rating, &card.tag_ids).is_some()
+            });
+            let value = card_context(state, card, thumbs.size, post_query);
+            match (blacklisted, blur) {
+                (false, _) => Some((card.id, value)),
+                (true, true) => Some((card.id, with_blur(value))),
+                (true, false) => None,
+            }
         })
-        .map(|card| (card.id, card_context(state, card, box_size, post_query)))
         .collect())
 }
 
@@ -639,6 +743,10 @@ struct ShowQuery {
     reply: Option<i64>,
     /// The pool the post was opened from, for stepping through it.
     pool: Option<i32>,
+    /// `1` shows the original image rather than the resized sample, `0`
+    /// the sample even for those who chose originals.
+    #[serde(default)]
+    original: String,
 }
 
 async fn show(
@@ -658,6 +766,11 @@ async fn show(
         Extra {
             comment,
             pool: params.pool,
+            original: match params.original.as_str() {
+                "1" => Some(true),
+                "0" => Some(false),
+                _ => None,
+            },
             ..Extra::default()
         },
     )
@@ -684,6 +797,9 @@ pub(crate) struct Extra<'a> {
     pub comment: Option<CommentDraft>,
     /// The pool the post was opened from.
     pub pool: Option<i32>,
+    /// Whether to show the original image rather than the resized sample;
+    /// `None` for the viewer's setting.
+    pub original: Option<bool>,
 }
 
 /// The post page.
@@ -734,7 +850,7 @@ pub(crate) async fn render_post(
             context! {
                 by => entry.actor_name,
                 reason => entry.reason,
-                when => entry.created_at.date().to_string(),
+                when => crate::dates::day(entry.created_at),
             }
         })
     } else {
@@ -749,7 +865,7 @@ pub(crate) async fn render_post(
                     by => f.creator_name,
                     reason => f.reason,
                     status => f.status,
-                    when => f.created_at.date().to_string(),
+                    when => crate::dates::day(f.created_at),
                 }
             })
             .collect()
@@ -824,12 +940,33 @@ pub(crate) async fn render_post(
     let original = url_of(&asset.storage_key);
     let video = matches!(asset.media_type.as_str(), "mp4" | "webm");
     let animated = asset.frames > 1;
-    // Stills show the resized sample when there is one; animations and
-    // videos always use the original.
-    let display = match variant("sample") {
-        Some(sample) if !video && !animated => url_of(&sample.storage_key),
+    // Stills show the resized sample when there is one, unless the viewer
+    // wants the original; animations and videos always use the original.
+    let sample = variant("sample").filter(|_| !video && !animated);
+    let show_original = extra.original.unwrap_or_else(|| {
+        page.current
+            .user
+            .as_ref()
+            .is_some_and(|u| UserSettings::from_json(&u.settings).original_images)
+    });
+    let display = match sample {
+        Some(sample) if !show_original => url_of(&sample.storage_key),
         _ => original.clone(),
     };
+    // Switches between the two without scripts; with them, in place.
+    let resized = sample.map(|sample| {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        if from_search {
+            query.append_pair("q", search);
+        }
+        query.append_pair("original", if show_original { "0" } else { "1" });
+        context! {
+            percent => (i64::from(sample.width) * 100 / i64::from(asset.width.max(1))).max(1),
+            sample => url_of(&sample.storage_key),
+            showing_original => show_original,
+            toggle_url => url_value(&format!("/posts/{id}?{}", query.finish())),
+        }
+    });
     let poster = variant("poster").and_then(|v| url_of(&v.storage_key));
     // Notes go on stills and animations, not videos.
     let notes = if video {
@@ -842,6 +979,7 @@ pub(crate) async fn render_post(
     let file = context! {
         original => original,
         display => display,
+        resized => resized,
         poster => poster,
         video => video,
         animated => animated,
@@ -863,7 +1001,7 @@ pub(crate) async fn render_post(
         source_link => is_web_url(&post.source),
         description => post.description,
         has_notes => post.last_noted_at.is_some(),
-        created => created.get(..10).unwrap_or_default(),
+        created => crate::dates::day(post.created_at),
         created_iso => created,
     };
     let bound = |lock| post.is_locked(lock) && !page.current.can(Permission::LockPosts);
@@ -1008,11 +1146,9 @@ async fn similar_context(
     )
     .await?;
     let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
-    let sizes = &state.media.config().thumbnail_sizes;
-    let box_size = sizes.first().copied().unwrap_or(250);
-    let kind = format!("thumb-{box_size}");
+    let thumbs = Thumbs::for_viewer(state, &page.current);
     let visible = visibility(&page.current);
-    Ok(posts::cards(db, &ids, (&kind, &kind))
+    Ok(posts::cards(db, &ids, thumbs.kinds())
         .await?
         .iter()
         .filter(|card| {
@@ -1022,7 +1158,7 @@ async fn similar_context(
                 && visible.allows_rating(rating)
                 && blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
         })
-        .map(|card| card_context(state, card, box_size, None))
+        .map(|card| card_context(state, card, thumbs.size, None))
         .collect())
 }
 
@@ -1039,17 +1175,15 @@ async fn family_context(page: &Page, post: &Post) -> Result<Option<Value>, AppEr
     if ids.len() < 2 {
         return Ok(None);
     }
-    let sizes = &state.media.config().thumbnail_sizes;
-    let box_size = sizes.first().copied().unwrap_or(250);
-    let kind = format!("thumb-{box_size}");
-    let cards = posts::cards(db, &ids, (&kind, &kind)).await?;
+    let thumbs = Thumbs::for_viewer(state, &page.current);
+    let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
     Ok(Some(context! {
         is_child => post.parent_id.is_some(),
         root => root,
         cards => cards
             .iter()
             .map(|card| context! {
-                ..card_context(state, card, box_size, None),
+                ..card_context(state, card, thumbs.size, None),
                 ..context! { current => card.id == post.id }
             })
             .collect::<Vec<_>>(),
@@ -1453,6 +1587,177 @@ mod tests {
             .await
             .body;
         assert!(!shown.contains("matches your blacklist"));
+    }
+
+    /// Stores `settings` for the user called `name`.
+    async fn set_user_settings(pool: &PgPool, name: &str, settings: serde_json::Value) {
+        sqlx::query("UPDATE users SET settings = $2 WHERE name = $1")
+            .bind(name)
+            .bind(settings)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn display_settings_apply(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let general = upload(&app, &alice, &fixture::png(20, 20), &[("rating", "g")]).await;
+        let explicit = upload(&app, &alice, &fixture::png(24, 20), &[("rating", "e")]).await;
+
+        // Safe mode: general posts only, in searches and on post pages.
+        set_user_settings(&pool, "alice", serde_json::json!({ "safe_mode": true })).await;
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(grid.contains(&format!("/posts/{general}?")), "{grid}");
+        assert!(!grid.contains(&format!("/posts/{explicit}?")), "{grid}");
+        assert_eq!(
+            app.get(&format!("/posts/{explicit}"), Some(&alice))
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+
+        // Blurred rather than left out, with larger thumbnails, no
+        // comments, autocomplete or shortcuts.
+        set_user_settings(
+            &pool,
+            "alice",
+            serde_json::json!({
+                "blacklist": "rating:e",
+                "blur_blacklisted": true,
+                "large_thumbnails": true,
+                "hide_comments": true,
+                "autocomplete": false,
+                "shortcuts": false,
+            }),
+        )
+        .await;
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(grid.contains("is-blacklisted"), "{grid}");
+        assert!(grid.contains(&format!("/posts/{explicit}?")), "{grid}");
+        assert!(grid.contains("1 blurred by your blacklist"), "{grid}");
+        assert!(
+            grid.contains("data-thumbs=\"large\" data-autocomplete=\"off\" data-shortcuts=\"off\""),
+            "{grid}"
+        );
+        assert!(!grid.contains("data-shortcuts-link"));
+        let post = app
+            .get(&format!("/posts/{general}"), Some(&alice))
+            .await
+            .body;
+        assert!(post.contains("Your settings hide comments"), "{post}");
+        assert!(!post.contains("id=\"new-comment\""));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn deleted_posts_hidden_from_searches(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let kept = upload(&app, &alice, &fixture::png(20, 20), &[("tags", "cat")]).await;
+        let gone = upload(&app, &alice, &fixture::png(24, 20), &[("tags", "cat")]).await;
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(gone)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let grid = app.get("/posts?tags=cat", Some(&moderator)).await.body;
+        assert!(grid.contains(&format!("/posts/{kept}?")), "{grid}");
+        assert!(!grid.contains(&format!("/posts/{gone}?")), "{grid}");
+        assert!(grid.contains("1 deleted post hidden"), "{grid}");
+        assert!(
+            grid.contains("href=\"/posts?tags=cat+status%3Aany\""),
+            "{grid}"
+        );
+        // Not for those who couldn't see them anyway, nor with a status:.
+        let member = app.get("/posts?tags=cat", Some(&alice)).await.body;
+        assert!(!member.contains("deleted post"), "{member}");
+        let any = app
+            .get("/posts?tags=cat+status:any", Some(&moderator))
+            .await
+            .body;
+        assert!(any.contains(&format!("/posts/{gone}?")), "{any}");
+        assert!(!any.contains("deleted post hidden"));
+
+        // Included by choice.
+        set_user_settings(&pool, "mod", serde_json::json!({ "show_deleted": true })).await;
+        let grid = app.get("/posts?tags=cat", Some(&moderator)).await.body;
+        assert!(grid.contains(&format!("/posts/{gone}?")), "{grid}");
+        assert!(!grid.contains("deleted post hidden"));
+        set_user_settings(&pool, "alice", serde_json::json!({ "show_deleted": true })).await;
+        let member = app.get("/posts?tags=cat", Some(&alice)).await.body;
+        assert!(!member.contains(&format!("/posts/{gone}?")), "{member}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn resized_samples_say_so(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = upload(&app, &alice, &fixture::png(40, 20), &[]).await;
+        let page = app.get(&format!("/posts/{id}"), None).await.body;
+        assert!(!page.contains("data-resized"), "no sample, no notice");
+        sqlx::query(
+            "INSERT INTO media_variants (asset_id, kind, format, width, height, file_size, storage_key)
+             SELECT id, 'sample', 'webp', 10, 5, 1, 'samples/ab/cd/abcd.webp'
+             FROM media_assets WHERE post_id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let page = app.get(&format!("/posts/{id}?q=x"), None).await.body;
+        assert!(page.contains("Resized to 25% of the original."), "{page}");
+        assert!(
+            page.contains("<img src=\"/data/samples/ab/cd/abcd.webp\""),
+            "{page}"
+        );
+        assert!(
+            page.contains(&format!("href=\"/posts/{id}?q=x&amp;original=1\"")),
+            "{page}"
+        );
+        let original = app.get(&format!("/posts/{id}?original=1"), None).await.body;
+        assert!(original.contains("Showing the original."), "{original}");
+        assert!(!original.contains("<img src=\"/data/samples/"));
+
+        // Or always, by choice, until asked for the sample.
+        set_user_settings(
+            &pool,
+            "alice",
+            serde_json::json!({ "original_images": true }),
+        )
+        .await;
+        let chosen = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(chosen.contains("Showing the original."), "{chosen}");
+        assert!(chosen.contains(&format!("href=\"/posts/{id}?original=0\"")));
+        let sample = app
+            .get(&format!("/posts/{id}?original=0"), Some(&alice))
+            .await
+            .body;
+        assert!(sample.contains("Resized to 25%"), "{sample}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn dates_are_in_the_viewers_time_zone(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = upload(&app, &alice, &fixture::png(20, 20), &[]).await;
+        sqlx::query("UPDATE posts SET created_at = '2026-01-01 23:30Z' WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let utc = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(utc.contains(">2026-01-01<"), "{utc}");
+        set_user_settings(
+            &pool,
+            "alice",
+            serde_json::json!({ "time_zone": "Asia/Tokyo" }),
+        )
+        .await;
+        let tokyo = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(tokyo.contains(">2026-01-02<"), "{tokyo}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -96,6 +96,10 @@ pub struct ApiSettings {
     pub theme: String,
     /// The blacklist in effect: the account's own, or the site's default.
     pub blacklist: String,
+    /// Only general-rated posts are shown, here too.
+    pub safe_mode: bool,
+    /// An IANA name such as `Europe/Berlin`; `null` for UTC.
+    pub time_zone: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -141,6 +145,8 @@ pub(crate) async fn me(
             )
             .to_owned(),
             blacklist: crate::blacklist::text_for(&state, &current),
+            safe_mode: settings.safe_mode,
+            time_zone: settings.time_zone.clone(),
         },
         uploads: {
             let allowance = crate::upload::allowance(&state, &current).await?;

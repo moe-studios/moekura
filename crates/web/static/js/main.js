@@ -51,7 +51,20 @@ var METATAGS = {
     "note_asc",
     "rank",
     "change",
-    "change_asc"
+    "change_asc",
+    "upvotes",
+    "upvotes_asc",
+    "downvotes",
+    "downvotes_asc",
+    "comment_bumped",
+    "comment_bumped_asc",
+    "comment_count",
+    "comment_count_asc",
+    "note_count",
+    "note_count_asc",
+    "custom",
+    "md5",
+    "md5_asc"
   ],
   limit: [],
   fav: [],
@@ -955,6 +968,23 @@ function enableReader(root = document) {
   }
 }
 
+// src/resized.ts
+function enableResized() {
+  const notice = document.querySelector("[data-resized]");
+  const image = document.querySelector("[data-notes] img");
+  const link = notice?.querySelector("a");
+  const text = notice?.querySelector("span");
+  const { sample, original, percent } = notice?.dataset ?? {};
+  if (!notice || !image || !link || !text || !sample || !original) return;
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    const showOriginal = image.getAttribute("src") !== original;
+    image.src = showOriginal ? original : sample;
+    text.textContent = showOriginal ? "Showing the original." : `Resized to ${percent}% of the original.`;
+    link.textContent = showOriginal ? "Show the resized image" : "View the original";
+  });
+}
+
 // src/select-all.ts
 function controlled(master) {
   const form = master.dataset.selectAll;
@@ -1147,15 +1177,17 @@ function enableUpload(root = document) {
 
 // src/main.ts
 document.documentElement.classList.add("js");
+var off = (feature) => document.documentElement.dataset[feature] === "off";
 enableToasts();
 enableConfirm();
 enableAutosubmit();
 enableLayout();
-attachAll();
+if (!off("autocomplete")) attachAll();
 enhanceReactions();
-enableShortcuts();
+if (!off("shortcuts")) enableShortcuts();
 enablePoolOrder();
 enableReader();
+enableResized();
 enableNotes();
 enableNoteEditor();
 enableTagScript();

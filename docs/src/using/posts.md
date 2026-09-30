@@ -1,5 +1,39 @@
 # Posts and files
 
+## Uploading from a link
+
+**…or a link to it** on the upload form downloads a file from the web.
+Give it the file itself, or a work's page on a site Moekura can read:
+
+| Site | Pages |
+|---|---|
+| Pixiv | `pixiv.net/artworks/<id>`, and its files on `i.pximg.net` |
+| X (Twitter) | `x.com/<user>/status/<id>`, and `…/photo/<n>` for one picture |
+| Bluesky | `bsky.app/profile/<user>/post/<id>` |
+| DeviantArt | `deviantart.com/<user>/art/<work>` |
+| pixivFANBOX | `<creator>.fanbox.cc/posts/<id>` (public posts) |
+| Skeb | `skeb.jp/@<creator>/works/<n>` |
+
+Moekura asks the site for the work's best (original) file and downloads
+that, and the page, not the file, becomes the post's source. Any other
+page whose preview tags (OpenGraph) name an image works the same way.
+What the site says is used as well:
+
+- **The artist**: beside the tags box, the tag of the artist whose
+  [artist entry](artists.md) lists their profile there; an artist without
+  one gets a link to start it, filled in with their name and profiles.
+- **Tags**: the **Related tags** panel's *From Pixiv* (or the site's
+  name) group lists the site's tags as this site's: tags whose wiki
+  pages list one as an [other name](wiki.md#other-names), and tags named
+  like one or its English translation.
+- **Commentary**: the work's title and description become the post's
+  [artist's commentary](artists.md#commentary), unless you wrote one in
+  the form.
+
+The same happens with a file and a **Source** that is such a page, and
+for uploads through the APIs. When a site can't be reached or has
+changed, the link is downloaded as it is, without extras.
+
 ## File metadata
 
 When a file is processed, its metadata is read and kept: the image's

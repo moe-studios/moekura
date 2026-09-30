@@ -22,7 +22,7 @@
     </div>
     <label for="url">…or a link to it</label>
     <input id="url" name="url" type="url" value="{{ form.url }}" placeholder="https://">
-    <p class="hint">Images or videos up to {{ max_mb }} MB.</p>
+    <p class="hint">Images or videos up to {{ max_mb }} MB. A work's page on Pixiv, X, Bluesky, DeviantArt, Fanbox or Skeb works too: its best file is downloaded, and the page becomes the source.</p>
 
     <fieldset class="ratings">
       <legend>Rating</legend>
@@ -45,6 +45,15 @@
 
     <label for="description">Description <span class="optional">(optional)</span></label>
     <textarea id="description" name="description" rows="4" maxlength="20000">{{ form.description }}</textarea>
+
+    <details class="edit"{% if form.commentary_title or form.commentary_description %} open{% endif %}>
+      <summary>Artist's commentary <span class="optional">(optional)</span></summary>
+      <label for="commentary_title">Title</label>
+      <input id="commentary_title" name="commentary_title" value="{{ form.commentary_title }}" maxlength="1000">
+      <label for="commentary_description">Description</label>
+      <textarea id="commentary_description" name="commentary_description" rows="3">{{ form.commentary_description }}</textarea>
+      <p class="hint">What the artist wrote with the work, as they wrote it. Left empty, it's taken from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt, Fanbox, Skeb, or a page with its image in its preview tags).</p>
+    </details>
 
     <button type="submit">Upload</button>
   </form>

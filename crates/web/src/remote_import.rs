@@ -228,7 +228,7 @@ async fn import_one(
         rating: Some(post.rating),
         tags,
         source: post.source.clone(),
-        description: String::new(),
+        ..UploadFields::default()
     };
     let local = match ingest(state, current, &file, &fields).await {
         Ok(local) => local,

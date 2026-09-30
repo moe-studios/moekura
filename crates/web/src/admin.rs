@@ -152,6 +152,10 @@ fn render_settings(
                 auto_promotion => current.auto_promotion,
                 preview_all_ratings => current.preview_all_ratings,
                 request_tags => current.request_tags,
+                banned_artists => context! {
+                    hide_posts => current.banned_artists.hide_posts,
+                    refuse_uploads => current.banned_artists.refuse_uploads,
+                },
                 // Every rating ticked when visitors aren't limited.
                 visitor_ratings => moekura_core::posts::Rating::ALL
                     .iter()
@@ -254,6 +258,10 @@ struct SettingsForm {
     preview_all_ratings: Option<String>,
     /// Present when ticked.
     request_tags: Option<String>,
+    /// Present when ticked.
+    banned_artists_hide: Option<String>,
+    /// Present when ticked.
+    banned_artists_refuse: Option<String>,
     /// Ratings visitors see, each present when ticked.
     visitor_rating_g: Option<String>,
     visitor_rating_s: Option<String>,
@@ -381,6 +389,13 @@ async fn save_settings(
             json!(form.preview_all_ratings.is_some()),
         ),
         ("request_tags", json!(form.request_tags.is_some())),
+        (
+            "banned_artists",
+            json!({
+                "hide_posts": form.banned_artists_hide.is_some(),
+                "refuse_uploads": form.banned_artists_refuse.is_some(),
+            }),
+        ),
         (
             "promotion_rules",
             json!({
@@ -1077,7 +1092,8 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(logged, 7);
+        // The form left the banned artist boxes unticked, turning both off.
+        assert_eq!(logged, 8);
 
         // The tagger: thresholds by category, a blank one falling back to
         // general's.

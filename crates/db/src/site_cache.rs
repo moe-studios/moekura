@@ -26,6 +26,8 @@ pub struct SiteSnapshot {
     pub settings: SiteSettings,
     roles: Vec<Role>,
     network_bans: Vec<NetworkBan>,
+    /// The tags of banned artists.
+    banned_artist_tags: Vec<i32>,
 }
 
 impl SiteSnapshot {
@@ -34,7 +36,19 @@ impl SiteSnapshot {
             settings,
             roles,
             network_bans: Vec::new(),
+            banned_artist_tags: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_banned_artist_tags(mut self, tags: Vec<i32>) -> Self {
+        self.banned_artist_tags = tags;
+        self
+    }
+
+    /// The tag ids of banned artists, sorted.
+    pub fn banned_artist_tags(&self) -> &[i32] {
+        &self.banned_artist_tags
     }
 
     #[must_use]
@@ -157,7 +171,10 @@ async fn fetch(db: &PgPool) -> sqlx::Result<SiteSnapshot> {
         }
     }
     let network_bans = bans::networks_in_force(db).await?;
-    Ok(SiteSnapshot::new(settings, roles).with_network_bans(network_bans))
+    let banned_artist_tags = crate::artists::banned_tag_ids(db).await?;
+    Ok(SiteSnapshot::new(settings, roles)
+        .with_network_bans(network_bans)
+        .with_banned_artist_tags(banned_artist_tags))
 }
 
 #[cfg(test)]

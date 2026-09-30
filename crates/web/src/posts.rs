@@ -68,6 +68,7 @@ pub fn visibility(current: &CurrentUser) -> Visibility {
         statuses.push(PostStatus::Deleted);
     }
     Visibility {
+        hidden_tags: current.hidden_tags.clone(),
         deleted_by_default: statuses.contains(&PostStatus::Deleted)
             && current
                 .user

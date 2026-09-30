@@ -350,6 +350,7 @@ pub struct Measured {
 /// A member, or an anonymous visitor: what a public site shows them.
 fn visibility(viewer: Option<i64>) -> Visibility {
     Visibility {
+        hidden_tags: Vec::new(),
         statuses: vec![PostStatus::Active, PostStatus::Flagged],
         viewer,
         ratings: Vec::new(),

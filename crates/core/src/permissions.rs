@@ -127,7 +127,7 @@ impl Permission {
             Permission::Favorite => "Favorite",
             Permission::Vote => "Vote",
             Permission::Flag => "Flag posts",
-            Permission::EditWiki => "Edit the wiki",
+            Permission::EditWiki => "Edit the wiki and artists",
             Permission::ApprovePosts => "Approve posts and handle flags",
             Permission::DeletePosts => "Delete and restore posts",
             Permission::PurgePosts => "Purge posts",

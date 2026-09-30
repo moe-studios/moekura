@@ -141,6 +141,7 @@ impl TagJobs {
         };
         // Everything staff could see; deleted posts only with status:.
         let visibility = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![
                 PostStatus::Active,
                 PostStatus::Flagged,

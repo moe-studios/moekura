@@ -240,6 +240,7 @@ async fn show(
         None
     } else {
         let public = moekura_db::posts::Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),

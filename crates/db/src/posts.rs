@@ -132,6 +132,8 @@ pub struct Visibility {
     /// Searches without a `status:` filter include deleted posts, if
     /// `statuses` has them: the viewer's choice.
     pub deleted_by_default: bool,
+    /// Posts with any of these tags are hidden (banned artists'), sorted.
+    pub hidden_tags: Vec<i32>,
 }
 
 impl Visibility {
@@ -146,7 +148,12 @@ impl Visibility {
             || (post.status == PostStatus::Pending
                 && post.uploader_id.is_some()
                 && post.uploader_id == self.viewer);
-        status && self.allows_rating(post.rating)
+        status
+            && self.allows_rating(post.rating)
+            && !post
+                .tag_ids
+                .iter()
+                .any(|t| self.hidden_tags.binary_search(t).is_ok())
     }
 
     pub fn allows_rating(&self, rating: Rating) -> bool {
@@ -544,6 +551,7 @@ mod tests {
             (Rating::Explicit, "s", Some(parent))
         );
         let public = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active],
             viewer: None,
             ratings: Vec::new(),

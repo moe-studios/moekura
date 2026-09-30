@@ -33,6 +33,7 @@
 - [Search syntax](using/search.md)
 - [Tags](using/tags.md)
 - [The wiki](using/wiki.md)
+- [Artists](using/artists.md)
 - [Comments](using/comments.md)
 - [Pools](using/pools.md)
 - [Notes](using/notes.md)

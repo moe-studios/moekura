@@ -9,6 +9,7 @@
 //! Danbooru's shape ([`error_response`]).
 
 mod ai_tags;
+mod artists;
 mod community;
 mod explore;
 mod missing;
@@ -47,6 +48,7 @@ pub fn routes() -> Router<AppState> {
             .merge(community::routes())
             .merge(missing::routes())
             .merge(explore::routes())
+            .merge(artists::routes())
             .merge(notes::routes())
             .merge(reactions::routes())
             .merge(tags::routes())

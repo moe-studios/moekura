@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}{{ artist.title }} · Artists · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "tag_nav.html" %}
+<article class="wiki">
+  <header class="wiki-head">
+    <h1 class="tag-artist">{{ artist.title }}</h1>
+    <p class="hint">
+      {% if post_count is not none %}<a href="{{ search_url }}">{{ post_count }} post{% if post_count != 1 %}s{% endif %}</a> · {% endif %}
+      version {{ version }}, {{ artist.date }}{% if artist.updater %} by {{ artist.updater }}{% endif %}
+      · <a href="{{ artist.url }}/history">History</a>
+      {% if can_edit %} · <a href="{{ artist.url }}/edit">Edit</a>{% endif %}
+    </p>
+  </header>
+  {% if artist.banned %}<p class="notice">This artist is banned: their works can't be posted here.</p>{% endif %}
+  {% if artist.deleted %}<p class="notice">This artist entry is deleted.</p>{% endif %}
+  <dl class="artist-details">
+    {% if artist.other_names %}<dt>Other names</dt><dd>{{ artist.other_names|join(" · ") }}</dd>{% endif %}
+    {% if artist.group %}<dt>Group</dt><dd><a href="/artists?name={{ artist.group|urlencode }}">{{ artist.group }}</a></dd>{% endif %}
+    <dt>URLs</dt>
+    <dd>
+      {% if artist.urls %}
+      <ul class="artist-urls">
+        {% for u in artist.urls %}<li>{% if u.active %}<a href="{{ u.href }}" rel="nofollow noopener">{{ u.url }}</a>{% else %}<del>{{ u.url }}</del> <span class="hint">inactive</span>{% endif %}</li>{% endfor %}
+      </ul>
+      {% else %}<span class="hint">None yet.</span>{% endif %}
+    </dd>
+  </dl>
+  {% if wiki.html %}
+  <div class="markup">{{ wiki.html }}</div>
+  <p class="hint"><a href="{{ wiki.url }}">Read the wiki page</a></p>
+  {% elif wiki.exists %}<p class="hint"><a href="{{ wiki.url }}">Wiki page</a></p>
+  {% elif can_edit %}<p class="hint"><a href="{{ wiki.url }}/edit">Start the wiki page</a></p>{% endif %}
+</article>
+{% if posts %}
+<h2>Posts</h2>
+<ul class="post-grid">
+  {% for card in posts %}<li>{% include "card.html" %}</li>{% endfor %}
+</ul>
+<p><a href="{{ search_url }}">All posts »</a></p>
+{% endif %}
+<div class="actions">
+  {% if can_edit %}
+  {% if artist.deleted %}
+  <form method="post" action="{{ artist.url }}/undelete"><button type="submit" class="secondary">Restore</button></form>
+  {% else %}
+  <form method="post" action="{{ artist.url }}/delete"><button type="submit" class="secondary" data-confirm="Delete this artist entry?">Delete</button></form>
+  {% endif %}
+  {% endif %}
+  {% if can_ban %}
+  {% if artist.banned %}
+  <form method="post" action="{{ artist.url }}/unban"><button type="submit" class="secondary">Unban</button></form>
+  {% else %}
+  <form method="post" action="{{ artist.url }}/ban"><button type="submit" class="danger" data-confirm="Ban this artist? Their posts are hidden or refused, as the site settings say.">Ban</button></form>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

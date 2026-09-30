@@ -233,7 +233,9 @@ async fn show(
         (Some(p), _) => (Some(p.body.clone()), p.other_names.clone(), None),
         (None, _) => (None, Vec::new(), None),
     };
+    let artist = crate::artists::entry_for(db, &page.current, title.as_str()).await?;
     let context = context! {
+        artist => artist,
         title => display_title(title.as_str()),
         name => title.as_str(),
         url => page_url(title.as_str()),

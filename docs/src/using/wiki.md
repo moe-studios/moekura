@@ -9,7 +9,7 @@ A page's title is the tag's name, so `Long Hair` and `long_hair` are the
 same page, and a page can exist before any post has the tag. The page of
 an aliased tag points to the tag it's aliased to.
 
-Anyone with the **Edit the wiki** permission (members, by default) can
+Anyone with the **Edit the wiki and artists** permission (members, by default) can
 start or change a page. Every change is kept: **History** lists them,
 and you can view any old version or revert to it. If someone else saves
 the page while you're editing it, you're told instead of overwriting

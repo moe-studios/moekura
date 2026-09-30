@@ -46,13 +46,27 @@ pub struct CurrentUser {
     /// The only ratings they may see; empty for all. Visitors are limited
     /// by the site's `visitor_ratings`, users by their safe mode.
     pub ratings: Vec<moekura_core::posts::Rating>,
+    /// Tags whose posts they may not see: banned artists', unless they
+    /// approve posts. Sorted.
+    pub hidden_tags: Vec<i32>,
+}
+
+/// The banned artists' tags hidden from someone in `role`.
+fn hidden_tags(site: &SiteSnapshot, role: &Role) -> Vec<i32> {
+    if site.settings.banned_artists.hide_posts && !role.can(Permission::ApprovePosts) {
+        site.banned_artist_tags().to_vec()
+    } else {
+        Vec::new()
+    }
 }
 
 impl CurrentUser {
     pub(crate) fn anonymous(site: &SiteSnapshot) -> Self {
+        let role = anonymous_role(site);
         Self {
             user: None,
-            role: anonymous_role(site),
+            hidden_tags: hidden_tags(site, &role),
+            role,
             ban: None,
             recent_write: false,
             ratings: site.settings.visitor_ratings.clone(),
@@ -73,6 +87,7 @@ impl CurrentUser {
             moekura_core::user_settings::UserSettings::from_json(&user.settings).safe_mode;
         Self {
             user: Some(user),
+            hidden_tags: hidden_tags(site, &role),
             role,
             ban,
             recent_write: false,

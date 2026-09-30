@@ -618,6 +618,9 @@ pub async fn create_post(
             .iter()
             .map(|t| t.id)
             .collect();
+    crate::artists::refuse_banned(state, &mut *tx, uploader, &tag_ids, &[])
+        .await
+        .map_err(UploadError::Invalid)?;
     let post_id = posts::insert(
         &mut *tx,
         NewPost {

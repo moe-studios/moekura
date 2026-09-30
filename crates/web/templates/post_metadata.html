@@ -10,7 +10,7 @@
   <table class="tag-table">
     <tbody>
       {% for f in group.fields %}
-      <tr><th scope="row">{{ f.tag }}</th><td>{{ f.value }}</td></tr>
+      <tr><th scope="row"><a href="{{ search_url('exif:' ~ f.key|lower) }}" title="Posts with this field">{{ f.tag }}</a></th><td><a href="{{ search_url('exif:' ~ f.key|lower ~ '=' ~ f.value|lower|replace(' ', '_')) }}" title="Posts with this value">{{ f.value }}</a></td></tr>
       {% endfor %}
     </tbody>
   </table>

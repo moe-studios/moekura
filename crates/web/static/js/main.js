@@ -215,6 +215,10 @@ var METATAGS = {
   commenter: [],
   comment: [],
   commentary: ["true", "false", "translated", "untranslated"],
+  exif: [],
+  embedded: ["true", "false"],
+  pixiv: ["any", "none"],
+  pixiv_id: [],
   noter: [],
   flagger: [],
   gentags: [],
@@ -916,10 +920,42 @@ function popupPosition(box, layerWidth, popupWidth) {
   const left = Math.max(0, Math.min(box.left, layerWidth - popupWidth));
   return { left, top: box.top + box.height + 4 };
 }
+function embeddedPlace(box, imageWidth, imageHeight) {
+  const percent = (n, of) => `${(n / of * 100).toFixed(3)}%`;
+  return {
+    left: percent(box.x, imageWidth),
+    top: percent(box.y, imageHeight),
+    width: percent(box.width, imageWidth),
+    height: percent(box.height, imageHeight)
+  };
+}
+function embed(root, layer, svg) {
+  const [, , imageWidth = 1, imageHeight = 1] = (svg.getAttribute("viewBox") ?? "").split(/\s+/).map(Number);
+  for (const rect of svg.querySelectorAll("rect.note-box")) {
+    const text = root.querySelector(`[data-note-text="${rect.dataset["note"]}"] .markup`);
+    if (!text) continue;
+    const note = root.createElement("div");
+    note.className = "note-embedded";
+    note.dataset["embeddedNote"] = rect.dataset["note"] ?? "";
+    note.append(text.cloneNode(true));
+    const number = (name) => Number(rect.getAttribute(name) ?? 0);
+    Object.assign(
+      note.style,
+      embeddedPlace(
+        { x: number("x"), y: number("y"), width: number("width"), height: number("height") },
+        imageWidth,
+        imageHeight
+      )
+    );
+    layer.append(note);
+  }
+}
 function enableNotes(root = document) {
   const layer = root.querySelector("[data-notes]");
   const svg = layer?.querySelector("svg.notes");
   if (!layer || !svg) return;
+  const embedded = layer.dataset["notesEmbedded"] !== void 0;
+  if (embedded) embed(root, layer, svg);
   const popup = root.createElement("div");
   popup.className = "note-popup";
   popup.hidden = true;
@@ -956,7 +992,7 @@ function enableNotes(root = document) {
     popup.style.left = `${place.left}px`;
     popup.style.top = `${place.top}px`;
   };
-  for (const rect of svg.querySelectorAll("rect.note-box")) {
+  for (const rect of embedded ? [] : svg.querySelectorAll("rect.note-box")) {
     rect.querySelector("title")?.remove();
     rect.setAttribute("tabindex", "0");
     rect.addEventListener("mouseenter", () => show(rect));

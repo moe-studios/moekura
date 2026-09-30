@@ -1,7 +1,8 @@
 // Shows a note's text beside its box when pointed at, focused or tapped,
-// and adds a button to hide the notes, remembered in this browser. Without
-// scripts, a box's text is its tooltip and every note is listed below the
-// image.
+// or, for posts whose notes are embedded, drawn in the box on the
+// picture; and adds a button to hide the notes, remembered in this
+// browser. Without scripts, a box's text is its tooltip and every note is
+// listed below the image.
 
 const HIDDEN_KEY = "moekura:notes-hidden";
 
@@ -32,10 +33,53 @@ export function popupPosition(
   return { left, top: box.top + box.height + 4 };
 }
 
+/** Where an embedded note goes, in percent of the picture. */
+export function embeddedPlace(
+  box: { x: number; y: number; width: number; height: number },
+  imageWidth: number,
+  imageHeight: number,
+): { left: string; top: string; width: string; height: string } {
+  const percent = (n: number, of: number) => `${((n / of) * 100).toFixed(3)}%`;
+  return {
+    left: percent(box.x, imageWidth),
+    top: percent(box.y, imageHeight),
+    width: percent(box.width, imageWidth),
+    height: percent(box.height, imageHeight),
+  };
+}
+
+/** Draws each note's text in its box. */
+function embed(root: Document, layer: HTMLElement, svg: SVGSVGElement): void {
+  const [, , imageWidth = 1, imageHeight = 1] = (svg.getAttribute("viewBox") ?? "")
+    .split(/\s+/)
+    .map(Number);
+  for (const rect of svg.querySelectorAll<SVGRectElement>("rect.note-box")) {
+    const text = root.querySelector(`[data-note-text="${rect.dataset["note"]}"] .markup`);
+    if (!text) continue;
+    const note = root.createElement("div");
+    note.className = "note-embedded";
+    note.dataset["embeddedNote"] = rect.dataset["note"] ?? "";
+    note.append(text.cloneNode(true));
+    const number = (name: string) => Number(rect.getAttribute(name) ?? 0);
+    Object.assign(
+      note.style,
+      embeddedPlace(
+        { x: number("x"), y: number("y"), width: number("width"), height: number("height") },
+        imageWidth,
+        imageHeight,
+      ),
+    );
+    layer.append(note);
+  }
+}
+
 export function enableNotes(root: Document = document): void {
   const layer = root.querySelector<HTMLElement>("[data-notes]");
   const svg = layer?.querySelector<SVGSVGElement>("svg.notes");
   if (!layer || !svg) return;
+
+  const embedded = layer.dataset["notesEmbedded"] !== undefined;
+  if (embedded) embed(root, layer, svg);
 
   const popup = root.createElement("div");
   popup.className = "note-popup";
@@ -76,7 +120,7 @@ export function enableNotes(root: Document = document): void {
     popup.style.top = `${place.top}px`;
   };
 
-  for (const rect of svg.querySelectorAll<SVGRectElement>("rect.note-box")) {
+  for (const rect of embedded ? [] : svg.querySelectorAll<SVGRectElement>("rect.note-box")) {
     // The popup replaces the tooltip.
     rect.querySelector("title")?.remove();
     rect.setAttribute("tabindex", "0");

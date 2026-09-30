@@ -68,6 +68,9 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `commenter:` | `commenter:alice` | has a comment by this user |
 | `comment:` | `comment:nice_art` | comments contain these words (underscores for spaces) |
 | `commentary:` | `commentary:true`, `commentary:untranslated`, `commentary:new_work` | has [artist's commentary](artists.md#commentary) (`true`), none (`false`), a translation (`translated`), an original without one (`untranslated`), or commentary containing these words |
+| `exif:` | `exif:file:colorcomponents=1`, `exif:exif:model=canon_eos`, `exif:png:parameters` | the file's [metadata](posts.md#file-metadata) has this field (`group:tag`), with this value if `=value` is given; regardless of case, underscores for spaces. Every field on a post's **Metadata** page links to its search |
+| `pixiv:`, `pixiv_id:` | `pixiv:123456`, `pixiv:any`, `pixiv:none`, `pixiv_id:>1000` | the source is this Pixiv work (a number or a range like other numbers), any Pixiv work, or none; works' pages and their files on `i.pximg.net` both count |
+| `embedded:` | `embedded:true` | the post's notes are drawn on the picture (see [Notes](notes.md)), or not |
 | `noter:` | `noter:alice` | has a note this user wrote or edited |
 | `upvote:`, `downvote:` | `upvote:alice` | voted up / down by this user; votes are private, so only staff who review posts may search for others' votes, everyone else only for their own |
 | `flagger:` | `flagger:alice` | flagged by this user; only staff who review posts may search for others' flags, everyone else only for their own |

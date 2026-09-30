@@ -1028,6 +1028,7 @@ pub(crate) async fn render_post(
         source_link => is_web_url(&post.source),
         description => post.description,
         has_notes => post.last_noted_at.is_some(),
+        embedded_notes => post.has_embedded_notes,
         created => crate::dates::day(post.created_at),
         created_iso => created,
     };

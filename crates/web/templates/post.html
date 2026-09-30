@@ -45,7 +45,7 @@
       <a href="{{ file.resized.toggle_url }}">{% if file.resized.showing_original %}Show the resized image{% else %}View the original{% endif %}</a>
     </p>
     {% endif %}
-    <div class="note-layer" data-notes{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
+    <div class="note-layer" data-notes{% if post.embedded_notes %} data-notes-embedded{% endif %}{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
       <a href="{{ file.original }}">
         <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">
       </a>
@@ -61,6 +61,12 @@
       <ol>
         {% for n in notes %}<li id="note-{{ n.id }}" data-note-text="{{ n.id }}"><div class="markup">{{ n.html }}</div></li>{% endfor %}
       </ol>
+      {% if can_edit_notes %}
+      <form method="post" action="/posts/{{ post.id }}/notes/embed" class="inline">
+        <input type="hidden" name="embedded" value="{{ '0' if post.embedded_notes else '1' }}">
+        <button type="submit" class="secondary">{% if post.embedded_notes %}Show the notes' text when pointed at{% else %}Draw the notes' text on the picture{% endif %}</button>
+      </form>
+      {% endif %}
     </details>
     {% endif %}
     {% endif %}

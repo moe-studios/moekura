@@ -98,6 +98,11 @@ mod tests {
         let file = page.body.find("ColorComponents").unwrap();
         let exif = page.body.find("Canon").unwrap();
         assert!(file < exif, "File comes first: {}", page.body);
+        assert!(
+            page.body.contains("exif%3Aexif%3Amake%3Dcanon"),
+            "{}",
+            page.body
+        );
         let post_page = app.get(&format!("/posts/{post}"), None).await.body;
         assert!(
             post_page.contains(&format!("/posts/{post}/metadata")),

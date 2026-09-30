@@ -18,6 +18,7 @@ mod missing;
 mod notes;
 mod posts;
 mod reactions;
+mod replacements;
 mod tags;
 mod uploads;
 mod users;
@@ -53,6 +54,7 @@ pub fn routes() -> Router<AppState> {
             .merge(artists::routes())
             .merge(commentaries::routes())
             .merge(media_assets::routes())
+            .merge(replacements::routes())
             .merge(notes::routes())
             .merge(reactions::routes())
             .merge(tags::routes())

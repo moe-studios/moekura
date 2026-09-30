@@ -52,6 +52,21 @@ processed, the post plays the animation as a video made from its frames
 (or `filetype:zip`) finds them, and the Danbooru API gives the video as
 the post's large file.
 
+## Replacing a post's file
+
+Staff with **Replace posts' files** (moderators and admins, by default)
+can swap a post's file for a better one: a higher resolution, an
+uncropped version, a fixed scan. **Replace the file**, below the picture,
+takes a file or a link, a reason, and whether to move and resize the notes
+to the new size (on by default). The post keeps its id, tags, comments,
+notes, pools and favourites; its thumbnails and metadata are made again
+from the new file, and the file can't be one another post already has.
+
+**Replacements**, under the picture, lists a post's replacements: when,
+by whom and why, and the file before (still downloadable, until the post
+is purged) and after. Replacements are recorded in the moderation log,
+and Danbooru clients can read them at `/post_replacements.json`.
+
 ## File metadata
 
 When a file is processed, its metadata is read and kept: the image's

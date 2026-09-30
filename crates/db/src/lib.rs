@@ -28,6 +28,7 @@ pub mod post_versions;
 pub mod posts;
 pub mod promotion;
 pub mod remote_imports;
+pub mod replacements;
 pub mod requests;
 pub mod roles;
 pub mod saved_searches;

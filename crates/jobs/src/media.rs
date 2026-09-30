@@ -28,6 +28,14 @@ pub async fn purge_post(db: &PgPool, storage: &Storage, post_id: i64) -> Result<
         tracing::warn!(post_id, "purge skipped: the post is no longer deleted");
         return Ok(false);
     }
+    // Files the post had before a replacement, too.
+    let replaced = moekura_db::replacements::old_keys(db, post_id).await?;
+    for key in replaced.iter().filter_map(|k| Key::parse(k)) {
+        storage
+            .delete(&key)
+            .await
+            .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
+    }
     if let Some(asset) = media::for_post(db, post_id).await? {
         let mut keys = vec![asset.storage_key.clone()];
         keys.extend(

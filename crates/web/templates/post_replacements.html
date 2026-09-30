@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Replacements of post #{{ post_id }} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>
+<h1>Replacements of post #{{ post_id }}</h1>
+{% if replacements %}
+<ol class="history">
+  {% for r in replacements %}
+  <li>
+    <div class="history-head">
+      <strong>{{ r.date }} {{ r.time }}</strong>
+      {% if r.creator %}<span class="hint">by {{ r.creator }}</span>{% endif %}
+      {% if r.reason %}<span>: {{ r.reason }}</span>{% endif %}
+    </div>
+    <ul class="changes">
+      <li class="removed">−{% if r.old.url %}<a href="{{ r.old.url }}">{% endif %}{{ r.old.size }} {{ r.old.kind }}, {{ r.old.bytes }}{% if r.old.url %}</a>{% endif %} <span class="hint">md5 {{ r.old.md5 }}</span></li>
+      <li class="added">+{{ r.new.size }} {{ r.new.kind }}, {{ r.new.bytes }} <span class="hint">md5 {{ r.new.md5 }}</span></li>
+      {% if r.source %}<li>from {{ r.source }}</li>{% endif %}
+    </ul>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="empty">This post's file was never replaced.</p>
+{% endif %}
+{% endblock %}

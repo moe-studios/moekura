@@ -1153,6 +1153,7 @@ pub(crate) async fn render_post(
             comments => comments,
             notes => notes,
             preview => preview,
+            can_replace => page.current.can(Permission::ReplacePosts),
             can_edit_notes => !video
                 && page.current.is_logged_in()
                 && page.current.can(Permission::EditNotes)

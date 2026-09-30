@@ -44,6 +44,20 @@ save with the reason. Metatags in the box win over the form's own
 rating, source and parent fields. They also work in tag scripts and the
 APIs' tag fields; in a mass edit, only `-tag` and `rating:` do.
 
+## Warnings after saving
+
+After an upload or an edit, the post page lists what may be missing,
+without stopping the save: no artist, copyright or character tag, fewer
+than 10 general tags, tags no other post has yet (often a typo), and a
+category prefix that couldn't move an existing tag (`artist:cat` when
+`cat` is already a general tag; only those who manage tags can move
+used tags).
+
+Sites can also have **request tags** added by themselves (**Admin →
+Settings**, off by default): `artist_request` while a post has no artist
+tag and `tagme` while it has fewer than 10 general tags. They come off
+again when an edit fixes that.
+
 ## Copying tags from related posts
 
 A post's **Edit** form lists its parent and children under **Copy

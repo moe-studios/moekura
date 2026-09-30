@@ -1220,6 +1220,9 @@ mod tests {
             )
             .await;
         let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let count = || async {
@@ -1346,6 +1349,9 @@ mod tests {
                 .await;
             ids.push(
                 response.location.unwrap()["/posts/".len()..]
+                    .split('?')
+                    .next()
+                    .unwrap()
                     .parse::<i64>()
                     .unwrap(),
             );
@@ -1532,6 +1538,9 @@ mod tests {
                 .await;
             ids.push(
                 response.location.unwrap()["/posts/".len()..]
+                    .split('?')
+                    .next()
+                    .unwrap()
                     .parse::<i64>()
                     .unwrap(),
             );
@@ -1808,6 +1817,9 @@ mod tests {
                 )
                 .await;
             let id: i64 = response.location.unwrap()["/posts/".len()..]
+                .split('?')
+                .next()
+                .unwrap()
                 .parse()
                 .unwrap();
             app.post_form(
@@ -1967,6 +1979,9 @@ mod tests {
                 .await;
             ids.push(
                 response.location.unwrap()["/posts/".len()..]
+                    .split('?')
+                    .next()
+                    .unwrap()
                     .parse::<i64>()
                     .unwrap(),
             );

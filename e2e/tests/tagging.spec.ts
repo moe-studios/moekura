@@ -20,7 +20,7 @@ test("tag posts with a tag script", async ({ page }) => {
     await page.locator("input[name=rating][value=g]").check();
     await page.locator("#tags").fill(tag);
     await page.getByRole("button", { name: "Upload" }).click();
-    await expect(page).toHaveURL(/\/posts\/\d+$/);
+    await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
   }
 
   await page.goto(`/posts?tags=${tag}`);

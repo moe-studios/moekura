@@ -45,6 +45,7 @@ pub mod shared;
 mod suggestions;
 mod tag_history;
 mod tag_relations;
+mod tag_warnings;
 mod tags;
 mod templates;
 #[cfg(test)]

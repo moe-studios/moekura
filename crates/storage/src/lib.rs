@@ -84,6 +84,7 @@ impl Key {
             "jxl" => "image/jxl",
             "mp4" => "video/mp4",
             "webm" => "video/webm",
+            "zip" => "application/zip",
             _ => "application/octet-stream",
         }
     }

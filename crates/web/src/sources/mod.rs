@@ -62,6 +62,9 @@ pub struct SourceInfo {
     /// The artist's title and description of the work.
     pub title: String,
     pub description: String,
+    /// For a Pixiv ugoira: each frame's file in the zip and delay (ms),
+    /// which the zip itself lacks.
+    pub ugoira_frames: Option<Vec<(String, u32)>>,
 }
 
 impl SourceInfo {

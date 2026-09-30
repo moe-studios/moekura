@@ -34,6 +34,24 @@ The same happens with a file and a **Source** that is such a page, and
 for uploads through the APIs. When a site can't be reached or has
 changed, the link is downloaded as it is, without extras.
 
+## Ugoira
+
+Pixiv's animations (*ugoira*) are a zip of JPEG or PNG frames. Upload the
+zip like any file, or link to the work on Pixiv, which downloads the zip
+and keeps each frame's time in it. A zip you upload yourself can say how
+long each frame shows in an `animation.json` beside the frames, in
+Pixiv's form:
+
+```json
+{"frames": [{"file": "000000.jpg", "delay": 100}, {"file": "000001.jpg", "delay": 80}]}
+```
+
+Without one, every frame shows for a tenth of a second. Once it's
+processed, the post plays the animation as a video made from its frames
+(a WebM), and **Download the frames** gets the zip. `filetype:ugoira`
+(or `filetype:zip`) finds them, and the Danbooru API gives the video as
+the post's large file.
+
 ## File metadata
 
 When a file is processed, its metadata is read and kept: the image's

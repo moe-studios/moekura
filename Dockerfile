@@ -39,12 +39,13 @@ ARG VIPS_SHA256=3c41e1d5458081bfa4a5bc54e116c46259c75c6760a18027764555632b9dda3e
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates curl xz-utils build-essential pkg-config nasm meson ninja-build cmake \
-        zlib1g-dev libdav1d-dev libaom-dev \
+        zlib1g-dev libdav1d-dev libaom-dev libvpx-dev \
         libglib2.0-dev libexpat1-dev libjpeg62-turbo-dev libpng-dev libwebp-dev \
         libjxl-dev libexif-dev liblcms2-dev libhwy-dev
 WORKDIR /build
-# ffmpeg: reading MP4 and WebM (H.264, VP8, VP9, AV1) for probing, and
-# writing a PNG poster frame.
+# ffmpeg: reading MP4 and WebM (H.264, VP8, VP9, AV1) for probing,
+# writing a PNG poster frame, and playing Pixiv ugoira (PNG frames, which
+# libvips converts JPEG ones to, each for its own time) into a VP9 WebM.
 RUN curl -fsSLo ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
     && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
     && tar xJf ffmpeg.tar.xz \
@@ -52,12 +53,13 @@ RUN curl -fsSLo ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSI
     && ./configure --prefix=/opt/media \
         --disable-everything --disable-autodetect --disable-doc --disable-debug \
         --disable-network --disable-ffplay \
-        --enable-zlib --enable-libdav1d \
+        --enable-zlib --enable-libdav1d --enable-libvpx \
         --enable-protocol=file,pipe \
-        --enable-demuxer=mov,matroska \
-        --enable-parser=h264,vp8,vp9,av1 \
-        --enable-decoder=h264,vp8,vp9,libdav1d \
-        --enable-encoder=png --enable-muxer=image2 \
+        --enable-demuxer=mov,matroska,concat,image2,image_png_pipe \
+        --enable-parser=h264,vp8,vp9,av1,png \
+        --enable-decoder=h264,vp8,vp9,libdav1d,png \
+        --enable-encoder=png,libvpx_vp9 --enable-muxer=image2,webm \
+        --enable-bsf=vp9_superframe \
         --enable-filter=scale \
     && make -j"$(nproc)" \
     && make install
@@ -97,7 +99,7 @@ FROM docker.io/library/debian:trixie-slim AS base
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        libdav1d7 libaom3 \
+        libdav1d7 libaom3 libvpx9 \
         libglib2.0-0t64 libexpat1 libjpeg62-turbo libpng16-16t64 \
         libwebp7 libwebpmux3 libwebpdemux2 libsharpyuv0 \
         libjxl0.11 libexif12 liblcms2-2 libhwy1t64 \

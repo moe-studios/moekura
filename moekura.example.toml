@@ -155,7 +155,7 @@ max_duration_secs = 600
 # Add "jxl" to accept JPEG XL. It is off by default because libvips marks
 # its JPEG XL decoder as not hardened against malicious files; the decoder
 # still runs in a separate, time-limited process.
-allowed_types = ["jpeg", "png", "gif", "webp", "avif", "mp4", "webm"]
+allowed_types = ["jpeg", "png", "gif", "webp", "avif", "mp4", "webm", "ugoira"]
 # Thumbnail bounding boxes: 1x and 2x for high-DPI screens.
 thumbnail_sizes = [250, 500]
 # Images larger than this also get a resized copy for the post page.

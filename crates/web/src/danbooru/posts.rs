@@ -112,6 +112,7 @@ struct MediaVariant {
 fn extension(format: &str) -> String {
     match format {
         "jpeg" => "jpg".to_owned(),
+        "ugoira" => "zip".to_owned(),
         other => other.to_owned(),
     }
 }
@@ -135,7 +136,7 @@ impl DanbooruPost {
             .join(" ");
         let file = &post.file;
         let file_ext = extension(&file.media_type);
-        let is_video = matches!(file.media_type.as_str(), "mp4" | "webm");
+        let is_video = crate::posts::is_video(&file.media_type);
 
         // Moekura's thumbnails, smallest first, stand in for Danbooru's
         // fixed sizes.
@@ -145,11 +146,13 @@ impl DanbooruPost {
             .filter(|v| v.kind.starts_with("thumb-"))
             .collect();
         thumbs.sort_by_key(|v| v.width.max(v.height));
+        // An ugoira's large file is its video, as on Danbooru.
         let sample = post
             .variants
             .iter()
             .find(|v| v.kind == "sample")
-            .filter(|_| !is_video);
+            .filter(|_| !is_video)
+            .or_else(|| post.variants.iter().find(|v| v.kind == "video"));
         let mut variants: Vec<MediaVariant> = thumbs
             .iter()
             .zip(["180x180", "360x360", "720x720"])

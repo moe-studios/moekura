@@ -16,10 +16,12 @@ pub enum MediaType {
     Jxl,
     Mp4,
     Webm,
+    /// Pixiv's animations: a zip of frames (see [`crate::ugoira`]).
+    Ugoira,
 }
 
 impl MediaType {
-    pub const ALL: [MediaType; 8] = [
+    pub const ALL: [MediaType; 9] = [
         MediaType::Jpeg,
         MediaType::Png,
         MediaType::Gif,
@@ -28,6 +30,7 @@ impl MediaType {
         MediaType::Jxl,
         MediaType::Mp4,
         MediaType::Webm,
+        MediaType::Ugoira,
     ];
 
     /// Identifies a file from its first bytes (at least [`SNIFF_LEN`] when
@@ -64,6 +67,10 @@ impl MediaType {
             }
             return None;
         }
+        // A zip; probing checks it holds an ugoira's frames.
+        if head.starts_with(b"PK\x03\x04") {
+            return Some(Self::Ugoira);
+        }
         // EBML header; accept WebM, not general Matroska.
         if head.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) && head.windows(4).any(|w| w == b"webm") {
             return Some(Self::Webm);
@@ -81,12 +88,14 @@ impl MediaType {
             Self::Jxl => "jxl",
             Self::Mp4 => "mp4",
             Self::Webm => "webm",
+            Self::Ugoira => "ugoira",
         }
     }
 
     pub fn extension(self) -> &'static str {
         match self {
             Self::Jpeg => "jpg",
+            Self::Ugoira => "zip",
             other => other.name(),
         }
     }
@@ -101,6 +110,7 @@ impl MediaType {
             Self::Jxl => "image/jxl",
             Self::Mp4 => "video/mp4",
             Self::Webm => "video/webm",
+            Self::Ugoira => "application/zip",
         }
     }
 
@@ -171,6 +181,7 @@ mod tests {
                 b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\x82\x84webm".to_vec(),
                 MediaType::Webm,
             ),
+            (b"PK\x03\x04\x14\x00".to_vec(), MediaType::Ugoira),
         ];
         for (bytes, expected) in cases {
             assert_eq!(MediaType::sniff(&bytes), Some(expected), "{expected:?}");

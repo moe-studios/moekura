@@ -99,6 +99,7 @@ pub(super) fn parse(post: &Value, target: &Target) -> Option<SourceInfo> {
             .unwrap_or_default(),
         title: text_of(&body["title"]),
         description: text.trim().to_owned(),
+        ugoira_frames: None,
     })
 }
 

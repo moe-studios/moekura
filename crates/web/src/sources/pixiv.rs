@@ -51,9 +51,15 @@ pub(super) fn target(url: &Url) -> Option<Target> {
     Some(Target { id, page: 0 })
 }
 
-/// A work's details from `/ajax/illust/<id>`, and its pages' files from
-/// `/ajax/illust/<id>/pages` (when there are several).
-pub(super) fn parse(work: &Value, pages: Option<&Value>, target: &Target) -> Option<SourceInfo> {
+/// A work's details from `/ajax/illust/<id>`, its pages' files from
+/// `/ajax/illust/<id>/pages` (when there are several), and an ugoira's
+/// zip and frames from `/ajax/illust/<id>/ugoira_meta`.
+pub(super) fn parse(
+    work: &Value,
+    pages: Option<&Value>,
+    ugoira: Option<&Value>,
+    target: &Target,
+) -> Option<SourceInfo> {
     let body = &work["body"];
     let user_id = text_of(&body["userId"]);
     if user_id.is_empty() {
@@ -73,6 +79,25 @@ pub(super) fn parse(work: &Value, pages: Option<&Value>, target: &Target) -> Opt
     {
         files.push(original.to_owned());
     }
+    let ugoira_frames = ugoira.and_then(|meta| {
+        let meta = &meta["body"];
+        let zip = meta["originalSrc"]
+            .as_str()
+            .or_else(|| meta["src"].as_str())?;
+        files = vec![zip.to_owned()];
+        Some(
+            meta["frames"]
+                .as_array()?
+                .iter()
+                .filter_map(|f| {
+                    Some((
+                        f["file"].as_str()?.to_owned(),
+                        u32::try_from(f["delay"].as_u64()?).ok()?,
+                    ))
+                })
+                .collect(),
+        )
+    });
     if target.page > 0 && target.page < files.len() {
         let chosen = files.remove(target.page);
         files.insert(0, chosen);
@@ -108,6 +133,7 @@ pub(super) fn parse(work: &Value, pages: Option<&Value>, target: &Target) -> Opt
         tags,
         title: text_of(&body["illustTitle"]),
         description: html_to_text(&text_of(&body["illustComment"])),
+        ugoira_frames,
     })
 }
 
@@ -133,7 +159,23 @@ pub(super) async fn fetch(http: &Http<'_>, target: &Target) -> Result<SourceInfo
     } else {
         None
     };
-    parse(&work, pages.as_ref(), target).ok_or_else(|| "Pixiv: no such work".into())
+    // Type 2 is an ugoira.
+    let ugoira = if work["body"]["illustType"].as_u64() == Some(2) {
+        Some(
+            http.json(
+                &format!(
+                    "https://www.pixiv.net/ajax/illust/{}/ugoira_meta",
+                    target.id
+                ),
+                &headers,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    parse(&work, pages.as_ref(), ugoira.as_ref(), target)
+        .ok_or_else(|| "Pixiv: no such work".into())
 }
 
 #[cfg(test)]
@@ -175,7 +217,7 @@ mod tests {
             { "urls": { "original": "https://i.pximg.net/a_p0.png" } },
             { "urls": { "original": "https://i.pximg.net/a_p1.png" } }
         ]});
-        let info = parse(&work, Some(&pages), &Target { id: 9, page: 1 }).unwrap();
+        let info = parse(&work, Some(&pages), None, &Target { id: 9, page: 1 }).unwrap();
         assert_eq!(info.files[0], "https://i.pximg.net/a_p1.png");
         assert_eq!(info.page_url, "https://www.pixiv.net/artworks/9");
         assert_eq!(info.description, "新作です\nよろしく");
@@ -188,5 +230,23 @@ mod tests {
         );
         assert_eq!(info.tags[0].translation.as_deref(), Some("cat"));
         assert_eq!(info.artist_name.as_deref(), Some("Neko"));
+        assert_eq!(info.ugoira_frames, None);
+
+        let meta = json!({ "body": {
+            "originalSrc": "https://i.pximg.net/img-zip-ugoira/a_ugoira1920x1080.zip",
+            "frames": [{ "file": "000000.jpg", "delay": 80 }, { "file": "000001.jpg", "delay": 120 }]
+        }});
+        let info = parse(&work, None, Some(&meta), &Target { id: 9, page: 0 }).unwrap();
+        assert_eq!(
+            info.files,
+            ["https://i.pximg.net/img-zip-ugoira/a_ugoira1920x1080.zip"]
+        );
+        assert_eq!(
+            info.ugoira_frames,
+            Some(vec![
+                ("000000.jpg".to_owned(), 80),
+                ("000001.jpg".to_owned(), 120)
+            ])
+        );
     }
 }

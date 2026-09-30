@@ -25,4 +25,7 @@ make "$video" -c:v libx264 -pix_fmt yuv420p h264.mp4
 make "$video" -c:v libvpx vp8.webm
 make "$video" -c:v libvpx-vp9 vp9.webm
 make "$video" -c:v libaom-av1 -cpu-used 8 av1.mp4
+# An ugoira's frames, as Pixiv zips them (unpacked here; check.sh plays
+# them the way the app does after unzipping).
+make testsrc2=size=160x120:duration=0.5:rate=4 -c:v mjpeg -q:v 3 frame%02d.jpg
 ls -l

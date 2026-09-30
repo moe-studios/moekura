@@ -99,6 +99,7 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
   approver: ["any", "none"],
   commenter: [],
   comment: [],
+  commentary: ["true", "false", "translated", "untranslated"],
   noter: [],
   flagger: [],
   gentags: [],

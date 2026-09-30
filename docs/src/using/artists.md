@@ -47,3 +47,15 @@ at the artist's request). What that does is a site setting, under
 
 Staff who approve posts still see the posts and can post them. Bans are
 recorded in the moderation log.
+
+## Commentary
+
+A post can have the **artist's commentary**: the title and description
+the artist gave the work where they posted it, and a translation. It's
+shown under the picture, translated when there's a translation (with the
+original a click away), and anyone who can edit posts can add or change
+it from the same place. Descriptions use the wiki's markup. Every change
+is kept (**Commentary history**; `/artist_commentary_versions` lists
+them sitewide), and `commentary:` [searches](search.md) find posts with
+commentary, with or without a translation, or by its words:
+`commentary:untranslated` lists commentary waiting for a translator.

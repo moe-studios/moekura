@@ -21,6 +21,7 @@ pub const RESERVED_PREFIXES: &[&str] = &[
     "chartags",
     "child",
     "comment",
+    "commentary",
     "commentcount",
     "commenter",
     "copytags",

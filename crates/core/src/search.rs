@@ -71,6 +71,7 @@ pub const METATAGS: &[&str] = &[
     "approver",
     "commenter",
     "comment",
+    "commentary",
     "noter",
     "flagger",
     "upvote",
@@ -332,6 +333,21 @@ pub enum SourceFilter {
     Pattern(String),
 }
 
+/// What `commentary:` asks of a post's artist commentary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommentaryFilter {
+    /// Has any (`true`).
+    Any,
+    /// Has none (`false`).
+    None,
+    /// Has a translation.
+    Translated,
+    /// Has an original but no translation.
+    Untranslated,
+    /// Contains these words, original or translated.
+    Words(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentFilter {
     /// Posts without a parent.
@@ -393,6 +409,7 @@ pub enum Filter {
     Commenter(String),
     /// Comments that aren't deleted contain these words.
     Comment(String),
+    Commentary(CommentaryFilter),
     /// Has a note written or edited by this user.
     Noter(String),
     /// Flagged by this user; only for staff, or the flagger.
@@ -1053,6 +1070,21 @@ impl Query {
                     Filter::Comment(words)
                 }
             }
+            "commentary" => Filter::Commentary(match value {
+                "true" | "any" => CommentaryFilter::Any,
+                "false" | "none" => CommentaryFilter::None,
+                "translated" => CommentaryFilter::Translated,
+                "untranslated" => CommentaryFilter::Untranslated,
+                words => {
+                    let words = words.replace('_', " ").trim().to_owned();
+                    if words.is_empty() {
+                        return Err(invalid(
+                            "expected true, false, translated, untranslated or words to find",
+                        ));
+                    }
+                    CommentaryFilter::Words(words)
+                }
+            }),
             "approver" => Filter::Approver(match value {
                 "" => return Err(invalid("expected a user name, any or none")),
                 "any" => UserMatch::Any,
@@ -1531,6 +1563,15 @@ impl fmt::Display for Filter {
             Filter::Approver(UserMatch::Name(name)) => write!(f, "approver:{name}"),
             Filter::Commenter(name) => write!(f, "commenter:{name}"),
             Filter::Comment(words) => write!(f, "comment:{}", words.replace(' ', "_")),
+            Filter::Commentary(c) => match c {
+                CommentaryFilter::Any => f.write_str("commentary:true"),
+                CommentaryFilter::None => f.write_str("commentary:false"),
+                CommentaryFilter::Translated => f.write_str("commentary:translated"),
+                CommentaryFilter::Untranslated => f.write_str("commentary:untranslated"),
+                CommentaryFilter::Words(words) => {
+                    write!(f, "commentary:{}", words.replace(' ', "_"))
+                }
+            },
             Filter::Noter(name) => write!(f, "noter:{name}"),
             Filter::Flagger(name) => write!(f, "flagger:{name}"),
             Filter::Upvote(name) => write!(f, "upvote:{name}"),
@@ -2122,6 +2163,15 @@ mod tests {
             );
         }
         assert_eq!(filter("similar:12"), Filter::Similar(12));
+        assert_eq!(
+            filter("commentary:translated"),
+            Filter::Commentary(CommentaryFilter::Translated)
+        );
+        assert_eq!(
+            filter("commentary:new_picture"),
+            Filter::Commentary(CommentaryFilter::Words("new picture".into()))
+        );
+        assert_eq!(parse("-commentary:false").to_string(), "-commentary:false");
         assert!(error("similar:x").contains("expected a post id"));
         assert_eq!(
             error("a\u{7}b"),

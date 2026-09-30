@@ -12,7 +12,6 @@ use crate::error::AppError;
 
 /// Lists of things Moekura doesn't have.
 pub(crate) const EMPTY_LISTS: &[&str] = &[
-    "/artist_commentaries",
     "/forum_topics",
     "/forum_posts",
     "/forum_post_votes",

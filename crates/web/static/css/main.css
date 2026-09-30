@@ -369,6 +369,11 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .subnav { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; font-size: 0.9375rem; }
 .subnav a[aria-current] { color: var(--text); font-weight: 600; }
 .explore-head h1 { margin-bottom: 0; }
+.commentary { margin: 16px 0; }
+.commentary h2 { font-size: 1.1rem; margin: 0 0 4px; }
+.commentary h3 { font-size: 1rem; margin: 8px 0 4px; }
+.commentary-original { margin-top: 8px; }
+.commentary-version { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 24px; }
 .artist-details { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 12px 0; }
 .artist-details dt { font-weight: 600; }
 .artist-details dd { margin: 0; overflow-wrap: anywhere; }

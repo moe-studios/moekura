@@ -202,6 +202,7 @@ var METATAGS = {
   approver: ["any", "none"],
   commenter: [],
   comment: [],
+  commentary: ["true", "false", "translated", "untranslated"],
   noter: [],
   flagger: [],
   gentags: [],

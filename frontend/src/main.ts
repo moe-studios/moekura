@@ -4,6 +4,7 @@
 import { attachAll } from "./autocomplete.ts";
 import { enableAutosubmit } from "./autosubmit.ts";
 import { enableConfirm } from "./confirm.ts";
+import { enableCopyTags } from "./copy-tags.ts";
 import { enableShortcuts } from "./keyboard.ts";
 import { enableLayout } from "./layout.ts";
 import { enableNoteEditor } from "./note-editor.ts";
@@ -38,5 +39,6 @@ enableNotes();
 enableNoteEditor();
 enableTagScript();
 enableSuggestions();
+enableCopyTags();
 enableSelectAll();
 enableUpload();

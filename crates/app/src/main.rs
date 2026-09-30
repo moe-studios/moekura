@@ -169,14 +169,17 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         tokio::spawn(site.listen(db.primary().clone())),
         tokio::spawn(hourly_maintenance(state.clone())),
         tokio::spawn(db.clone().monitor_replicas(max_lag)),
+        tokio::spawn(moekura_web::explore::flush_every_minute(state.clone())),
     ];
 
     let shutdown = CancellationToken::new();
     tokio::spawn(cancel_on_signal(shutdown.clone()));
     let workers = workers.map(|run| tokio::spawn(run(shutdown.clone())));
 
-    let app = moekura_web::router(state);
+    let app = moekura_web::router(state.clone());
     moekura_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
+    // Views and searches counted since the last minute.
+    moekura_web::explore::flush(&state).await;
 
     if let Some(workers) = workers {
         wait_for_workers(workers, &shutdown).await;
@@ -290,8 +293,8 @@ async fn wait_for_workers(mut workers: tokio::task::JoinHandle<()>, shutdown: &C
     }
 }
 
-/// Deletes expired sessions and unfinished logins, and forgets idle
-/// rate-limit counters.
+/// Deletes expired sessions, unfinished logins and old view and search
+/// counts, and forgets idle rate-limit counters.
 async fn hourly_maintenance(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {
@@ -308,6 +311,7 @@ async fn hourly_maintenance(state: AppState) {
         if let Err(error) = moekura_db::identities::prune_logins(state.db.primary()).await {
             tracing::warn!(%error, "could not prune abandoned single sign-on logins");
         }
+        moekura_web::explore::prune(&state).await;
     }
 }
 

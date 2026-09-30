@@ -366,6 +366,9 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 
 .subnav { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; font-size: 0.9375rem; }
 .subnav a[aria-current] { color: var(--text); font-weight: 600; }
+.explore-head h1 { margin-bottom: 0; }
+.explore-range { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 16px; }
+.explore-range a[aria-current] { color: var(--text); font-weight: 600; }
 .request-form { margin: 16px 0 24px; }
 .request-form h2 { margin: 0 0 4px; font-size: 1.125rem; }
 .pair { display: flex; flex-wrap: wrap; align-items: end; gap: 0 12px; }

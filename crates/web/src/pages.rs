@@ -90,6 +90,7 @@ fn section(path: &str) -> Option<&'static str> {
         "tags" | "wiki" => "tags",
         "pools" => "pools",
         "comments" => "comments",
+        "explore" => "explore",
         "upload" => "upload",
         "moderation" => "moderation",
         "admin" => "admin",

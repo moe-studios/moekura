@@ -8,6 +8,7 @@ pub mod bans;
 pub mod bench;
 pub mod comments;
 pub mod disapprovals;
+pub mod explore;
 pub mod favorite_groups;
 pub mod favorites;
 pub mod feeds;

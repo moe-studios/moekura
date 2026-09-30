@@ -142,6 +142,9 @@ fn render_settings(
         context! {
             settings => context! {
                 site_name => current.site_name,
+                site_description => current.site_description,
+                rules => current.rules,
+                footer_links => moekura_core::settings::FooterLink::to_list(&current.footer_links),
                 registration_mode => mode_name(current.registration_mode),
                 email_verification => current.email_verification,
                 upload_approval => current.upload_approval,
@@ -187,7 +190,8 @@ fn render_settings(
             captcha_enabled => page.state().captcha.is_some(),
             tagger_enabled => page.state().config.tagger.enabled,
             tagger_account => page.state().config.tagger.account,
-            modes => ["open", "invite", "approval", "closed"],
+            logo => crate::site::logo_url(page.state()),
+            registration_modes => ["open", "invite", "approval", "closed"],
             themes => crate::themes::choices(&page.state().assets),
             error => error,
         },
@@ -231,6 +235,11 @@ fn visitor_ratings(form: &SettingsForm) -> Vec<&'static str> {
 struct SettingsForm {
     #[serde(default)]
     site_name: String,
+    site_description: Option<String>,
+    /// Markup.
+    rules: Option<String>,
+    /// One per line: the text, then the address.
+    footer_links: Option<String>,
     #[serde(default)]
     registration_mode: String,
     /// Present when ticked.
@@ -330,8 +339,32 @@ async fn save_settings(
         .default_theme
         .clone()
         .unwrap_or_else(|| before.default_theme.clone());
+    let multiline = |text: &str| text.replace("\r\n", "\n").trim().to_owned();
     let wanted = [
         ("site_name", json!(form.site_name.trim())),
+        (
+            "site_description",
+            json!(
+                form.site_description
+                    .as_deref()
+                    .map_or_else(|| before.site_description.clone(), |d| d.trim().to_owned())
+            ),
+        ),
+        (
+            "rules",
+            json!(
+                form.rules
+                    .as_deref()
+                    .map_or_else(|| before.rules.clone(), multiline)
+            ),
+        ),
+        (
+            "footer_links",
+            form.footer_links.as_deref().map_or_else(
+                || json!(before.footer_links),
+                |text| json!(moekura_core::settings::FooterLink::parse_list(text)),
+            ),
+        ),
         ("registration_mode", json!(form.registration_mode)),
         (
             "email_verification",
@@ -434,6 +467,12 @@ async fn save_settings(
             Err(error) => {
                 let mut shown = checked.clone();
                 shown.site_name = form.site_name.clone();
+                if let Some(text) = &form.site_description {
+                    shown.site_description = text.clone();
+                }
+                if let Some(text) = &form.rules {
+                    shown.rules = text.clone();
+                }
                 shown.default_blacklist = form.default_blacklist.clone();
                 return Ok(render_settings(
                     &page,

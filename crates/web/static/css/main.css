@@ -64,7 +64,8 @@ main {
   border-bottom: 1px solid var(--border);
 }
 
-.brand { font-weight: 700; font-size: 1.15rem; color: var(--text); }
+.brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.15rem; color: var(--text); }
+.brand img { height: 32px; width: auto; max-width: 160px; object-fit: contain; }
 .primary { display: flex; flex-wrap: wrap; gap: 4px 16px; flex: 1 1 auto; }
 .primary a[aria-current] { color: var(--text); font-weight: 600; text-decoration: underline 2px var(--accent); text-underline-offset: 6px; }
 .account { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
@@ -371,6 +372,8 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .pair > div { display: flex; flex-direction: column; flex: 1 1 200px; }
 .pair .arrow { padding-bottom: 8px; color: var(--muted); }
 .actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.logo-form { margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+.logo-preview { height: 48px; width: auto; }
 .actions form { margin: 0; }
 .status { font-size: 0.8125rem; font-weight: 600; text-transform: capitalize; }
 .status-active { color: var(--tag-character); }
@@ -713,6 +716,7 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 /* Footer */
 
 .site-footer p { margin: 4px 0; }
+.site-footer .footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin: 4px 0; }
 .site-footer .appearance { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 24px; }
 .site-footer form { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; }
 .site-footer label { font-weight: normal; margin: 0; }

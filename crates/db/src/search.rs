@@ -521,6 +521,8 @@ impl Plan {
             set.ids.sort_unstable();
             set.ids.dedup();
         }
+        // Banned artists' posts, as if the search left them out.
+        plan.excluded.extend(&visibility.hidden_tags);
         plan.excluded.sort_unstable();
         plan.excluded.dedup();
 
@@ -1853,6 +1855,7 @@ mod tests {
 
     fn public() -> Visibility {
         Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
@@ -2009,6 +2012,7 @@ mod tests {
             assert_eq!(&search(&pool, input).await, expected, "{input}");
         }
         let staff = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Deleted],
             viewer: None,
             ratings: Vec::new(),
@@ -2283,6 +2287,7 @@ mod tests {
                 .is_empty()
         );
         let staff = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
             viewer: Some(alice),
             ratings: Vec::new(),
@@ -2567,6 +2572,7 @@ mod tests {
         assert_eq!(search(&pool, "").await, [flagged, active]);
         assert!(search(&pool, "status:deleted").await.is_empty());
         let member = Visibility {
+            hidden_tags: Vec::new(),
             viewer: Some(viewer),
             ..public()
         };
@@ -2577,6 +2583,7 @@ mod tests {
             [flagged, active]
         );
         let staff = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![
                 PostStatus::Active,
                 PostStatus::Flagged,
@@ -2619,6 +2626,7 @@ mod tests {
         // What's left for an approver: pending posts they didn't upload
         // or disapprove.
         let approver = Visibility {
+            hidden_tags: Vec::new(),
             viewer: Some(viewer),
             ..staff.clone()
         };
@@ -2896,6 +2904,7 @@ mod tests {
             .unwrap();
 
         let as_alice = Visibility {
+            hidden_tags: Vec::new(),
             viewer: Some(alice),
             ..public()
         };

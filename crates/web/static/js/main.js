@@ -1,5 +1,109 @@
 // Built from frontend/src by npm run build. Do not edit.
 
+// src/suggestions.ts
+function withTag(tags, tag) {
+  const words = tags.split(/\s+/).filter((word) => word !== "");
+  if (words.includes(tag)) return tags;
+  const kept = tags.trimEnd();
+  return kept === "" ? `${tag} ` : `${kept} ${tag} `;
+}
+function enableSuggestions(root = document) {
+  const box = root.querySelector("[data-suggestions]");
+  const form = box?.closest("form");
+  const field = form?.querySelector("textarea[name=tags]");
+  if (!box || !form || !field) return;
+  const hint = box.querySelector("[data-suggestions-hint]");
+  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button[name]");
+    if (!button) return;
+    event.preventDefault();
+    if (button.name === "add") {
+      field.value = withTag(field.value, button.value);
+    } else if (button.name === "suggested_rating") {
+      for (const radio of form.querySelectorAll("input[name=rating]")) {
+        radio.checked = radio.value === button.value;
+      }
+    }
+    button.classList.add("chosen");
+    button.disabled = true;
+  });
+}
+
+// src/artist-finder.ts
+var DEBOUNCE_MS = 400;
+function firstUrl(values) {
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (/^https?:\/\/\S+$/i.test(trimmed)) return trimmed;
+  }
+  return null;
+}
+function enableArtistFinder(root = document) {
+  const box = root.querySelector("[data-artist-finder]");
+  const form = box?.closest("form");
+  const tags = form?.querySelector("textarea[name=tags]");
+  if (!box || !form || !tags) return;
+  const inputs = (box.dataset["artistFinder"] ?? "").split(/\s+/).map((name) => form.querySelector(`input[name="${name}"]`)).filter((input) => input !== null);
+  let timer;
+  let request;
+  let last = "";
+  const show = (found) => {
+    if (found.length === 0) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    const label = document.createElement("span");
+    label.className = "hint";
+    label.textContent = found.length === 1 ? "Artist: " : "Artists: ";
+    const buttons = found.map((artist) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tag tag-artist link";
+      button.dataset["tag"] = artist.name;
+      button.textContent = artist.name;
+      button.title = "Add to the tags";
+      return button;
+    });
+    box.replaceChildren(label, ...buttons);
+    box.hidden = false;
+  };
+  const update2 = async () => {
+    const url = firstUrl(inputs.map((input) => input.value));
+    if (url === null) {
+      last = "";
+      show([]);
+      return;
+    }
+    if (url === last) return;
+    last = url;
+    request?.abort();
+    request = new AbortController();
+    try {
+      const response = await fetch(`/artists/finder?${new URLSearchParams({ url }).toString()}`, {
+        signal: request.signal,
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) return;
+      show(await response.json());
+    } catch {
+    }
+  };
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void update2(), DEBOUNCE_MS);
+  };
+  for (const input of inputs) input.addEventListener("input", schedule);
+  box.addEventListener("click", (event) => {
+    const tag = event.target.closest("button[data-tag]")?.dataset["tag"];
+    if (!tag) return;
+    tags.value = withTag(tags.value, tag);
+    tags.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  void update2();
+}
+
 // src/metatags.ts
 var METATAGS = {
   id: [],
@@ -132,7 +236,7 @@ function metatagsOf(mode) {
   if (mode === "edit") return EDIT_METATAGS;
   return {};
 }
-var DEBOUNCE_MS = 120;
+var DEBOUNCE_MS2 = 120;
 var cache = /* @__PURE__ */ new Map();
 var nextId = 0;
 function target(value, caret, mode) {
@@ -233,7 +337,7 @@ var Autocomplete = class {
   }
   schedule() {
     window.clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => void this.update(), DEBOUNCE_MS);
+    this.timer = window.setTimeout(() => void this.update(), DEBOUNCE_MS2);
   }
   async update() {
     const caret = this.field.selectionStart ?? this.field.value.length;
@@ -404,36 +508,6 @@ function enableConfirm() {
     },
     true
   );
-}
-
-// src/suggestions.ts
-function withTag(tags, tag) {
-  const words = tags.split(/\s+/).filter((word) => word !== "");
-  if (words.includes(tag)) return tags;
-  const kept = tags.trimEnd();
-  return kept === "" ? `${tag} ` : `${kept} ${tag} `;
-}
-function enableSuggestions(root = document) {
-  const box = root.querySelector("[data-suggestions]");
-  const form = box?.closest("form");
-  const field = form?.querySelector("textarea[name=tags]");
-  if (!box || !form || !field) return;
-  const hint = box.querySelector("[data-suggestions-hint]");
-  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
-  box.addEventListener("click", (event) => {
-    const button = event.target.closest("button[name]");
-    if (!button) return;
-    event.preventDefault();
-    if (button.name === "add") {
-      field.value = withTag(field.value, button.value);
-    } else if (button.name === "suggested_rating") {
-      for (const radio of form.querySelectorAll("input[name=rating]")) {
-        radio.checked = radio.value === button.value;
-      }
-    }
-    button.classList.add("chosen");
-    button.disabled = true;
-  });
 }
 
 // src/copy-tags.ts
@@ -1045,7 +1119,7 @@ function enableReader(root = document) {
 }
 
 // src/related-tags.ts
-var DEBOUNCE_MS2 = 400;
+var DEBOUNCE_MS3 = 400;
 function chosenTag(value, caret) {
   let start = caret;
   while (start > 0 && !/\s/.test(value.charAt(start - 1))) start--;
@@ -1120,7 +1194,7 @@ function attach(panel, field) {
   };
   const schedule = () => {
     window.clearTimeout(timer);
-    timer = window.setTimeout(() => void update2(), DEBOUNCE_MS2);
+    timer = window.setTimeout(() => void update2(), DEBOUNCE_MS3);
   };
   field.addEventListener("input", schedule);
   field.addEventListener("click", schedule);
@@ -1343,3 +1417,4 @@ enableCopyTags();
 enableRelatedTags();
 enableSelectAll();
 enableUpload();
+enableArtistFinder();

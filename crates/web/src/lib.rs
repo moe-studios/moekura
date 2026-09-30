@@ -5,6 +5,7 @@ mod account;
 mod admin;
 pub mod api;
 mod api_keys;
+mod artists;
 mod assets;
 pub mod auth;
 mod bans;
@@ -256,6 +257,7 @@ pub fn router(state: AppState) -> Router {
     let routes = posts::routes()
         .merge(api::routes(max_upload_bytes))
         .merge(api_keys::routes())
+        .merge(artists::routes())
         .merge(danbooru::routes())
         .merge(account::routes())
         .merge(admin::routes())

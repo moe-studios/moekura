@@ -568,6 +568,7 @@ mod tests {
         assert_eq!(post_ids(&pool, id).await.unwrap(), reordered.post_ids);
 
         let public = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),

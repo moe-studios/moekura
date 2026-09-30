@@ -482,6 +482,7 @@ mod tests {
         .await;
 
         let everyone = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active],
             viewer: None,
             ratings: Vec::new(),
@@ -518,6 +519,7 @@ mod tests {
             Some("alice")
         );
         let hidden = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Deleted],
             viewer: None,
             ratings: Vec::new(),

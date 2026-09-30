@@ -59,6 +59,7 @@ engine, then log in with your name and your API key.
 | `/profile.json`, `/users.json`, `/users/{id}.json` | levels follow roles: Member 20, Contributor 35, Janitor 37, Moderator 40, Admin 50 |
 | `/favorites.json`, `/favorites/{post_id}.json`, `/posts/{id}/favorites.json` | |
 | `/posts/{id}/votes.json`, `/post_votes.json` | only your own votes are listed |
+| `/artists.json`, `/artists/{id}.json`, `/artist_urls.json`, `/artist_versions.json` | read-only; artists by `search[name]`, `search[any_name_matches]`, `search[url_matches]` (any page of the artist's), `search[is_banned]`, `search[is_deleted]` or `search[id]`, each with its `urls`; URLs by `search[artist_id]` or `search[url_matches]`; versions by `search[artist_id]`, `search[updater_id]` or `search[updater_name]` |
 | `/explore/posts/popular.json`, `/explore/posts/viewed.json` | the best-scored and most viewed posts of a `date`'s day, or with `scale`, week or month |
 | `/explore/posts/searches.json`, `/explore/posts/missed_searches.json` | `[query, count]` pairs: the searches made most, and those that most often found nothing, by `date` and `scale` like the posts |
 | `/comments.json`, `/comments/{id}.json` | listed newest first, by `search[post_id]`, `search[creator_id]` or `search[creator_name]`; `page` takes numbers and `b<id>`; post with `comment[post_id]` and `comment[body]`, and change or delete your own |
@@ -73,8 +74,8 @@ engine, then log in with your name and your API key.
 
 ## What doesn't
 
-- Artists, forums and messages don't exist in Moekura: their lists are
-  empty, and single ones are "not found".
+- Forums and messages don't exist in Moekura: their lists are empty,
+  and single ones are "not found".
 - Favorites and your votes on posts and comments have no ids of their
   own: their `id` is the post's or comment's.
 - Pools, favorite groups and notes are read-only here; change them on

@@ -221,6 +221,7 @@ async fn bench(
         if explain.is_some_and(|name| case.name.contains(name)) {
             let query = moekura_core::search::Query::parse(&case.query)?;
             let visitor = moekura_db::posts::Visibility {
+                hidden_tags: Vec::new(),
                 statuses: vec![
                     moekura_core::posts::PostStatus::Active,
                     moekura_core::posts::PostStatus::Flagged,

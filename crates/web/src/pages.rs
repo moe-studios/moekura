@@ -87,7 +87,7 @@ fn section(path: &str) -> Option<&'static str> {
     let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
     Some(match first {
         "" | "posts" => "posts",
-        "tags" | "wiki" => "tags",
+        "tags" | "wiki" | "artists" | "artist_versions" => "tags",
         "pools" => "pools",
         "comments" => "comments",
         "explore" => "explore",

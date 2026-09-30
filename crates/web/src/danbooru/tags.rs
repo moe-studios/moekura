@@ -64,7 +64,7 @@ impl From<Tag> for DanbooruTag {
 }
 
 /// The page and limit of a list as an offset and count.
-fn window(list: &ListParams, max: u32) -> Result<(i64, i64), AppError> {
+pub(super) fn window(list: &ListParams, max: u32) -> Result<(i64, i64), AppError> {
     let limit = i64::from(list.limit(max));
     let page: i64 = match list.page.trim() {
         "" => 1,

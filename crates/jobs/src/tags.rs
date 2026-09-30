@@ -388,7 +388,9 @@ pub(crate) async fn search_plan(db: &PgPool, text: &str) -> Result<Plan, JobErro
         max_per_page: BATCH as u32,
         ..SearchConfig::default()
     };
+    // Everything staff could see; deleted posts only with status:.
     let visibility = Visibility {
+        hidden_tags: Vec::new(),
         statuses: vec![
             PostStatus::Active,
             PostStatus::Flagged,

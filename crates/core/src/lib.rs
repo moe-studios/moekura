@@ -4,6 +4,7 @@
 //! binary crates.
 
 pub mod accounts;
+pub mod artists;
 pub mod blacklist;
 pub mod bulk;
 pub mod config;

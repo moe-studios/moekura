@@ -480,6 +480,7 @@ mod tests {
         );
 
         let public = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
@@ -511,6 +512,7 @@ mod tests {
             ..Filter::default()
         };
         let uploader = Visibility {
+            hidden_tags: Vec::new(),
             viewer: None,
             ratings: Vec::new(),
             deleted_by_default: false,

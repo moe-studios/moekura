@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}{% if artist %}Edit {{ artist.title }}{% else %}New artist{% endif %} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back">{% if artist %}<a href="{{ artist.url }}">« {{ artist.title }}</a>{% else %}<a href="/artists">« Artists</a>{% endif %}</p>
+<h1>{% if artist %}Edit {{ artist.title }}{% else %}New artist{% endif %}</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}{% if artist %} <a href="{{ artist.url }}/history">History</a>{% endif %}</p>{% endif %}
+<form class="wiki-form" method="post" action="{{ action }}">
+  {% if artist %}<input type="hidden" name="base" value="{{ base }}">{% endif %}
+  <label for="artist-name">Name</label>
+  <input id="artist-name" name="name" value="{{ name }}" maxlength="170" required autocapitalize="none" spellcheck="false" data-autocomplete="edit">
+  <p class="hint">The artist's tag. A new tag, or one no post uses yet, becomes an artist tag.</p>
+  <label for="artist-other-names">Other names</label>
+  <input id="artist-other-names" name="other_names" value="{{ other_names }}" spellcheck="false">
+  <p class="hint">Separated by spaces, with underscores for spaces in a name: the artist's names elsewhere, and in other scripts.</p>
+  <label for="artist-group">Group</label>
+  <input id="artist-group" name="group_name" value="{{ group_name }}" maxlength="170">
+  <label for="artist-urls">URLs</label>
+  <textarea id="artist-urls" name="urls" rows="6" spellcheck="false" placeholder="https://twitter.com/…">{{ urls }}</textarea>
+  <p class="hint">One per line: their profiles and galleries. Put <code>-</code> in front of ones no longer in use; they still identify the artist. Uploads from any page under these addresses suggest this artist.</p>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

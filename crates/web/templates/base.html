@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ site.name }}{% endblock %}</title>
+  {% if site.description and not preview %}<meta name="description" content="{{ site.description }}">{% endif %}
   <link rel="stylesheet" href="{{ asset('css/main.css') }}">
   {% if theme_css %}<link rel="stylesheet" href="{{ asset(theme_css) }}">{% endif %}
   {% if prefs and prefs.custom_css %}<link rel="stylesheet" href="{{ prefs.custom_css }}">{% endif %}
@@ -13,7 +14,7 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="brand" href="/">{{ site.name }}</a>
+    <a class="brand" href="/">{% if site.logo %}<img src="{{ site.logo }}" alt="" height="32">{% endif %}{{ site.name }}</a>
     <form class="search" method="get" action="/posts" role="search">
       <input type="search" name="tags" value="{{ search.tags if search else '' }}" placeholder="Search tags" aria-label="Search tags"
              autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
@@ -49,6 +50,11 @@
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
+    {% if site.description %}<p class="description">{{ site.description }}</p>{% endif %}
+    {% if site.has_rules or site.footer_links %}<nav class="footer-links" aria-label="Site">
+      {% if site.has_rules %}<a href="/rules">Rules</a>{% endif %}
+      {% for link in site.footer_links %}<a href="{{ link.url }}"{% if link.external %} rel="noopener"{% endif %}>{{ link.label }}</a>{% endfor %}
+    </nav>{% endif %}
     <p>Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> {{ build_version }} · <a href="/api/docs">API</a>
       {% if not prefs or prefs.shortcuts %}<span data-shortcuts-link hidden>· <button type="button" class="link">Keyboard shortcuts</button> <kbd>?</kbd></span>{% endif %}</p>
     {% if mode_choice %}

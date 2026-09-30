@@ -5,11 +5,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 pub const SITE_NAME_MAX_LEN: usize = 64;
+/// The longest [`SiteSettings::site_description`], in characters.
+pub const DESCRIPTION_MAX_LEN: usize = 300;
+/// The longest [`SiteSettings::rules`], in characters.
+pub const RULES_MAX_LEN: usize = 20_000;
+/// The most [`SiteSettings::footer_links`].
+pub const MAX_FOOTER_LINKS: usize = 12;
+/// The longest footer link text, in characters.
+pub const FOOTER_LABEL_MAX_LEN: usize = 40;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SiteSettings {
     pub site_name: String,
+    /// A sentence or two about the site, for the footer, search engines
+    /// and link previews. Empty: none.
+    pub site_description: String,
+    /// The storage key of the logo shown beside the site's name (uploaded
+    /// from the settings page). Empty: none.
+    pub logo: String,
+    /// The site's content rules, in markup, shown at `/rules` and linked
+    /// from the footer, sign-up and uploads. Empty: no rules page.
+    pub rules: String,
+    /// Extra links in the footer (a Discord server, a donation page, …).
+    pub footer_links: Vec<FooterLink>,
     pub registration_mode: RegistrationMode,
     /// New accounts must follow a link sent to their email address before
     /// they can log in. Only applies when mail is configured.
@@ -61,6 +80,10 @@ impl Default for SiteSettings {
     fn default() -> Self {
         Self {
             site_name: "Moekura".to_owned(),
+            site_description: String::new(),
+            logo: String::new(),
+            rules: String::new(),
+            footer_links: Vec::new(),
             registration_mode: RegistrationMode::Open,
             email_verification: false,
             upload_approval: false,
@@ -83,6 +106,63 @@ impl Default for SiteSettings {
             post_reasons: crate::moderation::PostReasons::default(),
             request_tags: false,
         }
+    }
+}
+
+/// A link in the footer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FooterLink {
+    pub label: String,
+    /// An `http(s)` address, or a path on this site.
+    pub url: String,
+}
+
+impl FooterLink {
+    /// Links from text, one per line: the link's text, then its address
+    /// (`Discord https://discord.gg/abc`). Blank lines are skipped; a line
+    /// that is only an address uses it as its text.
+    pub fn parse_list(text: &str) -> Vec<Self> {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| match line.rsplit_once(char::is_whitespace) {
+                Some((label, url)) => Self {
+                    label: label.trim().to_owned(),
+                    url: url.to_owned(),
+                },
+                None => Self {
+                    label: line.to_owned(),
+                    url: line.to_owned(),
+                },
+            })
+            .collect()
+    }
+
+    /// The links as [`Self::parse_list`] reads them.
+    pub fn to_list(links: &[Self]) -> String {
+        links
+            .iter()
+            .map(|link| format!("{} {}", link.label, link.url))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.label.is_empty() || self.label.chars().count() > FOOTER_LABEL_MAX_LEN {
+            return Err(format!(
+                "link text must be 1 to {FOOTER_LABEL_MAX_LEN} characters"
+            ));
+        }
+        let local = self.url.starts_with('/') && !self.url.starts_with("//");
+        let web = url::Url::parse(&self.url)
+            .is_ok_and(|url| matches!(url.scheme(), "http" | "https") && url.has_host());
+        if !(local || web) || self.url.chars().any(char::is_whitespace) {
+            return Err(format!(
+                "`{}` isn't an http(s) address or a path on this site",
+                self.url
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -168,6 +248,31 @@ impl SiteSettings {
         if name.chars().count() > SITE_NAME_MAX_LEN {
             return Err(format!("must be at most {SITE_NAME_MAX_LEN} characters"));
         }
+        if self.site_description.chars().count() > DESCRIPTION_MAX_LEN {
+            return Err(format!(
+                "the description must be at most {DESCRIPTION_MAX_LEN} characters"
+            ));
+        }
+        if self.rules.chars().count() > RULES_MAX_LEN {
+            return Err(format!(
+                "the rules must be at most {RULES_MAX_LEN} characters"
+            ));
+        }
+        // A storage key; the web layer checks it names a real file.
+        if !self
+            .logo
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'-'))
+            || self.logo.contains("..")
+        {
+            return Err("not a stored file".into());
+        }
+        if self.footer_links.len() > MAX_FOOTER_LINKS {
+            return Err(format!("at most {MAX_FOOTER_LINKS} footer links"));
+        }
+        for link in &self.footer_links {
+            link.validate()?;
+        }
         crate::blacklist::Blacklist::parse(&self.default_blacklist).map_err(|e| e.to_string())?;
         if !crate::user_settings::is_theme_name(&self.default_theme) {
             return Err("must be a theme's name".into());
@@ -201,12 +306,16 @@ mod tests {
                 "default_theme",
                 "email_domains",
                 "email_verification",
+                "footer_links",
                 "ip_history_days",
+                "logo",
                 "post_reasons",
                 "preview_all_ratings",
                 "promotion_rules",
                 "registration_mode",
                 "request_tags",
+                "rules",
+                "site_description",
                 "site_name",
                 "tagger",
                 "upload_approval",
@@ -258,6 +367,45 @@ mod tests {
             defaults.with_value("tagger", thresholds),
             Err(SettingError::InvalidValue { .. })
         ));
+    }
+
+    #[test]
+    fn footer_links() {
+        let links = FooterLink::parse_list("Our Discord  https://discord.gg/abc\n\n/wiki/help\n");
+        assert_eq!(
+            links,
+            [
+                FooterLink {
+                    label: "Our Discord".into(),
+                    url: "https://discord.gg/abc".into()
+                },
+                FooterLink {
+                    label: "/wiki/help".into(),
+                    url: "/wiki/help".into()
+                },
+            ]
+        );
+        assert_eq!(FooterLink::parse_list(&FooterLink::to_list(&links)), links);
+        let defaults = SiteSettings::default();
+        let set = |text: &str| {
+            defaults.with_value(
+                "footer_links",
+                serde_json::to_value(FooterLink::parse_list(text)).unwrap(),
+            )
+        };
+        assert!(set("Help /wiki/help\nDonate https://ko-fi.com/x").is_ok());
+        for bad in [
+            "Evil javascript:alert(1)",
+            "Proto //evil.example",
+            "Mail mailto:a@b.c",
+        ] {
+            assert!(set(bad).is_err(), "{bad}");
+        }
+        assert!(
+            defaults
+                .with_value("logo", json!("../../etc/passwd"))
+                .is_err()
+        );
     }
 
     #[test]

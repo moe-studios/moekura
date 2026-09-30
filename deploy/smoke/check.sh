@@ -39,4 +39,17 @@ for file in h264.mp4 vp8.webm vp9.webm av1.mp4; do
     VIPS_BLOCK_UNTRUSTED=1 vipsthumbnail "$out/poster.png" --size '250x250>' -o "$out/thumb.webp[Q=80,keep=none]"
     echo "ok  $file"
 done
+# Ugoira: JPEG frames made PNG by libvips, each for its own time, into a
+# VP9 WebM.
+printf "ffconcat version 1.0\n" > "$out/frames.ffconcat"
+for frame in frame*.jpg; do
+    VIPS_BLOCK_UNTRUSTED=1 vips copy "$frame" "$out/${frame%.jpg}.png"
+    printf "file '%s'\nduration 0.100\n" "$out/${frame%.jpg}.png" >> "$out/frames.ffconcat"
+done
+printf "file '%s'\n" "$out/${frame%.jpg}.png" >> "$out/frames.ffconcat"
+ffmpeg -hide_banner -loglevel error -y -f concat -safe 0 -i "$out/frames.ffconcat" \
+    -vf 'scale=trunc(iw/2)*2:trunc(ih/2)*2' -c:v libvpx-vp9 -pix_fmt yuv420p -crf 30 -b:v 0 \
+    -deadline good -cpu-used 4 -an "$out/ugoira.webm"
+ffprobe -v error -print_format json -show_streams "$out/ugoira.webm" | grep -q '"codec_name": "vp9"'
+echo "ok  ugoira"
 echo "all media checks passed"

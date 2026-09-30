@@ -290,10 +290,29 @@ pub(crate) async fn fetch_url(
         _ => (url, Vec::new(), fields.url.clone()),
     };
     let writer = TempWriter::create(&state.work_dir).await?;
-    let file = state
+    let mut file = state
         .fetcher
         .fetch_with(&file_url, &headers, writer, max_bytes(state))
         .await?;
+    // A Pixiv ugoira's zip lacks its frames' delays; keep them in it.
+    if let Some(frames) = found
+        .as_deref()
+        .and_then(|info| info.ugoira_frames.as_ref())
+    {
+        let frames: Vec<moekura_media::ugoira::Frame> = frames
+            .iter()
+            .map(|(file, delay_ms)| moekura_media::ugoira::Frame {
+                file: file.clone(),
+                delay_ms: *delay_ms,
+            })
+            .collect();
+        let path = file.path.clone();
+        tokio::task::spawn_blocking(move || moekura_media::ugoira::add_frame_data(&path, &frames))
+            .await
+            .map_err(|e| UploadError::Internal(e.to_string()))?
+            .map_err(|e| UploadError::Invalid(format!("The ugoira's zip is damaged ({e}).")))?;
+        file.rehash().await?;
+    }
     if fields.source.is_empty() {
         fields.source = page;
     }
@@ -462,6 +481,19 @@ pub struct TempWriter {
     file: tokio::fs::File,
     sha256: Sha256,
     md5: Md5,
+}
+
+impl TempUpload {
+    /// Recomputes the hashes and size after the file was changed.
+    async fn rehash(&mut self) -> Result<(), UploadError> {
+        let bytes = tokio::fs::read(&self.path)
+            .await
+            .map_err(|e| UploadError::Internal(format!("reading temp file: {e}")))?;
+        self.sha256 = Sha256::digest(&bytes).into();
+        self.md5 = Md5::digest(&bytes).into();
+        self.size = bytes.len() as u64;
+        Ok(())
+    }
 }
 
 impl TempWriter {
@@ -832,6 +864,61 @@ mod tests {
         assert_eq!(post.source, link);
         let asset = media::for_post(&pool, id).await.unwrap().unwrap();
         assert_eq!(asset.sha256, Sha256::digest(&png).to_vec());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn ugoira_zips(pool: PgPool) {
+        use std::io::Write;
+
+        let (app, _) = app(&pool).await;
+        let session = session_for(&pool, "alice", SystemRole::Member).await;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for n in 0..2 {
+            zip.start_file(format!("{n:06}.png"), options).unwrap();
+            zip.write_all(&fixture::png(40, 30)).unwrap();
+        }
+        zip.start_file("animation.json", options).unwrap();
+        zip.write_all(
+            br#"{"frames":[{"file":"000000.png","delay":50},{"file":"000001.png","delay":70}]}"#,
+        )
+        .unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let fields = vec![("rating", "g".to_owned()), ("tags", "cat".to_owned())];
+        let response = app
+            .post_multipart("/upload", Some(&session), &fields, Some(("a.zip", &bytes)))
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let asset = media::for_post(&pool, id).await.unwrap().unwrap();
+        assert_eq!(asset.media_type, "ugoira");
+        assert_eq!((asset.width, asset.height, asset.frames), (40, 30, 2));
+        assert_eq!(asset.duration_ms, Some(120));
+        let page = app.get(&format!("/posts/{id}"), Some(&session)).await.body;
+        assert!(page.contains("still being prepared"), "{page}");
+        let found = app.get("/posts?tags=filetype%3Azip", None).await.body;
+        assert!(found.contains(&format!("href=\"/posts/{id}")), "{found}");
+
+        // Other zips aren't posts.
+        let mut other = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        other.start_file("notes.txt", options).unwrap();
+        other.write_all(b"hi").unwrap();
+        let bytes = other.finish().unwrap().into_inner();
+        let refused = app
+            .post_multipart("/upload", Some(&session), &fields, Some(("b.zip", &bytes)))
+            .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            refused.body
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

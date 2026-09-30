@@ -139,8 +139,17 @@ impl MediaJobs {
             Err(error) => tracing::warn!(asset_id, %error, "could not read the file's metadata"),
         }
 
-        // Videos are rendered from a still frame.
-        let (source, source_type) = if media_type.is_video() {
+        // Videos are rendered from a still frame, ugoira from their first
+        // frame, and ugoira also get a video to play.
+        let (source, source_type) = if media_type == MediaType::Ugoira {
+            let (video, first, first_type) = self
+                .media
+                .ugoira_video(&original, work.path())
+                .await
+                .map_err(media_error)?;
+            self.store_video(&asset, &video).await?;
+            (first, first_type)
+        } else if media_type.is_video() {
             let duration = asset.duration_ms.and_then(|d| u32::try_from(d).ok());
             let poster = self
                 .media
@@ -159,7 +168,7 @@ impl MediaJobs {
             .map(|&size| (format!("thumb-{size}"), size))
             .collect();
         let longest = asset.width.max(asset.height);
-        if media_type.is_video() {
+        if media_type.is_video() || media_type == MediaType::Ugoira {
             wanted.push(("poster".to_owned(), config.sample_size));
         } else if asset.frames == 1
             && longest > i32::try_from(config.sample_size).unwrap_or(i32::MAX)
@@ -190,6 +199,30 @@ impl MediaJobs {
         }
         tx.commit().await?;
         tracing::info!(asset_id, post_id = asset.post_id, "media processed");
+        Ok(())
+    }
+
+    /// Stores an ugoira's video as its `video` variant (WebM, full size).
+    async fn store_video(&self, asset: &Asset, video: &Path) -> Result<(), JobError> {
+        let key = Key::variant("video", &asset.sha256_hex(), "webm");
+        self.storage
+            .put_file(&key, video)
+            .await
+            .map_err(|e| JobError::retry(format!("storing the video: {e}")))?;
+        let size = tokio::fs::metadata(video)
+            .await
+            .map_err(|e| JobError::retry(format!("reading the video: {e}")))?
+            .len();
+        let variant = Variant {
+            asset_id: asset.id,
+            kind: "video".to_owned(),
+            format: "webm".to_owned(),
+            width: asset.width,
+            height: asset.height,
+            file_size: i64::try_from(size).unwrap_or(i64::MAX),
+            storage_key: key.as_str().to_owned(),
+        };
+        media::save_variant(&self.db, &variant).await?;
         Ok(())
     }
 
@@ -399,6 +432,61 @@ mod tests {
         // Running again is harmless.
         jobs.process(asset_id).await.unwrap();
         assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 3);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn ugoira_get_a_video(pool: PgPool) {
+        use std::io::Write;
+
+        let dir = scratch("ugoira");
+        let zip_path = dir.join("ugoira.zip");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for n in 0..3 {
+            let frame = dir.join(format!("{n}.png"));
+            ffmpeg(
+                &frame,
+                &[
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=64x48:duration=1",
+                    "-frames:v",
+                    "1",
+                ],
+            );
+            writer.start_file(format!("{n:06}.png"), options).unwrap();
+            writer.write_all(&std::fs::read(&frame).unwrap()).unwrap();
+        }
+        writer.finish().unwrap();
+        let (jobs, asset_id) = stored_asset(&pool, &dir, &zip_path, "ugoira", (64, 48)).await;
+
+        jobs.process(asset_id).await.unwrap();
+
+        let variants = media::variants(&pool, asset_id).await.unwrap();
+        let kinds: Vec<(&str, &str)> = variants
+            .iter()
+            .map(|v| (v.kind.as_str(), v.format.as_str()))
+            .collect();
+        assert!(kinds.contains(&("video", "webm")), "{kinds:?}");
+        assert!(kinds.contains(&("poster", "webp")), "{kinds:?}");
+        assert!(kinds.contains(&("thumb-250", "webp")), "{kinds:?}");
+        let metadata = media::metadata_for_post(
+            &pool,
+            media::by_id(&pool, asset_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .post_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            metadata.get("Ugoira:FrameCount").map(String::as_str),
+            Some("3")
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

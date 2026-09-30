@@ -31,6 +31,8 @@ impl Media {
     pub async fn probe(&self, path: &Path, media_type: MediaType) -> Result<Probe, MediaError> {
         let probe = if media_type.is_video() {
             self.probe_video(path, media_type).await?
+        } else if media_type == MediaType::Ugoira {
+            self.probe_ugoira(path).await?
         } else {
             self.probe_image(path, media_type).await?
         };
@@ -79,7 +81,9 @@ impl Media {
             MediaType::Webp => "webpload",
             MediaType::Avif => "heifload",
             MediaType::Jxl => "jxlload",
-            MediaType::Mp4 | MediaType::Webm => unreachable!("videos are probed with ffprobe"),
+            MediaType::Mp4 | MediaType::Webm | MediaType::Ugoira => {
+                unreachable!("videos and ugoira are probed on their own")
+            }
         };
         if !loader.starts_with(expected) {
             return Err(MediaError::Corrupt(format!(
@@ -174,6 +178,37 @@ impl Media {
             duration_ms: Some((seconds * 1000.0).round().min(f64::from(u32::MAX)) as u32),
             frames,
             has_audio: report.streams.iter().any(|s| s.codec_type == "audio"),
+        })
+    }
+
+    /// An ugoira: its frames, their delays, and its first frame's size.
+    async fn probe_ugoira(&self, path: &Path) -> Result<Probe, MediaError> {
+        let frames = self.ugoira_frames(path).await?;
+        let dir = path.with_extension("frames");
+        tokio::fs::create_dir_all(&dir).await?;
+        let probed = async {
+            let first = self.ugoira_extract(path, &frames[..1], &dir).await?;
+            let frame_type = crate::ugoira::frame_type(&first[0]);
+            // The frame's contents must be what its name says.
+            let sniffed = self.identify_any(&first[0]).await?;
+            if sniffed != frame_type {
+                return Err(MediaError::Corrupt(
+                    "a frame isn't what its name says".into(),
+                ));
+            }
+            self.probe_image(&first[0], frame_type).await
+        }
+        .await;
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        let still = probed?;
+        let total: u64 = frames.iter().map(|f| u64::from(f.delay_ms)).sum();
+        Ok(Probe {
+            media_type: MediaType::Ugoira,
+            width: still.width,
+            height: still.height,
+            duration_ms: Some(u32::try_from(total).unwrap_or(u32::MAX)),
+            frames: u32::try_from(frames.len()).unwrap_or(u32::MAX),
+            has_audio: false,
         })
     }
 

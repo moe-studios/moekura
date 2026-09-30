@@ -58,6 +58,12 @@ pub(crate) fn locked_message(lock: moekura_core::posts::PostLock) -> String {
     .to_owned()
 }
 
+/// Whether a file of `media_type` is played as a video: videos, and
+/// ugoira (as the video made of their frames).
+pub(crate) fn is_video(media_type: &str) -> bool {
+    matches!(media_type, "mp4" | "webm" | "ugoira")
+}
+
 /// Which posts `current` may see.
 pub fn visibility(current: &CurrentUser) -> Visibility {
     let mut statuses = vec![PostStatus::Active, PostStatus::Flagged];
@@ -634,11 +640,13 @@ pub(crate) async fn displays(
                 .iter()
                 .find(|v| v.asset_id == asset.id && v.kind == kind)
         };
-        let video = matches!(asset.media_type.as_str(), "mp4" | "webm");
-        let display = match variant("sample") {
-            Some(sample) if !video && asset.frames <= 1 => {
+        let video = is_video(&asset.media_type);
+        let display = match (variant("sample"), variant("video")) {
+            (Some(sample), _) if !video && asset.frames <= 1 => {
                 (&sample.storage_key, sample.width, sample.height)
             }
+            // An ugoira plays its video.
+            (_, Some(played)) => (&played.storage_key, played.width, played.height),
             _ => (&asset.storage_key, asset.width, asset.height),
         };
         shown.push(context! {
@@ -673,7 +681,7 @@ fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option
         rating => card.rating,
         pending => card.status == "pending",
         deleted => card.status == "deleted",
-        video => matches!(card.media_type.as_str(), "mp4" | "webm"),
+        video => is_video(&card.media_type),
         animated => card.frames > 1,
     }
 }
@@ -965,8 +973,14 @@ pub(crate) async fn render_post(
     let url_of = |key: &str| file_url(state, key);
     let variant = |kind: &str| variants.iter().find(|v: &&Variant| v.kind == kind);
     let original = url_of(&asset.storage_key);
-    let video = matches!(asset.media_type.as_str(), "mp4" | "webm");
+    let video = is_video(&asset.media_type);
     let animated = asset.frames > 1;
+    // What the player plays: an ugoira's video, once made.
+    let play = if asset.media_type == "ugoira" {
+        variant("video").and_then(|v| url_of(&v.storage_key))
+    } else {
+        original.clone()
+    };
     // Stills show the resized sample when there is one, unless the viewer
     // wants the original; animations and videos always use the original.
     let sample = variant("sample").filter(|_| !video && !animated);
@@ -1006,6 +1020,8 @@ pub(crate) async fn render_post(
     let file = context! {
         original => original,
         display => display,
+        play => play,
+        ugoira => asset.media_type == "ugoira",
         resized => resized,
         poster => poster,
         video => video,

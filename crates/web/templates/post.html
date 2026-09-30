@@ -35,9 +35,13 @@
     {% endfor %}
     {% if blacklisted %}
     <p class="notice blacklisted">This post matches your blacklist (<code>{{ blacklisted.rule }}</code>). <a href="{{ blacklisted.show_url }}">Show it anyway</a></p>
+    {% elif file.ugoira and not file.play %}
+    <p class="notice">This animation is still being prepared; it plays here once it's ready.</p>
+    {% if file.poster %}<img src="{{ file.poster }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">{% endif %}
     {% elif file.video %}
-    <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
-           width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
+    <video src="{{ file.play }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
+           width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline{% if file.ugoira %} autoplay muted{% endif %}></video>
+    {% if file.ugoira %}<p class="hint">An ugoira, played from its frames. <a href="{{ file.original }}" download>Download the frames</a> (a zip).</p>{% endif %}
     {% else %}
     {% if file.resized %}
     <p class="notice resized" data-resized data-percent="{{ file.resized.percent }}" data-sample="{{ file.resized.sample }}" data-original="{{ file.original }}">

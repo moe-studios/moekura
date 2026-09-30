@@ -128,6 +128,7 @@ pub(super) fn parse(post: &Value, target: &Target) -> Option<SourceInfo> {
         tags,
         title: String::new(),
         description: super::decode_entities(text),
+        ugoira_frames: None,
     })
 }
 

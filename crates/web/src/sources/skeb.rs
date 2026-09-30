@@ -48,6 +48,7 @@ pub(super) fn parse(work: &Value, target: &Target) -> Option<SourceInfo> {
         tags: Vec::new(),
         title: String::new(),
         description: text_of(&work["body"]),
+        ugoira_frames: None,
     })
 }
 

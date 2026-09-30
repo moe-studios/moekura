@@ -82,7 +82,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `ratio:` | `ratio:16:9`, `ratio:<1` | width ÷ height (`16:9` or a number; exact values match within 0.01) |
 | `filesize:` | `filesize:>2mb` | file size, in bytes or with `kb`, `mb`, `gb` (an exact size with a unit matches within 5%) |
 | `duration:` | `duration:>30` | length of a video, in seconds |
-| `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm` |
+| `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm`, `ugoira` (or `zip`) |
 | `date:` | `date:2026-01` | upload date (UTC): a day, month or year |
 | `source:` | `source:https://twitter.com/foo`, `source:*pixiv.net*`, `source:none`, `source:any` | the source starts with this, or matches a pattern with `*`, regardless of case; or posts without / with a source |
 | `age:` | `age:<1w`, `age:2d..1mo` | uploaded this long ago: `<1w` is less than a week ago; units `s`, `mi`, `h`, `d`, `w`, `mo` (30 days; `m` works too) and `y` |

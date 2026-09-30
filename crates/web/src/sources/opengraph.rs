@@ -60,6 +60,7 @@ pub(super) fn parse(html: &str, page: &Url) -> Option<SourceInfo> {
         title: get(&["og:title", "twitter:title"]).unwrap_or_default(),
         description: get(&["og:description", "twitter:description", "description"])
             .unwrap_or_default(),
+        ugoira_frames: None,
     })
 }
 

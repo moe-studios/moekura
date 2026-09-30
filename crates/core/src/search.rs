@@ -28,7 +28,9 @@ use crate::posts::{PostStatus, Rating};
 use crate::tags::{RESERVED_PREFIXES, TagName, TagNameError, normalize};
 
 /// File types as stored in `media_assets.media_type`.
-pub const FILETYPES: &[&str] = &["jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm"];
+pub const FILETYPES: &[&str] = &[
+    "jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm", "ugoira",
+];
 
 /// Metatags this version understands. Other reserved prefixes
 /// ([`RESERVED_PREFIXES`]) are refused as not supported yet.
@@ -1279,7 +1281,12 @@ impl Query {
             }
             "filetype" => Filter::FileType(
                 list(value, |v| {
-                    let v = if v == "jpg" { "jpeg" } else { v };
+                    let v = match v {
+                        "jpg" => "jpeg",
+                        // Danbooru's name, from the file's extension.
+                        "zip" => "ugoira",
+                        v => v,
+                    };
                     FILETYPES.contains(&v).then(|| v.to_owned())
                 })
                 .ok_or_else(|| invalid("expected file types like png, gif or webm"))?,

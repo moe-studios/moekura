@@ -67,6 +67,13 @@ impl Media {
     ) -> Result<Metadata, MediaError> {
         if media_type.is_video() {
             self.video_metadata(path).await
+        } else if media_type == MediaType::Ugoira {
+            let frames = self.ugoira_frames(path).await?;
+            let mut out = Metadata::new();
+            add(&mut out, "Ugoira", "FrameCount", &frames.len().to_string());
+            let delays: Vec<String> = frames.iter().map(|f| f.delay_ms.to_string()).collect();
+            add(&mut out, "Ugoira", "FrameDelays", &delays.join(" "));
+            Ok(out)
         } else {
             self.image_metadata(path, media_type).await
         }

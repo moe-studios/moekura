@@ -82,6 +82,7 @@ pub(super) fn parse(thread: &Value, target: &Target) -> Option<SourceInfo> {
         tags,
         title: String::new(),
         description: text_of(&post["record"]["text"]),
+        ugoira_frames: None,
     })
 }
 

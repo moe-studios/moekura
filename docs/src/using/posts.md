@@ -67,6 +67,18 @@ by whom and why, and the file before (still downloadable, until the post
 is purged) and after. Replacements are recorded in the moderation log,
 and Danbooru clients can read them at `/post_replacements.json`.
 
+## Square thumbnails
+
+**Square thumbnails**, under **Settings**, makes grids show every post as
+a square: the part of the picture libvips finds most interesting, which
+is usually the face or the subject rather than the middle. Staff who
+review posts can choose the square themselves under **Square thumbnail**
+on a post's page: give its left and top edges and its side in the
+picture's pixels, or with scripts, click the picture where it should be
+centred. **Back to automatic** undoes the choice. Squares are made when a
+file is processed; for older posts, `moekura admin regenerate-media
+--all` makes them, and until then grids show their usual thumbnails.
+
 ## File metadata
 
 When a file is processed, its metadata is read and kept: the image's

@@ -96,6 +96,71 @@ impl Media {
         self.describe(out).await
     }
 
+    /// A `size`×`size` square of `source` (a still image, or the first
+    /// frame of an animation), written to `out` without metadata: the
+    /// region `crop` (left, top and side, in the source's pixels) scaled
+    /// to fit, or without one, the most interesting part as libvips's
+    /// attention strategy finds it. `dir` holds the cut-out region.
+    pub async fn square(
+        &self,
+        source: &Path,
+        source_type: MediaType,
+        size: u32,
+        crop: Option<[u32; 3]>,
+        out: &Path,
+        dir: &Path,
+    ) -> Result<Rendition, MediaError> {
+        let loaders = if source_type.is_video() {
+            Loaders::Trusted
+        } else {
+            loaders_for(source_type)
+        };
+        let (input, strategy) = match crop {
+            Some([left, top, side]) => {
+                let region = dir.join(format!("crop-{size}.png"));
+                let args: Vec<OsString> = vec![
+                    "extract_area".into(),
+                    source.into(),
+                    region.clone().into(),
+                    left.to_string().into(),
+                    top.to_string().into(),
+                    side.to_string().into(),
+                    side.to_string().into(),
+                ];
+                tool::run_with(&self.config.tools.vips, args, self.timeout(), loaders)
+                    .await
+                    .map_err(corrupt_unless_missing)?;
+                (region, "centre")
+            }
+            None => (source.to_owned(), "attention"),
+        };
+        let quality = if out.extension().is_some_and(|e| e == "avif") {
+            60
+        } else {
+            80
+        };
+        let mut target = out.as_os_str().to_owned();
+        target.push(format!("[Q={quality},keep=none]"));
+        let args: Vec<OsString> = vec![
+            input.into(),
+            "--size".into(),
+            format!("{size}x{size}").into(),
+            "--smartcrop".into(),
+            strategy.into(),
+            "-o".into(),
+            target,
+        ];
+        tool::run_with(
+            &self.config.tools.vipsthumbnail,
+            args,
+            self.timeout(),
+            loaders,
+        )
+        .await
+        .map_err(corrupt_unless_missing)?;
+        self.describe(out).await
+    }
+
     /// Dimensions and size of a file we generated.
     async fn describe(&self, path: &Path) -> Result<Rendition, MediaError> {
         let header = |field: &'static str| {
@@ -196,6 +261,37 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((thumb.width, thumb.height), (80, 60));
+    }
+
+    #[tokio::test]
+    async fn squares() {
+        let dir = fixtures::dir("render-square");
+        let media = crate::tests::media();
+        let wide = fixtures::image(&dir, "wide.png", 400, 100);
+        let auto = media
+            .square(
+                &wide,
+                MediaType::Png,
+                50,
+                None,
+                &dir.join("auto.webp"),
+                &dir,
+            )
+            .await
+            .unwrap();
+        assert_eq!((auto.width, auto.height), (50, 50));
+        let chosen = media
+            .square(
+                &wide,
+                MediaType::Png,
+                50,
+                Some([300, 0, 100]),
+                &dir.join("chosen.webp"),
+                &dir,
+            )
+            .await
+            .unwrap();
+        assert_eq!((chosen.width, chosen.height), (50, 50));
     }
 
     #[tokio::test]

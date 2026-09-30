@@ -182,6 +182,24 @@
       </form>
     </details>
     {% endif %}
+    {% if crop %}
+    <details class="edit">
+      <summary>Square thumbnail</summary>
+      <form method="post" action="/posts/{{ post.id }}/crop" data-crop-form data-width="{{ file.width }}" data-height="{{ file.height }}">
+        <p class="hint">Square thumbnails show {% if crop.chosen %}this square{% else %}the part of the picture that looks most interesting; choose a square instead{% endif %}, in the picture's pixels ({{ file.width }}×{{ file.height }}). With scripts, click the picture to centre the square there.</p>
+        <label for="crop-left">Left</label>
+        <input id="crop-left" name="left" type="number" min="0" value="{{ crop.left }}" data-crop="left">
+        <label for="crop-top">Top</label>
+        <input id="crop-top" name="top" type="number" min="0" value="{{ crop.top }}" data-crop="top">
+        <label for="crop-side">Side</label>
+        <input id="crop-side" name="side" type="number" min="1" value="{{ crop.side }}" data-crop="side">
+        <div class="actions">
+          <button type="submit">Use this square</button>
+          {% if crop.chosen %}<button type="submit" class="secondary" name="reset" value="1">Back to automatic</button>{% endif %}
+        </div>
+      </form>
+    </details>
+    {% endif %}
     {% if can_replace %}
     <details class="edit">
       <summary>Replace the file</summary>

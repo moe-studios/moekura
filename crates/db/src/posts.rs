@@ -212,6 +212,8 @@ pub struct Card {
     /// Storage keys of the 1x and 2x thumbnails, once generated.
     pub thumb: Option<String>,
     pub thumb_2x: Option<String>,
+    /// The thumbnails are square crops.
+    pub square: bool,
 }
 
 /// Grid cards for `ids`, in the same order. Ids without a post (deleted
@@ -221,13 +223,19 @@ pub async fn cards(
     ids: &[i64],
     thumb_kinds: (&str, &str),
 ) -> sqlx::Result<Vec<Card>> {
+    // Square (crop-<size>) thumbnails fall back to the usual ones for
+    // files processed before they existed.
     let mut cards: Vec<Card> = sqlx::query_as(
         "SELECT p.id, p.rating, p.status, a.media_type, a.width, a.height, a.frames, p.tag_ids,
-                t1.storage_key AS thumb, t2.storage_key AS thumb_2x
+                coalesce(t1.storage_key, f1.storage_key) AS thumb,
+                coalesce(t2.storage_key, f2.storage_key) AS thumb_2x,
+                t1.storage_key IS NOT NULL AND $2 LIKE 'crop-%' AS square
          FROM posts p
          JOIN media_assets a ON a.post_id = p.id
          LEFT JOIN media_variants t1 ON t1.asset_id = a.id AND t1.kind = $2
          LEFT JOIN media_variants t2 ON t2.asset_id = a.id AND t2.kind = $3
+         LEFT JOIN media_variants f1 ON f1.asset_id = a.id AND f1.kind = replace($2, 'crop-', 'thumb-')
+         LEFT JOIN media_variants f2 ON f2.asset_id = a.id AND f2.kind = replace($3, 'crop-', 'thumb-')
          WHERE p.id = ANY($1)",
     )
     .bind(ids)

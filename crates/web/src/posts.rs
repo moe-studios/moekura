@@ -747,6 +747,12 @@ struct ShowQuery {
     /// the sample even for those who chose originals.
     #[serde(default)]
     original: String,
+    /// Set after a save, to warn about incomplete tagging.
+    #[serde(default)]
+    check: String,
+    /// Category prefixes that didn't apply (see crate::tag_warnings).
+    #[serde(default)]
+    kept: String,
 }
 
 async fn show(
@@ -771,6 +777,7 @@ async fn show(
                 "0" => Some(false),
                 _ => None,
             },
+            check: (!params.check.is_empty()).then_some(params.kept.as_str()),
             ..Extra::default()
         },
     )
@@ -800,6 +807,9 @@ pub(crate) struct Extra<'a> {
     /// Whether to show the original image rather than the resized sample;
     /// `None` for the viewer's setting.
     pub original: Option<bool>,
+    /// After a save: warn about incomplete tagging, with the `kept`
+    /// parameter.
+    pub check: Option<&'a str>,
 }
 
 /// The post page.
@@ -1032,6 +1042,12 @@ pub(crate) async fn render_post(
             ..context! { tags_locked => tags_locked, rating_locked => rating_locked }
         }
     });
+    let tag_warnings = match (&edit, extra.check) {
+        (Some(_), Some(kept)) if failed.is_none() => {
+            crate::tag_warnings::warnings(&post, &post_tags, &categories, kept)
+        }
+        _ => Vec::new(),
+    };
     let copy_tags = if edit.is_some() && !tags_locked {
         copy_sources(page, &post).await?
     } else {
@@ -1093,6 +1109,7 @@ pub(crate) async fn render_post(
             family => family,
             similar => similar,
             copy_tags => copy_tags,
+            tag_warnings => tag_warnings,
             deleted => deleted,
             moderate => moderate,
             blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
@@ -1367,6 +1384,9 @@ mod tests {
             .location
             .unwrap_or_else(|| panic!("upload failed: {}", response.body))
             .strip_prefix("/posts/")
+            .unwrap()
+            .split('?')
+            .next()
             .unwrap()
             .parse()
             .unwrap()

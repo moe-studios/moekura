@@ -92,12 +92,15 @@ async fn edit(
     page.current.require(Permission::EditPosts)?;
     match apply(page.state(), &page.current, id, &form).await {
         Ok(()) => {
-            let mut back = format!("/posts/{id}");
+            let kept =
+                crate::tag_warnings::kept_categories(page.state().db.primary(), &form.tags, id)
+                    .await?;
+            let mut back = format!("/posts/{id}?{}", crate::tag_warnings::check_query(&kept));
             if !query.q.is_empty() {
                 let q = url::form_urlencoded::Serializer::new(String::new())
                     .append_pair("q", &query.q)
                     .finish();
-                back = format!("{back}?{q}");
+                back = format!("{back}&{q}");
             }
             Ok((flash::set(jar, Flash::Saved), Redirect::to(&back)).into_response())
         }
@@ -228,7 +231,9 @@ pub(crate) async fn apply(
     // Before the tags, so tags this creates or recategorises are credited.
     moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
         .await?;
-    let tag_ids: Vec<i32> = tags::for_post(&mut tx, &wanted, current.can(Permission::ManageTags))
+    let found = tags::for_post(&mut tx, &wanted, current.can(Permission::ManageTags)).await?;
+    let request_tags = state.site.get().settings.request_tags;
+    let tag_ids: Vec<i32> = crate::tag_warnings::with_request_tags(&mut tx, request_tags, found)
         .await?
         .iter()
         .map(|t| t.id)
@@ -365,6 +370,9 @@ mod tests {
             .post_multipart("/upload", Some(session), &fields, Some(("a.png", png)))
             .await;
         response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap()
     }
@@ -633,6 +641,9 @@ mod tests {
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
         let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         assert_eq!(tag_names(&pool, id).await, ["dog"]);
@@ -691,7 +702,7 @@ mod tests {
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
         assert_eq!(
             response.location.as_deref(),
-            Some(format!("/posts/{child}?q=b").as_str())
+            Some(format!("/posts/{child}?check=1&q=b").as_str())
         );
         // Both posts show the family bar.
         for id in [parent, child] {

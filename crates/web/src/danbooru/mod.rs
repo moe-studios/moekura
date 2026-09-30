@@ -305,7 +305,12 @@ pub(crate) mod test_support {
         let location = response
             .location
             .unwrap_or_else(|| panic!("{}: {}", response.status, response.body));
-        location["/posts/".len()..].parse().unwrap()
+        location["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
     }
 
     pub(crate) fn routes() -> Router<AppState> {

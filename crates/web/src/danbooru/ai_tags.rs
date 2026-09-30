@@ -204,6 +204,9 @@ mod tests {
             )
             .await;
         let post_id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let mut conn = pool.acquire().await.unwrap();

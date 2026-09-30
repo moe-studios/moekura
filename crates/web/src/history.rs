@@ -204,6 +204,9 @@ mod tests {
             )
             .await;
         let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let edit = "old_tags=cat+cute&tags=cat+dog&rating=e&source=https%3A%2F%2Fexample.com";

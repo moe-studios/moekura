@@ -252,7 +252,13 @@ async fn upload(
         }
     };
     match ingest(&state, &page.current, &file, &fields).await {
-        Ok(post_id) => Ok(Redirect::to(&format!("/posts/{post_id}")).into_response()),
+        Ok(post_id) => {
+            let kept =
+                crate::tag_warnings::kept_categories(state.db.primary(), &fields.tags, post_id)
+                    .await?;
+            let query = crate::tag_warnings::check_query(&kept);
+            Ok(Redirect::to(&format!("/posts/{post_id}?{query}")).into_response())
+        }
         Err(error) => Ok(failed(&page, &fields, error)),
     }
 }
@@ -600,15 +606,18 @@ pub async fn create_post(
     // Credits the tags this creates; the post is the uploader's anyway.
     moekura_db::post_versions::attribute(&mut tx, uploader.user.as_ref().map(|u| u.id), None)
         .await?;
-    let tag_ids: Vec<i32> = moekura_db::tags::for_post(
+    let found = moekura_db::tags::for_post(
         &mut tx,
         &tags.wanted(),
         uploader.can(Permission::ManageTags),
     )
-    .await?
-    .iter()
-    .map(|t| t.id)
-    .collect();
+    .await?;
+    let tag_ids: Vec<i32> =
+        crate::tag_warnings::with_request_tags(&mut tx, site.settings.request_tags, found)
+            .await?
+            .iter()
+            .map(|t| t.id)
+            .collect();
     let post_id = posts::insert(
         &mut *tx,
         NewPost {
@@ -737,6 +746,9 @@ mod tests {
             .unwrap()
             .strip_prefix("/posts/")
             .unwrap()
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let post = posts::by_id(&pool, id).await.unwrap().unwrap();
@@ -796,6 +808,9 @@ mod tests {
             .unwrap()
             .strip_prefix("/posts/")
             .unwrap()
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
 
@@ -848,7 +863,8 @@ mod tests {
                 Some(("a.png", &png)),
             )
             .await;
-        let existing = first.location.unwrap();
+        let location = first.location.unwrap();
+        let existing = location.split('?').next().unwrap();
 
         let again = app
             .post_multipart(
@@ -954,6 +970,9 @@ mod tests {
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
         let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let post = posts::by_id(&pool, id).await.unwrap().unwrap();
@@ -1033,6 +1052,9 @@ mod tests {
             let id = location
                 .unwrap()
                 .strip_prefix("/posts/")
+                .unwrap()
+                .split('?')
+                .next()
                 .unwrap()
                 .parse()
                 .unwrap();

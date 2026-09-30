@@ -10,6 +10,16 @@
     {% elif post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
     {% if moderate.locked %}<p class="notice">Locked: {{ moderate.locked | join(", ") | lower }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
+    {% if tag_warnings %}
+    <div class="notice tag-warnings" role="status">
+      <p>Worth a look before moving on:</p>
+      <ul>
+        {% for w in tag_warnings %}
+        <li>{{ w.text }}{% if w.tags %} {% for tag in w.tags %}<a href="{{ tag.url }}">{{ tag.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
     {% for p in pools.pools %}
     <nav class="pool-nav{% if p.current %} current{% endif %}" aria-label="Pool {{ p.name }}">
       <span class="pool-steps">

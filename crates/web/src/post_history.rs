@@ -314,6 +314,9 @@ mod tests {
             )
             .await;
         let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let edit = app

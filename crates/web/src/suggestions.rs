@@ -100,6 +100,9 @@ mod tests {
             )
             .await;
         response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap()
     }

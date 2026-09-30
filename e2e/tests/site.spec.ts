@@ -27,7 +27,7 @@ test("upload a picture with tags", async ({ page }) => {
   await page.locator("input[name=rating][value=g]").check();
   await page.locator("#tags").fill(`${tag} solid_colour`);
   await page.getByRole("button", { name: "Upload" }).click();
-  await expect(page).toHaveURL(/\/posts\/\d+$/);
+  await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
   postPath = new URL(page.url()).pathname;
   await expect(tagLink(page, tag)).toBeVisible();
 });

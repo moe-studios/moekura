@@ -218,7 +218,7 @@ impl DanbooruPost {
             is_flagged: post.status == "flagged",
             is_deleted: post.status == "deleted",
             is_banned: false,
-            pixiv_id: None,
+            pixiv_id: post.pixiv_id,
             bit_flags: 0,
             last_comment_bumped_at: post.last_comment_bumped_at.map(timestamp),
             last_commented_at: post.last_commented_at.map(timestamp),

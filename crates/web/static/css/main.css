@@ -588,7 +588,10 @@ tr.is-deleted td { opacity: 0.6; }
 .notes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .note-box { fill: rgb(255 255 238 / 0.25); stroke: rgb(0 0 0 / 0.6); stroke-width: 1; pointer-events: all; cursor: help; }
 .note-box:hover, .note-box.active { fill: rgb(255 255 238 / 0.45); stroke: var(--accent); }
-.notes-hidden .notes { display: none; }
+.notes-hidden .notes, .notes-hidden .note-embedded, .editing-notes .note-embedded { display: none; }
+.note-embedded { position: absolute; overflow: auto; padding: 2px 4px; background: rgb(255 255 238 / 0.92); color: #111; font-size: 0.8125rem; line-height: 1.25; pointer-events: none; }
+.note-embedded .markup > :first-child { margin-top: 0; }
+.note-embedded .markup > :last-child { margin-bottom: 0; }
 .note-popup { position: absolute; z-index: 5; max-width: 320px; padding: 6px 10px; background: #ffe; color: #111; border: 1px solid #333; border-radius: 4px; box-shadow: 0 2px 8px rgb(0 0 0 / 0.25); font-size: 0.9375rem; }
 .note-popup .markup > :first-child { margin-top: 0; }
 .note-popup .markup > :last-child { margin-bottom: 0; }

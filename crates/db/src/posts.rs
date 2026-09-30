@@ -38,6 +38,10 @@ pub struct Post {
     pub created_at: OffsetDateTime,
     /// What staff locked against changes.
     pub locks: Vec<PostLock>,
+    /// The Pixiv work the source links to.
+    pub pixiv_id: Option<i64>,
+    /// Its notes are drawn on the picture with their text.
+    pub has_embedded_notes: bool,
 }
 
 impl Post {
@@ -65,6 +69,8 @@ struct PostRow {
     tag_ids: Vec<i32>,
     created_at: OffsetDateTime,
     locks: Vec<String>,
+    pixiv_id: Option<i64>,
+    has_embedded_notes: bool,
 }
 
 impl TryFrom<PostRow> for Post {
@@ -102,6 +108,8 @@ impl TryFrom<PostRow> for Post {
                 .iter()
                 .map(|l| PostLock::parse(l).ok_or_else(|| bad("lock", l)))
                 .collect::<Result<_, _>>()?,
+            pixiv_id: row.pixiv_id,
+            has_embedded_notes: row.has_embedded_notes,
         })
     }
 }
@@ -112,11 +120,26 @@ macro_rules! select_posts {
         concat!(
             "SELECT id, uploader_id, rating, status, source, description, parent_id, score,
                     fav_count, comment_count, last_commented_at, last_comment_bumped_at,
-                    note_count, last_noted_at, tag_ids, created_at, locks
+                    note_count, last_noted_at, tag_ids, created_at, locks, pixiv_id,
+                    has_embedded_notes
              FROM posts ",
             $rest
         )
     };
+}
+
+/// Sets whether post `id`'s notes are drawn on the picture.
+pub async fn set_embedded_notes(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    embedded: bool,
+) -> sqlx::Result<bool> {
+    let done = sqlx::query("UPDATE posts SET has_embedded_notes = $2 WHERE id = $1")
+        .bind(id)
+        .bind(embedded)
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected() > 0)
 }
 
 /// Which posts a viewer may see.

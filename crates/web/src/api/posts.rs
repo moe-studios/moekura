@@ -60,6 +60,8 @@ pub struct ApiPost {
     pub last_noted_at: Option<OffsetDateTime>,
     /// The uploader's name, unless their account is gone.
     pub uploader: Option<String>,
+    /// The Pixiv work the source links to.
+    pub pixiv_id: Option<i64>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     /// Sorted by name.
@@ -197,6 +199,7 @@ pub(crate) async fn load(
                 last_comment_bumped_at: post.last_comment_bumped_at,
                 note_count: post.note_count,
                 last_noted_at: post.last_noted_at,
+                pixiv_id: post.pixiv_id,
                 created_at: post.created_at,
                 tags,
                 file: ApiFile {

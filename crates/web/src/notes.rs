@@ -28,6 +28,33 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/posts/{id}/notes/history", get(history))
         .route("/notes/{id}/revert/{version}", post(revert))
+        .route("/posts/{id}/notes/embed", post(embed))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EmbedForm {
+    /// `1` to draw the notes on the picture, `0` to show them on hover.
+    #[serde(default)]
+    embedded: String,
+}
+
+/// Draws post `id`'s notes on the picture, text and all, or stops.
+async fn embed(
+    page: crate::pages::Page,
+    jar: axum_extra::extract::CookieJar,
+    Path(id): Path<i64>,
+    axum::Form(form): axum::Form<EmbedForm>,
+) -> Result<axum::response::Response, AppError> {
+    use axum::response::IntoResponse;
+
+    let (post, _, _) = visible_post(page.state(), &page.current, id).await?;
+    check_editor(&page.current, &post)?;
+    posts::set_embedded_notes(page.state().db.primary(), id, form.embedded == "1").await?;
+    Ok((
+        crate::flash::set(jar, crate::flash::Flash::Saved),
+        axum::response::Redirect::to(&format!("/posts/{id}")),
+    )
+        .into_response())
 }
 
 /// Post `id` and its image's size, if `current` may see it.
@@ -227,6 +254,30 @@ mod tests {
 
     use super::*;
     use crate::test_support::{TestApp, session_for, test_state};
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn embedding_notes(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = post(&pool, "active").await;
+        let url = format!("/posts/{id}/notes/embed");
+        assert_eq!(
+            app.post_form(&url, None, &[], "embedded=1").await.status,
+            StatusCode::UNAUTHORIZED
+        );
+        let done = app.post_form(&url, Some(&alice), &[], "embedded=1").await;
+        assert_eq!(done.status, StatusCode::SEE_OTHER);
+        let post = posts::by_id(&pool, id).await.unwrap().unwrap();
+        assert!(post.has_embedded_notes);
+        app.post_form(&url, Some(&alice), &[], "embedded=0").await;
+        assert!(
+            !posts::by_id(&pool, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .has_embedded_notes
+        );
+    }
 
     pub(crate) async fn post(pool: &PgPool, status: &str) -> i64 {
         let post: i64 =

@@ -184,6 +184,24 @@ page 2.
 Counts are exact up to 10,000 posts. Above that, a single tag shows its
 known post count, and other searches show "10,000+".
 
+## Popular posts and searches
+
+**Popular** in the menu shows what's going on, for a day, a week (the
+seven days ending on the date) or a month, with links to earlier and
+later ones:
+
+- **Popular**: the best-scored posts posted then.
+- **Most viewed**: the posts whose pages were looked at most.
+- **Searches**: the tag searches made most.
+- **Missed searches**: tag searches that found nothing, most often
+  because of a misspelling or a name the site calls something else;
+  an [alias](tags.md) can send them to the right tag.
+
+Each person counts once a day per post or search; crawlers and link
+previews don't count. Only searches of plain tags are counted (and only
+their first page): searches with metatags such as `fav:` or `user:`,
+which may name people, are left out. Counts are kept for about a year.
+
 ## Feeds
 
 Every search has an Atom feed of its newest posts: the **Feed** link

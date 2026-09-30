@@ -24,6 +24,7 @@
       {% set hot = search and search.tags == "order:rank" %}
       {% if hot %}<a href="/">Posts</a>{% else %}{{ item("posts", "/", "Posts") }}{% endif %}
       <a href="/posts?tags=order%3Arank"{% if hot %} aria-current="page"{% endif %}>Hot</a>
+      {{ item("explore", "/explore/posts/popular", "Popular") }}
       {{ item("tags", "/tags", "Tags") }}
       {{ item("pools", "/pools", "Pools") }}
       {{ item("comments", "/comments", "Comments") }}

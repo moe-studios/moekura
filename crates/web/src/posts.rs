@@ -100,7 +100,11 @@ const DID_YOU_MEAN_TERMS: usize = 6;
 const DID_YOU_MEAN_EACH: i64 = 3;
 
 /// Search results; the front page is the empty search.
-async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response, AppError> {
+async fn index(
+    page: Page,
+    info: crate::auth::RequestInfo,
+    Query(params): Query<IndexQuery>,
+) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
     let db = state.reader(&page.current);
@@ -151,6 +155,13 @@ async fn index(page: Page, Query(params): Query<IndexQuery>) -> Result<Response,
         (_, Err(SearchError::Invalid(message))) => return Ok(failed(message)),
     };
 
+    if page_ref == PageRef::default()
+        && let Some(counted) = crate::explore::counted_search(&query)
+    {
+        state
+            .tallies
+            .search(&page.current, &info, &counted, !ids.is_empty());
+    }
     let thumbs = Thumbs::for_viewer(state, &page.current);
     let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
     let normalized = query.to_string();
@@ -757,6 +768,7 @@ struct ShowQuery {
 
 async fn show(
     page: Page,
+    info: crate::auth::RequestInfo,
     Path(id): Path<i64>,
     Query(params): Query<ShowQuery>,
 ) -> Result<Response, AppError> {
@@ -764,7 +776,7 @@ async fn show(
         Some(reply) => crate::comments::reply_draft(page.state(), id, reply).await?,
         None => None,
     };
-    render_post(
+    let response = render_post(
         &page,
         id,
         params.q.as_deref(),
@@ -781,7 +793,11 @@ async fn show(
             ..Extra::default()
         },
     )
-    .await
+    .await?;
+    if response.status() == StatusCode::OK {
+        page.state().tallies.view(&page.current, &info, id);
+    }
+    Ok(response)
 }
 
 /// The edit form as submitted, shown again with an error.

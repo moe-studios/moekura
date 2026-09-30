@@ -18,6 +18,7 @@ mod dates;
 mod edit;
 mod email;
 pub mod error;
+pub mod explore;
 mod favorite_groups;
 mod favorites;
 mod feeds;
@@ -123,6 +124,8 @@ pub struct AppState {
     pub site: SiteCache,
     pub rate_limits: Arc<RateLimits>,
     pub(crate) counts: Arc<counts::CountCache>,
+    /// Post views and searches not yet written to the database.
+    pub(crate) tallies: Arc<explore::Tallies>,
     pub storage: Storage,
     pub media: Media,
     pub(crate) fetcher: fetch::Fetcher,
@@ -201,6 +204,7 @@ impl AppState {
             site,
             rate_limits: Arc::new(rate_limits),
             counts: Arc::new(counts),
+            tallies: Arc::default(),
             storage,
             media,
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
@@ -259,6 +263,7 @@ pub fn router(state: AppState) -> Router {
         .merge(comments::routes())
         .merge(edit::routes())
         .merge(email::routes())
+        .merge(explore::routes())
         .merge(favorite_groups::routes())
         .merge(favorites::routes())
         .merge(feeds::routes())

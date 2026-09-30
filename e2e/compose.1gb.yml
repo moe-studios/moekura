@@ -9,6 +9,9 @@ services:
     cpuset: "0,1"
     mem_limit: 384m
     memswap_limit: 384m
+    environment:
+      # `admin bench-http` sends hundreds of API requests from one address.
+      MOEKURA_SERVER__API_REQUESTS_PER_MINUTE: "0"
   db:
     cpuset: "0,1"
     mem_limit: 512m

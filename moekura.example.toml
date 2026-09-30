@@ -19,6 +19,11 @@ public_url = "http://localhost:8080"
 trusted_proxies = []   # e.g. ["127.0.0.1/32", "10.0.0.0/8"]
 # Requests running longer than this are aborted with 408.
 request_timeout_secs = 30
+# API requests (/api/v1 and the Danbooru-compatible API) each client may
+# make a minute on average, per account or, for visitors, per address; 0
+# turns the limit off. api_burst of them may come at once.
+api_requests_per_minute = 300
+api_burst = 60
 
 [database]
 # Required. Connection URL of the primary.

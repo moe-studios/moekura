@@ -31,6 +31,26 @@ Errors are JSON with the HTTP status:
 A duplicate upload is a `409` whose error also has `post_id`, the post that
 already has the file.
 
+## Rate limits
+
+Each client may make a few hundred requests a minute (300 by default,
+with bursts of up to 60; the site's admins set
+[`api_requests_per_minute` and `api_burst`](configuration.md#server)).
+Requests with a key count against its account, requests without one
+against the address they come from. The Danbooru-compatible API shares
+the same allowance. Every response says what's left:
+
+| Header | Meaning |
+|---|---|
+| `X-RateLimit-Limit` | requests that may be made at once (the burst) |
+| `X-RateLimit-Remaining` | requests left right now |
+| `X-RateLimit-Reset` | when the full burst is available again, in Unix time |
+
+Past the limit, requests get a `429` with `Retry-After`, the seconds to
+wait. Some actions also have their own, tighter limits, the same as on the
+site: logging in, posting comments, flagging and reporting, and forms that
+send email.
+
 ## Examples
 
 Search, 100 posts at a time:

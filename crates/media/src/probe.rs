@@ -195,7 +195,7 @@ pub(crate) fn loaders_for(media_type: MediaType) -> Loaders {
 
 /// A tool rejecting the file means the file is bad; a tool that is missing
 /// or timed out is our problem.
-fn corrupt_unless_missing(error: ToolError) -> MediaError {
+pub(crate) fn corrupt_unless_missing(error: ToolError) -> MediaError {
     match error {
         ToolError::Failed { stderr, .. } => MediaError::Corrupt(stderr),
         other => MediaError::Tool(other),

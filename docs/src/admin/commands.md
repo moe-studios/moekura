@@ -13,7 +13,7 @@
 | `moekura admin create-invite [--uses N] [--expires-days D]` | makes an invite code, shown once |
 | `moekura admin settings` | shows the site settings |
 | `moekura admin settings set KEY VALUE` | changes one; `VALUE` is JSON, or else a plain string |
-| `moekura admin regenerate-media (--all \| IDS…)` | remakes thumbnails and samples |
+| `moekura admin regenerate-media (--all \| IDS…)` | remakes thumbnails and samples, and rereads the files' metadata |
 | `moekura admin recount-tags` | recomputes every tag's post count |
 | `moekura admin tag-backlog [--all] [--limit N]` | queues posts the [tagger](tagger.md) hasn't seen (or, with `--all`, every post) |
 | `moekura admin send-test-mail ADDRESS` | sends a test message through the [`[mail]`](../configuration.md#mail) settings |

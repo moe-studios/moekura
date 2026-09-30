@@ -131,6 +131,14 @@ impl MediaJobs {
             .await
             .map_err(|e| JobError::retry(format!("downloading original: {e}")))?;
 
+        // Metadata comes from the original; failing to read it (a tool
+        // choking on odd fields) doesn't stop the renditions.
+        match self.media.metadata(&original, media_type).await {
+            Ok(metadata) => media::set_metadata(&self.db, asset_id, &metadata).await?,
+            Err(error) if error.is_internal() => return Err(media_error(error)),
+            Err(error) => tracing::warn!(asset_id, %error, "could not read the file's metadata"),
+        }
+
         // Videos are rendered from a still frame.
         let (source, source_type) = if media_type.is_video() {
             let duration = asset.duration_ms.and_then(|d| u32::try_from(d).ok());
@@ -377,6 +385,14 @@ mod tests {
         let processed = media::by_id(&pool, asset_id).await.unwrap().unwrap();
         assert!(processed.processed_at.is_some());
         assert!(processed.phash.is_some());
+        let metadata = media::metadata_for_post(&pool, processed.post_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            metadata.get("File:ColorComponents").map(String::as_str),
+            Some("3")
+        );
         // Scratch space is cleaned up.
         assert_eq!(std::fs::read_dir(dir.join("work")).unwrap().count(), 0);
 

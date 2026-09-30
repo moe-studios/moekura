@@ -201,6 +201,33 @@ pub async fn variants_of(db: impl PgExecutor<'_>, asset_ids: &[i64]) -> sqlx::Re
 
 /// Marks processing finished and stores the perceptual hash, split into
 /// the four 16-bit chunks the similarity index uses.
+/// Stores a file's metadata (`Group:Tag` to value).
+pub async fn set_metadata(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    metadata: &std::collections::BTreeMap<String, String>,
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE media_assets SET metadata = $2 WHERE id = $1")
+        .bind(id)
+        .bind(sqlx::types::Json(metadata))
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// The metadata of post `post_id`'s file, by `Group:Tag`.
+pub async fn metadata_for_post(
+    db: impl PgExecutor<'_>,
+    post_id: i64,
+) -> sqlx::Result<Option<std::collections::BTreeMap<String, String>>> {
+    let found: Option<sqlx::types::Json<std::collections::BTreeMap<String, String>>> =
+        sqlx::query_scalar("SELECT metadata FROM media_assets WHERE post_id = $1")
+            .bind(post_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(found.map(|json| json.0))
+}
+
 pub async fn mark_processed(
     db: impl PgExecutor<'_>,
     id: i64,

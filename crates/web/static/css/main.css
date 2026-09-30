@@ -369,6 +369,9 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .subnav { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; font-size: 0.9375rem; }
 .subnav a[aria-current] { color: var(--text); font-weight: 600; }
 .explore-head h1 { margin-bottom: 0; }
+.metadata-group h2 { font-size: 1.1rem; margin: 16px 0 4px; }
+.metadata-group th { width: 30%; font-weight: normal; overflow-wrap: anywhere; }
+.metadata-group td { overflow-wrap: anywhere; }
 .commentary { margin: 16px 0; }
 .commentary h2 { font-size: 1.1rem; margin: 0 0 4px; }
 .commentary h3 { font-size: 1rem; margin: 8px 0 4px; }

@@ -172,7 +172,8 @@
         <input type="hidden" name="old_tags" value="{{ edit.old_tags }}">
         <label for="edit-tags">Tags</label>
         <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="edit"{% if edit.tags_locked %} readonly{% endif %}>{{ edit.tags }}</textarea>
-        {% if edit.tags_locked %}<p class="hint">The tags are locked.</p>{% endif %}
+        {% if edit.tags_locked %}<p class="hint">The tags are locked.</p>
+        {% else %}<div class="related-tags" data-related-tags="edit-tags"><a class="hint" href="/tags/related?tags={{ edit.old_tags | urlencode }}">Related tags</a></div>{% endif %}
         <fieldset class="ratings">
           <legend>Rating</legend>
           {% for rating in ratings %}

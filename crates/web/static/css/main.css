@@ -460,6 +460,13 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 form .suggestions button[type="submit"] { background: var(--border); color: var(--text); }
 .suggestions .confidence { color: var(--muted); font-size: 0.8em; }
 .suggestions button.chosen { opacity: 0.5; }
+.related-tags { margin: 4px 0 12px; }
+.related-groups { display: flex; flex-wrap: wrap; gap: 4px 24px; }
+.related-group h2, .related-group h3 { margin: 8px 0 4px; font-size: 0.95rem; }
+.related-group ul { list-style: none; margin: 0; padding: 0; max-height: 16em; overflow-y: auto; }
+.related-group button { margin: 0; padding: 0; background: none; border: 0; font: inherit; cursor: pointer; text-align: start; }
+.related-group button[aria-pressed="true"], .related-group a.selected { font-weight: 700; }
+.related-group button[aria-pressed="true"]::before { content: "✓ "; }
 .copy-tags { margin-top: 20px; }
 .copy-tags h3 { margin: 0 0 6px; font-size: 0.95rem; }
 .copy-tags ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }

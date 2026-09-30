@@ -109,6 +109,7 @@ the busiest posts (with comments, notes and a pool), common and rare tags,
 the biggest pools. Point it at a server using the seeded database:
 
 ```sh
+export MOEKURA_SERVER__API_REQUESTS_PER_MINUTE=0   # no API rate limit
 MOEKURA_DATABASE__URL=postgres://…/moekura_bench moekura serve &
 MOEKURA_DATABASE__URL=postgres://…/moekura_bench moekura admin bench-http --url http://localhost:8080
 ```

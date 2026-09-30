@@ -191,11 +191,15 @@ impl AppState {
             .captcha
             .clone()
             .map(|c| Arc::new(captcha::Captcha::new(c)));
+        let rate_limits = RateLimits::new(valkey).with_api_limit(
+            config.server.api_requests_per_minute,
+            config.server.api_burst,
+        );
         Ok(Self {
             config: Arc::new(config),
             db,
             site,
-            rate_limits: Arc::new(RateLimits::new(valkey)),
+            rate_limits: Arc::new(rate_limits),
             counts: Arc::new(counts),
             storage,
             media,
@@ -332,6 +336,11 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::block_banned_networks,
+        ))
+        // Knows the requester, and its refusals become JSON errors.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::limit_api,
         ))
         // Inner layer: runs after the session is known, so error pages can
         // show who is logged in.

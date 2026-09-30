@@ -1,5 +1,6 @@
 //! Rate limits for login, registration and forms that send email, against
-//! password guessing, signup floods and mail bombing.
+//! password guessing, signup floods and mail bombing; and for the APIs, as
+//! a whole, per client (`server.api_requests_per_minute`).
 //!
 //! Counters live in this process's memory, or in Valkey when
 //! `cache.backend = "valkey"`, so that several web servers share them.
@@ -12,6 +13,8 @@ use std::num::NonZeroU32;
 use std::time::Duration;
 
 use governor::clock::{Clock, DefaultClock};
+use governor::middleware::StateInformationMiddleware;
+use governor::state::keyed::DefaultKeyedStateStore;
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
 
 use crate::error::AppError;
@@ -93,6 +96,41 @@ const APPEAL_BY_USER: Limit = Limit {
     period: Duration::from_secs(4 * 60 * 60),
 };
 
+/// A keyed limiter that also says how much allowance is left.
+type InfoLimiter =
+    RateLimiter<String, DefaultKeyedStateStore<String>, DefaultClock, StateInformationMiddleware>;
+
+/// A client's API allowance after a request, for the `X-RateLimit-*`
+/// headers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Allowance {
+    /// Requests that may come at once.
+    pub limit: u32,
+    pub remaining: u32,
+    /// How long until the whole burst is available again.
+    pub reset: Duration,
+    /// Set when the request was refused: how long to wait.
+    pub retry_after: Option<Duration>,
+}
+
+impl Allowance {
+    /// From a GCRA state that is `ahead` of now, for [`Valkey`] counts.
+    fn from_ahead(limit: Limit, ahead: Duration, retry_after: Option<Duration>) -> Self {
+        let window = limit.period * limit.burst;
+        let free = window.saturating_sub(ahead).as_millis() / limit.period.as_millis().max(1);
+        Self {
+            limit: limit.burst,
+            remaining: if retry_after.is_some() {
+                0
+            } else {
+                u32::try_from(free).unwrap_or(u32::MAX).min(limit.burst)
+            },
+            reset: ahead,
+            retry_after,
+        }
+    }
+}
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -110,6 +148,8 @@ pub struct RateLimits {
     comment_by_user: DefaultKeyedRateLimiter<i64>,
     report_by_user: DefaultKeyedRateLimiter<i64>,
     appeal_by_user: DefaultKeyedRateLimiter<i64>,
+    /// Off when `server.api_requests_per_minute` is 0.
+    api: Option<(Limit, InfoLimiter)>,
     valkey: Option<Valkey>,
 }
 
@@ -133,8 +173,62 @@ impl RateLimits {
             comment_by_user: RateLimiter::keyed(quota(COMMENT_BY_USER)),
             report_by_user: RateLimiter::keyed(quota(REPORT_BY_USER)),
             appeal_by_user: RateLimiter::keyed(quota(APPEAL_BY_USER)),
+            api: None,
             valkey,
         }
+    }
+
+    /// Limits API clients to `per_minute` requests a minute, `burst` at
+    /// once; 0 a minute is no limit.
+    pub fn with_api_limit(mut self, per_minute: u32, burst: u32) -> Self {
+        self.api = (per_minute > 0 && burst > 0).then(|| {
+            let limit = Limit {
+                name: "api",
+                burst,
+                period: Duration::from_secs(60) / per_minute,
+            };
+            let limiter =
+                RateLimiter::keyed(quota(limit)).with_middleware::<StateInformationMiddleware>();
+            (limit, limiter)
+        });
+        self
+    }
+
+    /// Counts an API request by `client` (`user:<id>` or `ip:<address>`):
+    /// the allowance left, or `None` when the API isn't limited.
+    pub async fn check_api(&self, client: &str) -> Option<Allowance> {
+        let (limit, local) = self.api.as_ref()?;
+        let limit = *limit;
+        if let Some(valkey) = &self.valkey {
+            let key = format!("rate:{}:{client}", limit.name);
+            match valkey.gcra_state(&key, limit.burst, limit.period).await {
+                Ok((wait, ahead)) => return Some(Allowance::from_ahead(limit, ahead, wait)),
+                Err(error) => {
+                    tracing::warn!(%error, "Valkey unavailable; rate limiting in this process only");
+                }
+            }
+        }
+        let key = client.to_owned();
+        Some(match local.check_key(&key) {
+            Ok(snapshot) => {
+                let remaining = snapshot.remaining_burst_capacity();
+                Allowance {
+                    limit: limit.burst,
+                    remaining,
+                    reset: limit.period * (limit.burst - remaining.min(limit.burst)),
+                    retry_after: None,
+                }
+            }
+            Err(not_until) => {
+                let wait = not_until.wait_time_from(DefaultClock::default().now());
+                Allowance {
+                    limit: limit.burst,
+                    remaining: 0,
+                    reset: wait + limit.period * (limit.burst - 1),
+                    retry_after: Some(wait),
+                }
+            }
+        })
     }
 
     /// Counts a login attempt. `ip` is `None` only when the connection
@@ -240,6 +334,9 @@ impl RateLimits {
         self.comment_by_user.retain_recent();
         self.report_by_user.retain_recent();
         self.appeal_by_user.retain_recent();
+        if let Some((_, api)) = &self.api {
+            api.retain_recent();
+        }
     }
 
     async fn check<K: std::hash::Hash + Eq + Clone>(
@@ -263,6 +360,69 @@ impl RateLimits {
             .check_key(key)
             .map_err(|not_until| too_many(not_until.wait_time_from(DefaultClock::default().now())))
     }
+}
+
+/// Middleware: counts requests to the APIs against their client's
+/// allowance and says what's left in `X-RateLimit-Limit`, `-Remaining`
+/// and `-Reset` (Unix time when the full burst is back), refusing with 429
+/// and `Retry-After` once it's used up. Clients are accounts, or for
+/// visitors, addresses (IPv6 by /64, which one person usually has).
+pub async fn limit_api(
+    axum::extract::State(state): axum::extract::State<crate::AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let path = request.uri().path();
+    let is_api = (crate::api::is_api_path(path) && path != crate::api::DOCS)
+        || crate::danbooru::is_danbooru_path(path);
+    if !is_api {
+        return next.run(request).await;
+    }
+    let user = request
+        .extensions()
+        .get::<crate::auth::CurrentUser>()
+        .and_then(|c| c.user.as_ref())
+        .map(|u| u.id);
+    let (parts, body) = request.into_parts();
+    let client = match user {
+        Some(id) => format!("user:{id}"),
+        None => match crate::client_ip::client_ip(&parts, &state.config.server.trusted_proxies) {
+            Some(IpAddr::V6(ip)) => {
+                let net = ipnet::Ipv6Net::new(ip, 64).map_or(ip, |net| net.network());
+                format!("ip:{net}")
+            }
+            Some(ip) => format!("ip:{ip}"),
+            // In-process tests only.
+            None => "ip:unknown".to_owned(),
+        },
+    };
+    let Some(allowance) = state.rate_limits.check_api(&client).await else {
+        return next
+            .run(axum::extract::Request::from_parts(parts, body))
+            .await;
+    };
+    let mut response = match allowance.retry_after {
+        Some(wait) => too_many(wait).into_response(),
+        None => {
+            next.run(axum::extract::Request::from_parts(parts, body))
+                .await
+        }
+    };
+    let reset = std::time::SystemTime::now()
+        .checked_add(allowance.reset)
+        .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |at| at.as_secs_f64().ceil() as u64);
+    let headers = response.headers_mut();
+    for (name, value) in [
+        ("x-ratelimit-limit", u64::from(allowance.limit)),
+        ("x-ratelimit-remaining", u64::from(allowance.remaining)),
+        ("x-ratelimit-reset", reset),
+    ] {
+        headers.insert(name, axum::http::HeaderValue::from(value));
+    }
+    response
 }
 
 fn too_many(wait: Duration) -> AppError {
@@ -362,6 +522,83 @@ mod tests {
             assert!(limits.check_report(user).await.is_err());
             limits.check_report(id()).await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn counts_api_requests_per_client() {
+        assert_eq!(RateLimits::default().check_api("ip:x").await, None);
+        for limits in backends().await {
+            // A burst of 3, then one every 20 seconds.
+            let limits = limits.with_api_limit(3, 3);
+            let client = crate::shared::tests::unique("user");
+            let first = limits.check_api(&client).await.unwrap();
+            assert_eq!((first.limit, first.remaining), (3, 2));
+            assert!(first.retry_after.is_none());
+            assert!(first.reset > Duration::from_secs(15), "{first:?}");
+            limits.check_api(&client).await.unwrap();
+            let last = limits.check_api(&client).await.unwrap();
+            assert_eq!(last.remaining, 0);
+            let refused = limits.check_api(&client).await.unwrap();
+            let wait = refused.retry_after.expect("refused");
+            assert!(
+                wait > Duration::from_secs(15) && wait <= Duration::from_secs(20),
+                "{wait:?}"
+            );
+            assert!(refused.reset >= Duration::from_secs(55), "{refused:?}");
+            // Others have their own allowance.
+            let other = limits
+                .check_api(&crate::shared::tests::unique("user"))
+                .await
+                .unwrap();
+            assert_eq!(other.remaining, 2);
+        }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn api_responses_carry_the_allowance(pool: sqlx::PgPool) {
+        use axum::http::StatusCode;
+
+        use crate::test_support::{TestApp, test_config, test_state_with};
+
+        let mut config = test_config();
+        config.server.api_requests_per_minute = 2;
+        config.server.api_burst = 2;
+        let app = TestApp::new(
+            test_state_with(&pool, config).await,
+            crate::api::routes(1024)
+                .merge(crate::danbooru::routes())
+                .merge(crate::posts::routes()),
+        );
+        let first = app.get_full("/api/v1/posts").await;
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(first.headers()["x-ratelimit-limit"], "2");
+        assert_eq!(first.headers()["x-ratelimit-remaining"], "1");
+        let reset: u64 = first.headers()["x-ratelimit-reset"]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        assert!(reset > now + 20 && reset <= now + 31, "{reset} vs {now}");
+        // The Danbooru API shares the allowance.
+        let second = app.get_full("/posts.json").await;
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(second.headers()["x-ratelimit-remaining"], "0");
+        let refused = app.get("/api/v1/posts", None).await;
+        assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            refused.retry_after.is_some_and(|s| s > 20),
+            "{:?}",
+            refused.retry_after
+        );
+        assert!(refused.body.contains("\"status\":429"), "{}", refused.body);
+        // Pages aren't counted.
+        let page = app.get_full("/").await;
+        assert_eq!(page.status(), StatusCode::OK);
+        assert!(!page.headers().contains_key("x-ratelimit-limit"));
     }
 
     #[tokio::test]

@@ -21,8 +21,10 @@ const RETRY_AFTER: Duration = Duration::from_secs(10);
 /// GCRA, the algorithm the in-memory limiter uses: each key stores the
 /// "theoretical arrival time" of the next request. `ARGV[1]` is the
 /// period between requests and `ARGV[2]` the burst, both in milliseconds
-/// and requests. Returns 0 when allowed, else milliseconds to wait. Uses
-/// the server's clock, so every web server agrees.
+/// and requests. Returns the milliseconds to wait (0 when allowed) and
+/// how far the key's theoretical arrival time is ahead of now, from which
+/// the allowance left follows. Uses the server's clock, so every web
+/// server agrees.
 const GCRA: &str = r"
 local t = redis.call('TIME')
 local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
@@ -31,10 +33,10 @@ local burst = tonumber(ARGV[2])
 local tat = tonumber(redis.call('GET', KEYS[1]) or now)
 if tat < now then tat = now end
 local allow_at = tat + period - burst * period
-if now < allow_at then return allow_at - now end
+if now < allow_at then return {allow_at - now, tat - now} end
 local new_tat = tat + period
 redis.call('SET', KEYS[1], new_tat, 'PX', new_tat - now)
-return 0
+return {0, new_tat - now}
 ";
 
 #[derive(Clone)]
@@ -123,16 +125,30 @@ impl Valkey {
         burst: u32,
         period: Duration,
     ) -> RedisResult<Option<Duration>> {
+        Ok(self.gcra_state(key, burst, period).await?.0)
+    }
+
+    /// [`Self::gcra`], also returning how long until `key` is back to its
+    /// full burst.
+    pub async fn gcra_state(
+        &self,
+        key: &str,
+        burst: u32,
+        period: Duration,
+    ) -> RedisResult<(Option<Duration>, Duration)> {
         let mut connection = self.connection().await?;
-        let wait: RedisResult<u64> = self
+        let result: RedisResult<(u64, i64)> = self
             .gcra
             .key(self.key(key))
             .arg(period.as_millis() as u64)
             .arg(burst)
             .invoke_async(&mut connection)
             .await;
-        let wait = self.note(wait).await?;
-        Ok((wait > 0).then(|| Duration::from_millis(wait)))
+        let (wait, ahead) = self.note(result).await?;
+        Ok((
+            (wait > 0).then(|| Duration::from_millis(wait)),
+            Duration::from_millis(ahead.max(0) as u64),
+        ))
     }
 
     fn key(&self, key: &str) -> String {
@@ -225,5 +241,11 @@ pub(crate) mod tests {
         assert_eq!(valkey.gcra(&key, 2, period).await.unwrap(), None);
         let wait = valkey.gcra(&key, 2, period).await.unwrap().unwrap();
         assert!(wait > Duration::from_secs(55) && wait <= period, "{wait:?}");
+        let (wait, ahead) = valkey.gcra_state(&unique("gcra"), 2, period).await.unwrap();
+        assert_eq!(wait, None);
+        assert!(
+            ahead > Duration::from_secs(55) && ahead <= period,
+            "{ahead:?}"
+        );
     }
 }

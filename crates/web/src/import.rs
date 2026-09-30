@@ -97,6 +97,7 @@ pub async fn import_file(
         tags: file.tags.join(" "),
         source: file.source.to_owned(),
         description: file.description.to_owned(),
+        ..UploadFields::default()
     };
     match ingest(state, &current, &received, &fields).await {
         Ok(id) => Ok(Imported::Created(id)),

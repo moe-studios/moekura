@@ -49,6 +49,7 @@ mod requests;
 mod saved_searches;
 pub mod shared;
 mod site;
+pub(crate) mod sources;
 mod suggestions;
 mod tag_history;
 mod tag_relations;
@@ -131,6 +132,8 @@ pub struct AppState {
     pub storage: Storage,
     pub media: Media,
     pub(crate) fetcher: fetch::Fetcher,
+    /// What upload sources' pages say (artist, tags, commentary).
+    pub(crate) sources: Arc<sources::Sources>,
     /// Scratch space for uploads in progress.
     pub(crate) work_dir: std::path::PathBuf,
     pub(crate) file_signer: files::FileSigner,
@@ -210,6 +213,7 @@ impl AppState {
             storage,
             media,
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
+            sources: Arc::new(sources::Sources::new(false)),
             work_dir,
             file_signer: files::FileSigner::new(file_key),
             oidc,

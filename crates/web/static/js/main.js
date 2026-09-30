@@ -48,7 +48,19 @@ function enableArtistFinder(root = document) {
   let timer;
   let request;
   let last = "";
-  const show = (found) => {
+  const show = ({ artists: found, unknown }) => {
+    if (found.length === 0 && unknown) {
+      const label2 = document.createElement("span");
+      label2.className = "hint";
+      label2.textContent = `By ${unknown.name}, who has no artist entry yet: `;
+      const link = document.createElement("a");
+      link.href = unknown.new_url;
+      link.target = "_blank";
+      link.textContent = "start one";
+      box.replaceChildren(label2, link);
+      box.hidden = false;
+      return;
+    }
     if (found.length === 0) {
       box.hidden = true;
       box.replaceChildren();
@@ -73,7 +85,7 @@ function enableArtistFinder(root = document) {
     const url = firstUrl(inputs.map((input) => input.value));
     if (url === null) {
       last = "";
-      show([]);
+      show({ artists: [] });
       return;
     }
     if (url === last) return;
@@ -1137,6 +1149,16 @@ function withoutTag(tags, tag) {
 function hasTag(tags, tag) {
   return tags.split(/\s+/).some((word) => word.toLowerCase() === tag);
 }
+function sourceOf(field) {
+  const form = field.form;
+  if (!form) return null;
+  for (const name of ["url", "source"]) {
+    const input = form.querySelector(`input[name="${name}"]`);
+    const value = input?.value.trim() ?? "";
+    if (/^https?:\/\/\S+$/i.test(value)) return value;
+  }
+  return null;
+}
 function enableRelatedTags(root = document) {
   for (const panel of root.querySelectorAll("[data-related-tags]")) {
     const field = root.getElementById(panel.dataset["relatedTags"] ?? "");
@@ -1180,6 +1202,8 @@ function attach(panel, field) {
     const chosen = chosenTag(field.value, field.selectionStart ?? field.value.length);
     const params = new URLSearchParams({ tags: field.value });
     if (chosen) params.set("tag", chosen);
+    const source = sourceOf(field);
+    if (source) params.set("source", source);
     const url = `/tags/related?${params.toString()}`;
     if (url === lastUrl) return;
     lastUrl = url;
@@ -1198,6 +1222,9 @@ function attach(panel, field) {
     timer = window.setTimeout(() => void update2(), DEBOUNCE_MS3);
   };
   field.addEventListener("input", schedule);
+  for (const input of field.form?.querySelectorAll('input[name="url"], input[name="source"]') ?? []) {
+    input.addEventListener("change", schedule);
+  }
   field.addEventListener("click", schedule);
   field.addEventListener("keyup", (event) => {
     if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") schedule();

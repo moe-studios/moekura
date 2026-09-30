@@ -311,6 +311,12 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
 struct NameQuery {
     #[serde(default)]
     name: String,
+    /// For a new entry: its URLs, one per line.
+    #[serde(default)]
+    urls: String,
+    /// For a new entry: its other names.
+    #[serde(default)]
+    other_names: String,
 }
 
 /// The entry for an artist tag, or the form to start one.
@@ -345,26 +351,96 @@ struct Found {
     url: String,
 }
 
-/// The artists a URL (a profile or a post) belongs to, as a page or, for
-/// scripts asking for JSON, a list.
+/// An artist the source names who has no entry yet.
+#[derive(Debug, Serialize)]
+struct Unknown {
+    /// Their name there.
+    name: String,
+    /// A tag name to suggest: their account's.
+    tag: Option<String>,
+    /// The form to start their entry, filled in.
+    new_url: String,
+}
+
+#[derive(Debug, Serialize)]
+struct FinderAnswer {
+    artists: Vec<Found>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    unknown: Option<Unknown>,
+}
+
+/// The artists a URL (a profile, a post, or a work's page on a site the
+/// source strategies read) belongs to, and, when the source names an
+/// artist without an entry, how to start one.
+async fn find_for_url(
+    state: &AppState,
+    db: &PgPool,
+    url: &str,
+) -> Result<(Vec<Artist>, Option<Unknown>), AppError> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Ok((Vec::new(), None));
+    }
+    let mut found = artists::find_by_url(db, url).await?;
+    let mut unknown = None;
+    if let Some(info) = state.sources.lookup(url).await {
+        for artist in crate::sources::artists_for(db, &info).await? {
+            if !found.iter().any(|a| a.id == artist.id) {
+                found.push(artist);
+            }
+        }
+        let name = info
+            .artist_name
+            .clone()
+            .or_else(|| info.artist_account.clone());
+        if found.is_empty()
+            && let Some(name) = name
+        {
+            let tag = info
+                .artist_account
+                .as_deref()
+                .and_then(|a| TagName::parse(a).ok())
+                .map(TagName::into_string);
+            let mut other_names: Vec<String> =
+                [info.artist_name.as_deref(), info.artist_account.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .map(moekura_core::wiki::normalize_other_name)
+                    .filter(|n| Some(n) != tag.as_ref())
+                    .collect();
+            other_names.dedup();
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("name", tag.as_deref().unwrap_or_default())
+                .append_pair("other_names", &other_names.join(" "))
+                .append_pair("urls", &info.profile_urls.join("\n"))
+                .finish();
+            unknown = Some(Unknown {
+                name,
+                tag,
+                new_url: format!("/artists/new?{query}"),
+            });
+        }
+    }
+    Ok((found, unknown))
+}
+
+/// The artists a URL belongs to, as a page or, for scripts asking for
+/// JSON, a list.
 async fn finder(
     page: Page,
     headers: HeaderMap,
     Query(query): Query<FinderQuery>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
-    let db = page.state().reader(&page.current);
-    let found = if query.url.trim().is_empty() {
-        Vec::new()
-    } else {
-        artists::find_by_url(db, query.url.trim()).await?
-    };
+    let state = page.state();
+    let db = state.reader(&page.current);
+    let (found, unknown) = find_for_url(state, db, &query.url).await?;
     let wants_json = headers
         .get(ACCEPT)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.contains("application/json"));
     if wants_json {
-        let list: Vec<Found> = found
+        let artists: Vec<Found> = found
             .iter()
             .map(|a| Found {
                 id: a.id,
@@ -372,7 +448,7 @@ async fn finder(
                 url: artist_url(a.id),
             })
             .collect();
-        return Ok(Json(list).into_response());
+        return Ok(Json(FinderAnswer { artists, unknown }).into_response());
     }
     let ids: Vec<i32> = found.iter().map(|a| a.id).collect();
     let urls = artists::urls(db, &ids).await?;
@@ -385,6 +461,11 @@ async fn finder(
                 let mine: Vec<_> = urls.iter().filter(|u| u.artist_id == a.id).collect();
                 summary_context(a, &mine)
             }).collect::<Vec<_>>(),
+            unknown => unknown.map(|u| context! {
+                name => u.name,
+                new_url => url_value(&u.new_url),
+            }),
+            can_create => page.current.can(Permission::EditWiki),
         },
     ))
 }
@@ -470,8 +551,8 @@ async fn new_form(page: Page, Query(query): Query<NameQuery>) -> Result<Response
     let input = ArtistInput {
         name: query.name.trim(),
         group_name: "",
-        other_names: "",
-        urls: "",
+        other_names: query.other_names.trim(),
+        urls: query.urls.trim(),
     };
     Ok(page.render("artist_edit.html", form_context(None, &input, 0, None)))
 }

@@ -1,6 +1,8 @@
 // Suggests the artist tag on the upload form: when the link to upload
-// from, or the source, is a page of an artist with an artist entry, their
-// tag is offered, and a click adds it to the tags box.
+// from, or the source, is a page of an artist with an artist entry (or a
+// work on a site whose pages say who made it), their tag is offered, and
+// a click adds it to the tags box. An artist without an entry yet gets a
+// link to start one.
 
 import { withTag } from "./suggestions.ts";
 
@@ -8,6 +10,17 @@ interface Found {
   id: number;
   name: string;
   url: string;
+}
+
+interface Unknown {
+  name: string;
+  tag: string | null;
+  new_url: string;
+}
+
+interface Answer {
+  artists: Found[];
+  unknown?: Unknown;
 }
 
 const DEBOUNCE_MS = 400;
@@ -34,7 +47,19 @@ export function enableArtistFinder(root: Document = document): void {
   let request: AbortController | undefined;
   let last = "";
 
-  const show = (found: Found[]) => {
+  const show = ({ artists: found, unknown }: Answer) => {
+    if (found.length === 0 && unknown) {
+      const label = document.createElement("span");
+      label.className = "hint";
+      label.textContent = `By ${unknown.name}, who has no artist entry yet: `;
+      const link = document.createElement("a");
+      link.href = unknown.new_url;
+      link.target = "_blank";
+      link.textContent = "start one";
+      box.replaceChildren(label, link);
+      box.hidden = false;
+      return;
+    }
     if (found.length === 0) {
       box.hidden = true;
       box.replaceChildren();
@@ -60,7 +85,7 @@ export function enableArtistFinder(root: Document = document): void {
     const url = firstUrl(inputs.map((input) => input.value));
     if (url === null) {
       last = "";
-      show([]);
+      show({ artists: [] });
       return;
     }
     if (url === last) return;
@@ -73,7 +98,7 @@ export function enableArtistFinder(root: Document = document): void {
         headers: { Accept: "application/json" },
       });
       if (!response.ok) return;
-      show((await response.json()) as Found[]);
+      show((await response.json()) as Answer);
     } catch {
       // Aborted by newer typing, or offline.
     }

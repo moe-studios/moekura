@@ -32,7 +32,11 @@ artist with `https://twitter.com/someone`. Addresses are compared without
 
 The upload form does the same with the link you upload from and the
 source: when they belong to a known artist, their tag is offered beside
-the tags box.
+the tags box. For works on Pixiv, X, Bluesky, DeviantArt, Fanbox and
+Skeb, the site is asked who made it, so a work's page finds the artist
+whose entry lists their profile, even when the page's address doesn't
+contain it (Pixiv's don't); an artist without an entry gets a link to
+start one, with their name and profiles filled in.
 
 ## Banned artists
 

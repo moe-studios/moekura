@@ -69,6 +69,59 @@ impl Fetcher {
         writer: TempWriter,
         limit: u64,
     ) -> Result<TempUpload, UploadError> {
+        self.fetch_with(url, &[], writer, limit).await
+    }
+
+    /// Reads a small response (a page or an API's JSON), at most `limit`
+    /// bytes, sending `headers`: its content type and body.
+    pub async fn get(
+        &self,
+        url: &Url,
+        headers: &[(&str, &str)],
+        limit: usize,
+    ) -> Result<(String, Vec<u8>), String> {
+        check_url(url, self.allow_private)?;
+        let mut request = self.client.get(url.clone());
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| short_reason(&e).to_owned())?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "{} answered {}",
+                url.host_str().unwrap_or(""),
+                response.status()
+            ));
+        }
+        let content_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let mut body = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| short_reason(&e).to_owned())?;
+            if body.len() + chunk.len() > limit {
+                return Err("the response is too large".into());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok((content_type, body))
+    }
+
+    /// [`Self::fetch`], sending `headers` (some sites want a `Referer`).
+    pub async fn fetch_with(
+        &self,
+        url: &Url,
+        headers: &[(&str, &str)],
+        writer: TempWriter,
+        limit: u64,
+    ) -> Result<TempUpload, UploadError> {
         check_url(url, self.allow_private).map_err(UploadError::Invalid)?;
         let unreachable = |e: reqwest::Error| {
             tracing::info!(%url, error = %e, "URL upload failed");
@@ -77,12 +130,11 @@ impl Fetcher {
                 short_reason(&e)
             ))
         };
-        let response = self
-            .client
-            .get(url.clone())
-            .send()
-            .await
-            .map_err(unreachable)?;
+        let mut request = self.client.get(url.clone());
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = request.send().await.map_err(unreachable)?;
         if !response.status().is_success() {
             return Err(UploadError::Invalid(format!(
                 "That link returned {}.",

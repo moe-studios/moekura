@@ -15,7 +15,7 @@
   {% for a in artists %}<li><a class="tag tag-artist" href="{{ a.url }}">{{ a.title }}</a>{% if a.other_names %} <span class="hint">{{ a.other_names|join(", ") }}</span>{% endif %}</li>{% endfor %}
 </ul>
 {% else %}
-<p class="empty">No artist has that URL.</p>
+<p class="empty">No artist has that URL.{% if unknown %} The page is by {{ unknown.name }}{% if can_create %}: <a href="{{ unknown.new_url }}">start their artist entry</a>{% endif %}.{% endif %}</p>
 {% endif %}
 {% endif %}
 {% endblock %}

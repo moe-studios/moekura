@@ -44,6 +44,13 @@ save with the reason. Metatags in the box win over the form's own
 rating, source and parent fields. They also work in tag scripts and the
 APIs' tag fields; in a mass edit, only `-tag` and `rating:` do.
 
+## Copying tags from related posts
+
+A post's **Edit** form lists its parent and children under **Copy
+tags**. Click one to add that post's tags to the tags box, then change
+what doesn't fit and save (without scripts, the click adds them and
+saves at once).
+
 ## Suggestions from the tagger
 
 On sites that run the [tagger](../admin/tagger.md), a model looks at each

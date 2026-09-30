@@ -48,6 +48,10 @@ pub(crate) struct EditForm {
     /// among `rating` instead).
     #[serde(default)]
     pub suggested_rating: String,
+    /// A related post whose tags to add, clicked on (without scripts,
+    /// which add them to `tags` instead).
+    #[serde(default)]
+    pub copy_from: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -125,11 +129,14 @@ pub(crate) async fn apply(
 ) -> Result<(), Refused> {
     let invalid = |message: &str| Err(Refused::Invalid(message.to_owned()));
     let db = state.db.primary();
-    let tags = if form.add.trim().is_empty() {
-        std::borrow::Cow::Borrowed(&form.tags)
-    } else {
-        std::borrow::Cow::Owned(format!("{} {}", form.tags, form.add))
-    };
+    let mut tags = std::borrow::Cow::Borrowed(&form.tags);
+    if !form.add.trim().is_empty() {
+        tags = std::borrow::Cow::Owned(format!("{tags} {}", form.add));
+    }
+    if !form.copy_from.trim().is_empty() {
+        let copied = copied_tags(state, current, &form.copy_from).await?;
+        tags = std::borrow::Cow::Owned(format!("{tags} {copied}"));
+    }
     let changes = parse_edit(db, &form.old_tags, &tags).await?;
     let rating = if form.suggested_rating.is_empty() {
         &form.rating
@@ -254,6 +261,34 @@ pub(crate) async fn apply(
         "post edited"
     );
     crate::metatags::apply(state, current, id, &effects).await
+}
+
+/// The tags of post `id` (as typed in a form), if `current` may see it.
+async fn copied_tags(state: &AppState, current: &CurrentUser, id: &str) -> Result<String, Refused> {
+    let db = state.db.primary();
+    let missing = || Refused::Invalid(format!("There is no post #{id}."));
+    let id: i64 = id
+        .trim()
+        .trim_start_matches('#')
+        .parse()
+        .map_err(|_| missing())?;
+    let post = posts::by_id(db, id)
+        .await?
+        .filter(|p| visibility(current).allows(p))
+        .ok_or_else(missing)?;
+    // A tag spelled like a metatag (from before metatags) isn't copied,
+    // since the box would read it as one.
+    Ok(tags::by_ids(db, &post.tag_ids)
+        .await?
+        .into_iter()
+        .map(|t| t.name)
+        .filter(|name| {
+            moekura_core::post_edit::parse(name, &[], &[])
+                .metatags
+                .is_empty()
+        })
+        .collect::<Vec<_>>()
+        .join(" "))
 }
 
 /// Sets post `id`'s parent as `current` (for `child:` metatags), with the
@@ -518,6 +553,62 @@ mod tests {
         let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
         assert_eq!(post.fav_count, 0);
         assert_eq!(tag_names(&pool, id).await, ["cat", "fav"]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn copies_tags_from_the_parent_and_children(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let parent = upload(&app, &alice, &fixture::png(20, 20), "cat long_hair").await;
+        let id = upload(
+            &app,
+            &alice,
+            &fixture::png(24, 20),
+            &format!("solo parent:{parent}"),
+        )
+        .await;
+        let child = upload(
+            &app,
+            &alice,
+            &fixture::png(28, 20),
+            &format!("dog parent:{id}"),
+        )
+        .await;
+
+        let page = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(
+            page.contains(&format!("name=\"copy_from\" value=\"{parent}\""))
+                && page.contains("data-tags=\"cat long_hair\"")
+                && page.contains(&format!("From child #{child}")),
+            "{page}"
+        );
+        // Without scripts, a click adds them and saves.
+        let copy = form(&[
+            ("old_tags", "solo"),
+            ("tags", "solo"),
+            ("rating", "s"),
+            ("parent", &parent.to_string()),
+            ("copy_from", &parent.to_string()),
+        ]);
+        let response = app
+            .post_form(&format!("/posts/{id}/edit"), Some(&alice), &[], &copy)
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        assert_eq!(tag_names(&pool, id).await, ["cat", "long_hair", "solo"]);
+        let bad = form(&[
+            ("old_tags", "solo"),
+            ("tags", "solo"),
+            ("rating", "s"),
+            ("copy_from", "99999"),
+        ]);
+        let response = app
+            .post_form(&format!("/posts/{id}/edit"), Some(&alice), &[], &bad)
+            .await;
+        assert!(
+            response.body.contains("no post #99999"),
+            "{}",
+            response.body
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

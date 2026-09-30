@@ -16,6 +16,8 @@ Every change is kept: **History** shows who added, removed or reordered
 posts, and any version can be restored. If someone else saves the pool
 while you're editing it, you're told instead of overwriting their
 change. Staff who can delete posts can also delete and restore pools.
+**Recent changes** on the pool list (`/pool_versions`) shows the changes
+to every pool, newest first, and can be filtered by user.
 
 ## Reading
 

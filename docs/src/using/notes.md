@@ -31,7 +31,9 @@ scripts; without them you can still read notes and revert them.
 **Note history** (beside the post's history) lists every version of
 every note on the post: its box, its text, who changed it and when.
 Revert a note to an earlier version to undo a change, or to bring back
-a deleted note.
+a deleted note. **All note changes** (`/note_versions`) lists the note
+changes on every post you can see, newest first, and can be filtered by
+user.
 
 ## Searching
 

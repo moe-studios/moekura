@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { target } from "./autocomplete.ts";
+import { metatagNames, target } from "./autocomplete.ts";
 
 /** `target` with the caret at `|` in `text`. */
-function at(text: string, mode: "search" | "tags" = "search") {
+function at(text: string, mode: "search" | "tags" | "edit" = "search") {
   const caret = text.indexOf("|");
   return target(text.replace("|", ""), caret, mode);
 }
@@ -46,6 +46,34 @@ test("metatag values", () => {
   });
   // Metatags are search syntax only.
   assert.deepEqual(at("rating:q|", "tags"), { start: 0, end: 8, typed: "rating:q", kind: "tag" });
+});
+
+test("edit metatags", () => {
+  assert.deepEqual(at("cat rating:q|", "edit"), {
+    start: 11,
+    end: 12,
+    typed: "q",
+    kind: "metatag-value",
+    metatag: "rating",
+  });
+  // `-` undoes metatags and takes tags off; it isn't part of the tag.
+  assert.deepEqual(at("-lo|", "edit"), { start: 1, end: 3, typed: "lo", kind: "tag" });
+  assert.deepEqual(at("-parent:n|", "edit"), {
+    start: 8,
+    end: 9,
+    typed: "n",
+    kind: "metatag-value",
+    metatag: "parent",
+  });
+  assert.deepEqual(
+    metatagNames("p", "edit").map((i) => i.text),
+    ["parent:", "pool:"],
+  );
+  assert.deepEqual(
+    metatagNames("", "edit", true).map((i) => i.text),
+    ["parent:", "child:", "pool:", "fav:", "favgroup:"],
+  );
+  assert.deepEqual(metatagNames("p", "tags"), []);
 });
 
 test("category prefixes", () => {

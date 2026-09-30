@@ -2110,10 +2110,12 @@ mod tests {
     fn malformed_terms() {
         assert_eq!(error("-~a"), "`-~a`: use either `-` or `~`, not both");
         assert_eq!(error("-"), "`-` is missing a tag");
-        // Every reserved prefix is a metatag or a category by now.
+        // Every reserved prefix is a metatag (of searches or the tag box)
+        // or a category by now.
         for prefix in RESERVED_PREFIXES {
             assert!(
                 METATAGS.contains(prefix)
+                    || crate::post_edit::METATAGS.contains(prefix)
                     || CATEGORY_PREFIXES.contains(prefix)
                     || tags_category(prefix).is_some(),
                 "{prefix}"

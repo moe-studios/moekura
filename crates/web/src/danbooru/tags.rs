@@ -1,7 +1,5 @@
 //! `/tags.json`, `/autocomplete.json`, `/tag_aliases.json`,
-//! `/tag_implications.json` and `/related_tag.json`.
-
-use std::collections::HashMap;
+//! `/tag_implications.json`, `/tag_versions.json` and `/related_tag.json`.
 
 use axum::Router;
 use axum::extract::{Query, State};
@@ -10,8 +8,8 @@ use axum::routing::get;
 use moekura_core::permissions::Permission;
 use moekura_core::search::{Query as SearchQuery, TagTerm};
 use moekura_core::tags::normalize;
-use moekura_db::search::{PageRef, Plan};
 use moekura_db::tag_relations::{self, Kind, Relation, Status};
+use moekura_db::tag_versions::{self, Change};
 use moekura_db::tags::{self, Category, ListOrder, Tag, TagFilter};
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +17,6 @@ use super::{ListParams, json};
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::AppError;
-use crate::posts::visibility;
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
@@ -27,6 +24,7 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/autocomplete", get(autocomplete))
         .route("/tag_aliases", get(aliases))
         .route("/tag_implications", get(implications))
+        .route("/tag_versions", get(versions))
         .route("/related_tag", get(related))
 }
 
@@ -309,6 +307,88 @@ async fn implications(
     relations(&state, &current, Kind::Implication, params).await
 }
 
+/// A tag version as Danbooru describes it.
+#[derive(Debug, Serialize)]
+struct DanbooruTagVersion {
+    id: i64,
+    tag_id: i32,
+    updater_id: Option<i64>,
+    previous_version_id: Option<i64>,
+    version: i32,
+    name: String,
+    category: i16,
+    is_deprecated: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl From<Change> for DanbooruTagVersion {
+    fn from(v: Change) -> Self {
+        let at = super::timestamp(v.created_at);
+        Self {
+            id: v.id,
+            tag_id: v.tag_id,
+            updater_id: v.updater_id,
+            previous_version_id: v.previous_id,
+            version: v.version,
+            name: v.name,
+            category: v.category_id,
+            is_deprecated: v.is_deprecated,
+            updated_at: at.clone(),
+            created_at: at,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct VersionParams {
+    #[serde(rename = "search[tag_id]", default)]
+    tag_id: String,
+    #[serde(rename = "search[name]", default)]
+    name: String,
+    #[serde(rename = "search[updater_id]", default)]
+    updater_id: String,
+    #[serde(rename = "search[updater_name]", default)]
+    updater_name: String,
+    #[serde(flatten)]
+    list: ListParams,
+}
+
+/// Tag versions, newest first, of one tag or by one user if asked.
+async fn versions(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Query(params): Query<VersionParams>,
+) -> Result<Response, AppError> {
+    current.require(Permission::ViewPosts)?;
+    let db = state.reader(&current);
+    let (offset, limit) = window(&params.list, 1000)?;
+    // Something that doesn't parse or exist matches nothing.
+    let tag_id = match (params.tag_id.trim(), normalize(&params.name).as_str()) {
+        ("", "") => None,
+        ("", name) => Some(tags::by_name(db, name).await?.map_or(-1, |t| t.id)),
+        (id, _) => Some(id.parse().unwrap_or(-1)),
+    };
+    let updater_id = match (params.updater_id.trim(), params.updater_name.trim()) {
+        ("", "") => None,
+        ("", name) => Some(
+            moekura_db::users::by_name(db, name)
+                .await?
+                .map_or(-1, |u| u.id),
+        ),
+        (id, _) => Some(id.parse().unwrap_or(-1)),
+    };
+    let filter = tag_versions::Filter {
+        tag_id,
+        updater_id,
+        before: None,
+        offset,
+    };
+    let found = tag_versions::search(db, &filter, limit).await?;
+    let found: Vec<DanbooruTagVersion> = found.into_iter().map(DanbooruTagVersion::from).collect();
+    json(found, &params.list.only)
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct RelatedParams {
     #[serde(rename = "search[query]", default)]
@@ -328,11 +408,10 @@ struct RelatedTag {
     frequency: f64,
 }
 
-/// Posts looked at for related tags: the newest that match.
-const RELATED_SAMPLE: u32 = 200;
-
-/// Tags that often appear with a search, from its newest posts. The
-/// similarities are estimates from that sample.
+/// Tags that often appear with a search, from its newest posts
+/// (crate::related_tags::SAMPLE). The similarities are estimates from
+/// that sample. For a single tag, `wiki_page_tags` are its wiki page's
+/// links.
 async fn related(
     State(state): State<AppState>,
     current: CurrentUser,
@@ -340,16 +419,8 @@ async fn related(
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
     let db = state.reader(&current);
-    let mut query = SearchQuery::parse(params.query.trim())
+    let query = SearchQuery::parse(params.query.trim())
         .map_err(|e| AppError::Unprocessable(e.to_string()))?;
-    query.limit = Some(RELATED_SAMPLE.min(state.config.search.max_per_page));
-    let plan = Plan::resolve(db, &query, &visibility(&current), &state.config.search)
-        .await
-        .map_err(super::posts::search_error)?;
-    let ids = plan
-        .ids(db, PageRef::default())
-        .await
-        .map_err(super::posts::search_error)?;
     let limit = params.limit.parse::<usize>().unwrap_or(25).clamp(1, 100);
     let categories = tags::categories(db).await?;
     let wanted = category_ids(&params.category, &categories);
@@ -363,17 +434,12 @@ async fn related(
         })
         .collect();
 
-    let counts = tags::counts_among(db, &ids, 500).await?;
-    let found: HashMap<i32, Tag> =
-        tags::by_ids(db, &counts.iter().map(|(id, _)| *id).collect::<Vec<_>>())
-            .await?
-            .into_iter()
-            .map(|t| (t.id, t))
-            .collect();
-    let sample = ids.len() as f64;
+    let (sample, counts) =
+        crate::related_tags::co_occurring(&state, &current, params.query.trim()).await?;
+    let sample = sample as f64;
     let related: Vec<RelatedTag> = counts
         .into_iter()
-        .filter_map(|(id, n)| found.get(&id).cloned().map(|t| (t, n as f64)))
+        .map(|(t, n)| (t, n as f64))
         .filter(|(t, _)| !searched.contains(&t.name.as_str()))
         .filter(|(t, _)| wanted.is_empty() || wanted.contains(&t.category_id))
         .take(limit)
@@ -388,17 +454,31 @@ async fn related(
             }
         })
         .collect();
-    let tag = match searched.as_slice() {
-        [single] => tags::by_name(db, single).await?.map(DanbooruTag::from),
-        _ => None,
+    let (tag, wiki_page_tags) = match searched.as_slice() {
+        [single] => {
+            let tag = tags::by_name(db, single).await?.map(DanbooruTag::from);
+            let links = match moekura_db::wiki::by_title(db, single).await? {
+                Some(page) => moekura_core::markup::wiki_links(&page.body),
+                None => Vec::new(),
+            };
+            let found =
+                tags::by_names(db, &links.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+            let linked: Vec<DanbooruTag> = links
+                .iter()
+                .filter_map(|name| found.iter().find(|t| t.name == *name).cloned())
+                .map(DanbooruTag::from)
+                .collect();
+            (tag, linked)
+        }
+        _ => (None, Vec::new()),
     };
     json(
         serde_json::json!({
             "query": params.query,
-            "post_count": ids.len(),
+            "post_count": sample as usize,
             "tag": tag,
             "related_tags": related,
-            "wiki_page_tags": [],
+            "wiki_page_tags": wiki_page_tags,
             "other_wikis": [],
         }),
         "",
@@ -475,6 +555,42 @@ mod tests {
         assert_eq!(names(&suggestions, "value"), ["long_hair"]);
         assert_eq!(suggestions[0]["label"], json!("long hair"));
         assert_eq!(suggestions[0]["type"], json!("tag"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn tag_versions(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        upload(&app, &alice, 20, "cat dog").await;
+        let cat = moekura_db::tags::by_name(&pool, "cat")
+            .await
+            .unwrap()
+            .unwrap();
+        let admin: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        moekura_db::tags::update(&pool, cat.id, 5, false, Some(admin))
+            .await
+            .unwrap();
+
+        let versions = get(&app, "/tag_versions.json?search[name]=cat").await;
+        assert_eq!(versions.as_array().unwrap().len(), 2);
+        assert_eq!(versions[0]["category"], json!(5));
+        assert_eq!(versions[0]["version"], json!(2));
+        assert_eq!(versions[0]["previous_version_id"], versions[1]["id"]);
+        assert_eq!(versions[1]["previous_version_id"], json!(null));
+        assert_eq!(versions[1]["updater_id"], json!(admin));
+        let by_id = get(
+            &app,
+            &format!("/tag_versions.json?search[tag_id]={}&limit=1", cat.id),
+        )
+        .await;
+        assert_eq!(by_id.as_array().unwrap().len(), 1);
+        let theirs = get(&app, "/tag_versions.json?search[updater_name]=alice").await;
+        assert_eq!(theirs.as_array().unwrap().len(), 3);
+        let nobody = get(&app, "/tag_versions.json?search[updater_name]=bob").await;
+        assert_eq!(nobody, json!([]));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

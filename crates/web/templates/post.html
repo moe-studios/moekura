@@ -10,6 +10,16 @@
     {% elif post.status != "active" %}<p class="notice">This post is {{ post.status }}.</p>{% endif %}
     {% if moderate.locked %}<p class="notice">Locked: {{ moderate.locked | join(", ") | lower }}.</p>{% endif %}
     {% if processing %}<p class="notice">Thumbnails are still being generated.</p>{% endif %}
+    {% if tag_warnings %}
+    <div class="notice tag-warnings" role="status">
+      <p>Worth a look before moving on:</p>
+      <ul>
+        {% for w in tag_warnings %}
+        <li>{{ w.text }}{% if w.tags %} {% for tag in w.tags %}<a href="{{ tag.url }}">{{ tag.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
     {% for p in pools.pools %}
     <nav class="pool-nav{% if p.current %} current{% endif %}" aria-label="Pool {{ p.name }}">
       <span class="pool-steps">
@@ -167,8 +177,9 @@
       <form method="post" action="/posts/{{ post.id }}/edit{% if search.tags %}?q={{ search.tags|urlencode }}{% endif %}">
         <input type="hidden" name="old_tags" value="{{ edit.old_tags }}">
         <label for="edit-tags">Tags</label>
-        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="tags"{% if edit.tags_locked %} readonly{% endif %}>{{ edit.tags }}</textarea>
-        {% if edit.tags_locked %}<p class="hint">The tags are locked.</p>{% endif %}
+        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="edit"{% if edit.tags_locked %} readonly{% endif %}>{{ edit.tags }}</textarea>
+        {% if edit.tags_locked %}<p class="hint">The tags are locked.</p>
+        {% else %}<div class="related-tags" data-related-tags="edit-tags"><a class="hint" href="/tags/related?tags={{ edit.old_tags | urlencode }}">Related tags</a></div>{% endif %}
         <fieldset class="ratings">
           <legend>Rating</legend>
           {% for rating in ratings %}
@@ -183,6 +194,17 @@
         <textarea id="edit-description" name="description" rows="3" maxlength="20000">{{ edit.description }}</textarea>
         <button type="submit">Save</button>
         {# After Save, which Enter in a field must keep pressing. #}
+        {% if copy_tags %}
+        <div class="copy-tags" data-copy-tags>
+          <h3>Copy tags</h3>
+          <ul>
+            {% for source in copy_tags %}
+            <li><button type="submit" name="copy_from" value="{{ source.id }}" class="secondary" data-tags="{{ source.tags }}" title="{{ source.tags }}">From {% if source.parent %}the parent{% else %}child{% endif %} #{{ source.id }}</button></li>
+            {% endfor %}
+          </ul>
+          <p class="hint" data-copy-tags-hint>Clicking one adds that post's tags and saves the form.</p>
+        </div>
+        {% endif %}
         {% if suggestions %}
         <div class="suggestions" data-suggestions>
           <h3>Suggested by the tagger</h3>

@@ -747,6 +747,12 @@ struct ShowQuery {
     /// the sample even for those who chose originals.
     #[serde(default)]
     original: String,
+    /// Set after a save, to warn about incomplete tagging.
+    #[serde(default)]
+    check: String,
+    /// Category prefixes that didn't apply (see crate::tag_warnings).
+    #[serde(default)]
+    kept: String,
 }
 
 async fn show(
@@ -771,6 +777,7 @@ async fn show(
                 "0" => Some(false),
                 _ => None,
             },
+            check: (!params.check.is_empty()).then_some(params.kept.as_str()),
             ..Extra::default()
         },
     )
@@ -800,6 +807,9 @@ pub(crate) struct Extra<'a> {
     /// Whether to show the original image rather than the resized sample;
     /// `None` for the viewer's setting.
     pub original: Option<bool>,
+    /// After a save: warn about incomplete tagging, with the `kept`
+    /// parameter.
+    pub check: Option<&'a str>,
 }
 
 /// The post page.
@@ -1032,6 +1042,17 @@ pub(crate) async fn render_post(
             ..context! { tags_locked => tags_locked, rating_locked => rating_locked }
         }
     });
+    let tag_warnings = match (&edit, extra.check) {
+        (Some(_), Some(kept)) if failed.is_none() => {
+            crate::tag_warnings::warnings(&post, &post_tags, &categories, kept)
+        }
+        _ => Vec::new(),
+    };
+    let copy_tags = if edit.is_some() && !tags_locked {
+        copy_sources(page, &post).await?
+    } else {
+        Vec::new()
+    };
     let suggestions = if edit.is_some() {
         crate::suggestions::for_edit_form(state, db, &post, &categories).await?
     } else {
@@ -1087,6 +1108,8 @@ pub(crate) async fn render_post(
             tag_groups => tag_groups,
             family => family,
             similar => similar,
+            copy_tags => copy_tags,
+            tag_warnings => tag_warnings,
             deleted => deleted,
             moderate => moderate,
             blacklisted => blacklisted.map(|rule| context! { rule => rule, show_url => show_url }),
@@ -1164,6 +1187,42 @@ async fn similar_context(
 
 /// Similar posts listed on a post page.
 const SIMILAR_SHOWN: i64 = 12;
+
+/// Most children offered to copy tags from.
+const COPY_SOURCES: usize = 10;
+
+/// The posts the edit form offers to copy tags from: the parent and the
+/// post's children, with their tags.
+async fn copy_sources(page: &Page, post: &Post) -> Result<Vec<Value>, AppError> {
+    let db = page.state().db.primary();
+    let visible = visibility(&page.current);
+    let mut ids: Vec<i64> = post.parent_id.into_iter().collect();
+    ids.extend(
+        posts::family(db, post.id, &visible)
+            .await?
+            .into_iter()
+            .filter(|&id| id != post.id)
+            .take(COPY_SOURCES),
+    );
+    let mut sources = Vec::new();
+    for other in posts::by_ids(db, &ids).await? {
+        if !visible.allows(&other) {
+            continue;
+        }
+        let mut names: Vec<String> = tags::by_ids(db, &other.tag_ids)
+            .await?
+            .into_iter()
+            .map(|t| t.name)
+            .collect();
+        names.sort();
+        sources.push(context! {
+            id => other.id,
+            parent => Some(other.id) == post.parent_id,
+            tags => names.join(" "),
+        });
+    }
+    Ok(sources)
+}
 
 /// The parent/children bar: the post's parent and its other children, or
 /// the post's own children. `None` when the post has no family.
@@ -1325,6 +1384,9 @@ mod tests {
             .location
             .unwrap_or_else(|| panic!("upload failed: {}", response.body))
             .strip_prefix("/posts/")
+            .unwrap()
+            .split('?')
+            .next()
             .unwrap()
             .parse()
             .unwrap()

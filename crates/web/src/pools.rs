@@ -52,7 +52,7 @@ pub(crate) fn pool_url(id: i32) -> String {
 }
 
 /// Whether `current` sees deleted pools.
-fn sees_deleted(current: &CurrentUser) -> bool {
+pub(crate) fn sees_deleted(current: &CurrentUser) -> bool {
     current.can(Permission::DeletePosts) || current.can(Permission::ViewDeleted)
 }
 

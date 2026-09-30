@@ -175,6 +175,12 @@ impl TestApp {
         self.send(builder, None, Body::empty()).await
     }
 
+    /// A GET asking for JSON, as the pages' scripts do.
+    pub async fn get_json(&self, path: &str, session: Option<&str>) -> TestResponse {
+        let builder = Request::get(path).header("accept", "application/json");
+        self.send(builder, session, Body::empty()).await
+    }
+
     pub async fn get(&self, path: &str, session: Option<&str>) -> TestResponse {
         self.send(Request::get(path), session, Body::empty()).await
     }

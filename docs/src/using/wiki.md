@@ -14,6 +14,17 @@ start or change a page. Every change is kept: **History** lists them,
 and you can view any old version or revert to it. If someone else saves
 the page while you're editing it, you're told instead of overwriting
 their change, and your text is kept so you can save again.
+**Recent changes** on the wiki's index (`/wiki_page_versions`) lists
+the changes to every page, newest first, and can be filtered by user.
+
+## Other names
+
+A page can list the tag's **other names**: what it's called elsewhere,
+such as its Japanese name, a romanisation or a pixiv tag. Write them
+separated by spaces, with underscores for spaces within a name
+(`長い髪 long_locks`). They're shown under the title and kept in the
+page's history, and the wiki's search finds pages by them as well as by
+title, so a tag can be found by what other sites call it.
 
 ## Formatting
 

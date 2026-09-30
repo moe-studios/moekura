@@ -28,6 +28,7 @@ mod health;
 mod history;
 pub mod import;
 mod mass_edit;
+mod metatags;
 mod moderation;
 mod notes;
 pub mod oidc;
@@ -37,12 +38,16 @@ mod post_history;
 mod posts;
 mod previews;
 pub mod rate_limit;
+mod recent_changes;
+mod related_tags;
 pub mod remote_import;
 mod requests;
 mod saved_searches;
 pub mod shared;
 mod suggestions;
+mod tag_history;
 mod tag_relations;
+mod tag_warnings;
 mod tags;
 mod templates;
 #[cfg(test)]
@@ -259,9 +264,12 @@ pub fn router(state: AppState) -> Router {
         .merge(pools::routes())
         .merge(post_history::routes())
         .merge(previews::routes())
+        .merge(recent_changes::routes())
+        .merge(related_tags::routes())
         .merge(requests::routes())
         .merge(saved_searches::routes())
         .merge(tags::routes())
+        .merge(tag_history::routes())
         .merge(tag_relations::routes())
         .merge(two_factor::routes())
         .merge(user_moderation::routes())

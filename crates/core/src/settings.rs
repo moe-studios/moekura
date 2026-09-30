@@ -48,6 +48,10 @@ pub struct SiteSettings {
     pub captcha: crate::spam::CaptchaSettings,
     /// Reasons offered for deleting, rejecting and flagging posts.
     pub post_reasons: crate::moderation::PostReasons,
+    /// Uploads and edits get `artist_request` while a post has no artist
+    /// tag and `tagme` while it has few general tags, and lose them again
+    /// once they don't apply.
+    pub request_tags: bool,
 }
 
 /// The longest [`SiteSettings::ip_history_days`].
@@ -77,6 +81,7 @@ impl Default for SiteSettings {
             email_domains: crate::spam::EmailDomains::default(),
             captcha: crate::spam::CaptchaSettings::default(),
             post_reasons: crate::moderation::PostReasons::default(),
+            request_tags: false,
         }
     }
 }
@@ -201,6 +206,7 @@ mod tests {
                 "preview_all_ratings",
                 "promotion_rules",
                 "registration_mode",
+                "request_tags",
                 "site_name",
                 "tagger",
                 "upload_approval",

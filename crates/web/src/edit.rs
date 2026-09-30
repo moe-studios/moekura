@@ -6,6 +6,7 @@ use axum::routing::post;
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use moekura_core::permissions::Permission;
+use moekura_core::post_edit::Metatag;
 use moekura_core::posts::{DESCRIPTION_MAX_LEN, PostLock, Rating, SOURCE_MAX_LEN};
 use moekura_core::tags::POST_MAX_TAGS;
 use moekura_db::posts::{self, PostEdit};
@@ -47,6 +48,10 @@ pub(crate) struct EditForm {
     /// among `rating` instead).
     #[serde(default)]
     pub suggested_rating: String,
+    /// A related post whose tags to add, clicked on (without scripts,
+    /// which add them to `tags` instead).
+    #[serde(default)]
+    pub copy_from: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -87,12 +92,15 @@ async fn edit(
     page.current.require(Permission::EditPosts)?;
     match apply(page.state(), &page.current, id, &form).await {
         Ok(()) => {
-            let mut back = format!("/posts/{id}");
+            let kept =
+                crate::tag_warnings::kept_categories(page.state().db.primary(), &form.tags, id)
+                    .await?;
+            let mut back = format!("/posts/{id}?{}", crate::tag_warnings::check_query(&kept));
             if !query.q.is_empty() {
                 let q = url::form_urlencoded::Serializer::new(String::new())
                     .append_pair("q", &query.q)
                     .finish();
-                back = format!("{back}?{q}");
+                back = format!("{back}&{q}");
             }
             Ok((flash::set(jar, Flash::Saved), Redirect::to(&back)).into_response())
         }
@@ -113,7 +121,9 @@ async fn edit(
     }
 }
 
-/// Validates `form` and saves it in one transaction with the post locked.
+/// Validates `form` and saves it in one transaction with the post locked;
+/// then applies the tag box's metatags for other things (pools,
+/// favorites, …).
 pub(crate) async fn apply(
     state: &AppState,
     current: &CurrentUser,
@@ -122,15 +132,38 @@ pub(crate) async fn apply(
 ) -> Result<(), Refused> {
     let invalid = |message: &str| Err(Refused::Invalid(message.to_owned()));
     let db = state.db.primary();
+    let mut tags = std::borrow::Cow::Borrowed(&form.tags);
+    if !form.add.trim().is_empty() {
+        tags = std::borrow::Cow::Owned(format!("{tags} {}", form.add));
+    }
+    if !form.copy_from.trim().is_empty() {
+        let copied = copied_tags(state, current, &form.copy_from).await?;
+        tags = std::borrow::Cow::Owned(format!("{tags} {copied}"));
+    }
+    let changes = parse_edit(db, &form.old_tags, &tags).await?;
     let rating = if form.suggested_rating.is_empty() {
         &form.rating
     } else {
         &form.suggested_rating
     };
-    let Ok(rating) = rating.parse::<Rating>() else {
+    let Ok(mut rating) = rating.parse::<Rating>() else {
         return invalid("Choose a rating.");
     };
-    let source = form.source.trim();
+    let mut source = form.source.trim().to_owned();
+    let mut parent = form.parent.trim().trim_start_matches('#').to_owned();
+    // Metatags for the post's own fields win over the form's.
+    for metatag in &changes.added.metatags {
+        match metatag {
+            Metatag::Rating(r) => rating = *r,
+            Metatag::Source(s) => source.clone_from(s),
+            Metatag::Parent(p) => parent = p.map(|p| p.to_string()).unwrap_or_default(),
+            Metatag::RemoveParent(p) if parent == p.to_string() => parent.clear(),
+            _ => {}
+        }
+    }
+    let effects =
+        crate::metatags::prepare(state, current, Some(id), &changes.added.metatags).await?;
+    let source = source.as_str();
     let description = form.description.trim();
     if source.chars().count() > SOURCE_MAX_LEN {
         return invalid(&format!(
@@ -142,7 +175,7 @@ pub(crate) async fn apply(
             "The description may be at most {DESCRIPTION_MAX_LEN} characters."
         ));
     }
-    let parent_id = match form.parent.trim().trim_start_matches('#') {
+    let parent_id = match parent.as_str() {
         "" => None,
         text => match text.parse::<i64>() {
             Ok(parent) if parent == id => return invalid("A post can't be its own parent."),
@@ -150,12 +183,6 @@ pub(crate) async fn apply(
             Err(_) => return invalid("The parent must be a post number."),
         },
     };
-    let tags = if form.add.trim().is_empty() {
-        std::borrow::Cow::Borrowed(&form.tags)
-    } else {
-        std::borrow::Cow::Owned(format!("{} {}", form.tags, form.add))
-    };
-    let changes = parse_edit(db, &form.old_tags, &tags).await?;
 
     let mut tx = db.begin().await?;
     let post = posts::lock(&mut *tx, id)
@@ -201,7 +228,12 @@ pub(crate) async fn apply(
     if wanted.len() > POST_MAX_TAGS {
         return Err(too_many().into());
     }
-    let tag_ids: Vec<i32> = tags::for_post(&mut tx, &wanted, current.can(Permission::ManageTags))
+    // Before the tags, so tags this creates or recategorises are credited.
+    moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
+        .await?;
+    let found = tags::for_post(&mut tx, &wanted, current.can(Permission::ManageTags)).await?;
+    let request_tags = state.site.get().settings.request_tags;
+    let tag_ids: Vec<i32> = crate::tag_warnings::with_request_tags(&mut tx, request_tags, found)
         .await?
         .iter()
         .map(|t| t.id)
@@ -215,8 +247,6 @@ pub(crate) async fn apply(
             return Err(Refused::Invalid(crate::posts::locked_message(lock)));
         }
     }
-    moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
-        .await?;
     posts::update(
         &mut *tx,
         id,
@@ -235,6 +265,85 @@ pub(crate) async fn apply(
         user = current.user.as_ref().map(|u| u.name.as_str()),
         "post edited"
     );
+    crate::metatags::apply(state, current, id, &effects).await
+}
+
+/// The tags of post `id` (as typed in a form), if `current` may see it.
+async fn copied_tags(state: &AppState, current: &CurrentUser, id: &str) -> Result<String, Refused> {
+    let db = state.db.primary();
+    let missing = || Refused::Invalid(format!("There is no post #{id}."));
+    let id: i64 = id
+        .trim()
+        .trim_start_matches('#')
+        .parse()
+        .map_err(|_| missing())?;
+    let post = posts::by_id(db, id)
+        .await?
+        .filter(|p| visibility(current).allows(p))
+        .ok_or_else(missing)?;
+    // A tag spelled like a metatag (from before metatags) isn't copied,
+    // since the box would read it as one.
+    Ok(tags::by_ids(db, &post.tag_ids)
+        .await?
+        .into_iter()
+        .map(|t| t.name)
+        .filter(|name| {
+            moekura_core::post_edit::parse(name, &[], &[])
+                .metatags
+                .is_empty()
+        })
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
+/// Sets post `id`'s parent as `current` (for `child:` metatags), with the
+/// same checks as the edit form, recorded in its history.
+pub(crate) async fn set_parent(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    parent_id: Option<i64>,
+) -> Result<(), Refused> {
+    let invalid = |message: String| Err(Refused::Invalid(message));
+    let db = state.db.primary();
+    let mut tx = db.begin().await?;
+    let Some(post) = posts::lock(&mut *tx, id).await? else {
+        return invalid(format!("There is no post #{id}."));
+    };
+    if !visibility(current).allows(&post) {
+        return invalid(format!("There is no post #{id}."));
+    }
+    if post.parent_id == parent_id {
+        return Ok(());
+    }
+    if let Some(parent) = parent_id {
+        if parent == id {
+            return invalid("A post can't be its own parent.".to_owned());
+        }
+        if posts::by_id(&mut *tx, parent).await?.is_none() {
+            return invalid(format!("There is no post #{parent}."));
+        }
+        if posts::has_ancestor(&mut *tx, parent, id).await? {
+            return invalid(format!(
+                "Post #{parent} descends from post #{id}, so it can't be its parent."
+            ));
+        }
+    }
+    moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
+        .await?;
+    posts::update(
+        &mut *tx,
+        id,
+        PostEdit {
+            rating: post.rating,
+            source: &post.source,
+            description: &post.description,
+            parent_id,
+            tag_ids: &post.tag_ids,
+        },
+    )
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 
@@ -261,6 +370,9 @@ mod tests {
             .post_multipart("/upload", Some(session), &fields, Some(("a.png", png)))
             .await;
         response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap()
     }
@@ -322,6 +434,249 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn metatags_in_the_tag_box(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let visitor_like = session_for(&pool, "bob", SystemRole::Member).await;
+        let id = upload(&app, &alice, &fixture::png(20, 20), "cat cute").await;
+        let other = upload(&app, &alice, &fixture::png(24, 20), "dog").await;
+        let path = format!("/posts/{id}/edit");
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let group = moekura_db::favorite_groups::create(
+            &pool,
+            alice_id,
+            &moekura_db::favorite_groups::Contents {
+                name: "mine".into(),
+                is_public: false,
+                post_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+        let edit = form(&[
+            ("old_tags", "cat cute"),
+            (
+                "tags",
+                &format!(
+                    "cat cute -cute rating:e source:https://example.com/x child:{other} \
+                     newpool:My_Comic fav favgroup:mine upvote"
+                ),
+            ),
+            ("rating", "s"),
+        ]);
+        let response = app.post_form(&path, Some(&alice), &[], &edit).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        assert_eq!(tag_names(&pool, id).await, ["cat"]);
+        let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(
+            (post.rating.code(), post.source.as_str()),
+            ("e", "https://example.com/x")
+        );
+        assert_eq!((post.fav_count, post.score), (1, 1));
+        let child = moekura_db::posts::by_id(&pool, other)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(child.parent_id, Some(id));
+        let history = moekura_db::post_versions::list(&pool, other).await.unwrap();
+        assert_eq!(history[0].updater_name.as_deref(), Some("alice"));
+        let comic = moekura_db::pools::by_name(&pool, "my_comic")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            moekura_db::pools::post_ids(&pool, comic.id).await.unwrap(),
+            [id]
+        );
+        assert_eq!(
+            moekura_db::favorite_groups::post_ids(&pool, group)
+                .await
+                .unwrap(),
+            [id]
+        );
+
+        // And undone.
+        let undo = form(&[
+            ("old_tags", "cat"),
+            (
+                "tags",
+                &format!(
+                    "cat -child:{other} -pool:{} -fav -favgroup:{group} -parent parent:none",
+                    comic.id
+                ),
+            ),
+            ("rating", "e"),
+        ]);
+        let response = app.post_form(&path, Some(&alice), &[], &undo).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let child = moekura_db::posts::by_id(&pool, other)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(child.parent_id, None);
+        assert!(
+            moekura_db::pools::post_ids(&pool, comic.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(post.fav_count, 0);
+
+        // Mistakes and what someone can't do are refused before saving.
+        for (tags, error) in [
+            ("cat rating:x", "isn&#x27;t a rating"),
+            ("cat pool:nope", "no pool called"),
+            ("cat favgroup:mine", "no favorite group"),
+            ("cat child:999", "no post #999"),
+        ] {
+            let bad = form(&[("old_tags", "cat"), ("tags", tags), ("rating", "e")]);
+            let response = app.post_form(&path, Some(&visitor_like), &[], &bad).await;
+            assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY, "{tags}");
+            assert!(response.body.contains(error), "{tags}: {}", response.body);
+        }
+        // A tag spelled like a metatag, from before, stays a tag.
+        sqlx::query("INSERT INTO tags (name) VALUES ('fav')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE posts SET tag_ids = uniq(sort(tag_ids || (SELECT id FROM tags WHERE name = 'fav')))
+             WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let kept = form(&[
+            ("old_tags", "cat fav"),
+            ("tags", "cat fav"),
+            ("rating", "e"),
+        ]);
+        app.post_form(&path, Some(&alice), &[], &kept).await;
+        let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(post.fav_count, 0);
+        assert_eq!(tag_names(&pool, id).await, ["cat", "fav"]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn copies_tags_from_the_parent_and_children(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let parent = upload(&app, &alice, &fixture::png(20, 20), "cat long_hair").await;
+        let id = upload(
+            &app,
+            &alice,
+            &fixture::png(24, 20),
+            &format!("solo parent:{parent}"),
+        )
+        .await;
+        let child = upload(
+            &app,
+            &alice,
+            &fixture::png(28, 20),
+            &format!("dog parent:{id}"),
+        )
+        .await;
+
+        let page = app.get(&format!("/posts/{id}"), Some(&alice)).await.body;
+        assert!(
+            page.contains(&format!("name=\"copy_from\" value=\"{parent}\""))
+                && page.contains("data-tags=\"cat long_hair\"")
+                && page.contains(&format!("From child #{child}")),
+            "{page}"
+        );
+        // Without scripts, a click adds them and saves.
+        let copy = form(&[
+            ("old_tags", "solo"),
+            ("tags", "solo"),
+            ("rating", "s"),
+            ("parent", &parent.to_string()),
+            ("copy_from", &parent.to_string()),
+        ]);
+        let response = app
+            .post_form(&format!("/posts/{id}/edit"), Some(&alice), &[], &copy)
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        assert_eq!(tag_names(&pool, id).await, ["cat", "long_hair", "solo"]);
+        let bad = form(&[
+            ("old_tags", "solo"),
+            ("tags", "solo"),
+            ("rating", "s"),
+            ("copy_from", "99999"),
+        ]);
+        let response = app
+            .post_form(&format!("/posts/{id}/edit"), Some(&alice), &[], &bad)
+            .await;
+        assert!(
+            response.body.contains("no post #99999"),
+            "{}",
+            response.body
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn metatags_on_upload(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let parent = upload(&app, &alice, &fixture::png(20, 20), "cat").await;
+        let fields = vec![
+            (
+                "tags",
+                format!("dog -cat rating:q parent:{parent} newpool:Series fav"),
+            ),
+            ("source", "https://example.com/field".to_owned()),
+        ];
+        let response = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &fields,
+                Some(("b.png", &fixture::png(24, 20))),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(tag_names(&pool, id).await, ["dog"]);
+        let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(
+            (post.rating.code(), post.parent_id, post.fav_count),
+            ("q", Some(parent), 1)
+        );
+        let series = moekura_db::pools::by_name(&pool, "series")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            moekura_db::pools::post_ids(&pool, series.id).await.unwrap(),
+            [id]
+        );
+        // A bad metatag stops the upload.
+        let fields = vec![
+            ("rating", "s".to_owned()),
+            ("tags", "dog pool:missing".to_owned()),
+        ];
+        let refused = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &fields,
+                Some(("c.png", &fixture::png(28, 20))),
+            )
+            .await;
+        assert!(refused.body.contains("no pool called"), "{}", refused.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn parents_and_refusals(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -347,7 +702,7 @@ mod tests {
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
         assert_eq!(
             response.location.as_deref(),
-            Some(format!("/posts/{child}?q=b").as_str())
+            Some(format!("/posts/{child}?check=1&q=b").as_str())
         );
         // Both posts show the family bar.
         for id in [parent, child] {
@@ -361,7 +716,7 @@ mod tests {
             (parent, parent.to_string(), "b", "its own parent"),
             (parent, "99999".to_owned(), "b", "There is no post #99999"),
             (parent, "x".to_owned(), "b", "must be a post number"),
-            (parent, String::new(), "-bad", "may not start with `-`"),
+            (parent, String::new(), "--bad", "may not start with `-`"),
         ];
         for (id, parent_field, tags, message) in cases {
             let response = app
@@ -542,12 +897,12 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        let changed = moekura_db::mass_updates::retag(&pool, &[id], &[], &[dog], None)
+        let changed = moekura_db::mass_updates::retag(&pool, &[id], &[], &[dog], None, None)
             .await
             .unwrap();
         assert_eq!(changed, 0);
         app.post_form(&lock, Some(&moderator), &[], "").await;
-        let changed = moekura_db::mass_updates::retag(&pool, &[id], &[], &[dog], None)
+        let changed = moekura_db::mass_updates::retag(&pool, &[id], &[], &[dog], None, None)
             .await
             .unwrap();
         assert_eq!(changed, 1);

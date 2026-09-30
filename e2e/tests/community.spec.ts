@@ -17,7 +17,7 @@ async function upload(page: Page, tags: string): Promise<string> {
   await page.locator("input[name=rating][value=g]").check();
   await page.locator("#tags").fill(tags);
   await page.getByRole("button", { name: "Upload" }).click();
-  await expect(page).toHaveURL(/\/posts\/\d+$/);
+  await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
   return new URL(page.url()).pathname;
 }
 

@@ -132,6 +132,7 @@ async fn revert(
             category_id: None,
         })
         .collect();
+    post_versions::attribute(&mut tx, page.current.user.as_ref().map(|u| u.id), None).await?;
     let tag_ids: Vec<i32> = tags::for_post(&mut tx, &wanted, false)
         .await?
         .iter()
@@ -152,7 +153,6 @@ async fn revert(
     if rating != post.rating {
         crate::posts::check_lock(&page.current, &post, PostLock::Rating)?;
     }
-    post_versions::attribute(&mut tx, page.current.user.as_ref().map(|u| u.id), None).await?;
     posts::update(
         &mut *tx,
         id,
@@ -204,6 +204,9 @@ mod tests {
             )
             .await;
         let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let edit = "old_tags=cat+cute&tags=cat+dog&rating=e&source=https%3A%2F%2Fexample.com";

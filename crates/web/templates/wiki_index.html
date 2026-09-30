@@ -5,10 +5,11 @@
 <h1>Wiki</h1>
 <form class="filters" method="get" action="/wiki">
   <label for="wiki-title">Title</label>
-  <input id="wiki-title" name="title" value="{{ query.title }}" placeholder="long_ha or *_hair"
+  <input id="wiki-title" name="title" value="{{ query.title }}" placeholder="long_ha, *_hair or an other name"
          autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
   <button type="submit">Search</button>
 </form>
+<p class="hint"><a href="/wiki_page_versions">Recent changes</a> to every page.</p>
 {% if create_url %}<p><a class="button" href="{{ create_url }}">Start a page for {{ create_title }}</a></p>{% endif %}
 {% if pages %}
 <table class="tag-table">
@@ -16,7 +17,7 @@
   <tbody>
     {% for p in pages %}
     <tr>
-      <td><a href="{{ p.url }}">{{ p.title }}</a></td>
+      <td><a href="{{ p.url }}">{{ p.title }}</a>{% if p.other_names %} <span class="hint">{{ p.other_names | join(" · ") }}</span>{% endif %}</td>
       <td>{{ p.date }}{% if p.updater %} <span class="hint">by {{ p.updater }}</span>{% endif %}</td>
       <td class="num">{{ p.version }}</td>
     </tr>

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ heading }} · {{ site.name }}{% endblock %}
+{% block content %}
+{% if kind == "wiki_page_versions" %}{% include "tag_nav.html" %}{% endif %}
+<h1>{{ heading }}</h1>
+<form class="filters" method="get" action="{{ path }}">
+  <label for="rc-user">By</label>
+  <input id="rc-user" name="user" value="{{ query.user }}" size="12">
+  <button type="submit">Filter</button>
+</form>
+{% if versions %}
+<ol class="history">
+  {% for v in versions %}
+  <li>
+    <div class="history-head">
+      {% if kind == "wiki_page_versions" %}
+      <a href="{{ v.url }}">{{ v.title }}</a> <a class="hint" href="{{ v.version_url }}">version {{ v.version }}</a>
+      {% elif kind == "pool_versions" %}
+      <a href="/pools/{{ v.pool_id }}">{{ v.name }}</a> <a class="hint" href="/pools/{{ v.pool_id }}/history">version {{ v.version }}</a>
+      {% else %}
+      <a href="/posts/{{ v.post_id }}">#{{ v.post_id }}</a> <a class="hint" href="/posts/{{ v.post_id }}/notes/history">note {{ v.note_id }}, version {{ v.version }}</a>
+      {% endif %}
+      <span class="hint">
+        {{ v.date }} {{ v.time }}
+        {% if v.updater %}· by <a href="{{ path }}?user={{ v.updater | urlencode }}">{{ v.updater }}</a>{% endif %}
+        {% if v.created %}· created{% endif %}
+      </span>
+    </div>
+    <ul class="changes">
+      {% if kind == "wiki_page_versions" %}
+      {% if v.change is not none %}<li>{% if v.change >= 0 %}+{% endif %}{{ v.change }} characters</li>{% endif %}
+      {% elif kind == "pool_versions" %}
+      {% if v.renamed_from %}<li>renamed from {{ v.renamed_from }}</li>{% endif %}
+      {% if v.category %}<li>kind: {{ v.category }}</li>{% endif %}
+      {% if v.description_changed %}<li>description changed</li>{% endif %}
+      {% if v.deleted is not none %}<li>{{ "deleted" if v.deleted else "restored" }}</li>{% endif %}
+      {% for id in v.added %}<li class="added">+<a href="/posts/{{ id }}">#{{ id }}</a></li>{% endfor %}
+      {% for id in v.removed %}<li class="removed">−<a href="/posts/{{ id }}">#{{ id }}</a></li>{% endfor %}
+      {% if v.reordered %}<li>reordered</li>{% endif %}
+      {% else %}
+      {% if v.moved %}<li>moved</li>{% endif %}
+      {% if v.deleted is not none %}<li>{{ "deleted" if v.deleted else "restored" }}</li>{% endif %}
+      {% endif %}
+    </ul>
+    {% if kind == "note_versions" and v.body is not none %}<p class="note-text">{{ v.body }}</p>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% if older_url %}<nav class="pager"><a class="button" href="{{ older_url }}" rel="next">Older</a></nav>{% endif %}
+{% else %}
+<p class="empty">No changes found.</p>
+{% endif %}
+{% endblock %}

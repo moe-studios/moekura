@@ -17,6 +17,7 @@ use md5::Md5;
 use minijinja::context;
 use moekura_core::jobs::ProcessMedia;
 use moekura_core::permissions::Permission;
+use moekura_core::post_edit::Metatag;
 use moekura_core::posts::{DESCRIPTION_MAX_LEN, PostStatus, Rating, SOURCE_MAX_LEN};
 use moekura_core::uploads::{self, UploadLimits};
 use moekura_db::media::{self, InsertAssetError, NewAsset};
@@ -28,6 +29,7 @@ use tokio::io::AsyncWriteExt;
 
 use crate::AppState;
 use crate::auth::CurrentUser;
+use crate::edit::Refused;
 use crate::error::AppError;
 use crate::pages::Page;
 
@@ -250,7 +252,13 @@ async fn upload(
         }
     };
     match ingest(&state, &page.current, &file, &fields).await {
-        Ok(post_id) => Ok(Redirect::to(&format!("/posts/{post_id}")).into_response()),
+        Ok(post_id) => {
+            let kept =
+                crate::tag_warnings::kept_categories(state.db.primary(), &fields.tags, post_id)
+                    .await?;
+            let query = crate::tag_warnings::check_query(&kept);
+            Ok(Redirect::to(&format!("/posts/{post_id}?{query}")).into_response())
+        }
         Err(error) => Ok(failed(&page, &fields, error)),
     }
 }
@@ -451,11 +459,28 @@ pub struct Prepared {
 }
 
 /// Checks the fields a post needs, before any work on the file.
-fn check_fields(fields: &UploadFields) -> Result<Rating, UploadError> {
-    let rating = fields
-        .rating
-        .ok_or_else(|| UploadError::Invalid("Choose a rating.".into()))?;
-    if fields.source.chars().count() > SOURCE_MAX_LEN {
+/// The rating, source and parent an upload gets: the fields, unless
+/// metatags in the tags say otherwise.
+struct Chosen {
+    rating: Rating,
+    source: String,
+    parent_id: Option<i64>,
+}
+
+fn check_fields(fields: &UploadFields, metatags: &[Metatag]) -> Result<Chosen, UploadError> {
+    let mut rating = fields.rating;
+    let mut source = fields.source.clone();
+    let mut parent_id = None;
+    for metatag in metatags {
+        match metatag {
+            Metatag::Rating(r) => rating = Some(*r),
+            Metatag::Source(s) => source.clone_from(s),
+            Metatag::Parent(p) => parent_id = *p,
+            _ => {}
+        }
+    }
+    let rating = rating.ok_or_else(|| UploadError::Invalid("Choose a rating.".into()))?;
+    if source.chars().count() > SOURCE_MAX_LEN {
         return Err(UploadError::Invalid(format!(
             "The source may be at most {SOURCE_MAX_LEN} characters."
         )));
@@ -465,7 +490,21 @@ fn check_fields(fields: &UploadFields) -> Result<Rating, UploadError> {
             "The description may be at most {DESCRIPTION_MAX_LEN} characters."
         )));
     }
-    Ok(rating)
+    Ok(Chosen {
+        rating,
+        source,
+        parent_id,
+    })
+}
+
+impl From<Refused> for UploadError {
+    fn from(error: Refused) -> Self {
+        match error {
+            Refused::Invalid(message) => Self::Invalid(message),
+            Refused::Error(AppError::Internal(detail)) => Self::Internal(detail),
+            Refused::Error(error) => Self::Invalid(error.public_message().to_owned()),
+        }
+    }
 }
 
 /// Turns a received file into a post. Returns the new post's id.
@@ -475,9 +514,10 @@ pub async fn ingest(
     file: &TempUpload,
     fields: &UploadFields,
 ) -> Result<i64, UploadError> {
-    check_fields(fields)?;
-    // Bad tags are refused before the file is looked at.
-    crate::tags::parse_field(state.db.primary(), &fields.tags).await?;
+    // Bad tags and fields are refused before the file is looked at.
+    let tags = crate::tags::parse_field(state.db.primary(), &fields.tags).await?;
+    check_fields(fields, &tags.metatags)?;
+    crate::metatags::prepare(state, uploader, None, &tags.metatags).await?;
     let prepared = prepare(state, file).await?;
     create_post(state, uploader, &prepared, fields).await
 }
@@ -538,9 +578,22 @@ pub async fn create_post(
     prepared: &Prepared,
     fields: &UploadFields,
 ) -> Result<i64, UploadError> {
-    let rating = check_fields(fields)?;
     let db = state.db.primary();
     let tags = crate::tags::parse_field(db, &fields.tags).await?;
+    let Chosen {
+        rating,
+        source,
+        parent_id,
+    } = check_fields(fields, &tags.metatags)?;
+    let effects = crate::metatags::prepare(state, uploader, None, &tags.metatags).await?;
+    if let Some(parent) = parent_id {
+        let visible = posts::by_id(db, parent)
+            .await?
+            .is_some_and(|p| crate::posts::visibility(uploader).allows(&p));
+        if !visible {
+            return Err(UploadError::Invalid(format!("There is no post #{parent}.")));
+        }
+    }
     let site = state.site.get();
     let status =
         if site.settings.upload_approval && !uploader.can(Permission::UploadWithoutApproval) {
@@ -550,22 +603,28 @@ pub async fn create_post(
         };
 
     let mut tx = db.begin().await?;
-    let tag_ids: Vec<i32> = moekura_db::tags::for_post(
+    // Credits the tags this creates; the post is the uploader's anyway.
+    moekura_db::post_versions::attribute(&mut tx, uploader.user.as_ref().map(|u| u.id), None)
+        .await?;
+    let found = moekura_db::tags::for_post(
         &mut tx,
         &tags.wanted(),
         uploader.can(Permission::ManageTags),
     )
-    .await?
-    .iter()
-    .map(|t| t.id)
-    .collect();
+    .await?;
+    let tag_ids: Vec<i32> =
+        crate::tag_warnings::with_request_tags(&mut tx, site.settings.request_tags, found)
+            .await?
+            .iter()
+            .map(|t| t.id)
+            .collect();
     let post_id = posts::insert(
         &mut *tx,
         NewPost {
             uploader_id: uploader.user.as_ref().map(|u| u.id),
             rating,
             status,
-            source: &fields.source,
+            source: &source,
             description: &fields.description,
             tag_ids: &tag_ids,
         },
@@ -606,6 +665,18 @@ pub async fn create_post(
         ?status,
         "post uploaded"
     );
+    // The post is made; what can't be done now is only logged.
+    let mut applied = Ok(());
+    if parent_id.is_some() {
+        applied = crate::edit::set_parent(state, uploader, post_id, parent_id).await;
+    }
+    if applied.is_ok() {
+        applied = crate::metatags::apply(state, uploader, post_id, &effects).await;
+    }
+    if let Err(error) = applied {
+        let message = UploadError::from(error).to_string();
+        tracing::warn!(post_id, message, "metatags from the upload not applied");
+    }
     crate::webhooks::emit_post(
         state,
         moekura_core::webhooks::Event::PostCreated,
@@ -675,6 +746,9 @@ mod tests {
             .unwrap()
             .strip_prefix("/posts/")
             .unwrap()
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let post = posts::by_id(&pool, id).await.unwrap().unwrap();
@@ -734,6 +808,9 @@ mod tests {
             .unwrap()
             .strip_prefix("/posts/")
             .unwrap()
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
 
@@ -786,7 +863,8 @@ mod tests {
                 Some(("a.png", &png)),
             )
             .await;
-        let existing = first.location.unwrap();
+        let location = first.location.unwrap();
+        let existing = location.split('?').next().unwrap();
 
         let again = app
             .post_multipart(
@@ -868,17 +946,23 @@ mod tests {
         let session = session_for(&pool, "alice", SystemRole::Member).await;
         let png = fixture::png(16, 16);
         let mut form = fields("g");
-        form.push(("tags", "Long_Hair -solo artist:someone".to_owned()));
+        form.push(("tags", "Long_Hair order:score artist:someone".to_owned()));
         let response = app
             .post_multipart("/upload", Some(&session), &form, Some(("a.png", &png)))
             .await;
         assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(
-            response.body.contains("`-solo` may not start with `-`"),
+            response
+                .body
+                .contains("`order:score` may not start with `order:`"),
             "{}",
             response.body
         );
-        assert!(response.body.contains("Long_Hair -solo artist:someone"));
+        assert!(
+            response
+                .body
+                .contains("Long_Hair order:score artist:someone")
+        );
 
         form.last_mut().unwrap().1 = "Long_Hair artist:someone".to_owned();
         let response = app
@@ -886,6 +970,9 @@ mod tests {
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
         let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         let post = posts::by_id(&pool, id).await.unwrap().unwrap();
@@ -965,6 +1052,9 @@ mod tests {
             let id = location
                 .unwrap()
                 .strip_prefix("/posts/")
+                .unwrap()
+                .split('?')
+                .next()
                 .unwrap()
                 .parse()
                 .unwrap();

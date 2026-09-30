@@ -10,7 +10,7 @@ use moekura_core::tags::normalize;
 use moekura_core::user_settings::UserSettings;
 use moekura_db::site_cache::SiteSnapshot;
 use moekura_db::users::{self, User, UserStatus};
-use moekura_db::wiki::{self, WikiPage};
+use moekura_db::wiki::{self, Match, WikiPage};
 use serde::{Deserialize, Serialize};
 
 use super::{ListParams, json, timestamp};
@@ -246,7 +246,7 @@ impl From<WikiPage> for DanbooruWiki {
             id: page.id,
             title: page.title,
             body: page.body,
-            other_names: Vec::new(),
+            other_names: page.other_names,
             is_locked: false,
             is_deleted: false,
             created_at: timestamp(page.created_at),
@@ -261,6 +261,12 @@ struct WikiParams {
     title: String,
     #[serde(rename = "search[title_normalize]", default)]
     title_normalize: String,
+    /// A pattern with `*` wildcards, regardless of case.
+    #[serde(rename = "search[other_names_match]", default)]
+    other_names_match: String,
+    /// Any of these exact names, separated by spaces.
+    #[serde(rename = "search[other_names_include_any]", default)]
+    other_names_include_any: String,
     #[serde(flatten)]
     list: ListParams,
 }
@@ -280,7 +286,43 @@ async fn wiki_index(
         &params.title_normalize
     };
     let title = normalize(wanted);
-    let found: Vec<DanbooruWiki> = if !title.is_empty() && !title.contains('*') {
+    let other_pattern = moekura_core::wiki::normalize_other_name(&params.other_names_match);
+    // Exact names: listed, or a pattern without `*`.
+    let exact = if !params.other_names_include_any.trim().is_empty() {
+        crate::wiki::clean_other_names(params.other_names_include_any.split_whitespace())?
+    } else if !other_pattern.is_empty() && !other_pattern.contains('*') {
+        vec![other_pattern.clone()]
+    } else {
+        Vec::new()
+    };
+    let found: Vec<DanbooruWiki> = if !exact.is_empty() || !other_pattern.is_empty() {
+        let titles: Vec<String> = if exact.is_empty() {
+            wiki::list(
+                db,
+                &other_pattern,
+                Match::OtherNames,
+                (page - 1) * limit,
+                limit,
+            )
+            .await?
+            .into_iter()
+            .map(|s| s.title)
+            .collect()
+        } else {
+            wiki::titles_for_other_names(db, &exact)
+                .await?
+                .into_iter()
+                .map(|(title, _)| title)
+                .collect()
+        };
+        let mut pages = Vec::new();
+        for title in titles {
+            if let Some(page) = wiki::by_title(db, &title).await? {
+                pages.push(DanbooruWiki::from(page));
+            }
+        }
+        pages
+    } else if !title.is_empty() && !title.contains('*') {
         // Without a wildcard, the title itself.
         wiki::by_title(db, &title)
             .await?
@@ -288,7 +330,7 @@ async fn wiki_index(
             .map(DanbooruWiki::from)
             .collect()
     } else {
-        let summaries = wiki::list(db, &title, (page - 1) * limit, limit).await?;
+        let summaries = wiki::list(db, &title, Match::Title, (page - 1) * limit, limit).await?;
         let mut pages = Vec::new();
         for summary in summaries {
             if let Some(page) = wiki::by_title(db, &summary.title).await? {
@@ -384,10 +426,35 @@ mod tests {
         moekura_db::wiki::save(&pool, "long_hair", "Hair that is long.", None, None)
             .await
             .unwrap();
-        moekura_db::wiki::save(&pool, "short_hair", "Not long.", None, None)
+        let names = vec!["長髪".to_owned(), "Long_Locks".to_owned()];
+        let text = moekura_db::wiki::Text {
+            body: "Not long.",
+            other_names: Some(&names),
+        };
+        moekura_db::wiki::save(&pool, "short_hair", text, None, None)
             .await
             .unwrap();
+        let translated = body(
+            &app.get(
+                "/wiki_pages.json?search[other_names_include_any]=nope+%E9%95%B7%E9%AB%AA",
+                None,
+            )
+            .await,
+        );
+        assert_eq!(translated[0]["title"], json!("short_hair"));
+        assert_eq!(translated[0]["other_names"], json!(names));
+        let matched = body(
+            &app.get("/wiki_pages.json?search[other_names_match]=long*", None)
+                .await,
+        );
+        assert_eq!(matched[0]["title"], json!("short_hair"));
+        let whole = body(
+            &app.get("/wiki_pages.json?search[other_names_match]=long", None)
+                .await,
+        );
+        assert_eq!(whole, json!([]));
         let page = body(&app.get("/wiki_pages/Long%20Hair.json", None).await);
+        assert_eq!(page["other_names"], json!([]));
         assert_eq!(page["title"], json!("long_hair"));
         assert_eq!(page["body"], json!("Hair that is long."));
         let id = page["id"].as_i64().unwrap();

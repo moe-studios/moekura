@@ -446,6 +446,9 @@ mod tests {
             )
             .await;
         let post: i64 = uploaded.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
             .parse()
             .unwrap();
         app.post_form(

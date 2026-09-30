@@ -5,6 +5,8 @@ use moekura_core::notes::NoteBox;
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
+use crate::posts::Visibility;
+
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Note {
     pub id: i64,
@@ -299,6 +301,54 @@ pub async fn versions(
     .bind(note_id)
     .bind(post_id)
     .bind(updater_id)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// A note version in the sitewide list, with the one before it.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Change {
+    pub id: i64,
+    #[sqlx(flatten)]
+    pub version: Version,
+    /// None for a note's first version.
+    pub previous_body: Option<String>,
+    pub previous_is_active: Option<bool>,
+    /// Whether the box moved or changed size.
+    pub moved: bool,
+}
+
+/// Note versions on posts `visibility` allows, newest first, optionally
+/// only one user's, older than version id `before`.
+pub async fn recent_versions(
+    db: impl PgExecutor<'_>,
+    updater_id: Option<i64>,
+    visibility: &Visibility,
+    before: Option<i64>,
+    limit: i64,
+) -> sqlx::Result<Vec<Change>> {
+    let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
+    sqlx::query_as(
+        "SELECT v.id, v.note_id, v.post_id, v.version, u.name::text AS updater_name,
+                v.x, v.y, v.width, v.height, v.body, v.is_active, v.created_at,
+                pv.body AS previous_body, pv.is_active AS previous_is_active,
+                coalesce((pv.x, pv.y, pv.width, pv.height) <> (v.x, v.y, v.width, v.height), false)
+                    AS moved
+         FROM note_versions v
+         JOIN posts p ON p.id = v.post_id
+         LEFT JOIN note_versions pv ON pv.note_id = v.note_id AND pv.version = v.version - 1
+         LEFT JOIN users u ON u.id = v.updater_id
+         WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
+           AND p.rating = ANY($3)
+           AND ($4::bigint IS NULL OR v.updater_id = $4) AND ($5::bigint IS NULL OR v.id < $5)
+         ORDER BY v.id DESC LIMIT $6",
+    )
+    .bind(statuses)
+    .bind(visibility.viewer)
+    .bind(visibility.rating_codes())
+    .bind(updater_id)
+    .bind(before)
     .bind(limit)
     .fetch_all(db)
     .await

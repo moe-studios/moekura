@@ -393,6 +393,56 @@ function enableConfirm() {
   );
 }
 
+// src/suggestions.ts
+function withTag(tags, tag) {
+  const words = tags.split(/\s+/).filter((word) => word !== "");
+  if (words.includes(tag)) return tags;
+  const kept = tags.trimEnd();
+  return kept === "" ? `${tag} ` : `${kept} ${tag} `;
+}
+function enableSuggestions(root = document) {
+  const box = root.querySelector("[data-suggestions]");
+  const form = box?.closest("form");
+  const field = form?.querySelector("textarea[name=tags]");
+  if (!box || !form || !field) return;
+  const hint = box.querySelector("[data-suggestions-hint]");
+  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button[name]");
+    if (!button) return;
+    event.preventDefault();
+    if (button.name === "add") {
+      field.value = withTag(field.value, button.value);
+    } else if (button.name === "suggested_rating") {
+      for (const radio of form.querySelectorAll("input[name=rating]")) {
+        radio.checked = radio.value === button.value;
+      }
+    }
+    button.classList.add("chosen");
+    button.disabled = true;
+  });
+}
+
+// src/copy-tags.ts
+function withTags(tags, copied) {
+  return copied.split(/\s+/).filter((word) => word !== "").reduce((all, word) => withTag(all, word), tags);
+}
+function enableCopyTags(root = document) {
+  const box = root.querySelector("[data-copy-tags]");
+  const field = box?.closest("form")?.querySelector("textarea[name=tags]");
+  if (!box || !field) return;
+  const hint = box.querySelector("[data-copy-tags-hint]");
+  if (hint) hint.textContent = "Clicking one adds that post's tags to the form; save to keep them.";
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-tags]");
+    if (!button) return;
+    event.preventDefault();
+    field.value = withTags(field.value, button.dataset["tags"] ?? "");
+    button.classList.add("chosen");
+    button.disabled = true;
+  });
+}
+
 // src/keyboard.ts
 var SHORTCUTS = [
   ["a, \u2190", "Previous post or page"],
@@ -995,36 +1045,6 @@ function enableSelectAll() {
   }
 }
 
-// src/suggestions.ts
-function withTag(tags, tag) {
-  const words = tags.split(/\s+/).filter((word) => word !== "");
-  if (words.includes(tag)) return tags;
-  const kept = tags.trimEnd();
-  return kept === "" ? `${tag} ` : `${kept} ${tag} `;
-}
-function enableSuggestions(root = document) {
-  const box = root.querySelector("[data-suggestions]");
-  const form = box?.closest("form");
-  const field = form?.querySelector("textarea[name=tags]");
-  if (!box || !form || !field) return;
-  const hint = box.querySelector("[data-suggestions-hint]");
-  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
-  box.addEventListener("click", (event) => {
-    const button = event.target.closest("button[name]");
-    if (!button) return;
-    event.preventDefault();
-    if (button.name === "add") {
-      field.value = withTag(field.value, button.value);
-    } else if (button.name === "suggested_rating") {
-      for (const radio of form.querySelectorAll("input[name=rating]")) {
-        radio.checked = radio.value === button.value;
-      }
-    }
-    button.classList.add("chosen");
-    button.disabled = true;
-  });
-}
-
 // src/tag-script.ts
 var RATINGS = {
   g: "g",
@@ -1190,5 +1210,6 @@ enableNotes();
 enableNoteEditor();
 enableTagScript();
 enableSuggestions();
+enableCopyTags();
 enableSelectAll();
 enableUpload();

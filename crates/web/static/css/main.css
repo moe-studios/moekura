@@ -121,7 +121,8 @@ form button.link[type="submit"] { margin: 0; padding: 0; }
 button.secondary, .button.secondary { background: var(--border); color: var(--text); }
 button.danger { background: var(--danger); color: var(--accent-text); }
 /* Compact buttons and selects, for rows of actions. */
-.actions button, form.inline button, .history-head button, form .suggestions button[type="submit"] {
+.actions button, form.inline button, .history-head button, form .suggestions button[type="submit"],
+form .copy-tags button[type="submit"] {
   margin: 0;
   padding: 3px 10px;
   font-size: 0.875rem;
@@ -457,6 +458,11 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 form .suggestions button[type="submit"] { background: var(--border); color: var(--text); }
 .suggestions .confidence { color: var(--muted); font-size: 0.8em; }
 .suggestions button.chosen { opacity: 0.5; }
+.copy-tags { margin-top: 20px; }
+.copy-tags h3 { margin: 0 0 6px; font-size: 0.95rem; }
+.copy-tags ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.copy-tags p { margin: 6px 0 0; }
+.copy-tags button.chosen { opacity: 0.5; }
 
 /* History */
 

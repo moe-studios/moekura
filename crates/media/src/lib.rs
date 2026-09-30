@@ -2,6 +2,7 @@
 //! (libvips for images, ffmpeg for video).
 
 mod kind;
+pub mod metadata;
 pub mod phash;
 mod pixels;
 mod probe;

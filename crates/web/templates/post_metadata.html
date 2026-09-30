@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Metadata of post #{{ post_id }} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>
+<h1>Metadata of post #{{ post_id }}</h1>
+{% if groups %}
+{% for group in groups %}
+<section class="metadata-group">
+  <h2>{{ group.label }}</h2>
+  <table class="tag-table">
+    <tbody>
+      {% for f in group.fields %}
+      <tr><th scope="row">{{ f.tag }}</th><td>{{ f.value }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+<p class="hint">Locations, serial numbers and owners' names aren't shown. The original file is kept as uploaded, with whatever it contains.</p>
+{% else %}
+<p class="empty">This file has no metadata to show, or it hasn't been read yet.</p>
+{% endif %}
+{% endblock %}

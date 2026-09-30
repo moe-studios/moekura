@@ -25,6 +25,7 @@ mod favorite_groups;
 mod favorites;
 mod feeds;
 mod fetch;
+mod file_metadata;
 mod files;
 pub mod flash;
 mod health;
@@ -270,6 +271,7 @@ pub fn router(state: AppState) -> Router {
         .merge(favorite_groups::routes())
         .merge(favorites::routes())
         .merge(feeds::routes())
+        .merge(file_metadata::routes())
         .merge(history::routes())
         .merge(mass_edit::routes())
         .merge(moderation::routes())

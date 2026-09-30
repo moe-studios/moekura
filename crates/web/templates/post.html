@@ -340,7 +340,7 @@
       <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
-    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>Edit</a>{% endif %}<a href="{{ file.original }}" download>Download original</a><a href="/posts/{{ post.id }}/history">History</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
+    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>Edit</a>{% endif %}<a href="{{ file.original }}" download>Download original</a><a href="/posts/{{ post.id }}/history">History</a><a href="/posts/{{ post.id }}/metadata">Metadata</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
     {% if favorite_groups %}
     <section class="tag-group post-favorite-groups">
       <h2>Your favorite groups</h2>

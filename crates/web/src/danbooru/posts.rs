@@ -78,12 +78,12 @@ pub(crate) struct DanbooruPost {
     last_comment_bumped_at: Option<String>,
     last_commented_at: Option<String>,
     last_noted_at: Option<String>,
-    media_asset: MediaAsset,
+    pub(super) media_asset: MediaAsset,
 }
 
 #[derive(Debug, Serialize)]
-struct MediaAsset {
-    id: i64,
+pub(super) struct MediaAsset {
+    pub(super) id: i64,
     created_at: String,
     updated_at: String,
     md5: String,

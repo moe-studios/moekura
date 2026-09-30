@@ -1079,6 +1079,7 @@ pub(crate) async fn render_post(
         .iter()
         .map(|r| context! { code => r.code(), label => r.label() })
         .collect();
+    let commentary = crate::commentary::for_post(db, id, edit.is_some()).await?;
     let comments =
         crate::comments::thread(state, &page.current, &post, extra.comment.as_ref()).await?;
     let pools = crate::pools::for_post(
@@ -1119,6 +1120,7 @@ pub(crate) async fn render_post(
         status,
         "post.html",
         context! {
+            commentary => commentary,
             post => post_context,
             file => file,
             uploader => uploader,

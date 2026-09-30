@@ -65,6 +65,54 @@
     {% endif %}
     {% endif %}
     {% if post.description %}<p class="description">{{ post.description }}</p>{% endif %}
+    {% if commentary %}
+    <section id="commentary" class="commentary" aria-labelledby="commentary-heading">
+      {% if commentary.shown %}
+      {% set c = commentary.shown %}
+      <h2 id="commentary-heading">Artist's commentary</h2>
+      {% if c.translated %}
+      <div class="commentary-text">
+        {% if c.translated_title %}<h3>{{ c.translated_title }}</h3>{% endif %}
+        {% if c.translated_html %}<div class="markup">{{ c.translated_html }}</div>{% endif %}
+      </div>
+      {% if c.original %}
+      <details class="commentary-original">
+        <summary>Original</summary>
+        {% if c.original_title %}<h3>{{ c.original_title }}</h3>{% endif %}
+        {% if c.original_html %}<div class="markup">{{ c.original_html }}</div>{% endif %}
+      </details>
+      {% endif %}
+      {% else %}
+      <div class="commentary-text">
+        {% if c.original_title %}<h3>{{ c.original_title }}</h3>{% endif %}
+        {% if c.original_html %}<div class="markup">{{ c.original_html }}</div>{% endif %}
+      </div>
+      {% endif %}
+      {% if commentary.history_url %}<p class="hint"><a href="{{ commentary.history_url }}">Commentary history</a></p>{% endif %}
+      {% else %}
+      <h2 id="commentary-heading" class="visually-hidden">Artist's commentary</h2>
+      {% endif %}
+      {% if commentary.form %}
+      {% set f = commentary.form %}
+      <details class="edit">
+        <summary>{% if commentary.shown %}Edit the commentary{% else %}Add the artist's commentary{% endif %}</summary>
+        <form method="post" action="/posts/{{ post.id }}/commentary">
+          <input type="hidden" name="base" value="{{ f.base }}">
+          <label for="commentary-original-title">Original title</label>
+          <input id="commentary-original-title" name="original_title" value="{{ f.original_title }}" maxlength="1000">
+          <label for="commentary-original-description">Original description</label>
+          <textarea id="commentary-original-description" name="original_description" rows="4">{{ f.original_description }}</textarea>
+          <label for="commentary-translated-title">Translated title</label>
+          <input id="commentary-translated-title" name="translated_title" value="{{ f.translated_title }}" maxlength="1000">
+          <label for="commentary-translated-description">Translated description</label>
+          <textarea id="commentary-translated-description" name="translated_description" rows="4">{{ f.translated_description }}</textarea>
+          <p class="hint">What the artist wrote where they posted this, as they wrote it, and a translation. Descriptions use the wiki's markup.</p>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+      {% endif %}
+    </section>
+    {% endif %}
     {% if family %}
     <section class="family" aria-label="Related posts">
       <p>{% if family.is_child %}This post belongs to <a href="/posts/{{ family.root }}">a parent post</a>.{% else %}This post has child posts.{% endif %}</p>

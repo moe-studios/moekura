@@ -10,6 +10,7 @@
 
 mod ai_tags;
 mod artists;
+mod commentaries;
 mod community;
 mod explore;
 mod missing;
@@ -49,6 +50,7 @@ pub fn routes() -> Router<AppState> {
             .merge(missing::routes())
             .merge(explore::routes())
             .merge(artists::routes())
+            .merge(commentaries::routes())
             .merge(notes::routes())
             .merge(reactions::routes())
             .merge(tags::routes())

@@ -20,8 +20,8 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
-    Age, Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, RANK_DAYS, SourceFilter,
-    StatusFilter, TagTerm, UserMatch, When,
+    Age, Bound, CommentaryFilter, Expr, Filter, Order, ParentFilter, PoolFilter, Query, RANK_DAYS,
+    SourceFilter, StatusFilter, TagTerm, UserMatch, When,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -1593,6 +1593,34 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
             )
             .push_bind(words.clone())
             .push("))");
+        }
+        Filter::Commentary(c) => {
+            if *c == CommentaryFilter::None {
+                sql.push("NOT ");
+            }
+            sql.push("EXISTS (SELECT 1 FROM artist_commentaries ac WHERE ac.post_id = p.id");
+            match c {
+                CommentaryFilter::Any | CommentaryFilter::None => {}
+                CommentaryFilter::Translated => {
+                    sql.push(" AND (ac.translated_title <> '' OR ac.translated_description <> '')");
+                }
+                CommentaryFilter::Untranslated => {
+                    sql.push(
+                        " AND ac.translated_title = '' AND ac.translated_description = '' \
+                         AND (ac.original_title <> '' OR ac.original_description <> '')",
+                    );
+                }
+                CommentaryFilter::Words(words) => {
+                    sql.push(
+                        " AND to_tsvector('simple', ac.original_title || ' ' || \
+                         ac.original_description || ' ' || ac.translated_title || ' ' || \
+                         ac.translated_description) @@ plainto_tsquery('simple', ",
+                    )
+                    .push_bind(words.clone())
+                    .push(")");
+                }
+            }
+            sql.push(")");
         }
         Filter::Source(SourceFilter::Any) => {
             sql.push("p.source <> ''");

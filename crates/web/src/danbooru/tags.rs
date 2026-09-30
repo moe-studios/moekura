@@ -1,8 +1,6 @@
 //! `/tags.json`, `/autocomplete.json`, `/tag_aliases.json`,
 //! `/tag_implications.json`, `/tag_versions.json` and `/related_tag.json`.
 
-use std::collections::HashMap;
-
 use axum::Router;
 use axum::extract::{Query, State};
 use axum::response::Response;
@@ -10,7 +8,6 @@ use axum::routing::get;
 use moekura_core::permissions::Permission;
 use moekura_core::search::{Query as SearchQuery, TagTerm};
 use moekura_core::tags::normalize;
-use moekura_db::search::{PageRef, Plan};
 use moekura_db::tag_relations::{self, Kind, Relation, Status};
 use moekura_db::tag_versions::{self, Change};
 use moekura_db::tags::{self, Category, ListOrder, Tag, TagFilter};
@@ -20,7 +17,6 @@ use super::{ListParams, json};
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::AppError;
-use crate::posts::visibility;
 
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
@@ -412,11 +408,10 @@ struct RelatedTag {
     frequency: f64,
 }
 
-/// Posts looked at for related tags: the newest that match.
-const RELATED_SAMPLE: u32 = 200;
-
-/// Tags that often appear with a search, from its newest posts. The
-/// similarities are estimates from that sample.
+/// Tags that often appear with a search, from its newest posts
+/// (crate::related_tags::SAMPLE). The similarities are estimates from
+/// that sample. For a single tag, `wiki_page_tags` are its wiki page's
+/// links.
 async fn related(
     State(state): State<AppState>,
     current: CurrentUser,
@@ -424,16 +419,8 @@ async fn related(
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
     let db = state.reader(&current);
-    let mut query = SearchQuery::parse(params.query.trim())
+    let query = SearchQuery::parse(params.query.trim())
         .map_err(|e| AppError::Unprocessable(e.to_string()))?;
-    query.limit = Some(RELATED_SAMPLE.min(state.config.search.max_per_page));
-    let plan = Plan::resolve(db, &query, &visibility(&current), &state.config.search)
-        .await
-        .map_err(super::posts::search_error)?;
-    let ids = plan
-        .ids(db, PageRef::default())
-        .await
-        .map_err(super::posts::search_error)?;
     let limit = params.limit.parse::<usize>().unwrap_or(25).clamp(1, 100);
     let categories = tags::categories(db).await?;
     let wanted = category_ids(&params.category, &categories);
@@ -447,17 +434,12 @@ async fn related(
         })
         .collect();
 
-    let counts = tags::counts_among(db, &ids, 500).await?;
-    let found: HashMap<i32, Tag> =
-        tags::by_ids(db, &counts.iter().map(|(id, _)| *id).collect::<Vec<_>>())
-            .await?
-            .into_iter()
-            .map(|t| (t.id, t))
-            .collect();
-    let sample = ids.len() as f64;
+    let (sample, counts) =
+        crate::related_tags::co_occurring(&state, &current, params.query.trim()).await?;
+    let sample = sample as f64;
     let related: Vec<RelatedTag> = counts
         .into_iter()
-        .filter_map(|(id, n)| found.get(&id).cloned().map(|t| (t, n as f64)))
+        .map(|(t, n)| (t, n as f64))
         .filter(|(t, _)| !searched.contains(&t.name.as_str()))
         .filter(|(t, _)| wanted.is_empty() || wanted.contains(&t.category_id))
         .take(limit)
@@ -472,17 +454,31 @@ async fn related(
             }
         })
         .collect();
-    let tag = match searched.as_slice() {
-        [single] => tags::by_name(db, single).await?.map(DanbooruTag::from),
-        _ => None,
+    let (tag, wiki_page_tags) = match searched.as_slice() {
+        [single] => {
+            let tag = tags::by_name(db, single).await?.map(DanbooruTag::from);
+            let links = match moekura_db::wiki::by_title(db, single).await? {
+                Some(page) => moekura_core::markup::wiki_links(&page.body),
+                None => Vec::new(),
+            };
+            let found =
+                tags::by_names(db, &links.iter().map(String::as_str).collect::<Vec<_>>()).await?;
+            let linked: Vec<DanbooruTag> = links
+                .iter()
+                .filter_map(|name| found.iter().find(|t| t.name == *name).cloned())
+                .map(DanbooruTag::from)
+                .collect();
+            (tag, linked)
+        }
+        _ => (None, Vec::new()),
     };
     json(
         serde_json::json!({
             "query": params.query,
-            "post_count": ids.len(),
+            "post_count": sample as usize,
             "tag": tag,
             "related_tags": related,
-            "wiki_page_tags": [],
+            "wiki_page_tags": wiki_page_tags,
             "other_wikis": [],
         }),
         "",

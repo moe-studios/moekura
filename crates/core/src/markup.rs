@@ -30,6 +30,32 @@ pub fn wiki_url(title: &str) -> String {
     format!("/wiki/{}", encode(&crate::tags::normalize(title)))
 }
 
+/// The wiki pages `text` links to with `[[tag]]` or `[[tag|text]]`,
+/// normalised like tag names, in order and without repeats.
+pub fn wiki_links(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[") {
+        rest = &rest[start..];
+        let mut ignored = String::new();
+        let target = std::cell::Cell::new(None);
+        let used = link(&mut ignored, rest, "[[", "]]", |t| {
+            target.set(Some(crate::tags::normalize(t)));
+            Some(String::new())
+        });
+        match (used, target.into_inner()) {
+            (Some(used), Some(target)) => {
+                if !target.is_empty() && !found.contains(&target) {
+                    found.push(target);
+                }
+                rest = &rest[used..];
+            }
+            _ => rest = &rest[2..],
+        }
+    }
+    found
+}
+
 /// Renders `text` to HTML.
 pub fn render(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + text.len() / 4);
@@ -492,6 +518,16 @@ mod tests {
         assert_eq!(render("javascript:alert(1)"), "<p>javascript:alert(1)</p>");
         assert_eq!(render("https://"), "<p>https://</p>");
         assert_eq!(render("xhttps://a.b"), "<p>xhttps://a.b</p>");
+    }
+
+    #[test]
+    fn finds_wiki_links() {
+        assert_eq!(
+            wiki_links(
+                "See [[Long Hair]], [[fate/stay_night|the series]], [[ ]] and [[long_hair]].\n[[a\nb]] [[[[x]]"
+            ),
+            ["long_hair", "fate/stay_night", "x"]
+        );
     }
 
     #[test]

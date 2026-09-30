@@ -58,6 +58,18 @@ Settings**, off by default): `artist_request` while a post has no artist
 tag and `tagme` while it has fewer than 10 general tags. They come off
 again when an edit fixes that.
 
+## Related tags
+
+Beside the tags box of the upload and edit forms, a panel lists tags to
+consider, updated as you type: tags often used with those in the box
+(or with the tag under the cursor), your recent and most frequent tags,
+the site's tags for words in the box that are a wiki page's
+[other names](wiki.md#other-names) (paste `長い髪` and it offers
+`long_hair`), and the links on the wiki page of the tag under the
+cursor. Click a tag to add it, or to take it out if it's already in the
+box. Without scripts, **Related tags** opens the same lists on a page of
+their own (`/tags/related`).
+
 ## Copying tags from related posts
 
 A post's **Edit** form lists its parent and children under **Copy

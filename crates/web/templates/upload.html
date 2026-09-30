@@ -35,7 +35,8 @@
 
     <label for="tags">Tags</label>
     <textarea id="tags" name="tags" rows="3" autocapitalize="none" spellcheck="false" data-autocomplete="edit">{{ form.tags }}</textarea>
-    <p class="hint">Separate tags with spaces. Give a new tag a category with a prefix, like <code>artist:name</code>.</p>
+    <p class="hint">Separate tags with spaces. Give a new tag a category with a prefix, like <code>artist:name</code>. <code>-tag</code> and metatags like <code>rating:s</code> or <code>pool:name</code> work too.</p>
+    <div class="related-tags" data-related-tags="tags"><a class="hint" href="/tags/related">Related tags</a></div>
 
     <label for="source">Source <span class="optional">(optional)</span></label>
     <input id="source" name="source" type="url" value="{{ form.source }}" placeholder="https://" maxlength="2048">

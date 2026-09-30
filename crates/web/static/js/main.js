@@ -1044,6 +1044,103 @@ function enableReader(root = document) {
   }
 }
 
+// src/related-tags.ts
+var DEBOUNCE_MS2 = 400;
+function chosenTag(value, caret) {
+  let start = caret;
+  while (start > 0 && !/\s/.test(value.charAt(start - 1))) start--;
+  let end = caret;
+  while (end < value.length && !/\s/.test(value.charAt(end))) end++;
+  const word = value.slice(start, end);
+  if (word === "" || word.startsWith("-") || word.includes(":") || word.includes("*")) return null;
+  return word.toLowerCase();
+}
+function withoutTag(tags, tag) {
+  const words = tags.split(/\s+/).filter((word) => word !== "" && word.toLowerCase() !== tag);
+  return words.length === 0 ? "" : `${words.join(" ")} `;
+}
+function hasTag(tags, tag) {
+  return tags.split(/\s+/).some((word) => word.toLowerCase() === tag);
+}
+function enableRelatedTags(root = document) {
+  for (const panel of root.querySelectorAll("[data-related-tags]")) {
+    const field = root.getElementById(panel.dataset["relatedTags"] ?? "");
+    if (field instanceof HTMLTextAreaElement) attach(panel, field);
+  }
+}
+function attach(panel, field) {
+  const list = document.createElement("div");
+  list.className = "related-groups";
+  list.setAttribute("aria-live", "polite");
+  panel.append(list);
+  let timer;
+  let request;
+  let lastUrl = "";
+  const render = (groups) => {
+    list.replaceChildren(
+      ...groups.map((group) => {
+        const section = document.createElement("section");
+        section.className = `related-group related-${group.kind}`;
+        const title = document.createElement("h3");
+        title.textContent = group.title;
+        const items = document.createElement("ul");
+        for (const tag of group.tags) {
+          const item = document.createElement("li");
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = `tag tag-${tag.category}`;
+          button.dataset["tag"] = tag.name;
+          button.setAttribute("aria-pressed", String(hasTag(field.value, tag.name)));
+          button.textContent = tag.name;
+          button.title = tag.from ? `${tag.from} \u2192 ${tag.name}` : `${tag.post_count} posts`;
+          item.append(button);
+          items.append(item);
+        }
+        section.append(title, items);
+        return section;
+      })
+    );
+  };
+  const update2 = async () => {
+    const chosen = chosenTag(field.value, field.selectionStart ?? field.value.length);
+    const params = new URLSearchParams({ tags: field.value });
+    if (chosen) params.set("tag", chosen);
+    const url = `/tags/related?${params.toString()}`;
+    if (url === lastUrl) return;
+    lastUrl = url;
+    request?.abort();
+    request = new AbortController();
+    try {
+      const response = await fetch(url, { signal: request.signal, headers: { Accept: "application/json" } });
+      if (!response.ok) return;
+      const panelData = await response.json();
+      render(panelData.groups);
+    } catch {
+    }
+  };
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void update2(), DEBOUNCE_MS2);
+  };
+  field.addEventListener("input", schedule);
+  field.addEventListener("click", schedule);
+  field.addEventListener("keyup", (event) => {
+    if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") schedule();
+  });
+  list.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-tag]");
+    const tag = button?.dataset["tag"];
+    if (!button || !tag) return;
+    const present = hasTag(field.value, tag);
+    field.value = present ? withoutTag(field.value, tag) : withTag(field.value, tag);
+    for (const other of list.querySelectorAll("button[data-tag]")) {
+      if (other.dataset["tag"] === tag) other.setAttribute("aria-pressed", String(!present));
+    }
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  void update2();
+}
+
 // src/resized.ts
 function enableResized() {
   const notice = document.querySelector("[data-resized]");
@@ -1243,5 +1340,6 @@ enableNoteEditor();
 enableTagScript();
 enableSuggestions();
 enableCopyTags();
+enableRelatedTags();
 enableSelectAll();
 enableUpload();

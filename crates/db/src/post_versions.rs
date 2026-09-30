@@ -66,6 +66,51 @@ pub async fn attribute(
     Ok(())
 }
 
+/// Versions of a user's looked at for [`recent_tags`].
+const RECENT_VERSIONS: i64 = 100;
+/// Versions of a user's looked at for [`frequent_tags`].
+const FREQUENT_VERSIONS: i64 = 1000;
+
+/// Tags `user_id` added lately, most recently added first.
+pub async fn recent_tags(
+    db: impl PgExecutor<'_>,
+    user_id: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<i32>> {
+    sqlx::query_scalar(
+        "SELECT tag_id FROM (
+             SELECT v.id, v.added_tag_ids FROM post_versions v
+             WHERE v.updater_id = $1 ORDER BY v.id DESC LIMIT $2
+         ) AS v, unnest(v.added_tag_ids) AS tag_id
+         GROUP BY tag_id ORDER BY max(v.id) DESC, tag_id LIMIT $3",
+    )
+    .bind(user_id)
+    .bind(RECENT_VERSIONS)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// Tags `user_id` adds most, among their latest edits and uploads.
+pub async fn frequent_tags(
+    db: impl PgExecutor<'_>,
+    user_id: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<i32>> {
+    sqlx::query_scalar(
+        "SELECT tag_id FROM (
+             SELECT v.added_tag_ids FROM post_versions v
+             WHERE v.updater_id = $1 ORDER BY v.id DESC LIMIT $2
+         ) AS v, unnest(v.added_tag_ids) AS tag_id
+         GROUP BY tag_id ORDER BY count(*) DESC, tag_id LIMIT $3",
+    )
+    .bind(user_id)
+    .bind(FREQUENT_VERSIONS)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// A post's versions, newest first (at most the latest 500).
 pub async fn list(db: impl PgExecutor<'_>, post_id: i64) -> sqlx::Result<Vec<Version>> {
     sqlx::query_as(select_versions!(

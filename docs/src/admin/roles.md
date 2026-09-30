@@ -25,6 +25,7 @@ roles can't be deleted and keep their ranks.
 | Mass edit tags | adding and removing tags on every post a search finds (Moderation → Mass edit) |
 | Lock posts and change locked ones | locking a post's rating, tags, notes or status, and changing them anyway |
 | Undo a user's post edits | taking back every post edit a user made in a range of days (Moderation → Post changes) |
+| Replace posts' files | swapping a post's file for a better one, keeping everything else ([Posts and files](../using/posts.md#replacing-a-posts-file)) |
 | Edit notes | adding, moving, changing and deleting notes on posts |
 | Create and edit pools | making pools, and changing their posts, names and descriptions (deleting a pool takes *Delete and restore posts*) |
 | Flag posts | asking moderators to delete a post |
@@ -47,7 +48,7 @@ The built-in roles and what they start with:
 | Member | 10 | Anonymous, plus Upload, Edit posts and tags, Comment, Favorite, Vote, Flag posts, Edit the wiki and artists, Create and edit pools, Edit notes |
 | Contributor | 20 | Member, plus Upload without approval |
 | Janitor | 30 | Contributor, plus Approve posts, Delete and restore posts, Manage tags, See deleted posts, Hide comments |
-| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits |
+| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits, Replace posts' files |
 | Admin | 50 | everything |
 
 ## Upload limits

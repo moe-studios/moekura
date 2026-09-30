@@ -154,10 +154,11 @@ pub enum ActionKind {
     UndoEdits,
     ArtistBan,
     ArtistUnban,
+    PostReplace,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 39] = [
+    pub const ALL: [ActionKind; 40] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -197,6 +198,7 @@ impl ActionKind {
         ActionKind::UndoEdits,
         ActionKind::ArtistBan,
         ActionKind::ArtistUnban,
+        ActionKind::PostReplace,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -240,6 +242,7 @@ impl ActionKind {
             ActionKind::UndoEdits => "post_versions.undo",
             ActionKind::ArtistBan => "artist.ban",
             ActionKind::ArtistUnban => "artist.unban",
+            ActionKind::PostReplace => "post.replace",
         }
     }
 
@@ -285,6 +288,7 @@ impl ActionKind {
             ActionKind::UndoEdits => "undid the post edits of",
             ActionKind::ArtistBan => "banned an artist",
             ActionKind::ArtistUnban => "unbanned an artist",
+            ActionKind::PostReplace => "replaced the file of post",
         }
     }
 

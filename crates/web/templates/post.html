@@ -182,6 +182,22 @@
       </form>
     </details>
     {% endif %}
+    {% if can_replace %}
+    <details class="edit">
+      <summary>Replace the file</summary>
+      <form method="post" action="/posts/{{ post.id }}/replace" enctype="multipart/form-data">
+        <label for="replace-file">New file</label>
+        <input id="replace-file" name="file" type="file">
+        <label for="replace-url">…or a link to it</label>
+        <input id="replace-url" name="url" type="url" placeholder="https://">
+        <label for="replace-reason">Why</label>
+        <input id="replace-reason" name="reason" maxlength="1000" placeholder="Higher resolution, uncropped, …">
+        <label class="choice"><input type="checkbox" name="rescale_notes" checked> Move and resize the notes to fit the new size</label>
+        <p class="hint">The post keeps its tags, comments, notes, pools and favourites; the old file is kept in its <a href="/posts/{{ post.id }}/replacements">replacements</a>.</p>
+        <button type="submit" data-confirm="Replace this post's file?">Replace</button>
+      </form>
+    </details>
+    {% endif %}
     {% if moderate.can_flag %}
     <details class="edit">
       <summary>Flag</summary>
@@ -350,7 +366,7 @@
       <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
-    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>Edit</a>{% endif %}<a href="{{ file.original }}" download>Download original</a><a href="/posts/{{ post.id }}/history">History</a><a href="/posts/{{ post.id }}/metadata">Metadata</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
+    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>Edit</a>{% endif %}<a href="{{ file.original }}" download>Download original</a><a href="/posts/{{ post.id }}/history">History</a><a href="/posts/{{ post.id }}/metadata">Metadata</a><a href="/posts/{{ post.id }}/replacements">Replacements</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
     {% if favorite_groups %}
     <section class="tag-group post-favorite-groups">
       <h2>Your favorite groups</h2>

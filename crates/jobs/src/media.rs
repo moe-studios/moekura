@@ -79,6 +79,14 @@ impl MediaJobs {
             tracing::warn!(post_id, "purge skipped: the post is no longer deleted");
             return Ok(());
         }
+        // Files the post had before a replacement, too.
+        let replaced = moekura_db::replacements::old_keys(&self.db, post_id).await?;
+        for key in replaced.iter().filter_map(|k| Key::parse(k)) {
+            self.storage
+                .delete(&key)
+                .await
+                .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
+        }
         if let Some(asset) = media::for_post(&self.db, post_id).await? {
             let mut keys = vec![asset.storage_key.clone()];
             keys.extend(

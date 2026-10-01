@@ -23,6 +23,7 @@ mod replacements;
 mod tags;
 mod uploads;
 mod users;
+mod versions;
 
 use axum::Router;
 use axum::extract::Request;
@@ -63,7 +64,8 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             .merge(reactions::routes())
             .merge(tags::routes())
             .merge(uploads::routes())
-            .merge(users::routes()),
+            .merge(users::routes())
+            .merge(versions::routes()),
     )
 }
 

@@ -38,6 +38,7 @@ mod mass_edit;
 mod metatags;
 mod moderation;
 mod notes;
+pub mod notifications;
 pub mod oidc;
 pub mod pages;
 mod pools;
@@ -289,6 +290,7 @@ pub fn router(state: AppState) -> Router {
         .merge(mass_edit::routes())
         .merge(moderation::routes())
         .merge(notes::routes())
+        .merge(notifications::routes())
         .merge(oidc::routes())
         .merge(pools::routes())
         .merge(post_batches::routes())

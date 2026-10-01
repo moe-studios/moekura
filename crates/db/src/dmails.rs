@@ -290,6 +290,21 @@ pub async fn set_blocked(
     Ok(())
 }
 
+/// Those among `user_ids` who blocked `user_id`.
+pub async fn blocking(
+    db: impl PgExecutor<'_>,
+    user_id: i64,
+    user_ids: &[i64],
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT user_id FROM user_blocks WHERE blocked_id = $1 AND user_id = ANY($2)",
+    )
+    .bind(user_id)
+    .bind(user_ids)
+    .fetch_all(db)
+    .await
+}
+
 /// The users `user_id` blocked, by name.
 pub async fn blocked(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<Vec<String>> {
     sqlx::query_scalar(

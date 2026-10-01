@@ -146,6 +146,7 @@ pub(crate) fn render(
             name => user.name,
             role => current.map(|c| c.role.name.clone()),
             unread_messages => current.map_or(0, |c| c.unread_messages),
+            unread_notifications => current.map_or(0, |c| c.unread_notifications),
         }),
         theme => theme,
         // The default theme is in the main stylesheet, without a file.

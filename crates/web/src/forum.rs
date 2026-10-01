@@ -146,7 +146,16 @@ pub(crate) async fn start_topic(
         return Err(AppError::Unprocessable("Choose a category.".into()));
     }
     state.rate_limits.check_comment(me).await?;
-    let (topic, _) = forum::create_topic(db, category_id, Some(me), &title, &body).await?;
+    let (topic, post) = forum::create_topic(db, category_id, Some(me), &title, &body).await?;
+    crate::notifications::notify_text(
+        state,
+        current,
+        &body,
+        &format!("the forum topic “{title}”"),
+        &format!("/forum_posts/{post}"),
+        (&[], moekura_db::notifications::Kind::Forum),
+    )
+    .await;
     Ok(topic)
 }
 
@@ -170,6 +179,17 @@ pub(crate) async fn add_post(
     let db = state.db.primary();
     let id = forum::create_post(db, topic.id, Some(me), &body).await?;
     forum::visit(db, me, topic.id).await?;
+    // Everyone else who posted in the topic hears of it.
+    let participants = forum::participants(db, topic.id).await?;
+    crate::notifications::notify_text(
+        state,
+        current,
+        &body,
+        &format!("the forum topic “{}”", topic.title),
+        &format!("/forum_posts/{id}"),
+        (&participants, moekura_db::notifications::Kind::Forum),
+    )
+    .await;
     Ok(id)
 }
 

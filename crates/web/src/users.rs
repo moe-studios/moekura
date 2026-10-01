@@ -217,6 +217,7 @@ fn render_settings(
                 square_thumbnails => settings.square_thumbnails,
                 blur_blacklisted => settings.blur_blacklisted,
                 hide_comments => settings.hide_comments,
+                email_notifications => settings.email_notifications,
                 autocomplete => settings.autocomplete,
                 shortcuts => settings.shortcuts,
                 time_zone => settings.time_zone,
@@ -254,6 +255,7 @@ struct SettingsForm {
     square_thumbnails: Option<String>,
     blur_blacklisted: Option<String>,
     hide_comments: Option<String>,
+    email_notifications: Option<String>,
     autocomplete: Option<String>,
     shortcuts: Option<String>,
     /// Empty for UTC.
@@ -316,6 +318,7 @@ async fn save_settings(
         blur_blacklisted: form.blur_blacklisted.is_some(),
         time_zone,
         hide_comments: form.hide_comments.is_some(),
+        email_notifications: form.email_notifications.is_some(),
         autocomplete: form.autocomplete.is_some(),
         shortcuts: form.shortcuts.is_some(),
         custom_css,

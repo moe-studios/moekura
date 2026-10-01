@@ -84,6 +84,9 @@ main {
 .forum-post.is-hidden { opacity: 0.6; }
 .forum-post .score { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 .forum-topics tr.unread a, .dmail-list tr.unread td { font-weight: 600; }
+.notification-list { list-style: none; padding: 0; }
+.notification-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.notification-list li.unread a { font-weight: 600; }
 .count-badge { display: inline-block; min-width: 1.4em; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 0.75rem; font-weight: 700; text-align: center; line-height: 1.4; }
 /* Phones: brand and account on the first row, search on its own row,
    then the links, wrapping as needed. */

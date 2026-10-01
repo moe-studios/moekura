@@ -88,6 +88,8 @@ pub struct UserSettings {
     pub time_zone: Option<String>,
     /// Post pages leave out comments.
     pub hide_comments: bool,
+    /// Notifications are emailed too (to a confirmed address).
+    pub email_notifications: bool,
     /// Tag autocomplete in search and tag fields.
     pub autocomplete: bool,
     /// Keyboard shortcuts.
@@ -111,6 +113,7 @@ impl Default for UserSettings {
             blur_blacklisted: false,
             time_zone: None,
             hide_comments: false,
+            email_notifications: false,
             autocomplete: true,
             shortcuts: true,
             custom_css: String::new(),
@@ -172,6 +175,7 @@ impl UserSettings {
             blur_blacklisted: flag("blur_blacklisted"),
             time_zone,
             hide_comments: flag("hide_comments"),
+            email_notifications: flag("email_notifications"),
             autocomplete: flag("autocomplete"),
             shortcuts: flag("shortcuts"),
             custom_css,
@@ -203,6 +207,7 @@ impl UserSettings {
             ("square_thumbnails", self.square_thumbnails),
             ("blur_blacklisted", self.blur_blacklisted),
             ("hide_comments", self.hide_comments),
+            ("email_notifications", self.email_notifications),
             ("autocomplete", self.autocomplete),
             ("shortcuts", self.shortcuts),
         ] {

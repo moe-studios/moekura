@@ -22,6 +22,26 @@ impl Target {
     }
 }
 
+/// Everyone who voted on a target.
+pub async fn voters(db: impl PgExecutor<'_>, target: Target) -> sqlx::Result<Vec<i64>> {
+    match target {
+        Target::Relation(id) => {
+            sqlx::query_scalar("SELECT user_id FROM tag_relation_votes WHERE relation_id = $1")
+                .bind(id)
+                .fetch_all(db)
+                .await
+        }
+        Target::Request(id) => {
+            sqlx::query_scalar(
+                "SELECT user_id FROM bulk_update_request_votes WHERE request_id = $1",
+            )
+            .bind(id)
+            .fetch_all(db)
+            .await
+        }
+    }
+}
+
 /// Sets `user_id`'s vote on a target: `1`, `-1`, or `0` to take it back.
 pub async fn vote(
     db: impl PgExecutor<'_>,

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Notifications · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>Notifications</h1>
+<nav class="subnav" aria-label="Notifications">
+  <a href="/notifications"{% if not unread %} aria-current="page"{% endif %}>All</a>
+  <a href="/notifications?unread=1"{% if unread %} aria-current="page"{% endif %}>Unread</a>
+</nav>
+<form method="post" action="/notifications/read_all" class="actions"><button type="submit" class="secondary">Mark all read</button></form>
+{% if notifications %}
+<ol class="notification-list">
+  {% for n in notifications %}
+  <li{% if not n.read %} class="unread"{% endif %}>
+    <a href="/notifications/{{ n.id }}">{{ n.actor or "Someone" }} {{ n.says }} {{ n.subject }}</a>
+    <span class="hint">{{ n.date }} {{ n.time }}</span>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="empty">Nothing yet. You're told here when someone mentions you with @{{ me.name }}, replies to you, messages you, posts in a forum topic you posted in, or a request you made or voted on is decided.</p>
+{% endif %}
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

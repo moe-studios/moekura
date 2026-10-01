@@ -35,6 +35,7 @@
     <nav class="account" aria-label="Account">
       {% if me %}
         <a class="who" href="/users/{{ me.name }}">{{ me.name }}</a>
+        <a href="/dmails"{% if me.unread_messages %} class="unread"{% endif %}>Messages{% if me.unread_messages %} <span class="count-badge">{{ me.unread_messages }}<span class="visually-hidden"> unread</span></span>{% endif %}</a>
         <a href="/settings">Settings</a>
         <form method="post" action="/logout">
           <button type="submit" class="link">Log out</button>

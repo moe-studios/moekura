@@ -4,6 +4,12 @@
 <section class="card medium">
   <h1>{{ user.name }}</h1>
   {% if record_url %}<p><a href="{{ record_url }}">Moderation record</a></p>{% endif %}
+  {% if messages %}
+  <div class="actions">
+    {% if messages.can_send and not messages.blocked %}<a class="button" href="/dmails/new?to={{ user.name|urlencode }}">Send a message</a>{% endif %}
+    <form method="post" action="/users/{{ user.name }}/block"><input type="hidden" name="blocked" value="{{ '0' if messages.blocked else '1' }}"><button type="submit" class="secondary">{% if messages.blocked %}Unblock{% else %}Block messages{% endif %}</button></form>
+  </div>
+  {% endif %}
   <dl class="facts">
     <dt>Role</dt><dd>{{ user.role or "—" }}</dd>
     <dt>Joined</dt><dd>{{ user.joined }}</dd>

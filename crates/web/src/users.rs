@@ -66,6 +66,14 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
         .await?
         .len();
     let notes = crate::user_moderation::notes(page.state(), &page.current, user.id).await?;
+    let me = page.current.user.as_ref().map(|u| u.id);
+    let messages = match me.filter(|&me| me != user.id) {
+        Some(me) => Some(context! {
+            can_send => page.current.can(Permission::SendMessages),
+            blocked => moekura_db::dmails::is_blocked(db, me, user.id).await?,
+        }),
+        None => None,
+    };
     let comments_url = format!(
         "/comments?{}",
         url::form_urlencoded::Serializer::new(String::new())
@@ -75,6 +83,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     Ok(page.render(
         "profile.html",
         context! {
+            messages => messages,
             user => context! {
                 name => user.name,
                 role => role,

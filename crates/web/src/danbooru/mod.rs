@@ -12,6 +12,7 @@ mod ai_tags;
 mod artists;
 mod commentaries;
 mod community;
+mod dmails;
 mod explore;
 mod iqdb;
 mod media_assets;
@@ -58,6 +59,7 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             .merge(explore::routes())
             .merge(artists::routes())
             .merge(commentaries::routes())
+            .merge(dmails::routes())
             .merge(media_assets::routes())
             .merge(replacements::routes())
             .merge(notes::routes())

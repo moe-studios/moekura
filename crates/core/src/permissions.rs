@@ -55,10 +55,12 @@ pub enum Permission {
     UndoEdits = 23,
     /// Replace a post's file (a better version, a fixed crop).
     ReplacePosts = 24,
+    /// Send private messages to other users.
+    SendMessages = 25,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 25] = [
+    pub const ALL: [Permission; 26] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -84,6 +86,7 @@ impl Permission {
         Permission::LockPosts,
         Permission::UndoEdits,
         Permission::ReplacePosts,
+        Permission::SendMessages,
     ];
 
     const fn bit(self) -> u64 {
@@ -118,6 +121,7 @@ impl Permission {
             Permission::LockPosts => "lock_posts",
             Permission::UndoEdits => "undo_edits",
             Permission::ReplacePosts => "replace_posts",
+            Permission::SendMessages => "send_messages",
         }
     }
 
@@ -149,6 +153,7 @@ impl Permission {
             Permission::LockPosts => "Lock posts and change locked ones",
             Permission::UndoEdits => "Undo a user's post edits",
             Permission::ReplacePosts => "Replace posts' files",
+            Permission::SendMessages => "Send private messages",
         }
     }
 }
@@ -289,7 +294,16 @@ impl SystemRole {
         use Permission::*;
         const ANONYMOUS: Permissions = Permissions::of(&[ViewPosts]);
         const MEMBER: Permissions = ANONYMOUS.with(Permissions::of(&[
-            Upload, EditPosts, Comment, Favorite, Vote, Flag, EditWiki, EditPools, EditNotes,
+            Upload,
+            EditPosts,
+            Comment,
+            Favorite,
+            Vote,
+            Flag,
+            EditWiki,
+            EditPools,
+            EditNotes,
+            SendMessages,
         ]));
         const CONTRIBUTOR: Permissions = MEMBER.with(Permissions::of(&[UploadWithoutApproval]));
         const JANITOR: Permissions = CONTRIBUTOR.with(Permissions::of(&[

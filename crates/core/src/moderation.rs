@@ -157,10 +157,11 @@ pub enum ActionKind {
     PostReplace,
     DeleteUploads,
     PurgePosts,
+    DmailReportSettle,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 42] = [
+    pub const ALL: [ActionKind; 43] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -203,6 +204,7 @@ impl ActionKind {
         ActionKind::PostReplace,
         ActionKind::DeleteUploads,
         ActionKind::PurgePosts,
+        ActionKind::DmailReportSettle,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -249,6 +251,7 @@ impl ActionKind {
             ActionKind::PostReplace => "post.replace",
             ActionKind::DeleteUploads => "posts.delete_uploads",
             ActionKind::PurgePosts => "posts.purge_batch",
+            ActionKind::DmailReportSettle => "dmail_report.settle",
         }
     }
 
@@ -297,6 +300,7 @@ impl ActionKind {
             ActionKind::PostReplace => "replaced the file of post",
             ActionKind::DeleteUploads => "started deleting the uploads of",
             ActionKind::PurgePosts => "started purging deleted posts",
+            ActionKind::DmailReportSettle => "settled a report about a message from",
         }
     }
 

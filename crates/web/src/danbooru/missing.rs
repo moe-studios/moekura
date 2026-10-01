@@ -15,7 +15,6 @@ pub(crate) const EMPTY_LISTS: &[&str] = &[
     "/forum_topics",
     "/forum_posts",
     "/forum_post_votes",
-    "/dmails",
     "/user_feedbacks",
     "/user_name_change_requests",
     "/users/{id}/uploads",
@@ -42,16 +41,12 @@ mod tests {
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn missing_features_are_empty(pool: PgPool) {
         let app = app(&pool).await;
-        for path in [
-            "/dmails.json",
-            "/forum_topics.json?search[id]=1",
-            "/users/1/uploads.json",
-        ] {
+        for path in ["/forum_topics.json?search[id]=1", "/users/1/uploads.json"] {
             let response = app.get(path, None).await;
             assert_eq!(response.status, StatusCode::OK, "{path}");
             assert_eq!(response.body, "[]", "{path}");
         }
-        let missing = app.get("/dmails/1.json", None).await;
+        let missing = app.get("/forum_topics/1.json", None).await;
         assert_eq!(missing.status, StatusCode::NOT_FOUND);
         let body: Value = serde_json::from_str(&missing.body).unwrap();
         assert_eq!(body["success"], json!(false));

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Reported messages · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Reported messages</h1>
+<p class="hint">Messages their recipients reported. Staff see these, and no others.</p>
+{% if dmails %}
+<ol class="history">
+  {% for d in dmails %}
+  <li>
+    <div class="history-head">
+      <strong>{{ d.title }}</strong>
+      <span class="hint">from {% if d.from %}<a href="/moderation/users/{{ d.from }}">{{ d.from }}</a>{% else %}(gone){% endif %} to {% if d.to %}<a href="/users/{{ d.to }}">{{ d.to }}</a>{% else %}(gone){% endif %} · {{ d.date }} {{ d.time }}</span>
+      <form method="post" action="/moderation/dmails/{{ d.id }}/settle"><button type="submit" class="secondary">Settled</button></form>
+    </div>
+    {% if d.report_reason %}<p>Reported: {{ d.report_reason }}</p>{% endif %}
+    <div class="markup">{{ d.html }}</div>
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="empty">No reported messages.</p>
+{% endif %}
+{% endblock %}

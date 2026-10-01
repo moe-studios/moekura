@@ -3,6 +3,7 @@
   <a href="/moderation/flags"{% if path == "/moderation/flags" or path is startingwith("/moderation/flags/") %} aria-current="page"{% endif %}>Flags</a>
   <a href="/moderation/appeals"{% if path == "/moderation/appeals" or path is startingwith("/moderation/appeals/") %} aria-current="page"{% endif %}>Appeals</a>
   <a href="/moderation/comments"{% if path == "/moderation/comments" or path is startingwith("/moderation/comments/") %} aria-current="page"{% endif %}>Reported comments</a>
+  <a href="/moderation/dmails"{% if path == "/moderation/dmails" %} aria-current="page"{% endif %}>Reported messages</a>
   <a href="/posts?tags=status%3Adeleted">Deleted posts</a>
   {% if can_purge %}<a href="/moderation/purge"{% if path == "/moderation/purge" %} aria-current="page"{% endif %}>Purge</a>{% endif %}
   <a href="/post_versions">Post changes</a>

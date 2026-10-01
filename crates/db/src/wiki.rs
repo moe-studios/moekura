@@ -167,6 +167,44 @@ pub async fn recent_versions(
     .await
 }
 
+/// A version with its page's id and title, for the Danbooru API.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct FullVersion {
+    pub id: i64,
+    pub wiki_page_id: i32,
+    pub title: String,
+    pub version: i32,
+    pub updater_id: Option<i64>,
+    pub body: String,
+    pub other_names: Vec<String>,
+    pub created_at: OffsetDateTime,
+}
+
+/// Versions of a page (or every page), and of one user's if given,
+/// newest first.
+pub async fn full_versions(
+    db: impl PgExecutor<'_>,
+    page_id: Option<i32>,
+    updater_id: Option<i64>,
+    offset: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<FullVersion>> {
+    sqlx::query_as(
+        "SELECT v.id, v.wiki_page_id, p.title::text AS title, v.version, v.updater_id, v.body,
+                v.other_names, v.created_at
+         FROM wiki_page_versions v JOIN wiki_pages p ON p.id = v.wiki_page_id
+         WHERE ($1::int IS NULL OR v.wiki_page_id = $1)
+           AND ($2::bigint IS NULL OR v.updater_id = $2)
+         ORDER BY v.id DESC OFFSET $3 LIMIT $4",
+    )
+    .bind(page_id)
+    .bind(updater_id)
+    .bind(offset)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn version(
     db: impl PgExecutor<'_>,
     page_id: i32,

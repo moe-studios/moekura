@@ -4,6 +4,8 @@
 // browser. Without scripts, a box's text is its tooltip and every note is
 // listed below the image.
 
+import { t } from "./i18n.ts";
+
 const HIDDEN_KEY = "moekura:notes-hidden";
 
 function remembered(): boolean {
@@ -143,7 +145,7 @@ export function enableNotes(root: Document = document): void {
   toggle.dataset["notesToggle"] = "";
   const apply = (hidden: boolean) => {
     layer.classList.toggle("notes-hidden", hidden);
-    toggle.textContent = hidden ? "Show notes" : "Hide notes";
+    toggle.textContent = hidden ? t("notes-show", "Show notes") : t("notes-hide", "Hide notes");
     toggle.setAttribute("aria-pressed", String(hidden));
     if (hidden) hide();
   };

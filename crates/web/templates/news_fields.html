@@ -1,6 +1,6 @@
-<label for="news-body">News</label>
+<label for="news-body">{{ t("news-field-body") }}</label>
 <textarea id="news-body" name="body" rows="3" maxlength="{{ max_len }}" required>{{ form.body }}</textarea>
-<p class="hint">A sentence or two, in the same markup as the wiki.</p>
-<label for="news-until">Show until <span class="optional">(optional)</span></label>
+<p class="hint">{{ t("news-field-body-hint") }}</p>
+<label for="news-until">{{ t("news-field-until") }} <span class="optional">{{ t("optional") }}</span></label>
 <input id="news-until" name="until" type="date" value="{{ form.until }}">
-<p class="hint">The last day (UTC) it's shown. Without one, it's shown until deleted or replaced by newer news.</p>
+<p class="hint">{{ t("news-field-until-hint") }}</p>

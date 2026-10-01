@@ -1,38 +1,38 @@
 {% extends "base.html" %}
-{% block title %}{{ pool.name }} · Pools · {{ site.name }}{% endblock %}
+{% block title %}{{ pool.name }} · {{ t("nav-pools") }} · {{ site.name }}{% endblock %}
 {% block head %}{% include "preview_meta.html" %}{% endblock %}
 {% block content %}
-<p class="back"><a href="/pools">« Pools</a></p>
+<p class="back"><a href="/pools">« {{ t("nav-pools") }}</a></p>
 <header class="wiki-head">
   <h1>{{ pool.name }}</h1>
   <p class="hint">
-    {{ pool.category }} · {{ pool.post_count }} post{% if pool.post_count != 1 %}s{% endif %}
-    · version {{ version }}, {{ pool.date }}{% if pool.updater %} by {{ pool.updater }}{% endif %}
-    · <a href="{{ pool.url }}/history">History</a>
-    · <a href="{{ search_url }}">Search</a>
-    {% if pool.post_count %}· <a href="{{ pool.url }}/read">Read</a>{% endif %}
-    {% if can_edit %} · <a href="{{ pool.url }}/edit">Edit</a>{% endif %}
+    {{ t("pool-kind-" ~ pool.category) }} · {{ t("post-count", count=pool.post_count) }}
+    · {% if pool.updater %}{{ t("wiki-version-by", version=version, date=pool.date, user=pool.updater) }}{% else %}{{ t("wiki-version", version=version, date=pool.date) }}{% endif %}
+    · <a href="{{ pool.url }}/history">{{ t("tag-nav-history") }}</a>
+    · <a href="{{ search_url }}">{{ t("search") }}</a>
+    {% if pool.post_count %}· <a href="{{ pool.url }}/read">{{ t("pool-read") }}</a>{% endif %}
+    {% if can_edit %} · <a href="{{ pool.url }}/edit">{{ t("edit") }}</a>{% endif %}
   </p>
 </header>
-{% if pool.deleted %}<p class="notice">This pool is deleted.</p>{% endif %}
+{% if pool.deleted %}<p class="notice">{{ t("pool-deleted") }}</p>{% endif %}
 {% if html %}<div class="markup pool-description">{{ html }}</div>{% endif %}
-<p class="reader-resume" data-reader-resume="{{ pool.id }}" hidden><a class="button" href="{{ pool.url }}/read">Continue reading</a></p>
+<p class="reader-resume" data-reader-resume="{{ pool.id }}" hidden><a class="button" href="{{ pool.url }}/read">{{ t("pool-continue") }}</a></p>
 {% if cards %}
 <ul class="post-grid">
   {% for card in cards %}<li>{% include "card.html" %}</li>{% endfor %}
 </ul>
 {% else %}
-<p class="empty">This pool has no posts yet.</p>
+<p class="empty">{{ t("pool-empty") }}</p>
 {% endif %}
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% if can_delete %}
-<form method="post" action="{{ pool.url }}/delete"><button type="submit" class="danger" data-confirm="Delete this pool?">Delete pool</button></form>
+<form method="post" action="{{ pool.url }}/delete"><button type="submit" class="danger" data-confirm="{{ t('pool-delete-confirm') }}">{{ t("pool-delete") }}</button></form>
 {% elif can_undelete %}
-<form method="post" action="{{ pool.url }}/undelete"><button type="submit">Restore pool</button></form>
+<form method="post" action="{{ pool.url }}/undelete"><button type="submit">{{ t("pool-restore") }}</button></form>
 {% endif %}
 {% endblock %}

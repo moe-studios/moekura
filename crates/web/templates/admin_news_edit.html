@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Edit news · {{ site.name }}{% endblock %}
+{% block title %}{{ t("news-edit-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "admin_nav.html" %}
 <section class="card medium">
-  <h1>Edit news</h1>
+  <h1>{{ t("news-edit-title") }}</h1>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/admin/news/{{ id }}">
     {% include "news_fields.html" %}
-    <p class="hint">Readers who dismissed it don't see it again; post new news for something they should.</p>
-    <button type="submit">Save</button>
+    <p class="hint">{{ t("news-edit-hint") }}</p>
+    <button type="submit">{{ t("common-save") }}</button>
   </form>
 </section>
 {% endblock %}

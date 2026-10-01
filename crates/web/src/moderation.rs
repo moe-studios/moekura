@@ -792,14 +792,13 @@ pub(crate) async fn disapprovals(
         .await?
         .into_iter()
         .map(|d| {
-            let reason = d
-                .reason()
-                .map_or(d.reason.clone(), |r| r.label().to_owned());
             (
                 d.post_id,
                 context! {
                     by => d.user_name,
-                    reason => reason,
+                    // A known reason's name, worded by the template.
+                    reason => d.reason,
+                    known => d.reason().is_some(),
                     message => d.message,
                     when => crate::dates::day(d.created_at),
                 },
@@ -862,7 +861,7 @@ async fn queue(page: Page, Query(query): Query<ApprovalQuery>) -> Result<Respons
                 .collect::<Vec<_>>(),
             disapproval_reasons => DisapprovalReason::ALL
                 .iter()
-                .map(|r| context! { name => r.as_str(), label => r.label() })
+                .map(|r| context! { name => r.as_str() })
                 .collect::<Vec<_>>(),
         },
     ))
@@ -1126,7 +1125,9 @@ pub(crate) fn entry_context(entry: &Entry) -> Value {
         when => crate::dates::day(entry.created_at),
         time => crate::dates::clock(entry.created_at),
         actor => entry.actor_name,
-        label => kind.map_or_else(|| entry.action.clone(), |k| k.label().to_owned()),
+        // Known actions are worded by the template; others shown as stored.
+        action => entry.action,
+        known => kind.is_some(),
         post_id => entry.post_id,
         user => entry.user_name,
         reason => entry.reason,
@@ -1174,7 +1175,7 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
         "moderation_log.html",
         context! {
             entries => entries.iter().map(entry_context).collect::<Vec<_>>(),
-            actions => ActionKind::ALL.iter().map(|k| context! { name => k.as_str(), label => k.label() }).collect::<Vec<_>>(),
+            actions => ActionKind::ALL.iter().map(|k| context! { name => k.as_str() }).collect::<Vec<_>>(),
             query => context! {
                 action => query.action,
                 by => query.by,

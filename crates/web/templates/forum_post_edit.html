@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Edit post · Forum · {{ site.name }}{% endblock %}
+{% block title %}{{ t("forum-post-edit-title") }} · {{ t("nav-forum") }} · {{ site.name }}{% endblock %}
 {% block content %}
 <p class="back"><a href="/forum_posts/{{ id }}">« {{ topic }}</a></p>
-<h1>Edit post</h1>
+<h1>{{ t("forum-post-edit-title") }}</h1>
 <form class="wiki-form" method="post" action="/forum_posts/{{ id }}">
-  <label for="post-body">Post</label>
+  <label for="post-body">{{ t("forum-post-field") }}</label>
   <textarea id="post-body" name="body" rows="10" required>{{ body }}</textarea>
   {% include "comment_help.html" %}
-  <button type="submit">Save</button>
+  <button type="submit">{{ t("common-save") }}</button>
 </form>
 {% endblock %}

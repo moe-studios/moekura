@@ -1,66 +1,73 @@
 {% extends "base.html" %}
-{% block title %}Settings · {{ site.name }}{% endblock %}
+{% block title %}{{ t("nav-settings") }} · {{ site.name }}{% endblock %}
 {% block content %}
 <section class="card medium">
-  <h1>Settings</h1>
+  <h1>{{ t("nav-settings") }}</h1>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/settings">
-    <label for="per_page">Posts per page</label>
+    <label for="per_page">{{ t("settings-per-page") }}</label>
     <select id="per_page" name="per_page">
-      <option value="">Site default ({{ default_per_page }})</option>
+      <option value="">{{ t("settings-site-default", value=default_per_page) }}</option>
       {% for n in per_page_choices %}
       <option value="{{ n }}"{% if per_page == n %} selected{% endif %}>{{ n }}</option>
       {% endfor %}
     </select>
-    <label for="theme">Theme</label>
+    <label for="theme">{{ t("settings-theme") }}</label>
     <select id="theme" name="theme">
-      <option value="">Site default ({{ site_theme }})</option>
-      {% for t in themes %}
-      <option value="{{ t.name }}"{% if current_theme == t.name %} selected{% endif %}>{{ t.label }}</option>
+      <option value="">{{ t("settings-site-default", value=site_theme) }}</option>
+      {% for choice in themes %}
+      <option value="{{ choice.name }}"{% if current_theme == choice.name %} selected{% endif %}>{{ choice.label }}</option>
       {% endfor %}
     </select>
     <fieldset class="ratings">
-      <legend>Mode</legend>
+      <legend>{{ t("footer-mode-label") }}</legend>
       {% for m in modes %}
-      <label class="choice"><input type="radio" name="mode" value="{{ m }}"{% if current_mode == m %} checked{% endif %}> {{ {"system": "Match your device", "light": "Light", "dark": "Dark"}[m] }}</label>
+      <label class="choice"><input type="radio" name="mode" value="{{ m }}"{% if current_mode == m %} checked{% endif %}> {{ t("settings-mode-" ~ m) }}</label>
       {% endfor %}
     </fieldset>
-    <label for="blacklist">Blacklist</label>
+    <label for="blacklist">{{ t("settings-blacklist") }}</label>
     <textarea id="blacklist" name="blacklist" rows="5" autocapitalize="none" spellcheck="false">{{ blacklist }}</textarea>
-    <p class="hint">Posts matching a line are hidden. One rule per line; every term on a line must match: <code>tag</code>, <code>-tag</code>, <code>rating:e,q</code>.</p>
-    <label class="choice"><input type="checkbox" name="blur_blacklisted" value="1"{% if prefs_form.blur_blacklisted %} checked{% endif %}> Blur blacklisted posts instead of leaving them out</label>
+    <p class="hint">{{ t("settings-blacklist-hint") }}</p>
+    <label class="choice"><input type="checkbox" name="blur_blacklisted" value="1"{% if prefs_form.blur_blacklisted %} checked{% endif %}> {{ t("settings-blur") }}</label>
     <fieldset class="group">
-      <legend>Display</legend>
-      <label class="choice"><input type="checkbox" name="safe_mode" value="1"{% if prefs_form.safe_mode %} checked{% endif %}> Safe mode: only show general-rated posts</label>
-      <label class="choice"><input type="checkbox" name="original_images" value="1"{% if prefs_form.original_images %} checked{% endif %}> Show original images on post pages, not resized ones</label>
-      {% if can_view_deleted %}<label class="choice"><input type="checkbox" name="show_deleted" value="1"{% if prefs_form.show_deleted %} checked{% endif %}> Include deleted posts in searches</label>{% endif %}
-      {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> Large thumbnails ({{ large_thumbnail_size }} pixels)</label>{% endif %}
-      <label class="choice"><input type="checkbox" name="square_thumbnails" value="1"{% if prefs_form.square_thumbnails %} checked{% endif %}> Square thumbnails, cropped to the picture's most interesting part</label>
-      <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> Hide comments on post pages</label>
-      <label class="choice"><input type="checkbox" name="email_notifications" value="1"{% if prefs_form.email_notifications %} checked{% endif %}> Email me my notifications (to a confirmed address)</label>
-      <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> Suggest tags while typing</label>
-      <label class="choice"><input type="checkbox" name="shortcuts" value="1"{% if prefs_form.shortcuts %} checked{% endif %}> Keyboard shortcuts</label>
+      <legend>{{ t("settings-display") }}</legend>
+      <label class="choice"><input type="checkbox" name="safe_mode" value="1"{% if prefs_form.safe_mode %} checked{% endif %}> {{ t("settings-safe-mode") }}</label>
+      <label class="choice"><input type="checkbox" name="original_images" value="1"{% if prefs_form.original_images %} checked{% endif %}> {{ t("settings-original") }}</label>
+      {% if can_view_deleted %}<label class="choice"><input type="checkbox" name="show_deleted" value="1"{% if prefs_form.show_deleted %} checked{% endif %}> {{ t("settings-show-deleted") }}</label>{% endif %}
+      {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> {{ t("settings-large-thumbs", size=large_thumbnail_size) }}</label>{% endif %}
+      <label class="choice"><input type="checkbox" name="square_thumbnails" value="1"{% if prefs_form.square_thumbnails %} checked{% endif %}> {{ t("settings-square") }}</label>
+      <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> {{ t("settings-hide-comments") }}</label>
+      <label class="choice"><input type="checkbox" name="email_notifications" value="1"{% if prefs_form.email_notifications %} checked{% endif %}> {{ t("settings-email-notifications") }}</label>
+      <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> {{ t("settings-autocomplete") }}</label>
+      <label class="choice"><input type="checkbox" name="shortcuts" value="1"{% if prefs_form.shortcuts %} checked{% endif %}> {{ t("footer-shortcuts") }}</label>
     </fieldset>
-    <label for="time_zone">Time zone</label>
+    <label for="time_zone">{{ t("settings-time-zone") }}</label>
     <select id="time_zone" name="time_zone">
       <option value="">UTC</option>
       {% for zone in time_zones %}{% if zone != "UTC" %}<option{% if prefs_form.time_zone == zone %} selected{% endif %}>{{ zone }}</option>{% endif %}{% endfor %}
     </select>
-    <p class="hint">For the dates shown on pages.</p>
-    <label for="custom_css">Custom CSS</label>
+    <p class="hint">{{ t("settings-time-zone-hint") }}</p>
+    {% if languages %}
+    <label for="language">{{ t("settings-language") }}</label>
+    <select id="language" name="language">
+      <option value="">{{ t("settings-language-browser") }}</option>
+      {% for l in languages %}<option value="{{ l[0] }}"{% if prefs_form.language == l[0] %} selected{% endif %}>{{ l[1] }}</option>{% endfor %}
+    </select>
+    {% endif %}
+    <label for="custom_css">{{ t("settings-custom-css") }}</label>
     <textarea id="custom_css" name="custom_css" rows="5" autocapitalize="none" spellcheck="false">{{ prefs_form.custom_css }}</textarea>
-    <p class="hint">Applied after the site's styles, on every page, for you alone.</p>
-    <button type="submit">Save</button>
+    <p class="hint">{{ t("settings-custom-css-hint") }}</p>
+    <button type="submit">{{ t("common-save") }}</button>
   </form>
-  <p><a href="/settings/account">Your email address and password</a> · <a href="/settings/name">Your name</a></p>
-  <p><a href="/settings/api-keys">API keys</a> let scripts and apps use the site as you.</p>
-  {% if can_invite %}<p><a href="/invites">Invites</a> let people sign up when it takes an invite code.</p>{% endif %}
-  <h2>Feeds</h2>
-  <p class="hint">Search results and comments have Atom feeds (the <em>Feed</em> link beside results). On a private site, feed readers need your feed token: it lets them read feeds as you, and nothing else.</p>
+  <p><a href="/settings/account">{{ t("settings-account-link") }}</a> · <a href="/settings/name">{{ t("name-title") }}</a></p>
+  <p>{{ t("settings-api-keys") }}</p>
+  {% if can_invite %}<p>{{ t("settings-invites") }}</p>{% endif %}
+  <h2>{{ t("settings-feeds") }}</h2>
+  <p class="hint">{{ t("settings-feeds-hint") }}</p>
   <form class="inline" method="post" action="/settings/feed-token">
-    <button type="submit" name="action" value="new" class="secondary">{% if has_feed_token %}Make a new feed token{% else %}Make a feed token{% endif %}</button>
-    {% if has_feed_token %}<button type="submit" name="action" value="revoke" class="secondary" data-confirm="Revoke your feed token? Feed readers using it stop working.">Revoke it</button>{% endif %}
+    <button type="submit" name="action" value="new" class="secondary">{% if has_feed_token %}{{ t("settings-feed-token-new") }}{% else %}{{ t("settings-feed-token-make") }}{% endif %}</button>
+    {% if has_feed_token %}<button type="submit" name="action" value="revoke" class="secondary" data-confirm="{{ t('settings-feed-token-revoke-confirm') }}">{{ t("settings-feed-token-revoke") }}</button>{% endif %}
   </form>
-  <p><a href="/saved_searches">Saved searches</a>, to see the newest posts of several searches together.</p>
+  <p>{{ t("settings-saved-searches") }}</p>
 </section>
 {% endblock %}

@@ -1,23 +1,23 @@
 {% extends "base.html" %}
-{% block title %}{% if post_id %}Comments on post #{{ post_id }}{% elif user %}Comments by {{ user }}{% else %}Comments{% endif %} · {{ site.name }}{% endblock %}
-{% block head %}<link rel="alternate" type="application/atom+xml" title="Comments" href="/comments.atom">{% endblock %}
+{% block title %}{% if post_id %}{{ t("comments-on-post", id=post_id) }}{% elif user %}{{ t("comments-by", user=user) }}{% else %}{{ t("nav-comments") }}{% endif %} · {{ site.name }}{% endblock %}
+{% block head %}<link rel="alternate" type="application/atom+xml" title="{{ t('nav-comments') }}" href="/comments.atom">{% endblock %}
 {% block content %}
-{% if post_id %}<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>{% endif %}
-<h1>{% if post_id %}Comments on post #{{ post_id }}{% elif user %}Comments by {{ user }}{% else %}Comments{% endif %}</h1>
+{% if post_id %}<p class="back"><a href="/posts/{{ post_id }}">« {{ t("post-number", id=post_id) }}</a></p>{% endif %}
+<h1>{% if post_id %}{{ t("comments-on-post", id=post_id) }}{% elif user %}{{ t("comments-by", user=user) }}{% else %}{{ t("nav-comments") }}{% endif %}</h1>
 {% if rows %}
 <ol class="comment-list plain">
   {% for row in rows %}
   <li class="comment-row">
     <div class="comment-post">
       {% if row.card %}{% with card = row.card %}{% include "card.html" %}{% endwith %}
-      {% else %}<a class="hint" href="/posts/{{ row.comment.post_id }}">Post #{{ row.comment.post_id }}</a>{% endif %}
+      {% else %}<a class="hint" href="/posts/{{ row.comment.post_id }}">{{ t("post-number", id=row.comment.post_id) }}</a>{% endif %}
     </div>
     {% with comment = row.comment %}{% include "comment.html" %}{% endwith %}
   </li>
   {% endfor %}
 </ol>
-{% if next_url %}<nav class="pager" aria-label="Pages"><a rel="next" href="{{ next_url }}">Older ›</a></nav>{% endif %}
+{% if next_url %}<nav class="pager" aria-label="{{ t('pages') }}"><a rel="next" href="{{ next_url }}">{{ t("older") }}</a></nav>{% endif %}
 {% else %}
-<p class="empty">No comments yet.</p>
+<p class="empty">{{ t("comments-none") }}</p>
 {% endif %}
 {% endblock %}

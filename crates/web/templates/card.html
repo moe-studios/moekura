@@ -2,10 +2,10 @@
 <a href="{{ card.href }}" class="card rating-{{ card.rating }}{% if card.pending %} is-pending{% endif %}{% if card.deleted %} is-deleted{% endif %}{% if card.blacklisted %} is-blacklisted{% endif %}">
   {% if card.thumb %}
   <img class="thumb" src="{{ card.thumb }}"{% if card.thumb_2x %} srcset="{{ card.thumb }} 1x, {{ card.thumb_2x }} 2x"{% endif %}
-       width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }}" loading="lazy" decoding="async">
+       width="{{ card.width }}" height="{{ card.height }}" alt="{{ t('card-alt', id=card.id) }}" loading="lazy" decoding="async">
   {% else %}
   <img class="thumb pending-media" src="{{ asset('processing.svg') }}"
-       width="{{ card.width }}" height="{{ card.height }}" alt="Post #{{ card.id }} (still processing)">
+       width="{{ card.width }}" height="{{ card.height }}" alt="{{ t('card-alt-processing', id=card.id) }}">
   {% endif %}
-  {% if card.blacklisted %}<span class="badge">blacklisted</span>{% elif card.video %}<span class="badge">video</span>{% elif card.animated %}<span class="badge">anim</span>{% endif %}
+  {% if card.blacklisted %}<span class="badge">{{ t("card-blacklisted") }}</span>{% elif card.video %}<span class="badge">{{ t("card-video") }}</span>{% elif card.animated %}<span class="badge">{{ t("card-animated") }}</span>{% endif %}
 </a>

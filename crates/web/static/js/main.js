@@ -1,5 +1,26 @@
 // Built from frontend/src by npm run build. Do not edit.
 
+// src/i18n.ts
+var messages = null;
+function load() {
+  if (messages === null) {
+    try {
+      const data = typeof document === "undefined" ? void 0 : document.body?.dataset.messages;
+      messages = data ? JSON.parse(data) : {};
+    } catch {
+      messages = {};
+    }
+  }
+  return messages ?? {};
+}
+function t(key, english, args = {}) {
+  let text = load()[`js-${key}`] ?? english;
+  for (const [name, value] of Object.entries(args)) {
+    text = text.replaceAll(`{$${name}}`, String(value));
+  }
+  return text;
+}
+
 // src/suggestions.ts
 function withTag(tags, tag) {
   const words = tags.split(/\s+/).filter((word) => word !== "");
@@ -13,7 +34,7 @@ function enableSuggestions(root = document) {
   const field = form?.querySelector("textarea[name=tags]");
   if (!box || !form || !field) return;
   const hint = box.querySelector("[data-suggestions-hint]");
-  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
+  if (hint) hint.textContent = t("suggestions-hint", "Clicking one adds it to the form; save to keep it.");
   box.addEventListener("click", (event) => {
     const button = event.target.closest("button[name]");
     if (!button) return;
@@ -52,11 +73,11 @@ function enableArtistFinder(root = document) {
     if (found.length === 0 && unknown) {
       const label2 = document.createElement("span");
       label2.className = "hint";
-      label2.textContent = `By ${unknown.name}, who has no artist entry yet: `;
+      label2.textContent = t("artist-finder-unknown", "By {$name}, who has no artist entry yet: ", { name: unknown.name });
       const link = document.createElement("a");
       link.href = unknown.new_url;
       link.target = "_blank";
-      link.textContent = "start one";
+      link.textContent = t("artist-finder-start", "start one");
       box.replaceChildren(label2, link);
       box.hidden = false;
       return;
@@ -68,14 +89,14 @@ function enableArtistFinder(root = document) {
     }
     const label = document.createElement("span");
     label.className = "hint";
-    label.textContent = found.length === 1 ? "Artist: " : "Artists: ";
+    label.textContent = found.length === 1 ? t("artist-finder-one", "Artist: ") : t("artist-finder-many", "Artists: ");
     const buttons = found.map((artist) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "tag tag-artist link";
       button.dataset["tag"] = artist.name;
       button.textContent = artist.name;
-      button.title = "Add to the tags";
+      button.title = t("artist-finder-add", "Add to the tags");
       return button;
     });
     box.replaceChildren(label, ...buttons);
@@ -550,9 +571,9 @@ function enableCropPicker(root = document) {
   layer.append(outline);
   const draw = () => {
     outline.hidden = !details.open;
-    const [l, t, s] = [Number(left.value), Number(top.value), Number(side.value)];
+    const [l, t2, s] = [Number(left.value), Number(top.value), Number(side.value)];
     outline.style.left = `${l / width * 100}%`;
-    outline.style.top = `${t / height * 100}%`;
+    outline.style.top = `${t2 / height * 100}%`;
     outline.style.width = `${s / width * 100}%`;
     outline.style.height = `${s / height * 100}%`;
   };
@@ -582,7 +603,7 @@ function enableCopyTags(root = document) {
   const field = box?.closest("form")?.querySelector("textarea[name=tags]");
   if (!box || !field) return;
   const hint = box.querySelector("[data-copy-tags-hint]");
-  if (hint) hint.textContent = "Clicking one adds that post's tags to the form; save to keep them.";
+  if (hint) hint.textContent = t("copy-tags-hint", "Clicking one adds that post's tags to the form; save to keep them.");
   box.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-tags]");
     if (!button) return;
@@ -595,13 +616,13 @@ function enableCopyTags(root = document) {
 
 // src/keyboard.ts
 var SHORTCUTS = [
-  ["a, \u2190", "Previous post or page"],
-  ["d, \u2192", "Next post or page"],
-  ["e", "Edit the post"],
-  ["f", "Favorite the post"],
-  ["n", "Show or hide notes"],
-  ["/", "Search"],
-  ["?", "Show these shortcuts"]
+  ["a, \u2190", "previous", "Previous post or page"],
+  ["d, \u2192", "next", "Next post or page"],
+  ["e", "edit", "Edit the post"],
+  ["f", "favorite", "Favorite the post"],
+  ["n", "notes", "Show or hide notes"],
+  ["/", "search", "Search"],
+  ["?", "help", "Show these shortcuts"]
 ];
 function actionFor(key) {
   switch (key) {
@@ -636,18 +657,18 @@ function showHelp() {
     dialog.id = "shortcuts";
     dialog.className = "shortcuts";
     const title = document.createElement("h2");
-    title.textContent = "Keyboard shortcuts";
+    title.textContent = t("shortcuts-title", "Keyboard shortcuts");
     const list = document.createElement("dl");
-    for (const [keys, what] of SHORTCUTS) {
+    for (const [keys, key, english] of SHORTCUTS) {
       const dt = document.createElement("dt");
       dt.textContent = keys;
       const dd = document.createElement("dd");
-      dd.textContent = what;
+      dd.textContent = t(`shortcut-${key}`, english);
       list.append(dt, dd);
     }
     const close = document.createElement("button");
     close.type = "button";
-    close.textContent = "Close";
+    close.textContent = t("close", "Close");
     close.addEventListener("click", () => dialog.close());
     dialog.append(title, list, close);
     dialog.addEventListener("click", (event) => {
@@ -781,9 +802,9 @@ async function send(method, url, body) {
   if (response.ok) return null;
   try {
     const error = await response.json();
-    return error.error?.message ?? `Error ${response.status}`;
+    return error.error?.message ?? t("error-status", "Error {$status}", { status: response.status });
   } catch {
-    return `Error ${response.status}`;
+    return t("error-status", "Error {$status}", { status: response.status });
   }
 }
 function enableNoteEditor(root = document) {
@@ -803,7 +824,7 @@ function enableNoteEditor(root = document) {
   const toggle = root.createElement("button");
   toggle.type = "button";
   toggle.className = "secondary note-toggle";
-  toggle.textContent = "Edit notes";
+  toggle.textContent = t("notes-edit", "Edit notes");
   toggle.setAttribute("aria-pressed", "false");
   (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
   toggle.addEventListener("click", () => {
@@ -811,7 +832,7 @@ function enableNoteEditor(root = document) {
     layer.classList.toggle("editing-notes", on);
     layer.classList.remove("notes-hidden");
     toggle.setAttribute("aria-pressed", String(on));
-    toggle.textContent = on ? "Done editing notes" : "Edit notes";
+    toggle.textContent = on ? t("notes-done", "Done editing notes") : t("notes-edit", "Edit notes");
     if (!on) closeForm();
   });
   const form = root.createElement("form");
@@ -1059,7 +1080,7 @@ function enableNotes(root = document) {
   toggle.dataset["notesToggle"] = "";
   const apply = (hidden) => {
     layer.classList.toggle("notes-hidden", hidden);
-    toggle.textContent = hidden ? "Show notes" : "Hide notes";
+    toggle.textContent = hidden ? t("notes-show", "Show notes") : t("notes-hide", "Hide notes");
     toggle.setAttribute("aria-pressed", String(hidden));
     if (hidden) hide();
   };
@@ -1123,7 +1144,7 @@ function update(root, state) {
   const favCount = root.querySelector(".favorite .fav-count");
   if (favCount && state.fav_count !== void 0) favCount.textContent = String(state.fav_count);
   for (const button of root.querySelectorAll(".vote button[name=score]")) {
-    const direction = button.getAttribute("aria-label") === "Vote up" ? 1 : -1;
+    const direction = button.dataset.vote === "up" ? 1 : -1;
     const pressed = state.vote === direction;
     button.setAttribute("aria-pressed", String(pressed));
     button.value = String(pressed ? 0 : direction);
@@ -1150,7 +1171,7 @@ function enhanceReactions(root = document) {
         headers: { Accept: "application/json" }
       }).then(async (response) => {
         if (response.status === 429) {
-          toast("That was too quick. Wait a moment, then try again.");
+          toast(t("too-quick", "That was too quick. Wait a moment, then try again."));
           return;
         }
         if (!response.ok) throw new Error(String(response.status));
@@ -1166,7 +1187,7 @@ function enhanceReactions(root = document) {
 
 // src/reader.ts
 var PREFIX = "moekura:read:";
-function load(pool) {
+function load2(pool) {
   try {
     const value = Number(localStorage.getItem(PREFIX + pool));
     return Number.isInteger(value) && value > 0 ? value : null;
@@ -1204,10 +1225,10 @@ function enableReader(root = document) {
   const resumePool = resume?.dataset["readerResume"];
   const link = resume?.querySelector("a");
   if (resume && resumePool && link) {
-    const page = load(resumePool);
+    const page = load2(resumePool);
     if (page !== null && page > 1) {
       link.href = `/pools/${resumePool}/read/${page}`;
-      link.textContent = `Continue reading from page ${page}`;
+      link.textContent = t("reader-continue", "Continue reading from page {$page}", { page });
       resume.hidden = false;
     }
   }
@@ -1271,7 +1292,7 @@ function attach(panel, field) {
           button.dataset["tag"] = tag.name;
           button.setAttribute("aria-pressed", String(hasTag(field.value, tag.name)));
           button.textContent = tag.name;
-          button.title = tag.from ? `${tag.from} \u2192 ${tag.name}` : `${tag.post_count} posts`;
+          button.title = tag.from ? `${tag.from} \u2192 ${tag.name}` : t("related-posts", "{$count} posts", { count: tag.post_count });
           item.append(button);
           items.append(item);
         }
@@ -1337,8 +1358,8 @@ function enableResized() {
     event.preventDefault();
     const showOriginal = image.getAttribute("src") !== original;
     image.src = showOriginal ? original : sample;
-    text.textContent = showOriginal ? "Showing the original." : `Resized to ${percent}% of the original.`;
-    link.textContent = showOriginal ? "Show the resized image" : "View the original";
+    text.textContent = showOriginal ? t("resized-original", "Showing the original.") : t("resized-to", "Resized to {$percent}% of the original.", { percent: percent ?? "" });
+    link.textContent = showOriginal ? t("resized-show-resized", "Show the resized image") : t("resized-show-original", "View the original");
   });
 }
 
@@ -1374,7 +1395,7 @@ function parseScript(text) {
     const lower = word.toLowerCase();
     if (lower.startsWith("rating:")) {
       const rating = RATINGS[lower.slice("rating:".length)];
-      if (!rating) throw new Error(`Unknown rating in \u201C${word}\u201D.`);
+      if (!rating) throw new Error(t("tag-script-rating", "Unknown rating in \u201C{$word}\u201D.", { word }));
       script.rating = rating;
     } else if (word.startsWith("-") && word.length > 1 && !isNegatedMetatag(lower)) {
       script.remove.push(word.slice(1));
@@ -1419,7 +1440,7 @@ function enableTagScript(root = document) {
         return;
       }
       if (script.add.length === 0 && script.remove.length === 0 && script.rating === null) {
-        say("Type a script first.");
+        say(t("tag-script-empty", "Type a script first."));
         return;
       }
       const body = { add_tags: script.add, remove_tags: script.remove };
@@ -1435,16 +1456,21 @@ function enableTagScript(root = document) {
         card.classList.remove("script-busy");
         if (response.ok) {
           card.classList.add("script-ok");
-          say(`Post #${id} changed.`);
+          say(t("tag-script-changed", "Post #{$id} changed.", { id }));
         } else {
           card.classList.add("script-failed");
           const error = await response.json().catch(() => null);
-          say(`Post #${id}: ${error?.error?.message ?? `error ${response.status}`}`);
+          say(
+            t("tag-script-error", "Post #{$id}: {$error}", {
+              id,
+              error: error?.error?.message ?? t("error-status", "Error {$status}", { status: response.status })
+            })
+          );
         }
       }).catch(() => {
         card.classList.remove("script-busy");
         card.classList.add("script-failed");
-        say(`Post #${id} couldn't be changed.`);
+        say(t("tag-script-failed", "Post #{$id} couldn't be changed.", { id }));
       });
     },
     true
@@ -1463,7 +1489,7 @@ function enableUpload(root = document) {
   if (hint) hint.hidden = false;
   const select = (files) => {
     if (files.length !== 1) {
-      status.textContent = "Choose one file at a time. Your current selection has not changed.";
+      status.textContent = t("upload-one-file", "Choose one file at a time. Your current selection has not changed.");
       return;
     }
     const transfer = new DataTransfer();
@@ -1472,7 +1498,7 @@ function enableUpload(root = document) {
     input.dispatchEvent(new Event("change", { bubbles: true }));
   };
   input.addEventListener("change", () => {
-    status.textContent = input.files?.[0] ? `Selected: ${input.files[0].name}` : "";
+    status.textContent = input.files?.[0] ? t("upload-selected", "Selected: {$name}", { name: input.files[0].name }) : "";
   });
   root.addEventListener("paste", (event) => {
     const files = event.clipboardData?.files;

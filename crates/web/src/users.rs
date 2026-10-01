@@ -335,8 +335,11 @@ fn render_settings(
                 shortcuts => settings.shortcuts,
                 time_zone => settings.time_zone,
                 custom_css => settings.custom_css,
+                language => settings.language,
             },
             time_zones => crate::dates::zone_names(),
+            // Only worth choosing between several.
+            languages => Some(page.state().locales.languages()).filter(|l| l.len() > 1),
             can_view_deleted => page.current.can(Permission::ViewDeleted),
             large_thumbnail_size => page.state().media.config().thumbnail_sizes.get(1),
             site_theme => crate::themes::label(crate::themes::resolve(
@@ -376,6 +379,9 @@ struct SettingsForm {
     time_zone: String,
     #[serde(default)]
     custom_css: String,
+    /// Empty to follow the browser.
+    #[serde(default)]
+    language: String,
 }
 
 fn parse_mode(text: &str) -> Result<Mode, AppError> {
@@ -418,6 +424,11 @@ async fn save_settings(
         _ => return Err(AppError::BadRequest("Unknown time zone".into())),
     };
     let custom_css = form.custom_css.replace("\r\n", "\n").trim().to_owned();
+    let language = match form.language.as_str() {
+        "" => None,
+        tag if page.state().locales.has(tag) => Some(tag.to_owned()),
+        _ => return Err(AppError::BadRequest("Unknown language".into())),
+    };
     let settings = UserSettings {
         per_page,
         mode,
@@ -435,6 +446,7 @@ async fn save_settings(
         autocomplete: form.autocomplete.is_some(),
         shortcuts: form.shortcuts.is_some(),
         custom_css,
+        language,
     };
     let error = match Blacklist::parse(&blacklist) {
         Err(error) => Some(error.to_string()),

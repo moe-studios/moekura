@@ -1,36 +1,36 @@
 {% extends "base.html" %}
-{% block title %}Artists · {{ site.name }}{% endblock %}
+{% block title %}{{ t("tag-nav-artists") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
-<h1>Artists</h1>
+<h1>{{ t("tag-nav-artists") }}</h1>
 <form class="filters" method="get" action="/artists">
   <div class="filter-field">
-    <label for="artist-name">Name</label>
-    <input id="artist-name" name="name" value="{{ query.name }}" size="16" placeholder="name, other name or group">
+    <label for="artist-name">{{ t("account-name") }}</label>
+    <input id="artist-name" name="name" value="{{ query.name }}" size="16" placeholder="{{ t('artists-placeholder') }}">
   </div>
   <div class="filter-field">
-    <label for="artist-url">URL</label>
+    <label for="artist-url">{{ t("url") }}</label>
     <input id="artist-url" name="url" value="{{ query.url }}" size="24" placeholder="https://">
   </div>
   <div class="filter-field">
-    <label for="artist-banned">Banned</label>
+    <label for="artist-banned">{{ t("artists-banned") }}</label>
     <select id="artist-banned" name="banned">
-      <option value=""{% if not query.banned %} selected{% endif %}>Any</option>
-      <option value="yes"{% if query.banned == "yes" %} selected{% endif %}>Yes</option>
-      <option value="no"{% if query.banned == "no" %} selected{% endif %}>No</option>
+      <option value=""{% if not query.banned %} selected{% endif %}>{{ t("any") }}</option>
+      <option value="yes"{% if query.banned == "yes" %} selected{% endif %}>{{ t("yes") }}</option>
+      <option value="no"{% if query.banned == "no" %} selected{% endif %}>{{ t("no") }}</option>
     </select>
   </div>
-  <button type="submit">Search</button>
+  <button type="submit">{{ t("search") }}</button>
 </form>
-<p class="hint">{% if can_create %}<a href="/artists/new">New artist</a> · {% endif %}<a href="/artists/finder">Find an artist by URL</a> · <a href="/artist_versions">Recent changes</a></p>
+<p class="hint">{% if can_create %}<a href="/artists/new">{{ t("artist-new") }}</a> · {% endif %}<a href="/artists/finder">{{ t("finder-heading") }}</a> · <a href="/artist_versions">{{ t("recent-changes") }}</a></p>
 {% if artists %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Artists table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('artists-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">Name</th><th scope="col">Other names</th><th scope="col">Group</th><th scope="col">URLs</th><th scope="col">Updated</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("account-name") }}</th><th scope="col">{{ t("other-names") }}</th><th scope="col">{{ t("artist-group") }}</th><th scope="col">{{ t("artist-urls") }}</th><th scope="col">{{ t("updated") }}</th></tr></thead>
   <tbody>
     {% for a in artists %}
     <tr>
-      <td><a class="tag tag-artist" href="{{ a.url }}">{{ a.title }}</a>{% if a.banned %} <span class="hint">banned</span>{% endif %}</td>
+      <td><a class="tag tag-artist" href="{{ a.url }}">{{ a.title }}</a>{% if a.banned %} <span class="hint">{{ t("banned-word") }}</span>{% endif %}</td>
       <td>{{ a.other_names|join(", ") }}</td>
       <td>{{ a.group }}</td>
       <td class="num">{{ a.urls|length }}</td>
@@ -41,12 +41,12 @@
 </table>
 </div>
 {% else %}
-<p class="empty">No artists found.</p>
+<p class="empty">{{ t("artists-none") }}</p>
 {% endif %}
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

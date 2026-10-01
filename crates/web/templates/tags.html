@@ -1,55 +1,55 @@
 {% extends "base.html" %}
-{% block title %}Tags · {{ site.name }}{% endblock %}
+{% block title %}{{ t("nav-tags") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
-<h1>Tags</h1>
+<h1>{{ t("nav-tags") }}</h1>
 <form class="filters" method="get" action="/tags">
   <div class="filter-field">
-    <label for="tag-name">Name</label>
-    <input id="tag-name" name="name" value="{{ query.name }}" placeholder="long_ha or *_hair">
+    <label for="tag-name">{{ t("account-name") }}</label>
+    <input id="tag-name" name="name" value="{{ query.name }}" placeholder="{{ t('tags-placeholder') }}">
   </div>
   <div class="filter-field">
-    <label for="tag-category">Category</label>
+    <label for="tag-category">{{ t("tag-category") }}</label>
     <select id="tag-category" name="category">
-      <option value="">Any</option>
+      <option value="">{{ t("any") }}</option>
       {% for category in categories %}
       <option value="{{ category.name }}"{% if query.category == category.name %} selected{% endif %}>{{ category.label }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="filter-field">
-    <label for="tag-order">Order</label>
+    <label for="tag-order">{{ t("order") }}</label>
     <select id="tag-order" name="order">
-      <option value="count">Most used</option>
-      <option value="name"{% if query.order == "name" %} selected{% endif %}>Name</option>
-      <option value="newest"{% if query.order == "newest" %} selected{% endif %}>Newest</option>
+      <option value="count">{{ t("tags-order-count") }}</option>
+      <option value="name"{% if query.order == "name" %} selected{% endif %}>{{ t("account-name") }}</option>
+      <option value="newest"{% if query.order == "newest" %} selected{% endif %}>{{ t("tags-order-newest") }}</option>
     </select>
   </div>
-  <button type="submit">Search</button>
+  <button type="submit">{{ t("search") }}</button>
 </form>
 {% if tags %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Tags table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('tags-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">Name</th><th scope="col">Category</th><th scope="col" class="num">Posts</th>{% if can_edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
+  <thead><tr><th scope="col">{{ t("account-name") }}</th><th scope="col">{{ t("tag-category") }}</th><th scope="col" class="num">{{ t("nav-posts") }}</th>{% if can_edit %}<th scope="col"><span class="visually-hidden">{{ t("actions") }}</span></th>{% endif %}</tr></thead>
   <tbody>
     {% for tag in tags %}
     <tr>
-      <td><a class="tag tag-{{ tag.category }}{% if tag.deprecated %} is-deprecated{% endif %}" href="{{ tag.url }}">{{ tag.name }}</a>{% if tag.deprecated %} <span class="hint">deprecated</span>{% endif %}</td>
+      <td><a class="tag tag-{{ tag.category }}{% if tag.deprecated %} is-deprecated{% endif %}" href="{{ tag.url }}">{{ tag.name }}</a>{% if tag.deprecated %} <span class="hint">{{ t("deprecated") }}</span>{% endif %}</td>
       <td>{{ tag.category_label }}</td>
       <td class="num">{{ tag.count }}</td>
-      {% if can_edit %}<td><a href="/tags/{{ tag.id }}/edit">Edit</a></td>{% endif %}
+      {% if can_edit %}<td><a href="/tags/{{ tag.id }}/edit">{{ t("edit") }}</a></td>{% endif %}
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% else %}
-<p class="empty">No tags found.</p>
+<p class="empty">{{ t("tags-none") }}</p>
 {% endif %}
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

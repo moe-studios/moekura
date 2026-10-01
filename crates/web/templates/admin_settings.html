@@ -1,140 +1,140 @@
 {% extends "base.html" %}
-{% block title %}Site settings · {{ site.name }}{% endblock %}
+{% block title %}{{ t("as-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "admin_nav.html" %}
 <section class="card medium">
-  <h1>Site settings</h1>
+  <h1>{{ t("as-title") }}</h1>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/admin/settings/logo" enctype="multipart/form-data" class="logo-form">
-    <label for="logo">Logo</label>
-    {% if logo %}<p><img class="logo-preview" src="{{ logo }}" alt="The current logo" height="48"></p>{% endif %}
+    <label for="logo">{{ t("as-logo") }}</label>
+    {% if logo %}<p><img class="logo-preview" src="{{ logo }}" alt="{{ t('as-logo-alt') }}" height="48"></p>{% endif %}
     <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif">
-    <p class="hint">Shown beside the site's name. PNG, JPEG, GIF, WebP or AVIF, up to 1 MB; it is shown 32 pixels high.</p>
+    <p class="hint">{{ t("as-logo-hint") }}</p>
     <div class="actions">
-      <button type="submit" class="secondary">Upload logo</button>
-      {% if logo %}<button type="submit" class="secondary" name="remove" value="1">Remove logo</button>{% endif %}
+      <button type="submit" class="secondary">{{ t("as-logo-upload") }}</button>
+      {% if logo %}<button type="submit" class="secondary" name="remove" value="1">{{ t("as-logo-remove") }}</button>{% endif %}
     </div>
   </form>
   <form method="post" action="/admin/settings">
-    <label for="site_name">Site name</label>
+    <label for="site_name">{{ t("as-site-name") }}</label>
     <input id="site_name" name="site_name" value="{{ settings.site_name }}" maxlength="64" required>
-    <label for="site_description">Description</label>
+    <label for="site_description">{{ t("description") }}</label>
     <textarea id="site_description" name="site_description" rows="2" maxlength="300">{{ settings.site_description }}</textarea>
-    <p class="hint">A sentence or two about the site, shown in the footer and to search engines.</p>
-    <label for="rules">Rules</label>
+    <p class="hint">{{ t("as-description-hint") }}</p>
+    <label for="rules">{{ t("rules-title") }}</label>
     <textarea id="rules" name="rules" rows="8">{{ settings.rules }}</textarea>
-    <p class="hint">What may be posted, and how to behave, in the same markup as the wiki. Shown at <a href="/rules">/rules</a> and linked from the footer, sign-up and uploads. Leave it empty for no rules page.</p>
-    <label for="footer_links">Footer links</label>
+    <p class="hint">{{ t("as-rules-hint") }}</p>
+    <label for="footer_links">{{ t("as-footer-links") }}</label>
     <textarea id="footer_links" name="footer_links" rows="3" spellcheck="false" placeholder="Discord https://discord.gg/…">{{ settings.footer_links }}</textarea>
-    <p class="hint">One per line: the link's text, then its address (<code>https://…</code> or a path on this site, like <code>/wiki/help</code>).</p>
-    <label for="registration_mode">Registration</label>
+    <p class="hint">{{ t("as-footer-links-hint") }}</p>
+    <label for="registration_mode">{{ t("as-registration") }}</label>
     <select id="registration_mode" name="registration_mode">
-      {% for m in registration_modes %}<option value="{{ m }}"{% if settings.registration_mode == m %} selected{% endif %}>{{ {"open": "Open to anyone", "invite": "Invite code needed", "approval": "Staff approve new accounts", "closed": "Closed"}[m] }}</option>{% endfor %}
+      {% for m in registration_modes %}<option value="{{ m }}"{% if settings.registration_mode == m %} selected{% endif %}>{{ t("as-registration-" ~ m) }}</option>{% endfor %}
     </select>
-    <label for="invite_quota">Invites each person may make every 30 days</label>
+    <label for="invite_quota">{{ t("as-invite-quota") }}</label>
     <input id="invite_quota" name="invite_quota" type="number" min="0" max="1000" value="{{ settings.invite_quota }}">
-    <p class="hint">For roles with <em>Invite people</em>, at <a href="/invites">/invites</a>; those who can manage users have no limit.</p>
-    <label class="choice"><input type="checkbox" name="email_verification"{% if settings.email_verification %} checked{% endif %}> New accounts must confirm their email address</label>
-    {% if not mail_enabled %}<p class="hint">Mail isn't set up (<code>[mail]</code> in the server configuration), so addresses aren't checked.</p>{% endif %}
-    <label class="choice"><input type="checkbox" name="upload_approval"{% if settings.upload_approval %} checked{% endif %}> New uploads wait for approval (unless the uploader's role skips it)</label>
-    <label class="choice"><input type="checkbox" name="request_tags"{% if settings.request_tags %} checked{% endif %}> Tag posts <code>artist_request</code> while they have no artist tag, and <code>tagme</code> while they have fewer than 10 general tags</label>
+    <p class="hint">{{ t("as-invite-quota-hint") }}</p>
+    <label class="choice"><input type="checkbox" name="email_verification"{% if settings.email_verification %} checked{% endif %}> {{ t("as-email-verification") }}</label>
+    {% if not mail_enabled %}<p class="hint">{{ t("as-no-mail") }}</p>{% endif %}
+    <label class="choice"><input type="checkbox" name="upload_approval"{% if settings.upload_approval %} checked{% endif %}> {{ t("as-upload-approval") }}</label>
+    <label class="choice"><input type="checkbox" name="request_tags"{% if settings.request_tags %} checked{% endif %}> {{ t("as-request-tags") }}</label>
     <fieldset class="group">
-      <legend>Banned artists</legend>
-      <label class="choice"><input type="checkbox" name="banned_artists_hide"{% if settings.banned_artists.hide_posts %} checked{% endif %}> Hide their posts</label>
-      <label class="choice"><input type="checkbox" name="banned_artists_refuse"{% if settings.banned_artists.refuse_uploads %} checked{% endif %}> Refuse uploads, and edits adding their tag</label>
-      <p class="hint">Staff who approve posts still see and post them. Artists are banned from their <a href="/artists">artist entry</a>.</p>
+      <legend>{{ t("as-banned-artists") }}</legend>
+      <label class="choice"><input type="checkbox" name="banned_artists_hide"{% if settings.banned_artists.hide_posts %} checked{% endif %}> {{ t("as-banned-hide") }}</label>
+      <label class="choice"><input type="checkbox" name="banned_artists_refuse"{% if settings.banned_artists.refuse_uploads %} checked{% endif %}> {{ t("as-banned-refuse") }}</label>
+      <p class="hint">{{ t("as-banned-hint") }}</p>
     </fieldset>
-    <label class="choice"><input type="checkbox" name="upload_limit_scaling"{% if settings.upload_limit_scaling %} checked{% endif %}> Limits on uploads waiting for approval grow with a user's approved uploads and shrink with deleted ones</label>
-    <p class="hint">Each role's limits are set under <a href="/admin/roles">Roles</a>.</p>
+    <label class="choice"><input type="checkbox" name="upload_limit_scaling"{% if settings.upload_limit_scaling %} checked{% endif %}> {{ t("as-limit-scaling") }}</label>
+    <p class="hint">{{ t("as-limits-hint") }}</p>
     <fieldset class="limits">
-      <legend>Automatic promotion</legend>
-      <label class="choice"><input type="checkbox" name="auto_promotion"{% if settings.auto_promotion %} checked{% endif %}> Promote members to contributors (hourly) once they have</label>
-      <label for="promotion_uploads">Approved uploads</label>
+      <legend>{{ t("auto-promotion") }}</legend>
+      <label class="choice"><input type="checkbox" name="auto_promotion"{% if settings.auto_promotion %} checked{% endif %}> {{ t("as-promote") }}</label>
+      <label for="promotion_uploads">{{ t("as-promote-uploads") }}</label>
       <input id="promotion_uploads" name="promotion_uploads" type="number" min="0" value="{{ settings.promotion.uploads }}">
-      <label for="promotion_edits">Post edits</label>
+      <label for="promotion_edits">{{ t("as-promote-edits") }}</label>
       <input id="promotion_edits" name="promotion_edits" type="number" min="0" value="{{ settings.promotion.edits }}">
-      <label for="promotion_account_days">Days since registering</label>
+      <label for="promotion_account_days">{{ t("as-promote-days") }}</label>
       <input id="promotion_account_days" name="promotion_account_days" type="number" min="0" value="{{ settings.promotion.account_days }}">
-      <label for="promotion_max_recent_deletions">At most this many uploads deleted in the last 30 days</label>
+      <label for="promotion_max_recent_deletions">{{ t("as-promote-deletions") }}</label>
       <input id="promotion_max_recent_deletions" name="promotion_max_recent_deletions" type="number" min="0" value="{{ settings.promotion.max_recent_deletions }}">
-      <label for="promotion_max_negative_feedback">At most this many negative feedback records</label>
+      <label for="promotion_max_negative_feedback">{{ t("as-promote-feedback") }}</label>
       <input id="promotion_max_negative_feedback" name="promotion_max_negative_feedback" type="number" min="0" value="{{ settings.promotion.max_negative_feedback }}">
-      <p class="hint">Banned members, and those staff keep from promotion on their profile, aren't promoted.</p>
+      <p class="hint">{{ t("as-promote-hint") }}</p>
     </fieldset>
-    <label class="choice"><input type="checkbox" name="preview_all_ratings"{% if settings.preview_all_ratings %} checked{% endif %}> Link previews (in chat apps and social networks) show questionable and explicit posts' images too</label>
+    <label class="choice"><input type="checkbox" name="preview_all_ratings"{% if settings.preview_all_ratings %} checked{% endif %}> {{ t("as-preview-all") }}</label>
     <fieldset class="group">
-      <legend>Ratings visitors see</legend>
-      {% for code, name in [("g", "General"), ("s", "Sensitive"), ("q", "Questionable"), ("e", "Explicit")] %}
-      <label class="choice"><input type="checkbox" name="visitor_rating_{{ code }}"{% if code in settings.visitor_ratings %} checked{% endif %}> {{ name }}</label>
+      <legend>{{ t("as-visitor-ratings") }}</legend>
+      {% for code in ["g", "s", "q", "e"] %}
+      <label class="choice"><input type="checkbox" name="visitor_rating_{{ code }}"{% if code in settings.visitor_ratings %} checked{% endif %}> {{ t("rating-" ~ code) }}</label>
       {% endfor %}
-      <p class="hint">Logged-out visitors only see posts with these ratings, in searches, on post pages, in feeds and through the APIs. Tick all of them to show everything.</p>
+      <p class="hint">{{ t("as-visitor-ratings-hint") }}</p>
     </fieldset>
-    <label for="default_blacklist">Default blacklist</label>
+    <label for="default_blacklist">{{ t("as-default-blacklist") }}</label>
     <textarea id="default_blacklist" name="default_blacklist" rows="3" spellcheck="false">{{ settings.default_blacklist }}</textarea>
-    <p class="hint">For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.</p>
+    <p class="hint">{{ t("as-default-blacklist-hint") }}</p>
     <fieldset class="group">
-      <legend>Moderation reasons</legend>
-      <p class="hint">Offered when deleting, rejecting and flagging posts, one per line; anyone can still give another reason, or add details.</p>
-      <label for="deletion_reasons">For deleting and rejecting posts</label>
+      <legend>{{ t("as-reasons") }}</legend>
+      <p class="hint">{{ t("as-reasons-hint") }}</p>
+      <label for="deletion_reasons">{{ t("as-reasons-deletion") }}</label>
       <textarea id="deletion_reasons" name="deletion_reasons" rows="4">{{ settings.post_reasons.deletion }}</textarea>
-      <label for="flag_reasons">For flagging posts</label>
+      <label for="flag_reasons">{{ t("as-reasons-flag") }}</label>
       <textarea id="flag_reasons" name="flag_reasons" rows="4">{{ settings.post_reasons.flag }}</textarea>
     </fieldset>
     <fieldset class="group">
-      <legend>Spam</legend>
-      <label for="email_domain_mode">Email domains listed below are</label>
+      <legend>{{ t("as-spam") }}</legend>
+      <label for="email_domain_mode">{{ t("as-domain-mode") }}</label>
       <select id="email_domain_mode" name="email_domain_mode">
-        <option value="block"{% if not settings.email_domains.allow %} selected{% endif %}>Refused</option>
-        <option value="allow"{% if settings.email_domains.allow %} selected{% endif %}>The only ones accepted</option>
+        <option value="block"{% if not settings.email_domains.allow %} selected{% endif %}>{{ t("as-domain-refused") }}</option>
+        <option value="allow"{% if settings.email_domains.allow %} selected{% endif %}>{{ t("as-domain-only") }}</option>
       </select>
-      <label for="email_domains">Email domains</label>
+      <label for="email_domains">{{ t("as-domains") }}</label>
       <textarea id="email_domains" name="email_domains" rows="4" spellcheck="false" placeholder="mailinator.com">{{ settings.email_domains.list }}</textarea>
-      <p class="hint">One per line; each covers its subdomains. Applies to signing up and changing addresses. An empty list accepts any domain.</p>
-      {% if not captcha_enabled %}<p class="hint">No captcha service is set up (<code>[auth.captcha]</code> in the server configuration), so these only matter once one is.</p>{% endif %}
-      <label class="choice"><input type="checkbox" name="captcha_sign_up"{% if settings.captcha.sign_up %} checked{% endif %}> Ask for a captcha when signing up</label>
-      <label for="captcha_comment_account_days">Ask for one on comments by accounts younger than this many days (0 for never)</label>
+      <p class="hint">{{ t("as-domains-hint") }}</p>
+      {% if not captcha_enabled %}<p class="hint">{{ t("as-no-captcha") }}</p>{% endif %}
+      <label class="choice"><input type="checkbox" name="captcha_sign_up"{% if settings.captcha.sign_up %} checked{% endif %}> {{ t("as-captcha-sign-up") }}</label>
+      <label for="captcha_comment_account_days">{{ t("as-captcha-comments") }}</label>
       <input id="captcha_comment_account_days" name="captcha_comment_account_days" type="number" min="0" value="{{ settings.captcha.comment_account_days }}">
-      <label for="spam_filter_mode">Hold likely spam in comments, forum posts and messages for review</label>
+      <label for="spam_filter_mode">{{ t("as-spam-filter") }}</label>
       <select id="spam_filter_mode" name="spam_filter_mode">
-        <option value="auto"{% if settings.spam_filter.mode == "auto" %} selected{% endif %}>Unless the site is private</option>
-        <option value="on"{% if settings.spam_filter.mode == "on" %} selected{% endif %}>Always</option>
-        <option value="off"{% if settings.spam_filter.mode == "off" %} selected{% endif %}>Never</option>
+        <option value="auto"{% if settings.spam_filter.mode == "auto" %} selected{% endif %}>{{ t("as-spam-auto") }}</option>
+        <option value="on"{% if settings.spam_filter.mode == "on" %} selected{% endif %}>{{ t("as-spam-on") }}</option>
+        <option value="off"{% if settings.spam_filter.mode == "off" %} selected{% endif %}>{{ t("as-spam-off") }}</option>
       </select>
-      <p class="hint">Held writing waits under <a href="/moderation/held">Moderation → Held for review</a>. Staff who can hide comments are never held.</p>
-      <label for="spam_link_account_days">Hold links from accounts younger than this many days (0 for never)</label>
+      <p class="hint">{{ t("as-spam-hint") }}</p>
+      <label for="spam_link_account_days">{{ t("as-spam-links") }}</label>
       <input id="spam_link_account_days" name="spam_link_account_days" type="number" min="0" value="{{ settings.spam_filter.link_account_days }}">
-      <label for="spam_max_repeats">Hold text its writer already posted this many times today (0 for never)</label>
+      <label for="spam_max_repeats">{{ t("as-spam-repeats") }}</label>
       <input id="spam_max_repeats" name="spam_max_repeats" type="number" min="0" value="{{ settings.spam_filter.max_repeats }}">
-      <label for="spam_words">Spam words</label>
-      <textarea id="spam_words" name="spam_words" rows="4" spellcheck="false" placeholder="cheap pills">{{ settings.spam_filter.words }}</textarea>
-      <p class="hint">One word or phrase per line; writing that contains any is held, whatever the case.</p>
+      <label for="spam_words">{{ t("as-spam-words") }}</label>
+      <textarea id="spam_words" name="spam_words" rows="4" spellcheck="false" placeholder="{{ t('as-spam-words-placeholder') }}">{{ settings.spam_filter.words }}</textarea>
+      <p class="hint">{{ t("as-spam-words-hint") }}</p>
     </fieldset>
     <label for="robots_txt"><code>robots.txt</code></label>
-    <textarea id="robots_txt" name="robots_txt" rows="4" spellcheck="false" placeholder="Empty for the default">{{ settings.robots_txt }}</textarea>
-    <details class="hint"><summary>The default</summary><pre>{{ default_robots }}</pre></details>
-    <label for="ip_history_days">Keep the addresses accounts use for this many days</label>
+    <textarea id="robots_txt" name="robots_txt" rows="4" spellcheck="false" placeholder="{{ t('as-robots-placeholder') }}">{{ settings.robots_txt }}</textarea>
+    <details class="hint"><summary>{{ t("as-robots-default") }}</summary><pre>{{ default_robots }}</pre></details>
+    <label for="ip_history_days">{{ t("as-ip-days") }}</label>
     <input id="ip_history_days" name="ip_history_days" type="number" min="0" max="3650" value="{{ settings.ip_history_days }}">
-    <p class="hint">Staff who can ban users see them on a user's moderation record, with other accounts seen on the same addresses. 0 keeps none.</p>
-    <label for="default_theme">Default theme</label>
+    <p class="hint">{{ t("as-ip-days-hint") }}</p>
+    <label for="default_theme">{{ t("as-default-theme") }}</label>
     <select id="default_theme" name="default_theme">
-      {% for t in themes %}<option value="{{ t.name }}"{% if settings.default_theme == t.name %} selected{% endif %}>{{ t.label }}</option>{% endfor %}
+      {% for choice in themes %}<option value="{{ choice.name }}"{% if settings.default_theme == choice.name %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
     </select>
-    <p class="hint">For visitors, and users who haven't picked one. To add a theme, put <code>themes/&lt;name&gt;.css</code> in the <code>static_override</code> directory and restart.</p>
+    <p class="hint">{{ t("as-default-theme-hint") }}</p>
     <fieldset class="limits">
-      <legend>Tagger</legend>
-      {% if not tagger_enabled %}<p class="hint">The tagger isn't set up (<code>[tagger]</code> in the server configuration), so these only matter once it is.</p>{% endif %}
-      <p class="hint">How sure the tagger must be, in percent, to suggest a tag of each category. Categories left blank use General's.</p>
+      <legend>{{ t("as-tagger") }}</legend>
+      {% if not tagger_enabled %}<p class="hint">{{ t("as-no-tagger") }}</p>{% endif %}
+      <p class="hint">{{ t("as-tagger-hint") }}</p>
       {% for category in settings.tagger.thresholds %}
       <label for="tagger_threshold_{{ category.name }}">{{ category.label }}</label>
       <input id="tagger_threshold_{{ category.name }}" name="tagger_threshold_{{ category.name }}" type="number" min="1" max="100" value="{{ category.value if category.value is not none else "" }}">
       {% endfor %}
-      <label class="choice"><input type="checkbox" name="tagger_auto_apply"{% if settings.tagger.auto_apply %} checked{% endif %}> Add suggested tags to posts when the tagger is at least this sure, as the <code>{{ tagger_account }}</code> account</label>
-      <label for="tagger_auto_threshold">Percent sure</label>
+      <label class="choice"><input type="checkbox" name="tagger_auto_apply"{% if settings.tagger.auto_apply %} checked{% endif %}> {{ t("as-tagger-auto", account=tagger_account) }}</label>
+      <label for="tagger_auto_threshold">{{ t("as-tagger-percent") }}</label>
       <input id="tagger_auto_threshold" name="tagger_auto_threshold" type="number" min="1" max="100" value="{{ settings.tagger.auto_threshold }}">
-      <label class="choice"><input type="checkbox" name="tagger_auto_rating"{% if settings.tagger.auto_rating %} checked{% endif %}> Change the rating too, when it is that sure of another</label>
+      <label class="choice"><input type="checkbox" name="tagger_auto_rating"{% if settings.tagger.auto_rating %} checked{% endif %}> {{ t("as-tagger-rating") }}</label>
     </fieldset>
-    <p class="hint">To make the site private, take “View posts” away from the Anonymous role under <a href="/admin/roles">Roles</a>.</p>
-    <button type="submit">Save</button>
+    <p class="hint">{{ t("as-private-hint") }}</p>
+    <button type="submit">{{ t("common-save") }}</button>
   </form>
 </section>
 {% endblock %}

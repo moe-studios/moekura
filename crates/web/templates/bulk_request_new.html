@@ -1,22 +1,18 @@
 {% extends "base.html" %}
-{% block title %}New bulk update request · {{ site.name }}{% endblock %}
+{% block title %}{{ t("bur-new-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
-<p class="back"><a href="/tags/requests">« Bulk update requests</a></p>
-<h1>New bulk update request</h1>
+<p class="back"><a href="/tags/requests">« {{ t("bur-title") }}</a></p>
+<h1>{{ t("bur-new-title") }}</h1>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 <form class="wiki-form" method="post" action="/tags/requests">
-  <label for="request-title">Title</label>
+  <label for="request-title">{{ t("field-title") }}</label>
   <input id="request-title" name="title" value="{{ form.title }}" maxlength="200" required>
-  <label for="request-script">Script</label>
+  <label for="request-script">{{ t("bur-script") }}</label>
   <textarea id="request-script" name="script" rows="10" spellcheck="false" required>{{ form.script }}</textarea>
-  <p class="hint">One change a line:
-    <code>alias kitty -&gt; cat</code>, <code>imply cat -&gt; animal</code>,
-    <code>unalias a -&gt; b</code>, <code>unimply a -&gt; b</code>,
-    <code>update cat_ears -&gt; animal_ears -cat_ears</code> (a search, then tags to add, and to remove with <code>-</code>),
-    <code>category someone -&gt; artist</code>. Lines starting with <code>#</code> are ignored.</p>
-  <label for="request-reason">Reason <span class="optional">(optional)</span></label>
+  <p class="hint">{{ t("bur-script-hint") }}</p>
+  <label for="request-reason">{{ t("reason") }} <span class="optional">{{ t("optional") }}</span></label>
   <textarea id="request-reason" name="reason" rows="4">{{ form.reason }}</textarea>
-  <button type="submit">Send request</button>
+  <button type="submit">{{ t("bur-send") }}</button>
 </form>
 {% endblock %}

@@ -2,14 +2,17 @@
 // has, so the page decides what "next" means (the next post in a search,
 // or the next page of results).
 
-export const SHORTCUTS: readonly (readonly [string, string])[] = [
-  ["a, ←", "Previous post or page"],
-  ["d, →", "Next post or page"],
-  ["e", "Edit the post"],
-  ["f", "Favorite the post"],
-  ["n", "Show or hide notes"],
-  ["/", "Search"],
-  ["?", "Show these shortcuts"],
+import { t } from "./i18n.ts";
+
+/** Keys, the message naming what they do, and its English text. */
+export const SHORTCUTS: readonly (readonly [string, string, string])[] = [
+  ["a, ←", "previous", "Previous post or page"],
+  ["d, →", "next", "Next post or page"],
+  ["e", "edit", "Edit the post"],
+  ["f", "favorite", "Favorite the post"],
+  ["n", "notes", "Show or hide notes"],
+  ["/", "search", "Search"],
+  ["?", "help", "Show these shortcuts"],
 ];
 
 /** The action for a key, or null. Pure, for tests. */
@@ -52,18 +55,18 @@ export function showHelp(): void {
     dialog.id = "shortcuts";
     dialog.className = "shortcuts";
     const title = document.createElement("h2");
-    title.textContent = "Keyboard shortcuts";
+    title.textContent = t("shortcuts-title", "Keyboard shortcuts");
     const list = document.createElement("dl");
-    for (const [keys, what] of SHORTCUTS) {
+    for (const [keys, key, english] of SHORTCUTS) {
       const dt = document.createElement("dt");
       dt.textContent = keys;
       const dd = document.createElement("dd");
-      dd.textContent = what;
+      dd.textContent = t(`shortcut-${key}`, english);
       list.append(dt, dd);
     }
     const close = document.createElement("button");
     close.type = "button";
-    close.textContent = "Close";
+    close.textContent = t("close", "Close");
     close.addEventListener("click", () => dialog.close());
     dialog.append(title, list, close);
     // A click on the backdrop closes it.

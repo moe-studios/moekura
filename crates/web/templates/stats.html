@@ -1,16 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Stats · {{ site.name }}{% endblock %}
+{% block title %}{{ t("footer-stats") }} · {{ site.name }}{% endblock %}
 {% block content %}
 <section class="card medium">
-  <h1>Stats</h1>
+  <h1>{{ t("footer-stats") }}</h1>
   {% if totals %}
   <dl class="facts">
-    {% for t in totals %}<dt>{{ t.label }}</dt><dd>{{ t.value }}</dd>{% endfor %}
+    {% for total in totals %}<dt>{{ t("stats-" ~ total.key) }}</dt><dd>{{ total.value }}</dd>{% endfor %}
   </dl>
-  <p class="hint">Counted hourly; last on {{ counted }}.</p>
+  <p class="hint">{{ t("stats-counted", day=counted) }}</p>
   {% else %}
-  <p class="empty">The site's figures aren't counted yet; they will be within the hour.</p>
+  <p class="empty">{{ t("stats-not-yet") }}</p>
   {% endif %}
-  {% if can_report %}<p><a href="/reports">Reports</a> chart what's happened over time.</p>{% endif %}
+  {% if can_report %}<p>{{ t("stats-reports") }}</p>{% endif %}
 </section>
 {% endblock %}

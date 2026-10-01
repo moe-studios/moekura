@@ -62,20 +62,16 @@ impl ChangeQuery {
 /// Which list a page shows, for the shared template.
 struct Kind {
     path: &'static str,
-    title: &'static str,
 }
 
 const WIKI: Kind = Kind {
     path: "/wiki_page_versions",
-    title: "Wiki changes",
 };
 const POOLS: Kind = Kind {
     path: "/pool_versions",
-    title: "Pool changes",
 };
 const NOTES: Kind = Kind {
     path: "/note_versions",
-    title: "Note changes",
 };
 
 fn when(at: OffsetDateTime) -> (String, String) {
@@ -97,7 +93,6 @@ fn render(
         context! {
             kind => kind.path.trim_start_matches('/'),
             path => kind.path,
-            heading => kind.title,
             versions => rows,
             older_url => query.older_url(kind.path, ids),
             query => context! { user => query.user },

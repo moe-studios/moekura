@@ -3,91 +3,91 @@
 {% block content %}
 <section class="card medium">
   <h1>{{ user.name }}</h1>
-  {% if record_url %}<p><a href="{{ record_url }}">Moderation record</a></p>{% endif %}
+  {% if record_url %}<p><a href="{{ record_url }}">{{ t("profile-record") }}</a></p>{% endif %}
   {% if messages or feedback.can_give %}
   <div class="actions">
-    {% if messages and messages.can_send and not messages.blocked %}<a class="button" href="/dmails/new?to={{ user.name|urlencode }}">Send a message</a>{% endif %}
-    {% if feedback.can_give %}<a class="button secondary" href="/user_feedbacks/new?user={{ user.name|urlencode }}">Leave feedback</a>{% endif %}
+    {% if messages and messages.can_send and not messages.blocked %}<a class="button" href="/dmails/new?to={{ user.name|urlencode }}">{{ t("profile-send-message") }}</a>{% endif %}
+    {% if feedback.can_give %}<a class="button secondary" href="/user_feedbacks/new?user={{ user.name|urlencode }}">{{ t("feedback-leave") }}</a>{% endif %}
     {% if messages %}
-    <form method="post" action="/users/{{ user.name }}/block"><input type="hidden" name="blocked" value="{{ '0' if messages.blocked else '1' }}"><button type="submit" class="secondary">{% if messages.blocked %}Unblock{% else %}Block messages{% endif %}</button></form>
+    <form method="post" action="/users/{{ user.name }}/block"><input type="hidden" name="blocked" value="{{ '0' if messages.blocked else '1' }}"><button type="submit" class="secondary">{% if messages.blocked %}{{ t("unblock") }}{% else %}{{ t("profile-block") }}{% endif %}</button></form>
     {% endif %}
   </div>
   {% endif %}
   <dl class="facts">
-    <dt>Role</dt><dd>{{ user.role or "—" }}</dd>
-    {% if former_names %}<dt>Formerly</dt><dd>{{ former_names|join(", ") }}</dd>{% endif %}
-    <dt>Joined</dt><dd>{{ user.joined }}</dd>
-    {% if invited_by %}<dt>Invited by</dt><dd><a href="/users/{{ invited_by|urlencode }}">{{ invited_by }}</a></dd>{% endif %}
-    {% if user.status != "active" %}<dt>Status</dt><dd>{{ user.status }}</dd>{% endif %}
-    <dt>Uploads</dt><dd><a href="{{ uploads_url }}">{{ uploads }}</a>{% if more.deleted_uploads %} · <a href="{{ more.deleted_uploads_url }}">{{ more.deleted_uploads }} deleted</a>{% endif %}</dd>
-    {% if uploads %}<dt>Upload score</dt><dd><a href="{{ more.upload_score_url }}">{{ more.upload_score }}</a></dd>{% endif %}
-    {% if more.approvals %}<dt>Approvals</dt><dd><a href="{{ more.approvals_url }}">{{ more.approvals }}</a></dd>{% endif %}
-    <dt>Favorites</dt><dd><a href="{{ favorites_url }}">{{ favorites }}</a></dd>
-    <dt>Favorite groups</dt><dd><a href="{{ favorite_groups_url }}">{{ favorite_groups }}</a></dd>
-    {% if more.votes %}<dt>Votes</dt><dd><a href="{{ more.votes.up_url }}">{{ more.votes.up }} up</a>, <a href="{{ more.votes.down_url }}">{{ more.votes.down }} down</a></dd>{% endif %}
-    <dt>Post changes</dt><dd><a href="{{ changes_url }}">{{ more.post_changes }}</a></dd>
-    <dt>Note changes</dt><dd><a href="{{ more.note_changes_url }}">{{ more.note_changes }}</a></dd>
-    <dt>Wiki edits</dt><dd><a href="{{ more.wiki_edits_url }}">{{ more.wiki_edits }}</a></dd>
-    <dt>Pool edits</dt><dd><a href="{{ more.pool_edits_url }}">{{ more.pool_edits }}</a></dd>
-    <dt>Comments</dt><dd><a href="{{ comments_url }}">{{ comments }}</a></dd>
-    <dt>Forum posts</dt><dd><a href="{{ more.forum_posts_url }}">{{ more.forum_posts }}</a></dd>
-    <dt>Feedback</dt><dd><a href="{{ feedback.url }}">{% if feedback.positive or feedback.neutral or feedback.negative %}<span class="status-positive">{{ feedback.positive }} positive</span>, {{ feedback.neutral }} neutral, <span class="status-negative">{{ feedback.negative }} negative</span>{% else %}None{% endif %}</a></dd>
+    <dt>{{ t("role") }}</dt><dd>{{ user.role or "—" }}</dd>
+    {% if former_names %}<dt>{{ t("profile-formerly") }}</dt><dd>{{ former_names|join(", ") }}</dd>{% endif %}
+    <dt>{{ t("joined") }}</dt><dd>{{ user.joined }}</dd>
+    {% if invited_by %}<dt>{{ t("profile-invited-by") }}</dt><dd><a href="/users/{{ invited_by|urlencode }}">{{ invited_by }}</a></dd>{% endif %}
+    {% if user.status != "active" %}<dt>{{ t("status") }}</dt><dd>{{ t("status-" ~ user.status) }}</dd>{% endif %}
+    <dt>{{ t("uploads") }}</dt><dd><a href="{{ uploads_url }}">{{ uploads }}</a>{% if more.deleted_uploads %} · <a href="{{ more.deleted_uploads_url }}">{{ t("profile-deleted-count", count=more.deleted_uploads) }}</a>{% endif %}</dd>
+    {% if uploads %}<dt>{{ t("profile-upload-score") }}</dt><dd><a href="{{ more.upload_score_url }}">{{ more.upload_score }}</a></dd>{% endif %}
+    {% if more.approvals %}<dt>{{ t("metric-approvals") }}</dt><dd><a href="{{ more.approvals_url }}">{{ more.approvals }}</a></dd>{% endif %}
+    <dt>{{ t("stats-favorites") }}</dt><dd><a href="{{ favorites_url }}">{{ favorites }}</a></dd>
+    <dt>{{ t("profile-favorite-groups") }}</dt><dd><a href="{{ favorite_groups_url }}">{{ favorite_groups }}</a></dd>
+    {% if more.votes %}<dt>{{ t("votes") }}</dt><dd><a href="{{ more.votes.up_url }}">{{ t("profile-votes-up", count=more.votes.up) }}</a>, <a href="{{ more.votes.down_url }}">{{ t("profile-votes-down", count=more.votes.down) }}</a></dd>{% endif %}
+    <dt>{{ t("metric-post_changes") }}</dt><dd><a href="{{ changes_url }}">{{ more.post_changes }}</a></dd>
+    <dt>{{ t("metric-note_changes") }}</dt><dd><a href="{{ more.note_changes_url }}">{{ more.note_changes }}</a></dd>
+    <dt>{{ t("metric-wiki_edits") }}</dt><dd><a href="{{ more.wiki_edits_url }}">{{ more.wiki_edits }}</a></dd>
+    <dt>{{ t("profile-pool-edits") }}</dt><dd><a href="{{ more.pool_edits_url }}">{{ more.pool_edits }}</a></dd>
+    <dt>{{ t("nav-comments") }}</dt><dd><a href="{{ comments_url }}">{{ comments }}</a></dd>
+    <dt>{{ t("metric-forum_posts") }}</dt><dd><a href="{{ more.forum_posts_url }}">{{ more.forum_posts }}</a></dd>
+    <dt>{{ t("feedback") }}</dt><dd><a href="{{ feedback.url }}">{% if feedback.positive or feedback.neutral or feedback.negative %}<span class="status-positive">{{ t("profile-feedback-positive", count=feedback.positive) }}</span>, {{ t("profile-feedback-neutral", count=feedback.neutral) }}, <span class="status-negative">{{ t("profile-feedback-negative", count=feedback.negative) }}</span>{% else %}{{ t("none-capital") }}{% endif %}</a></dd>
   </dl>
   {% if chart %}
-  <h2>Uploads by month</h2>
-  {% with chart_label = "Uploads in each of the last 12 months" %}{% include "bar_chart.html" %}{% endwith %}
+  <h2>{{ t("profile-uploads-by-month") }}</h2>
+  {% with chart_label = t("profile-uploads-chart") %}{% include "bar_chart.html" %}{% endwith %}
   {% endif %}
   {% if top_tags %}
-  <h2>Most used in uploads</h2>
+  <h2>{{ t("profile-top-tags") }}</h2>
   <ul class="tag-list top-tags">
-    {% for t in top_tags %}<li><a class="tag-{{ t.category }}" href="{{ t.url }}">{{ t.name }}</a> <span class="hint">{{ t.posts }}</span></li>{% endfor %}
+    {% for tag in top_tags %}<li><a class="tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="hint">{{ tag.posts }}</span></li>{% endfor %}
   </ul>
   {% endif %}
-  {% if promotion.promoted %}<p class="hint">Promoted automatically on {{ promotion.promoted }}.</p>{% endif %}
+  {% if promotion.promoted %}<p class="hint">{{ t("profile-promoted", day=promotion.promoted) }}</p>{% endif %}
   {% if promotion.can_change %}
   <form class="inline" method="post" action="/users/{{ user.name }}/auto-promotion">
     {% if not promotion.blocked %}<input type="hidden" name="blocked" value="1">{% endif %}
-    <button type="submit" class="secondary">{% if promotion.blocked %}Allow automatic promotion{% else %}Never promote automatically{% endif %}</button>
-    {% if promotion.blocked %}<span class="hint">Kept from automatic promotion.</span>{% endif %}
+    <button type="submit" class="secondary">{% if promotion.blocked %}{{ t("profile-allow-promotion") }}{% else %}{{ t("profile-never-promote") }}{% endif %}</button>
+    {% if promotion.blocked %}<span class="hint">{{ t("profile-kept-from-promotion") }}</span>{% endif %}
   </form>
   {% endif %}
   {% if bans %}
-  <h2>Bans</h2>
+  <h2>{{ t("mod-nav-bans") }}</h2>
   <ul class="plain">
     {% for b in bans %}
-    <li><span class="status status-{{ 'open' if b.active else 'dismissed' }}">{{ "active" if b.active else ("lifted" if b.lifted else "expired") }}</span>
-      {{ b.since }}{% if b.until %}–{{ b.until }}{% endif %}{% if b.by %} by {{ b.by }}{% endif %}: {{ b.reason }}</li>
+    <li><span class="status status-{{ 'open' if b.active else 'dismissed' }}">{{ t("status-active") if b.active else (t("ban-lifted") if b.lifted else t("news-state-expired")) }}</span>
+      {{ b.since }}{% if b.until %}–{{ b.until }}{% endif %}{% if b.by %} {{ t("by-user", user=b.by) }}{% endif %}: {{ b.reason }}</li>
     {% endfor %}
   </ul>
   {% endif %}
   {% if can_ban %}
   <details class="edit">
-    <summary>{% if banned %}Change the ban{% else %}Ban{% endif %}</summary>
-    {% if banned %}<p class="hint">The new ban replaces the one in force.</p>{% endif %}
+    <summary>{% if banned %}{{ t("ban-change") }}{% else %}{{ t("ban") }}{% endif %}</summary>
+    {% if banned %}<p class="hint">{{ t("ban-replaces") }}</p>{% endif %}
     <form method="post" action="/users/{{ user.name }}/ban">
-      <label for="ban-reason">Reason</label>
+      <label for="ban-reason">{{ t("reason") }}</label>
       <input id="ban-reason" name="reason" maxlength="2000" required>
-      <label for="ban-days">For</label>
+      <label for="ban-days">{{ t("ban-for") }}</label>
       <select id="ban-days" name="days">
-        {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ d.label }}</option>{% endfor %}
+        {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ t("ban-for-" ~ (d.days or "ever")) }}</option>{% endfor %}
       </select>
-      <button type="submit" class="danger">Ban {{ user.name }}</button>
+      <button type="submit" class="danger">{{ t("ban-user", user=user.name) }}</button>
     </form>
   </details>
   {% endif %}
   {% if can_unban %}
-  <form method="post" action="/users/{{ user.name }}/unban"><button type="submit">Lift the ban</button></form>
+  <form method="post" action="/users/{{ user.name }}/unban"><button type="submit">{{ t("ban-lift") }}</button></form>
   {% endif %}
   {% if can_rename %}
   <details class="edit">
-    <summary>Rename</summary>
+    <summary>{{ t("rename") }}</summary>
     <form method="post" action="/users/{{ user.name }}/rename">
-      <label for="rename-name">New name</label>
+      <label for="rename-name">{{ t("name-new") }}</label>
       <input id="rename-name" name="name" required minlength="2" maxlength="32" autocapitalize="none" spellcheck="false">
-      <label for="rename-reason">Reason</label>
+      <label for="rename-reason">{{ t("reason") }}</label>
       <input id="rename-reason" name="reason" maxlength="2000">
-      <p class="hint">Unlike their own changes, this has no waiting time. It goes in the moderation log.</p>
-      <button type="submit">Rename {{ user.name }}</button>
+      <p class="hint">{{ t("profile-rename-hint") }}</p>
+      <button type="submit">{{ t("rename-user", user=user.name) }}</button>
     </form>
   </details>
   {% endif %}

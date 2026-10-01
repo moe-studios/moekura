@@ -631,6 +631,9 @@ impl Default for MediaTools {
 pub struct PathsConfig {
     pub templates_override: Option<PathBuf>,
     pub static_override: Option<PathBuf>,
+    /// Translations (`<language>/*.ftl`) that add languages or replace
+    /// built-in messages.
+    pub locales_override: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -754,6 +757,7 @@ impl Config {
         for (key, dir) in [
             ("paths.templates_override", &self.paths.templates_override),
             ("paths.static_override", &self.paths.static_override),
+            ("paths.locales_override", &self.paths.locales_override),
         ] {
             if let Some(dir) = dir.as_ref().filter(|d| !d.is_dir()) {
                 problems.push(ConfigProblem {

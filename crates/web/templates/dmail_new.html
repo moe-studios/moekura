@@ -1,18 +1,18 @@
 {% extends "base.html" %}
-{% block title %}New message · {{ site.name }}{% endblock %}
+{% block title %}{{ t("dmail-new-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<p class="back"><a href="/dmails">« Messages</a></p>
-<h1>New message</h1>
+<p class="back"><a href="/dmails">« {{ t("nav-messages") }}</a></p>
+<h1>{{ t("dmail-new-title") }}</h1>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 <form class="wiki-form" method="post" action="/dmails">
-  <label for="dmail-to">To</label>
+  <label for="dmail-to">{{ t("dmail-to") }}</label>
   <input id="dmail-to" name="to" value="{{ to }}" required autocomplete="off" autocapitalize="none" spellcheck="false">
-  <label for="dmail-title">Title</label>
+  <label for="dmail-title">{{ t("field-title") }}</label>
   <input id="dmail-title" name="title" value="{{ title }}" maxlength="250" required>
-  <label for="dmail-body">Message</label>
+  <label for="dmail-body">{{ t("dmail-body") }}</label>
   <textarea id="dmail-body" name="body" rows="10" maxlength="{{ max_len }}" required>{{ body }}</textarea>
   {% include "comment_help.html" %}
-  <p class="hint">Only you and the recipient see it, unless they report it to the staff.</p>
-  <button type="submit">Send</button>
+  <p class="hint">{{ t("dmail-new-hint") }}</p>
+  <button type="submit">{{ t("dmail-send") }}</button>
 </form>
 {% endblock %}

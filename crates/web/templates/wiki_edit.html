@@ -1,22 +1,17 @@
 {% extends "base.html" %}
-{% block title %}{% if is_new %}Start{% else %}Edit{% endif %} {{ title }} · Wiki · {{ site.name }}{% endblock %}
+{% block title %}{% if is_new %}{{ t("wiki-start", title=title) }}{% else %}{{ t("edit-thing", name=title) }}{% endif %} · {{ t("tag-nav-wiki") }} · {{ site.name }}{% endblock %}
 {% block content %}
 <p class="back"><a href="{{ url }}">« {{ title }}</a></p>
-<h1>{% if is_new %}Start the page for{% else %}Edit{% endif %} {{ title }}</h1>
-{% if error %}<p class="form-error" role="alert">{{ error }}{% if not is_new %} <a href="{{ url }}/history">History</a>{% endif %}</p>{% endif %}
+<h1>{% if is_new %}{{ t("wiki-start-page", title=title) }}{% else %}{{ t("edit-thing", name=title) }}{% endif %}</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}{% if not is_new %} <a href="{{ url }}/history">{{ t("tag-nav-history") }}</a>{% endif %}</p>{% endif %}
 <form class="wiki-form" method="post" action="{{ url }}/edit">
   <input type="hidden" name="base" value="{{ base }}">
-  <label for="wiki-body">Text</label>
+  <label for="wiki-body">{{ t("wiki-text") }}</label>
   <textarea id="wiki-body" name="body" rows="20" maxlength="{{ max_len }}" required>{{ body }}</textarea>
-  <p class="hint">
-    Blank lines separate paragraphs. <code>h2. Heading</code>, <code>* list item</code>,
-    <code>[b]bold[/b]</code>, <code>[i]italic[/i]</code>, <code>[[tag]]</code> or
-    <code>[[tag|text]]</code> for another wiki page, <code>{{ '{{' }}search{{ '}}' }}</code> for search
-    results, <code>post #123</code>, and plain links.
-  </p>
-  <label for="wiki-other-names">Other names</label>
+  <p class="hint">{{ t("wiki-markup-help") }}</p>
+  <label for="wiki-other-names">{{ t("other-names") }}</label>
   <input id="wiki-other-names" name="other_names" value="{{ other_names }}" autocomplete="off" autocapitalize="none" spellcheck="false">
-  <p class="hint">What the tag is called elsewhere, such as its Japanese name or a romanisation, separated by spaces (underscores within a name).</p>
-  <button type="submit">Save</button>
+  <p class="hint">{{ t("wiki-other-names-hint") }}</p>
+  <button type="submit">{{ t("common-save") }}</button>
 </form>
 {% endblock %}

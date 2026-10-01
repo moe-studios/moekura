@@ -78,6 +78,8 @@ pub struct SiteSettings {
     pub request_tags: bool,
     /// What happens to posts by artists staff have banned.
     pub banned_artists: BannedArtists,
+    /// Served as `/robots.txt`; empty for the default.
+    pub robots_txt: String,
 }
 
 /// What banning an artist does, for everyone but those who approve posts.
@@ -104,6 +106,8 @@ pub const MAX_IP_HISTORY_DAYS: u32 = 3650;
 /// The period [`SiteSettings::invite_quota`] counts over.
 pub const INVITE_QUOTA_DAYS: i64 = 30;
 pub const MAX_INVITE_QUOTA: u32 = 1000;
+/// The longest custom `robots.txt`, in bytes.
+pub const MAX_ROBOTS_TXT: usize = 20_000;
 
 impl Default for SiteSettings {
     fn default() -> Self {
@@ -138,6 +142,7 @@ impl Default for SiteSettings {
             post_reasons: crate::moderation::PostReasons::default(),
             request_tags: false,
             banned_artists: BannedArtists::default(),
+            robots_txt: String::new(),
         }
     }
 }
@@ -314,6 +319,9 @@ impl SiteSettings {
         self.email_domains.validate()?;
         self.spam_filter.validate()?;
         self.post_reasons.validate()?;
+        if self.robots_txt.len() > MAX_ROBOTS_TXT {
+            return Err(format!("at most {MAX_ROBOTS_TXT} bytes"));
+        }
         if self.invite_quota > MAX_INVITE_QUOTA {
             return Err(format!("at most {MAX_INVITE_QUOTA} invites"));
         }
@@ -353,6 +361,7 @@ mod tests {
                 "promotion_rules",
                 "registration_mode",
                 "request_tags",
+                "robots_txt",
                 "rules",
                 "site_description",
                 "site_name",

@@ -147,6 +147,7 @@ fn render_settings(
                 footer_links => moekura_core::settings::FooterLink::to_list(&current.footer_links),
                 registration_mode => mode_name(current.registration_mode),
                 invite_quota => current.invite_quota,
+                robots_txt => current.robots_txt,
                 email_verification => current.email_verification,
                 upload_approval => current.upload_approval,
                 upload_limit_scaling => current.upload_limit_scaling,
@@ -205,6 +206,7 @@ fn render_settings(
             logo => crate::site::logo_url(page.state()),
             registration_modes => ["open", "invite", "approval", "closed"],
             themes => crate::themes::choices(&page.state().assets),
+            default_robots => crate::sitemap::default_robots(page.state()),
             error => error,
         },
     )
@@ -288,6 +290,7 @@ struct SettingsForm {
     default_blacklist: String,
     ip_history_days: Option<String>,
     invite_quota: Option<String>,
+    robots_txt: Option<String>,
     /// `block` or `allow`.
     email_domain_mode: Option<String>,
     /// One domain per line.
@@ -431,6 +434,13 @@ async fn save_settings(
         ),
         ("visitor_ratings", json!(visitor_ratings(&form))),
         ("default_theme", json!(default_theme)),
+        (
+            "robots_txt",
+            form.robots_txt.as_deref().map_or_else(
+                || json!(before.robots_txt),
+                |text| json!(text.replace("\r\n", "\n").trim()),
+            ),
+        ),
         (
             "invite_quota",
             form.invite_quota

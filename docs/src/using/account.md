@@ -31,6 +31,20 @@
 The rest of this page is under **Settings → Your email address and
 password**.
 
+## Profiles
+
+Everyone's profile, at `/users/name`, counts what they've done, each
+count linking to the list or search behind it: uploads (and those since
+deleted), the score their uploads add up to, favorites and favorite
+groups, post, note, wiki and pool changes, comments, forum posts and
+[feedback](#feedback). Approvers' profiles count the posts they
+approved; you and staff who approve posts also see your up- and
+downvotes, which are private otherwise.
+
+Below them, a chart shows uploads in each of the last 12 months, and a
+list the tags used most on their latest 1000 uploads (leaving out meta
+tags), each linking to their uploads with that tag.
+
 ## Notifications
 
 **Notifications**, at the top of every page, lists what happened that

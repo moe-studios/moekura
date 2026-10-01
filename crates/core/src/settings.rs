@@ -71,6 +71,27 @@ pub struct SiteSettings {
     /// tag and `tagme` while it has few general tags, and lose them again
     /// once they don't apply.
     pub request_tags: bool,
+    /// What happens to posts by artists staff have banned.
+    pub banned_artists: BannedArtists,
+}
+
+/// What banning an artist does, for everyone but those who approve posts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BannedArtists {
+    /// Their posts are left out of searches and their pages not found.
+    pub hide_posts: bool,
+    /// Uploads, and edits adding their tag, are refused.
+    pub refuse_uploads: bool,
+}
+
+impl Default for BannedArtists {
+    fn default() -> Self {
+        Self {
+            hide_posts: true,
+            refuse_uploads: true,
+        }
+    }
 }
 
 /// The longest [`SiteSettings::ip_history_days`].
@@ -105,6 +126,7 @@ impl Default for SiteSettings {
             captcha: crate::spam::CaptchaSettings::default(),
             post_reasons: crate::moderation::PostReasons::default(),
             request_tags: false,
+            banned_artists: BannedArtists::default(),
         }
     }
 }
@@ -301,6 +323,7 @@ mod tests {
             SiteSettings::keys(),
             [
                 "auto_promotion",
+                "banned_artists",
                 "captcha",
                 "default_blacklist",
                 "default_theme",

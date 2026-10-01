@@ -28,7 +28,9 @@ use crate::posts::{PostStatus, Rating};
 use crate::tags::{RESERVED_PREFIXES, TagName, TagNameError, normalize};
 
 /// File types as stored in `media_assets.media_type`.
-pub const FILETYPES: &[&str] = &["jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm"];
+pub const FILETYPES: &[&str] = &[
+    "jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm", "ugoira",
+];
 
 /// Metatags this version understands. Other reserved prefixes
 /// ([`RESERVED_PREFIXES`]) are refused as not supported yet.
@@ -71,6 +73,11 @@ pub const METATAGS: &[&str] = &[
     "approver",
     "commenter",
     "comment",
+    "commentary",
+    "exif",
+    "embedded",
+    "pixiv",
+    "pixiv_id",
     "noter",
     "flagger",
     "upvote",
@@ -332,6 +339,32 @@ pub enum SourceFilter {
     Pattern(String),
 }
 
+/// What `pixiv:` and `pixiv_id:` ask of a post's source.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PixivFilter {
+    /// The source is a Pixiv work.
+    Any,
+    /// It isn't.
+    None,
+    /// A work with this id.
+    Id(Bound<i64>),
+}
+
+/// What `commentary:` asks of a post's artist commentary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommentaryFilter {
+    /// Has any (`true`).
+    Any,
+    /// Has none (`false`).
+    None,
+    /// Has a translation.
+    Translated,
+    /// Has an original but no translation.
+    Untranslated,
+    /// Contains these words, original or translated.
+    Words(String),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParentFilter {
     /// Posts without a parent.
@@ -393,6 +426,16 @@ pub enum Filter {
     Commenter(String),
     /// Comments that aren't deleted contain these words.
     Comment(String),
+    Commentary(CommentaryFilter),
+    /// The file's metadata has this field (`Group:Tag`, lower case), with
+    /// this value if given (lower case, underscores for spaces).
+    Exif {
+        key: String,
+        value: Option<String>,
+    },
+    /// The post's notes are drawn on the picture.
+    Embedded(bool),
+    Pixiv(PixivFilter),
     /// Has a note written or edited by this user.
     Noter(String),
     /// Flagged by this user; only for staff, or the flagger.
@@ -1053,6 +1096,49 @@ impl Query {
                     Filter::Comment(words)
                 }
             }
+            "exif" => {
+                let (key, value) = match value.split_once('=') {
+                    Some((key, value)) => (key, Some(value.to_owned())),
+                    None => (value, None),
+                };
+                if !key.contains(':') || key.starts_with(':') || key.ends_with(':') {
+                    return Err(invalid(
+                        "expected a metadata field like exif:file:colorcomponents, \
+                         with =value to match its value",
+                    ));
+                }
+                Filter::Exif {
+                    key: key.to_owned(),
+                    value,
+                }
+            }
+            "embedded" => Filter::Embedded(match value {
+                "true" | "yes" => true,
+                "false" | "no" => false,
+                _ => return Err(invalid("expected true or false")),
+            }),
+            "pixiv" | "pixiv_id" => Filter::Pixiv(match value {
+                "any" => PixivFilter::Any,
+                "none" => PixivFilter::None,
+                _ => PixivFilter::Id(
+                    bound(value, int).ok_or_else(|| invalid("expected a Pixiv id, any or none"))?,
+                ),
+            }),
+            "commentary" => Filter::Commentary(match value {
+                "true" | "any" => CommentaryFilter::Any,
+                "false" | "none" => CommentaryFilter::None,
+                "translated" => CommentaryFilter::Translated,
+                "untranslated" => CommentaryFilter::Untranslated,
+                words => {
+                    let words = words.replace('_', " ").trim().to_owned();
+                    if words.is_empty() {
+                        return Err(invalid(
+                            "expected true, false, translated, untranslated or words to find",
+                        ));
+                    }
+                    CommentaryFilter::Words(words)
+                }
+            }),
             "approver" => Filter::Approver(match value {
                 "" => return Err(invalid("expected a user name, any or none")),
                 "any" => UserMatch::Any,
@@ -1195,7 +1281,12 @@ impl Query {
             }
             "filetype" => Filter::FileType(
                 list(value, |v| {
-                    let v = if v == "jpg" { "jpeg" } else { v };
+                    let v = match v {
+                        "jpg" => "jpeg",
+                        // Danbooru's name, from the file's extension.
+                        "zip" => "ugoira",
+                        v => v,
+                    };
                     FILETYPES.contains(&v).then(|| v.to_owned())
                 })
                 .ok_or_else(|| invalid("expected file types like png, gif or webm"))?,
@@ -1531,6 +1622,23 @@ impl fmt::Display for Filter {
             Filter::Approver(UserMatch::Name(name)) => write!(f, "approver:{name}"),
             Filter::Commenter(name) => write!(f, "commenter:{name}"),
             Filter::Comment(words) => write!(f, "comment:{}", words.replace(' ', "_")),
+            Filter::Exif { key, value } => match value {
+                Some(value) => write!(f, "exif:{key}={value}"),
+                None => write!(f, "exif:{key}"),
+            },
+            Filter::Embedded(on) => write!(f, "embedded:{on}"),
+            Filter::Pixiv(PixivFilter::Any) => f.write_str("pixiv:any"),
+            Filter::Pixiv(PixivFilter::None) => f.write_str("pixiv:none"),
+            Filter::Pixiv(PixivFilter::Id(b)) => write!(f, "pixiv:{b}"),
+            Filter::Commentary(c) => match c {
+                CommentaryFilter::Any => f.write_str("commentary:true"),
+                CommentaryFilter::None => f.write_str("commentary:false"),
+                CommentaryFilter::Translated => f.write_str("commentary:translated"),
+                CommentaryFilter::Untranslated => f.write_str("commentary:untranslated"),
+                CommentaryFilter::Words(words) => {
+                    write!(f, "commentary:{}", words.replace(' ', "_"))
+                }
+            },
             Filter::Noter(name) => write!(f, "noter:{name}"),
             Filter::Flagger(name) => write!(f, "flagger:{name}"),
             Filter::Upvote(name) => write!(f, "upvote:{name}"),
@@ -2122,6 +2230,29 @@ mod tests {
             );
         }
         assert_eq!(filter("similar:12"), Filter::Similar(12));
+        assert_eq!(
+            filter("exif:File:ColorComponents=1"),
+            Filter::Exif {
+                key: "file:colorcomponents".into(),
+                value: Some("1".into())
+            }
+        );
+        assert!(error("exif:make").contains("metadata field"));
+        assert_eq!(filter("embedded:true"), Filter::Embedded(true));
+        assert_eq!(
+            filter("pixiv_id:>100"),
+            Filter::Pixiv(PixivFilter::Id(Bound::Gt(100)))
+        );
+        assert_eq!(parse("-pixiv:none").to_string(), "-pixiv:none");
+        assert_eq!(
+            filter("commentary:translated"),
+            Filter::Commentary(CommentaryFilter::Translated)
+        );
+        assert_eq!(
+            filter("commentary:new_picture"),
+            Filter::Commentary(CommentaryFilter::Words("new picture".into()))
+        );
+        assert_eq!(parse("-commentary:false").to_string(), "-commentary:false");
         assert!(error("similar:x").contains("expected a post id"));
         assert_eq!(
             error("a\u{7}b"),

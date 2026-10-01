@@ -1,9 +1,11 @@
 // Progressive enhancements. Every page works without this script; it only
 // makes things quicker to use.
 
+import { enableArtistFinder } from "./artist-finder.ts";
 import { attachAll } from "./autocomplete.ts";
 import { enableAutosubmit } from "./autosubmit.ts";
 import { enableConfirm } from "./confirm.ts";
+import { enableCropPicker } from "./crop-picker.ts";
 import { enableCopyTags } from "./copy-tags.ts";
 import { enableShortcuts } from "./keyboard.ts";
 import { enableLayout } from "./layout.ts";
@@ -44,3 +46,5 @@ enableCopyTags();
 enableRelatedTags();
 enableSelectAll();
 enableUpload();
+enableArtistFinder();
+enableCropPicker();

@@ -26,6 +26,15 @@ theirs; reload to see their change. Notes use the same
 [formatting as the wiki](wiki.md#formatting). Drawing notes needs
 scripts; without them you can still read notes and revert them.
 
+## Embedded notes
+
+Translations of speech bubbles and signs read best in place. **Draw the
+notes' text on the picture**, under the list of notes, shows each note's
+text inside its box all the time, rather than when pointed at
+(Danbooru's *embedded notes*); the same button switches back. It's for
+the whole post, needs **Edit notes**, and `embedded:true` finds such
+posts.
+
 ## History
 
 **Note history** (beside the post's history) lists every version of

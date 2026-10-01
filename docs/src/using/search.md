@@ -67,6 +67,10 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `approver:` | `approver:alice`, `approver:any`, `approver:none` | approved by this user, by anyone, or by no one (posts that never waited for approval) |
 | `commenter:` | `commenter:alice` | has a comment by this user |
 | `comment:` | `comment:nice_art` | comments contain these words (underscores for spaces) |
+| `commentary:` | `commentary:true`, `commentary:untranslated`, `commentary:new_work` | has [artist's commentary](artists.md#commentary) (`true`), none (`false`), a translation (`translated`), an original without one (`untranslated`), or commentary containing these words |
+| `exif:` | `exif:file:colorcomponents=1`, `exif:exif:model=canon_eos`, `exif:png:parameters` | the file's [metadata](posts.md#file-metadata) has this field (`group:tag`), with this value if `=value` is given; regardless of case, underscores for spaces. Every field on a post's **Metadata** page links to its search |
+| `pixiv:`, `pixiv_id:` | `pixiv:123456`, `pixiv:any`, `pixiv:none`, `pixiv_id:>1000` | the source is this Pixiv work (a number or a range like other numbers), any Pixiv work, or none; works' pages and their files on `i.pximg.net` both count |
+| `embedded:` | `embedded:true` | the post's notes are drawn on the picture (see [Notes](notes.md)), or not |
 | `noter:` | `noter:alice` | has a note this user wrote or edited |
 | `upvote:`, `downvote:` | `upvote:alice` | voted up / down by this user; votes are private, so only staff who review posts may search for others' votes, everyone else only for their own |
 | `flagger:` | `flagger:alice` | flagged by this user; only staff who review posts may search for others' flags, everyone else only for their own |
@@ -78,7 +82,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `ratio:` | `ratio:16:9`, `ratio:<1` | width ÷ height (`16:9` or a number; exact values match within 0.01) |
 | `filesize:` | `filesize:>2mb` | file size, in bytes or with `kb`, `mb`, `gb` (an exact size with a unit matches within 5%) |
 | `duration:` | `duration:>30` | length of a video, in seconds |
-| `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm` |
+| `filetype:` | `filetype:png,webm` | file type: `jpg`, `png`, `gif`, `webp`, `avif`, `jxl`, `mp4`, `webm`, `ugoira` (or `zip`) |
 | `date:` | `date:2026-01` | upload date (UTC): a day, month or year |
 | `source:` | `source:https://twitter.com/foo`, `source:*pixiv.net*`, `source:none`, `source:any` | the source starts with this, or matches a pattern with `*`, regardless of case; or posts without / with a source |
 | `age:` | `age:<1w`, `age:2d..1mo` | uploaded this long ago: `<1w` is less than a week ago; units `s`, `mi`, `h`, `d`, `w`, `mo` (30 days; `m` works too) and `y` |
@@ -183,6 +187,18 @@ page 2.
 
 Counts are exact up to 10,000 posts. Above that, a single tag shows its
 known post count, and other searches show "10,000+".
+
+## Searching by image
+
+**Search by image** (`/iqdb_queries`, linked from **Popular** and as
+**Look-alikes** under every post) takes a picture, a link to one (a
+work's page on a site Moekura reads works too), or a post, and lists the
+posts that look most like it, with how alike they are, without uploading
+anything. Matches are found by the same perceptual hash as `similar:`,
+so a resized or recompressed copy is found, but a crop or an edit may
+not be. Each search compares the picture with every post, so they're
+limited to a few a minute. The API has it as `POST /api/v1/posts/similar`,
+and Danbooru clients as `/iqdb_queries.json`.
 
 ## Popular posts and searches
 

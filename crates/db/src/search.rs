@@ -20,8 +20,8 @@ use futures_util::{StreamExt, TryStreamExt, stream};
 use moekura_core::config::SearchConfig;
 use moekura_core::posts::PostStatus;
 use moekura_core::search::{
-    Age, Bound, Expr, Filter, Order, ParentFilter, PoolFilter, Query, RANK_DAYS, SourceFilter,
-    StatusFilter, TagTerm, UserMatch, When,
+    Age, Bound, CommentaryFilter, Expr, Filter, Order, ParentFilter, PixivFilter, PoolFilter,
+    Query, RANK_DAYS, SourceFilter, StatusFilter, TagTerm, UserMatch, When,
 };
 use serde_json::Value as Json;
 use sqlx::{PgPool, Postgres, QueryBuilder};
@@ -223,6 +223,7 @@ impl Node {
                     | Filter::Duration(_)
                     | Filter::FileType(_)
                     | Filter::Md5(_)
+                    | Filter::Exif { .. }
             ),
             Node::Not(inner) => inner.uses_media(),
             Node::And(nodes) | Node::Or(nodes) => nodes.iter().any(Node::uses_media),
@@ -521,6 +522,8 @@ impl Plan {
             set.ids.sort_unstable();
             set.ids.dedup();
         }
+        // Banned artists' posts, as if the search left them out.
+        plan.excluded.extend(&visibility.hidden_tags);
         plan.excluded.sort_unstable();
         plan.excluded.dedup();
 
@@ -1592,6 +1595,67 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
             .push_bind(words.clone())
             .push("))");
         }
+        Filter::Exif { key, value } => {
+            // metadata_search (migration 0062) is indexed.
+            match value {
+                Some(value) => {
+                    sql.push("metadata_search(a.metadata) @> jsonb_build_object(")
+                        .push_bind(key.clone())
+                        .push("::text, ")
+                        .push_bind(value.clone())
+                        .push("::text)");
+                }
+                None => {
+                    sql.push("metadata_search(a.metadata) ? ")
+                        .push_bind(key.clone());
+                }
+            }
+        }
+        Filter::Embedded(on) => {
+            if *on {
+                sql.push("p.has_embedded_notes AND p.note_count > 0");
+            } else {
+                sql.push("NOT (p.has_embedded_notes AND p.note_count > 0)");
+            }
+        }
+        Filter::Pixiv(PixivFilter::Any) => {
+            sql.push("p.pixiv_id IS NOT NULL");
+        }
+        Filter::Pixiv(PixivFilter::None) => {
+            sql.push("p.pixiv_id IS NULL");
+        }
+        Filter::Pixiv(PixivFilter::Id(b)) => {
+            sql.push("p.pixiv_id IS NOT NULL AND ");
+            push_bound(sql, "p.pixiv_id", b);
+        }
+        Filter::Commentary(c) => {
+            if *c == CommentaryFilter::None {
+                sql.push("NOT ");
+            }
+            sql.push("EXISTS (SELECT 1 FROM artist_commentaries ac WHERE ac.post_id = p.id");
+            match c {
+                CommentaryFilter::Any | CommentaryFilter::None => {}
+                CommentaryFilter::Translated => {
+                    sql.push(" AND (ac.translated_title <> '' OR ac.translated_description <> '')");
+                }
+                CommentaryFilter::Untranslated => {
+                    sql.push(
+                        " AND ac.translated_title = '' AND ac.translated_description = '' \
+                         AND (ac.original_title <> '' OR ac.original_description <> '')",
+                    );
+                }
+                CommentaryFilter::Words(words) => {
+                    sql.push(
+                        " AND to_tsvector('simple', ac.original_title || ' ' || \
+                         ac.original_description || ' ' || ac.translated_title || ' ' || \
+                         ac.translated_description) @@ plainto_tsquery('simple', ",
+                    )
+                    .push_bind(words.clone())
+                    .push(")");
+                }
+            }
+            sql.push(")");
+        }
         Filter::Source(SourceFilter::Any) => {
             sql.push("p.source <> ''");
         }
@@ -1853,6 +1917,7 @@ mod tests {
 
     fn public() -> Visibility {
         Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),
@@ -2009,6 +2074,7 @@ mod tests {
             assert_eq!(&search(&pool, input).await, expected, "{input}");
         }
         let staff = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Deleted],
             viewer: None,
             ratings: Vec::new(),
@@ -2283,6 +2349,7 @@ mod tests {
                 .is_empty()
         );
         let staff = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
             viewer: Some(alice),
             ratings: Vec::new(),
@@ -2567,6 +2634,7 @@ mod tests {
         assert_eq!(search(&pool, "").await, [flagged, active]);
         assert!(search(&pool, "status:deleted").await.is_empty());
         let member = Visibility {
+            hidden_tags: Vec::new(),
             viewer: Some(viewer),
             ..public()
         };
@@ -2577,6 +2645,7 @@ mod tests {
             [flagged, active]
         );
         let staff = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![
                 PostStatus::Active,
                 PostStatus::Flagged,
@@ -2619,6 +2688,7 @@ mod tests {
         // What's left for an approver: pending posts they didn't upload
         // or disapprove.
         let approver = Visibility {
+            hidden_tags: Vec::new(),
             viewer: Some(viewer),
             ..staff.clone()
         };
@@ -2896,6 +2966,7 @@ mod tests {
             .unwrap();
 
         let as_alice = Visibility {
+            hidden_tags: Vec::new(),
             viewer: Some(alice),
             ..public()
         };
@@ -3041,6 +3112,70 @@ mod tests {
         assert_eq!(search(&pool, "notecount:2").await, [ids[0]]);
         assert_eq!(search(&pool, "notecount:0").await, [ids[1]]);
         assert_eq!(search(&pool, "order:note").await, [ids[2], ids[0]]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn metadata_pixiv_and_embedded_notes(pool: PgPool) {
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            ids.push(seed(&pool, Seed::default()).await);
+        }
+        sqlx::query(
+            "UPDATE media_assets SET metadata =
+                 '{\"File:ColorComponents\": \"1\", \"EXIF:Model\": \"Canon EOS\"}'
+             WHERE post_id = $1",
+        )
+        .bind(ids[0])
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (id, source) in [
+            (ids[1], "https://www.pixiv.net/en/artworks/12345"),
+            (
+                ids[2],
+                "https://i.pximg.net/img-original/img/2026/01/01/00/00/00/99_p0.png",
+            ),
+        ] {
+            sqlx::query("UPDATE posts SET source = $2 WHERE id = $1")
+                .bind(id)
+                .bind(source)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        assert_eq!(search(&pool, "exif:File:ColorComponents=1").await, [ids[0]]);
+        assert_eq!(search(&pool, "exif:exif:model").await, [ids[0]]);
+        assert_eq!(search(&pool, "exif:EXIF:Model=canon_eos").await, [ids[0]]);
+        assert!(
+            search(&pool, "exif:File:ColorComponents=3")
+                .await
+                .is_empty()
+        );
+        assert_eq!(search(&pool, "pixiv:any").await, [ids[2], ids[1]]);
+        assert_eq!(search(&pool, "pixiv:none").await, [ids[0]]);
+        assert_eq!(search(&pool, "pixiv_id:12345").await, [ids[1]]);
+        assert_eq!(search(&pool, "pixiv:<1000").await, [ids[2]]);
+
+        let note_box = moekura_core::notes::NoteBox {
+            x: 0,
+            y: 0,
+            width: 5,
+            height: 5,
+        };
+        crate::notes::create(&pool, ids[1], note_box, "Hi", None)
+            .await
+            .unwrap();
+        assert!(
+            crate::posts::set_embedded_notes(&pool, ids[1], true)
+                .await
+                .unwrap()
+        );
+        // Embedded, but with no notes: not counted.
+        crate::posts::set_embedded_notes(&pool, ids[2], true)
+            .await
+            .unwrap();
+        assert_eq!(search(&pool, "embedded:true").await, [ids[1]]);
+        assert_eq!(search(&pool, "embedded:false").await, [ids[2], ids[0]]);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

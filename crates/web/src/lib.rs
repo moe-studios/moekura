@@ -5,12 +5,14 @@ mod account;
 mod admin;
 pub mod api;
 mod api_keys;
+mod artists;
 mod assets;
 pub mod auth;
 mod bans;
 mod blacklist;
 mod captcha;
 mod client_ip;
+mod commentary;
 mod comments;
 mod counts;
 mod danbooru;
@@ -23,10 +25,12 @@ mod favorite_groups;
 mod favorites;
 mod feeds;
 mod fetch;
+mod file_metadata;
 mod files;
 pub mod flash;
 mod health;
 mod history;
+mod image_search;
 pub mod import;
 mod mass_edit;
 mod metatags;
@@ -43,10 +47,12 @@ pub mod rate_limit;
 mod recent_changes;
 mod related_tags;
 pub mod remote_import;
+mod replacements;
 mod requests;
 mod saved_searches;
 pub mod shared;
 mod site;
+pub(crate) mod sources;
 mod suggestions;
 mod tag_history;
 mod tag_relations;
@@ -56,6 +62,7 @@ mod templates;
 #[cfg(test)]
 mod test_support;
 mod themes;
+mod thumbnail_crop;
 mod two_factor;
 mod upload;
 mod user_moderation;
@@ -129,6 +136,8 @@ pub struct AppState {
     pub storage: Storage,
     pub media: Media,
     pub(crate) fetcher: fetch::Fetcher,
+    /// What upload sources' pages say (artist, tags, commentary).
+    pub(crate) sources: Arc<sources::Sources>,
     /// Scratch space for uploads in progress.
     pub(crate) work_dir: std::path::PathBuf,
     pub(crate) file_signer: files::FileSigner,
@@ -208,6 +217,7 @@ impl AppState {
             storage,
             media,
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
+            sources: Arc::new(sources::Sources::new(false)),
             work_dir,
             file_signer: files::FileSigner::new(file_key),
             oidc,
@@ -256,10 +266,12 @@ pub fn router(state: AppState) -> Router {
     let routes = posts::routes()
         .merge(api::routes(max_upload_bytes))
         .merge(api_keys::routes())
-        .merge(danbooru::routes())
+        .merge(artists::routes())
+        .merge(danbooru::routes(max_upload_bytes))
         .merge(account::routes())
         .merge(admin::routes())
         .merge(bans::routes())
+        .merge(commentary::routes())
         .merge(comments::routes())
         .merge(edit::routes())
         .merge(email::routes())
@@ -267,7 +279,9 @@ pub fn router(state: AppState) -> Router {
         .merge(favorite_groups::routes())
         .merge(favorites::routes())
         .merge(feeds::routes())
+        .merge(file_metadata::routes())
         .merge(history::routes())
+        .merge(image_search::routes(max_upload_bytes))
         .merge(mass_edit::routes())
         .merge(moderation::routes())
         .merge(notes::routes())
@@ -278,12 +292,14 @@ pub fn router(state: AppState) -> Router {
         .merge(previews::routes())
         .merge(recent_changes::routes())
         .merge(related_tags::routes())
+        .merge(replacements::routes(max_upload_bytes))
         .merge(requests::routes())
         .merge(saved_searches::routes())
         .merge(site::routes())
         .merge(tags::routes())
         .merge(tag_history::routes())
         .merge(tag_relations::routes())
+        .merge(thumbnail_crop::routes())
         .merge(two_factor::routes())
         .merge(user_moderation::routes())
         .merge(users::routes())

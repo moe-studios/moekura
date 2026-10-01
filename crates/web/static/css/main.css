@@ -369,6 +369,19 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .subnav { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px; font-size: 0.9375rem; }
 .subnav a[aria-current] { color: var(--text); font-weight: 600; }
 .explore-head h1 { margin-bottom: 0; }
+.metadata-group h2 { font-size: 1.1rem; margin: 16px 0 4px; }
+.metadata-group th { width: 30%; font-weight: normal; overflow-wrap: anywhere; }
+.metadata-group td { overflow-wrap: anywhere; }
+.commentary { margin: 16px 0; }
+.commentary h2 { font-size: 1.1rem; margin: 0 0 4px; }
+.commentary h3 { font-size: 1rem; margin: 8px 0 4px; }
+.commentary-original { margin-top: 8px; }
+.commentary-version { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 24px; }
+.artist-details { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 12px 0; }
+.artist-details dt { font-weight: 600; }
+.artist-details dd { margin: 0; overflow-wrap: anywhere; }
+.artist-finder { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; margin: 4px 0; }
+.artist-urls, .artist-list { margin: 0; padding-left: 1.2em; }
 .explore-range { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 4px 0 16px; }
 .explore-range a[aria-current] { color: var(--text); font-weight: 600; }
 .request-form { margin: 16px 0 24px; }
@@ -575,7 +588,14 @@ tr.is-deleted td { opacity: 0.6; }
 .notes { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .note-box { fill: rgb(255 255 238 / 0.25); stroke: rgb(0 0 0 / 0.6); stroke-width: 1; pointer-events: all; cursor: help; }
 .note-box:hover, .note-box.active { fill: rgb(255 255 238 / 0.45); stroke: var(--accent); }
-.notes-hidden .notes { display: none; }
+.notes-hidden .notes, .notes-hidden .note-embedded, .editing-notes .note-embedded { display: none; }
+.image-matches li { display: flex; flex-direction: column; align-items: center; }
+.image-matches .similarity { font-size: 0.8125rem; color: var(--muted); }
+.crop-outline { position: absolute; outline: 2px dashed var(--accent); background: rgb(255 255 255 / 0.15); pointer-events: none; }
+.crop-outline[hidden] { display: none; }
+.note-embedded { position: absolute; overflow: auto; padding: 2px 4px; background: rgb(255 255 238 / 0.92); color: #111; font-size: 0.8125rem; line-height: 1.25; pointer-events: none; }
+.note-embedded .markup > :first-child { margin-top: 0; }
+.note-embedded .markup > :last-child { margin-bottom: 0; }
 .note-popup { position: absolute; z-index: 5; max-width: 320px; padding: 6px 10px; background: #ffe; color: #111; border: 1px solid #333; border-radius: 4px; box-shadow: 0 2px 8px rgb(0 0 0 / 0.25); font-size: 0.9375rem; }
 .note-popup .markup > :first-child { margin-top: 0; }
 .note-popup .markup > :last-child { margin-bottom: 0; }

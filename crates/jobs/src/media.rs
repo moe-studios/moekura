@@ -28,6 +28,14 @@ pub async fn purge_post(db: &PgPool, storage: &Storage, post_id: i64) -> Result<
         tracing::warn!(post_id, "purge skipped: the post is no longer deleted");
         return Ok(false);
     }
+    // Files the post had before a replacement, too.
+    let replaced = moekura_db::replacements::old_keys(db, post_id).await?;
+    for key in replaced.iter().filter_map(|k| Key::parse(k)) {
+        storage
+            .delete(&key)
+            .await
+            .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
+    }
     if let Some(asset) = media::for_post(db, post_id).await? {
         let mut keys = vec![asset.storage_key.clone()];
         keys.extend(
@@ -131,8 +139,25 @@ impl MediaJobs {
             .await
             .map_err(|e| JobError::retry(format!("downloading original: {e}")))?;
 
-        // Videos are rendered from a still frame.
-        let (source, source_type) = if media_type.is_video() {
+        // Metadata comes from the original; failing to read it (a tool
+        // choking on odd fields) doesn't stop the renditions.
+        match self.media.metadata(&original, media_type).await {
+            Ok(metadata) => media::set_metadata(&self.db, asset_id, &metadata).await?,
+            Err(error) if error.is_internal() => return Err(media_error(error)),
+            Err(error) => tracing::warn!(asset_id, %error, "could not read the file's metadata"),
+        }
+
+        // Videos are rendered from a still frame, ugoira from their first
+        // frame, and ugoira also get a video to play.
+        let (source, source_type) = if media_type == MediaType::Ugoira {
+            let (video, first, first_type) = self
+                .media
+                .ugoira_video(&original, work.path())
+                .await
+                .map_err(media_error)?;
+            self.store_video(&asset, &video).await?;
+            (first, first_type)
+        } else if media_type.is_video() {
             let duration = asset.duration_ms.and_then(|d| u32::try_from(d).ok());
             let poster = self
                 .media
@@ -151,7 +176,7 @@ impl MediaJobs {
             .map(|&size| (format!("thumb-{size}"), size))
             .collect();
         let longest = asset.width.max(asset.height);
-        if media_type.is_video() {
+        if media_type.is_video() || media_type == MediaType::Ugoira {
             wanted.push(("poster".to_owned(), config.sample_size));
         } else if asset.frames == 1
             && longest > i32::try_from(config.sample_size).unwrap_or(i32::MAX)
@@ -163,6 +188,37 @@ impl MediaJobs {
         for (kind, size) in wanted {
             self.render_variant(&asset, &source, source_type, &kind, size, work.path())
                 .await?;
+        }
+        // Square thumbnails, of the chosen region (unless the file changed
+        // size since) or the most interesting part.
+        let crop = media::crop(&self.db, asset.id)
+            .await?
+            .and_then(|[x, y, side]| {
+                let fits = x + side <= asset.width && y + side <= asset.height;
+                fits.then(|| [x, y, side].map(|n| u32::try_from(n).unwrap_or(0)))
+            });
+        // Never larger than the picture's (or the region's) short side.
+        let shortest = crop.map_or_else(
+            || u32::try_from(asset.width.min(asset.height)).unwrap_or(1),
+            |[_, _, side]| side,
+        );
+        for &size in &config.thumbnail_sizes {
+            let kind = format!("crop-{size}");
+            let format = self.media.variant_format();
+            let out = work.path().join(format!("{kind}.{format}"));
+            let rendition = self
+                .media
+                .square(
+                    &source,
+                    source_type,
+                    size.min(shortest).max(1),
+                    crop,
+                    &out,
+                    work.path(),
+                )
+                .await
+                .map_err(media_error)?;
+            self.store_rendition(&asset, &kind, &rendition).await?;
         }
         let phash = self
             .media
@@ -185,22 +241,14 @@ impl MediaJobs {
         Ok(())
     }
 
-    async fn render_variant(
+    /// Stores a rendition made in the work directory as variant `kind`.
+    async fn store_rendition(
         &self,
         asset: &Asset,
-        source: &Path,
-        source_type: MediaType,
         kind: &str,
-        size: u32,
-        dir: &Path,
+        rendition: &moekura_media::Rendition,
     ) -> Result<(), JobError> {
         let format = self.media.variant_format();
-        let out = dir.join(format!("{kind}.{format}"));
-        let rendition = self
-            .media
-            .fit_within(source, source_type, size, &out)
-            .await
-            .map_err(media_error)?;
         let key = Key::variant(kind, &asset.sha256_hex(), format);
         self.storage
             .put_file(&key, &rendition.path)
@@ -217,6 +265,49 @@ impl MediaJobs {
         };
         media::save_variant(&self.db, &variant).await?;
         Ok(())
+    }
+
+    /// Stores an ugoira's video as its `video` variant (WebM, full size).
+    async fn store_video(&self, asset: &Asset, video: &Path) -> Result<(), JobError> {
+        let key = Key::variant("video", &asset.sha256_hex(), "webm");
+        self.storage
+            .put_file(&key, video)
+            .await
+            .map_err(|e| JobError::retry(format!("storing the video: {e}")))?;
+        let size = tokio::fs::metadata(video)
+            .await
+            .map_err(|e| JobError::retry(format!("reading the video: {e}")))?
+            .len();
+        let variant = Variant {
+            asset_id: asset.id,
+            kind: "video".to_owned(),
+            format: "webm".to_owned(),
+            width: asset.width,
+            height: asset.height,
+            file_size: i64::try_from(size).unwrap_or(i64::MAX),
+            storage_key: key.as_str().to_owned(),
+        };
+        media::save_variant(&self.db, &variant).await?;
+        Ok(())
+    }
+
+    async fn render_variant(
+        &self,
+        asset: &Asset,
+        source: &Path,
+        source_type: MediaType,
+        kind: &str,
+        size: u32,
+        dir: &Path,
+    ) -> Result<(), JobError> {
+        let format = self.media.variant_format();
+        let out = dir.join(format!("{kind}.{format}"));
+        let rendition = self
+            .media
+            .fit_within(source, source_type, size, &out)
+            .await
+            .map_err(media_error)?;
+        self.store_rendition(asset, kind, &rendition).await
     }
 }
 
@@ -364,6 +455,8 @@ mod tests {
         assert_eq!(
             summary(&variants),
             [
+                ("crop-250".to_owned(), 250, 250),
+                ("crop-500".to_owned(), 500, 500),
                 ("sample".to_owned(), 1600, 1200),
                 ("thumb-250".to_owned(), 250, 188),
                 ("thumb-500".to_owned(), 500, 375),
@@ -377,12 +470,75 @@ mod tests {
         let processed = media::by_id(&pool, asset_id).await.unwrap().unwrap();
         assert!(processed.processed_at.is_some());
         assert!(processed.phash.is_some());
+        let metadata = media::metadata_for_post(&pool, processed.post_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            metadata.get("File:ColorComponents").map(String::as_str),
+            Some("3")
+        );
         // Scratch space is cleaned up.
         assert_eq!(std::fs::read_dir(dir.join("work")).unwrap().count(), 0);
 
         // Running again is harmless.
         jobs.process(asset_id).await.unwrap();
-        assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 3);
+        assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 5);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn ugoira_get_a_video(pool: PgPool) {
+        use std::io::Write;
+
+        let dir = scratch("ugoira");
+        let zip_path = dir.join("ugoira.zip");
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for n in 0..3 {
+            let frame = dir.join(format!("{n}.png"));
+            ffmpeg(
+                &frame,
+                &[
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=64x48:duration=1",
+                    "-frames:v",
+                    "1",
+                ],
+            );
+            writer.start_file(format!("{n:06}.png"), options).unwrap();
+            writer.write_all(&std::fs::read(&frame).unwrap()).unwrap();
+        }
+        writer.finish().unwrap();
+        let (jobs, asset_id) = stored_asset(&pool, &dir, &zip_path, "ugoira", (64, 48)).await;
+
+        jobs.process(asset_id).await.unwrap();
+
+        let variants = media::variants(&pool, asset_id).await.unwrap();
+        let kinds: Vec<(&str, &str)> = variants
+            .iter()
+            .map(|v| (v.kind.as_str(), v.format.as_str()))
+            .collect();
+        assert!(kinds.contains(&("video", "webm")), "{kinds:?}");
+        assert!(kinds.contains(&("poster", "webp")), "{kinds:?}");
+        assert!(kinds.contains(&("thumb-250", "webp")), "{kinds:?}");
+        let metadata = media::metadata_for_post(
+            &pool,
+            media::by_id(&pool, asset_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .post_id,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            metadata.get("Ugoira:FrameCount").map(String::as_str),
+            Some("3")
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
@@ -436,6 +592,8 @@ mod tests {
         assert_eq!(
             summary(&variants),
             [
+                ("crop-250".to_owned(), 240, 240),
+                ("crop-500".to_owned(), 240, 240),
                 ("poster".to_owned(), 320, 240),
                 ("thumb-250".to_owned(), 250, 188),
                 ("thumb-500".to_owned(), 320, 240),

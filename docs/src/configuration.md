@@ -178,7 +178,7 @@ See [File storage](admin/storage.md).
 | `max_upload_mb` | `100` | largest upload |
 | `max_pixels` | `200000000` | larger images are refused before decoding |
 | `max_duration_secs` | `600` | longest video |
-| `allowed_types` | `["jpeg", "png", "gif", "webp", "avif", "mp4", "webm"]` | add `"jxl"` for JPEG XL (off by default: libvips doesn't consider its decoder hardened against malicious files) |
+| `allowed_types` | `["jpeg", "png", "gif", "webp", "avif", "mp4", "webm", "ugoira"]` | `ugoira` is Pixiv's zip of animation frames; add `"jxl"` for JPEG XL (off by default: libvips doesn't consider its decoder hardened against malicious files) |
 | `thumbnail_sizes` | `[250, 500]` | thumbnail boxes, 1x and 2x for high-density screens |
 | `sample_size` | `1600` | larger images also get a resized copy for the post page |
 | `variant_format` | `"webp"` | `"webp"` or `"avif"` (smaller, slower) for thumbnails and samples |

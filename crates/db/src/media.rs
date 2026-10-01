@@ -201,6 +201,59 @@ pub async fn variants_of(db: impl PgExecutor<'_>, asset_ids: &[i64]) -> sqlx::Re
 
 /// Marks processing finished and stores the perceptual hash, split into
 /// the four 16-bit chunks the similarity index uses.
+/// The region post `post_id`'s square thumbnails show, if one was chosen:
+/// left, top and side, in the file's pixels.
+pub async fn crop(db: impl PgExecutor<'_>, asset_id: i64) -> sqlx::Result<Option<[i32; 3]>> {
+    let crop: Option<Option<Vec<i32>>> =
+        sqlx::query_scalar("SELECT crop FROM media_assets WHERE id = $1")
+            .bind(asset_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(crop.flatten().and_then(|c| c.try_into().ok()))
+}
+
+/// Chooses the region post `post_id`'s square thumbnails show, or with
+/// `None`, leaves it to libvips. False if the post has no file.
+pub async fn set_crop(
+    db: impl PgExecutor<'_>,
+    post_id: i64,
+    crop: Option<[i32; 3]>,
+) -> sqlx::Result<bool> {
+    let done = sqlx::query("UPDATE media_assets SET crop = $2 WHERE post_id = $1")
+        .bind(post_id)
+        .bind(crop.map(|c| c.to_vec()))
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected() > 0)
+}
+
+/// Stores a file's metadata (`Group:Tag` to value).
+pub async fn set_metadata(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    metadata: &std::collections::BTreeMap<String, String>,
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE media_assets SET metadata = $2 WHERE id = $1")
+        .bind(id)
+        .bind(sqlx::types::Json(metadata))
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// The metadata of post `post_id`'s file, by `Group:Tag`.
+pub async fn metadata_for_post(
+    db: impl PgExecutor<'_>,
+    post_id: i64,
+) -> sqlx::Result<Option<std::collections::BTreeMap<String, String>>> {
+    let found: Option<sqlx::types::Json<std::collections::BTreeMap<String, String>>> =
+        sqlx::query_scalar("SELECT metadata FROM media_assets WHERE post_id = $1")
+            .bind(post_id)
+            .fetch_optional(db)
+            .await?;
+    Ok(found.map(|json| json.0))
+}
+
 pub async fn mark_processed(
     db: impl PgExecutor<'_>,
     id: i64,
@@ -265,6 +318,32 @@ pub async fn similar(
     .bind(c2)
     .bind(c3)
     .bind(exclude_post)
+    .bind(i32::try_from(max_distance).unwrap_or(64))
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// The posts whose perceptual hash is nearest `hash`, within
+/// `max_distance` bits, closest first. Unlike [`similar`], every file is
+/// compared, so distant matches are found too; it reads every asset, so
+/// callers limit how often it runs.
+pub async fn nearest(
+    db: impl PgExecutor<'_>,
+    hash: u64,
+    max_distance: u32,
+    limit: i64,
+) -> sqlx::Result<Vec<Similar>> {
+    sqlx::query_as(
+        "SELECT post_id, distance FROM (
+             SELECT post_id, bit_count((phash # $1)::bit(64))::int AS distance
+             FROM media_assets WHERE phash IS NOT NULL
+         ) compared
+         WHERE distance <= $2
+         ORDER BY distance, post_id DESC
+         LIMIT $3",
+    )
+    .bind(hash as i64)
     .bind(i32::try_from(max_distance).unwrap_or(64))
     .bind(limit)
     .fetch_all(db)

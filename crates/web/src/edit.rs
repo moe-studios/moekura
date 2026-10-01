@@ -238,6 +238,9 @@ pub(crate) async fn apply(
         .iter()
         .map(|t| t.id)
         .collect();
+    crate::artists::refuse_banned(state, &mut *tx, current, &tag_ids, &post.tag_ids)
+        .await
+        .map_err(Refused::Invalid)?;
 
     for (changed, lock) in [
         (tag_ids != post.tag_ids, PostLock::Tags),

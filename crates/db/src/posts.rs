@@ -38,6 +38,10 @@ pub struct Post {
     pub created_at: OffsetDateTime,
     /// What staff locked against changes.
     pub locks: Vec<PostLock>,
+    /// The Pixiv work the source links to.
+    pub pixiv_id: Option<i64>,
+    /// Its notes are drawn on the picture with their text.
+    pub has_embedded_notes: bool,
 }
 
 impl Post {
@@ -65,6 +69,8 @@ struct PostRow {
     tag_ids: Vec<i32>,
     created_at: OffsetDateTime,
     locks: Vec<String>,
+    pixiv_id: Option<i64>,
+    has_embedded_notes: bool,
 }
 
 impl TryFrom<PostRow> for Post {
@@ -102,6 +108,8 @@ impl TryFrom<PostRow> for Post {
                 .iter()
                 .map(|l| PostLock::parse(l).ok_or_else(|| bad("lock", l)))
                 .collect::<Result<_, _>>()?,
+            pixiv_id: row.pixiv_id,
+            has_embedded_notes: row.has_embedded_notes,
         })
     }
 }
@@ -112,11 +120,26 @@ macro_rules! select_posts {
         concat!(
             "SELECT id, uploader_id, rating, status, source, description, parent_id, score,
                     fav_count, comment_count, last_commented_at, last_comment_bumped_at,
-                    note_count, last_noted_at, tag_ids, created_at, locks
+                    note_count, last_noted_at, tag_ids, created_at, locks, pixiv_id,
+                    has_embedded_notes
              FROM posts ",
             $rest
         )
     };
+}
+
+/// Sets whether post `id`'s notes are drawn on the picture.
+pub async fn set_embedded_notes(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    embedded: bool,
+) -> sqlx::Result<bool> {
+    let done = sqlx::query("UPDATE posts SET has_embedded_notes = $2 WHERE id = $1")
+        .bind(id)
+        .bind(embedded)
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected() > 0)
 }
 
 /// Which posts a viewer may see.
@@ -132,6 +155,8 @@ pub struct Visibility {
     /// Searches without a `status:` filter include deleted posts, if
     /// `statuses` has them: the viewer's choice.
     pub deleted_by_default: bool,
+    /// Posts with any of these tags are hidden (banned artists'), sorted.
+    pub hidden_tags: Vec<i32>,
 }
 
 impl Visibility {
@@ -146,7 +171,12 @@ impl Visibility {
             || (post.status == PostStatus::Pending
                 && post.uploader_id.is_some()
                 && post.uploader_id == self.viewer);
-        status && self.allows_rating(post.rating)
+        status
+            && self.allows_rating(post.rating)
+            && !post
+                .tag_ids
+                .iter()
+                .any(|t| self.hidden_tags.binary_search(t).is_ok())
     }
 
     pub fn allows_rating(&self, rating: Rating) -> bool {
@@ -182,6 +212,8 @@ pub struct Card {
     /// Storage keys of the 1x and 2x thumbnails, once generated.
     pub thumb: Option<String>,
     pub thumb_2x: Option<String>,
+    /// The thumbnails are square crops.
+    pub square: bool,
 }
 
 /// Grid cards for `ids`, in the same order. Ids without a post (deleted
@@ -191,13 +223,19 @@ pub async fn cards(
     ids: &[i64],
     thumb_kinds: (&str, &str),
 ) -> sqlx::Result<Vec<Card>> {
+    // Square (crop-<size>) thumbnails fall back to the usual ones for
+    // files processed before they existed.
     let mut cards: Vec<Card> = sqlx::query_as(
         "SELECT p.id, p.rating, p.status, a.media_type, a.width, a.height, a.frames, p.tag_ids,
-                t1.storage_key AS thumb, t2.storage_key AS thumb_2x
+                coalesce(t1.storage_key, f1.storage_key) AS thumb,
+                coalesce(t2.storage_key, f2.storage_key) AS thumb_2x,
+                t1.storage_key IS NOT NULL AND $2 LIKE 'crop-%' AS square
          FROM posts p
          JOIN media_assets a ON a.post_id = p.id
          LEFT JOIN media_variants t1 ON t1.asset_id = a.id AND t1.kind = $2
          LEFT JOIN media_variants t2 ON t2.asset_id = a.id AND t2.kind = $3
+         LEFT JOIN media_variants f1 ON f1.asset_id = a.id AND f1.kind = replace($2, 'crop-', 'thumb-')
+         LEFT JOIN media_variants f2 ON f2.asset_id = a.id AND f2.kind = replace($3, 'crop-', 'thumb-')
          WHERE p.id = ANY($1)",
     )
     .bind(ids)
@@ -544,6 +582,7 @@ mod tests {
             (Rating::Explicit, "s", Some(parent))
         );
         let public = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active],
             viewer: None,
             ratings: Vec::new(),

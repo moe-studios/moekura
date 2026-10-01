@@ -63,6 +63,10 @@ pub struct UploadFields {
     pub tags: String,
     pub source: String,
     pub description: String,
+    /// The artist's commentary, as given; when both are empty, the
+    /// source's (if it has one) is used.
+    pub commentary_title: String,
+    pub commentary_description: String,
 }
 
 /// An uploaded file on local disk, removed when dropped.
@@ -214,6 +218,8 @@ fn render_form(
                 tags => fields.tags,
                 source => fields.source,
                 description => fields.description,
+                commentary_title => fields.commentary_title,
+                commentary_description => fields.commentary_description,
             },
             error => message,
             duplicate_of => duplicate_of,
@@ -263,19 +269,95 @@ async fn upload(
     }
 }
 
-/// Downloads `fields.url`, which also becomes the source if none was given.
+/// Downloads `fields.url`, which also becomes the source if none was
+/// given. A work's page on a site the source strategies know (or any page
+/// naming its image) downloads the work's best file instead, and the page
+/// becomes the source.
 pub(crate) async fn fetch_url(
     state: &AppState,
     fields: &mut UploadFields,
 ) -> Result<TempUpload, UploadError> {
     let url = url::Url::parse(&fields.url)
         .map_err(|_| UploadError::Invalid("That isn't a valid link.".into()))?;
+    let found = state.sources.lookup(&fields.url).await;
+    let (file_url, headers, page) = match found.as_deref() {
+        Some(info) if !info.files.is_empty() => {
+            let file = url::Url::parse(&info.files[0]).map_err(|_| {
+                UploadError::Invalid(format!("{} gave a file link that isn't valid.", info.site))
+            })?;
+            (file, info.header_pairs(), info.page_url.clone())
+        }
+        _ => (url, Vec::new(), fields.url.clone()),
+    };
     let writer = TempWriter::create(&state.work_dir).await?;
-    let file = state.fetcher.fetch(&url, writer, max_bytes(state)).await?;
+    let mut file = state
+        .fetcher
+        .fetch_with(&file_url, &headers, writer, max_bytes(state))
+        .await?;
+    // A Pixiv ugoira's zip lacks its frames' delays; keep them in it.
+    if let Some(frames) = found
+        .as_deref()
+        .and_then(|info| info.ugoira_frames.as_ref())
+    {
+        let frames: Vec<moekura_media::ugoira::Frame> = frames
+            .iter()
+            .map(|(file, delay_ms)| moekura_media::ugoira::Frame {
+                file: file.clone(),
+                delay_ms: *delay_ms,
+            })
+            .collect();
+        let path = file.path.clone();
+        tokio::task::spawn_blocking(move || moekura_media::ugoira::add_frame_data(&path, &frames))
+            .await
+            .map_err(|e| UploadError::Internal(e.to_string()))?
+            .map_err(|e| UploadError::Invalid(format!("The ugoira's zip is damaged ({e}).")))?;
+        file.rehash().await?;
+    }
     if fields.source.is_empty() {
-        fields.source = fields.url.clone();
+        fields.source = page;
     }
     Ok(file)
+}
+
+/// Saves the upload's commentary on post `post_id`: the one given, or
+/// else the source's. Only logged if that fails; the post is made.
+async fn save_commentary(
+    state: &AppState,
+    uploader: &CurrentUser,
+    post_id: i64,
+    fields: &UploadFields,
+) {
+    let mut texts = moekura_db::artist_commentaries::Texts {
+        original_title: fields.commentary_title.clone(),
+        original_description: fields.commentary_description.clone(),
+        ..Default::default()
+    };
+    if texts.is_empty()
+        && !fields.source.is_empty()
+        && let Some(info) = state.sources.lookup(&fields.source).await
+    {
+        texts.original_title = info.title.clone();
+        texts.original_description = info.description.clone();
+    }
+    if texts.is_empty() {
+        return;
+    }
+    let saved = match crate::commentary::clean(texts) {
+        Ok(texts) => moekura_db::artist_commentaries::save(
+            state.db.primary(),
+            post_id,
+            &texts,
+            uploader.user.as_ref().map(|u| u.id),
+            None,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string()),
+        Err(error) => Err(error.public_message().to_owned()),
+    };
+    if let Err(error) = saved {
+        tracing::warn!(post_id, error, "commentary from the upload not saved");
+    }
 }
 
 fn failed(page: &Page, fields: &UploadFields, error: UploadError) -> Response {
@@ -325,7 +407,13 @@ pub(crate) async fn receive(
                     Err(error) => return (fields, Err(error)),
                 }
             }
-            "url" | "rating" | "tags" | "source" | "description" => {
+            "url"
+            | "rating"
+            | "tags"
+            | "source"
+            | "description"
+            | "commentary_title"
+            | "commentary_description" => {
                 let text = match field.text().await {
                     Ok(text) => text,
                     Err(error) => return (fields, Err(multipart_error(state, &error))),
@@ -335,6 +423,10 @@ pub(crate) async fn receive(
                     "rating" => fields.rating = text.parse().ok(),
                     "tags" => fields.tags = text,
                     "source" => fields.source = text.trim().to_owned(),
+                    "commentary_title" => fields.commentary_title = text.trim().to_owned(),
+                    "commentary_description" => {
+                        fields.commentary_description = text.trim().to_owned();
+                    }
                     _ => fields.description = text.trim().to_owned(),
                 }
             }
@@ -389,6 +481,19 @@ pub struct TempWriter {
     file: tokio::fs::File,
     sha256: Sha256,
     md5: Md5,
+}
+
+impl TempUpload {
+    /// Recomputes the hashes and size after the file was changed.
+    async fn rehash(&mut self) -> Result<(), UploadError> {
+        let bytes = tokio::fs::read(&self.path)
+            .await
+            .map_err(|e| UploadError::Internal(format!("reading temp file: {e}")))?;
+        self.sha256 = Sha256::digest(&bytes).into();
+        self.md5 = Md5::digest(&bytes).into();
+        self.size = bytes.len() as u64;
+        Ok(())
+    }
 }
 
 impl TempWriter {
@@ -618,6 +723,9 @@ pub async fn create_post(
             .iter()
             .map(|t| t.id)
             .collect();
+    crate::artists::refuse_banned(state, &mut *tx, uploader, &tag_ids, &[])
+        .await
+        .map_err(UploadError::Invalid)?;
     let post_id = posts::insert(
         &mut *tx,
         NewPost {
@@ -677,6 +785,7 @@ pub async fn create_post(
         let message = UploadError::from(error).to_string();
         tracing::warn!(post_id, message, "metatags from the upload not applied");
     }
+    save_commentary(state, uploader, post_id, fields).await;
     crate::webhooks::emit_post(
         state,
         moekura_core::webhooks::Event::PostCreated,
@@ -755,6 +864,61 @@ mod tests {
         assert_eq!(post.source, link);
         let asset = media::for_post(&pool, id).await.unwrap().unwrap();
         assert_eq!(asset.sha256, Sha256::digest(&png).to_vec());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn ugoira_zips(pool: PgPool) {
+        use std::io::Write;
+
+        let (app, _) = app(&pool).await;
+        let session = session_for(&pool, "alice", SystemRole::Member).await;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for n in 0..2 {
+            zip.start_file(format!("{n:06}.png"), options).unwrap();
+            zip.write_all(&fixture::png(40, 30)).unwrap();
+        }
+        zip.start_file("animation.json", options).unwrap();
+        zip.write_all(
+            br#"{"frames":[{"file":"000000.png","delay":50},{"file":"000001.png","delay":70}]}"#,
+        )
+        .unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let fields = vec![("rating", "g".to_owned()), ("tags", "cat".to_owned())];
+        let response = app
+            .post_multipart("/upload", Some(&session), &fields, Some(("a.zip", &bytes)))
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let id: i64 = response.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let asset = media::for_post(&pool, id).await.unwrap().unwrap();
+        assert_eq!(asset.media_type, "ugoira");
+        assert_eq!((asset.width, asset.height, asset.frames), (40, 30, 2));
+        assert_eq!(asset.duration_ms, Some(120));
+        let page = app.get(&format!("/posts/{id}"), Some(&session)).await.body;
+        assert!(page.contains("still being prepared"), "{page}");
+        let found = app.get("/posts?tags=filetype%3Azip", None).await.body;
+        assert!(found.contains(&format!("href=\"/posts/{id}")), "{found}");
+
+        // Other zips aren't posts.
+        let mut other = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        other.start_file("notes.txt", options).unwrap();
+        other.write_all(b"hi").unwrap();
+        let bytes = other.finish().unwrap().into_inner();
+        let refused = app
+            .post_multipart("/upload", Some(&session), &fields, Some(("b.zip", &bytes)))
+            .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            refused.body
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

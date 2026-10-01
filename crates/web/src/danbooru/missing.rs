@@ -12,17 +12,12 @@ use crate::error::AppError;
 
 /// Lists of things Moekura doesn't have.
 pub(crate) const EMPTY_LISTS: &[&str] = &[
-    "/artists",
-    "/artist_urls",
-    "/artist_commentaries",
     "/forum_topics",
     "/forum_posts",
     "/forum_post_votes",
     "/dmails",
     "/user_feedbacks",
     "/user_name_change_requests",
-    "/media_assets",
-    "/iqdb_queries",
     "/users/{id}/uploads",
 ];
 
@@ -48,7 +43,7 @@ mod tests {
     async fn missing_features_are_empty(pool: PgPool) {
         let app = app(&pool).await;
         for path in [
-            "/artists.json",
+            "/dmails.json",
             "/forum_topics.json?search[id]=1",
             "/users/1/uploads.json",
         ] {
@@ -56,7 +51,7 @@ mod tests {
             assert_eq!(response.status, StatusCode::OK, "{path}");
             assert_eq!(response.body, "[]", "{path}");
         }
-        let missing = app.get("/artists/1.json", None).await;
+        let missing = app.get("/dmails/1.json", None).await;
         assert_eq!(missing.status, StatusCode::NOT_FOUND);
         let body: Value = serde_json::from_str(&missing.body).unwrap();
         assert_eq!(body["success"], json!(false));

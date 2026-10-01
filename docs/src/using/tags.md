@@ -65,8 +65,10 @@ consider, updated as you type: tags often used with those in the box
 (or with the tag under the cursor), your recent and most frequent tags,
 the site's tags for words in the box that are a wiki page's
 [other names](wiki.md#other-names) (paste `長い髪` and it offers
-`long_hair`), and the links on the wiki page of the tag under the
-cursor. Click a tag to add it, or to take it out if it's already in the
+`long_hair`), the links on the wiki page of the tag under the cursor,
+and, when the link or source is a work on a site Moekura can read, the
+artist and the site's tags in this site's terms (see
+[Uploading from a link](posts.md#uploading-from-a-link)). Click a tag to add it, or to take it out if it's already in the
 box. Without scripts, **Related tags** opens the same lists on a page of
 their own (`/tags/related`).
 

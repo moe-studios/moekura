@@ -191,7 +191,7 @@ mod tests {
         let max = state.config.media.max_upload_mb * 1024 * 1024;
         let app = TestApp::new(
             state,
-            crate::upload::routes(max).merge(crate::danbooru::routes()),
+            crate::upload::routes(max).merge(crate::danbooru::routes(1024 * 1024)),
         );
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
         let fields = vec![("rating", "g".to_owned()), ("tags", "cat".to_owned())];

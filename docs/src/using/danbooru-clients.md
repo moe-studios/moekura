@@ -59,6 +59,12 @@ engine, then log in with your name and your API key.
 | `/profile.json`, `/users.json`, `/users/{id}.json` | levels follow roles: Member 20, Contributor 35, Janitor 37, Moderator 40, Admin 50 |
 | `/favorites.json`, `/favorites/{post_id}.json`, `/posts/{id}/favorites.json` | |
 | `/posts/{id}/votes.json`, `/post_votes.json` | only your own votes are listed |
+| `/artists.json`, `/artists/{id}.json`, `/artist_urls.json`, `/artist_versions.json` | read-only; artists by `search[name]`, `search[any_name_matches]`, `search[url_matches]` (any page of the artist's), `search[is_banned]`, `search[is_deleted]` or `search[id]`, each with its `urls`; URLs by `search[artist_id]` or `search[url_matches]`; versions by `search[artist_id]`, `search[updater_id]` or `search[updater_name]` |
+| `/artist_commentaries.json`, `/artist_commentaries/{post_id}.json`, `/posts/{id}/artist_commentary.json`, `/artist_commentary_versions.json` | a commentary's `id` is its post's; by `search[post_id]`, `search[text_matches]`, `search[original_present]` or `search[translated_present]`; `PUT /artist_commentaries/create_or_update.json` sets `artist_commentary[post_id]`'s texts (those left out stay) |
+| `/media_assets.json`, `/media_assets/{id}.json`, `/media_metadata.json` | a post's file has the post's id; files by `search[id]` or `search[md5]`; metadata by `search[media_asset_id]`, as `Group:Tag` pairs like `EXIF:Make` |
+| `/post_replacements.json` | read-only, by `search[post_id]` or `search[creator_id]` |
+| `/iqdb_queries.json` | searching by image: GET with `search[url]` or `search[post_id]`, or POST a `file` too; `[{post_id, score, post}]`, score in percent |
+| `/wiki_page_versions.json`, `/pool_versions.json` | wiki versions by `search[wiki_page_id]`, `search[title]`, `search[updater_id]` or `search[updater_name]`; pool versions by `search[pool_id]` or the updater, with `added_post_ids` and `removed_post_ids` |
 | `/explore/posts/popular.json`, `/explore/posts/viewed.json` | the best-scored and most viewed posts of a `date`'s day, or with `scale`, week or month |
 | `/explore/posts/searches.json`, `/explore/posts/missed_searches.json` | `[query, count]` pairs: the searches made most, and those that most often found nothing, by `date` and `scale` like the posts |
 | `/comments.json`, `/comments/{id}.json` | listed newest first, by `search[post_id]`, `search[creator_id]` or `search[creator_name]`; `page` takes numbers and `b<id>`; post with `comment[post_id]` and `comment[body]`, and change or delete your own |
@@ -73,8 +79,8 @@ engine, then log in with your name and your API key.
 
 ## What doesn't
 
-- Artists, forums and messages don't exist in Moekura: their lists are
-  empty, and single ones are "not found".
+- Forums and messages don't exist in Moekura: their lists are empty,
+  and single ones are "not found".
 - Favorites and your votes on posts and comments have no ids of their
   own: their `id` is the post's or comment's.
 - Pools, favorite groups and notes are read-only here; change them on

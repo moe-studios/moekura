@@ -45,6 +45,18 @@ function hasTag(tags: string, tag: string): boolean {
   return tags.split(/\s+/).some((word) => word.toLowerCase() === tag);
 }
 
+/** The link being uploaded, or else the source, from the field's form. */
+function sourceOf(field: HTMLTextAreaElement): string | null {
+  const form = field.form;
+  if (!form) return null;
+  for (const name of ["url", "source"]) {
+    const input = form.querySelector<HTMLInputElement>(`input[name="${name}"]`);
+    const value = input?.value.trim() ?? "";
+    if (/^https?:\/\/\S+$/i.test(value)) return value;
+  }
+  return null;
+}
+
 export function enableRelatedTags(root: Document = document): void {
   for (const panel of root.querySelectorAll<HTMLElement>("[data-related-tags]")) {
     const field = root.getElementById(panel.dataset["relatedTags"] ?? "");
@@ -91,6 +103,8 @@ function attach(panel: HTMLElement, field: HTMLTextAreaElement): void {
     const chosen = chosenTag(field.value, field.selectionStart ?? field.value.length);
     const params = new URLSearchParams({ tags: field.value });
     if (chosen) params.set("tag", chosen);
+    const source = sourceOf(field);
+    if (source) params.set("source", source);
     const url = `/tags/related?${params.toString()}`;
     if (url === lastUrl) return;
     lastUrl = url;
@@ -111,6 +125,9 @@ function attach(panel: HTMLElement, field: HTMLTextAreaElement): void {
   };
 
   field.addEventListener("input", schedule);
+  for (const input of field.form?.querySelectorAll<HTMLInputElement>('input[name="url"], input[name="source"]') ?? []) {
+    input.addEventListener("change", schedule);
+  }
   field.addEventListener("click", schedule);
   field.addEventListener("keyup", (event) => {
     if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") schedule();

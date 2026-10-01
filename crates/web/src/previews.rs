@@ -136,7 +136,7 @@ pub(crate) async fn post_image(
     };
     let variants = media::variants(db, asset.id).await?;
     let find = |kind: &str| variants.iter().find(|v| v.kind == kind);
-    let video = matches!(asset.media_type.as_str(), "mp4" | "webm");
+    let video = crate::posts::is_video(&asset.media_type);
     let (key, width, height) = if video {
         match find("poster") {
             Some(poster) => (poster.storage_key.clone(), poster.width, poster.height),

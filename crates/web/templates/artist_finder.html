@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Find an artist · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "tag_nav.html" %}
+<h1>Find an artist by URL</h1>
+<form class="filters" method="get" action="/artists/finder">
+  <label for="finder-url">URL</label>
+  <input id="finder-url" name="url" type="url" value="{{ query }}" size="40" placeholder="https://" required>
+  <button type="submit">Find</button>
+</form>
+<p class="hint">A profile, or a page of one of their works: artists whose URLs it falls under are listed.</p>
+{% if searched %}
+{% if artists %}
+<ul class="artist-list">
+  {% for a in artists %}<li><a class="tag tag-artist" href="{{ a.url }}">{{ a.title }}</a>{% if a.other_names %} <span class="hint">{{ a.other_names|join(", ") }}</span>{% endif %}</li>{% endfor %}
+</ul>
+{% else %}
+<p class="empty">No artist has that URL.{% if unknown %} The page is by {{ unknown.name }}{% if can_create %}: <a href="{{ unknown.new_url }}">start their artist entry</a>{% endif %}.{% endif %}</p>
+{% endif %}
+{% endif %}
+{% endblock %}

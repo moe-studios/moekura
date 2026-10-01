@@ -488,6 +488,57 @@ pub async fn recent_versions(
     .await
 }
 
+/// A version with its pool's id and the posts before, for the Danbooru
+/// API.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct FullVersion {
+    pub id: i64,
+    pub pool_id: i32,
+    pub version: i32,
+    pub updater_id: Option<i64>,
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    pub is_deleted: bool,
+    pub post_ids: Vec<i64>,
+    pub created_at: OffsetDateTime,
+    pub previous_name: Option<String>,
+    pub previous_description: Option<String>,
+    pub previous_post_ids: Option<Vec<i64>>,
+}
+
+/// Versions of a pool (or every pool, those deleted now only with
+/// `deleted`), and of one user's if given, newest first.
+pub async fn full_versions(
+    db: impl PgExecutor<'_>,
+    pool_id: Option<i32>,
+    updater_id: Option<i64>,
+    deleted: bool,
+    offset: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<FullVersion>> {
+    sqlx::query_as(
+        "SELECT v.id, v.pool_id, v.version, v.updater_id, v.name, v.description, v.category,
+                v.is_deleted, v.post_ids, v.created_at,
+                pv.name AS previous_name, pv.description AS previous_description,
+                pv.post_ids AS previous_post_ids
+         FROM pool_versions v
+         JOIN pools p ON p.id = v.pool_id
+         LEFT JOIN pool_versions pv ON pv.pool_id = v.pool_id AND pv.version = v.version - 1
+         WHERE ($1::int IS NULL OR v.pool_id = $1)
+           AND ($2::bigint IS NULL OR v.updater_id = $2)
+           AND ($3 OR NOT p.is_deleted)
+         ORDER BY v.id DESC OFFSET $4 LIMIT $5",
+    )
+    .bind(pool_id)
+    .bind(updater_id)
+    .bind(deleted)
+    .bind(offset)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn version(
     db: impl PgExecutor<'_>,
     pool_id: i32,
@@ -568,6 +619,7 @@ mod tests {
         assert_eq!(post_ids(&pool, id).await.unwrap(), reordered.post_ids);
 
         let public = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active, PostStatus::Flagged],
             viewer: None,
             ratings: Vec::new(),

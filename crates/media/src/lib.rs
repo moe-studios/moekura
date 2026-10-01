@@ -2,11 +2,13 @@
 //! (libvips for images, ffmpeg for video).
 
 mod kind;
+pub mod metadata;
 pub mod phash;
 mod pixels;
 mod probe;
 mod render;
 pub mod tool;
+pub mod ugoira;
 
 use std::path::Path;
 
@@ -81,6 +83,17 @@ impl Media {
             return Err(MediaError::NotAllowed(media_type));
         }
         Ok(media_type)
+    }
+
+    /// Sniffs `path`, whatever the allowed types.
+    pub(crate) async fn identify_any(&self, path: &Path) -> Result<MediaType, MediaError> {
+        let mut head = Vec::with_capacity(SNIFF_LEN);
+        tokio::fs::File::open(path)
+            .await?
+            .take(SNIFF_LEN as u64)
+            .read_to_end(&mut head)
+            .await?;
+        MediaType::sniff(&head).ok_or_else(|| MediaError::Corrupt("unknown frame type".into()))
     }
 
     /// Checks the external tools are installed, returning their versions

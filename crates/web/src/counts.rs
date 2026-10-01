@@ -137,6 +137,7 @@ mod tests {
             ..SearchConfig::default()
         };
         let visible = Visibility {
+            hidden_tags: Vec::new(),
             statuses: vec![PostStatus::Active],
             viewer: None,
             ratings: Vec::new(),

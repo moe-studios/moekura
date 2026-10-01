@@ -1,7 +1,8 @@
 //! The related tags panel of the upload and edit forms (`/tags/related`):
 //! tags often used with the box's tags or a chosen one, the user's recent
 //! and frequent tags, tags whose wiki pages list a word in the box as an
-//! other name, and the chosen tag's wiki links. JSON for the script,
+//! other name, the chosen tag's wiki links, and the source's artist and
+//! tags in this site's terms (see [`crate::sources`]). JSON for the script,
 //! which updates the panel as the tags change; a page without scripts.
 
 use std::collections::HashMap;
@@ -47,6 +48,9 @@ struct RelatedQuery {
     /// to list.
     #[serde(default)]
     tag: String,
+    /// The link or source being uploaded or edited.
+    #[serde(default)]
+    source: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,7 +67,7 @@ struct RelatedTag {
 
 #[derive(Debug, Serialize)]
 struct Group {
-    /// `related`, `translated`, `recent`, `frequent` or `wiki`.
+    /// `source`, `related`, `translated`, `recent`, `frequent` or `wiki`.
     kind: &'static str,
     title: String,
     tags: Vec<RelatedTag>,
@@ -142,6 +146,30 @@ async fn related(
         from: None,
     };
     let mut groups = Vec::new();
+
+    // The source's artist and its tags, translated.
+    if let Some(info) = state.sources.lookup(&query.source).await {
+        let artists = crate::sources::artists_for(db, &info).await?;
+        let names: Vec<&str> = artists.iter().map(|a| a.name.as_str()).collect();
+        let mut tags: Vec<RelatedTag> =
+            tags::by_names(db, &names).await?.iter().map(item).collect();
+        for (tag, from) in crate::sources::translated_tags(db, &info).await? {
+            if !tags.iter().any(|t| t.name == tag.name) {
+                tags.push(RelatedTag {
+                    from: Some(from),
+                    ..item(&tag)
+                });
+            }
+        }
+        tags.truncate(GROUP_SIZE);
+        if !tags.is_empty() {
+            groups.push(Group {
+                kind: "source",
+                title: format!("From {}", info.site),
+                tags,
+            });
+        }
+    }
 
     // Tags used with the chosen tag, or with the box's most telling tags.
     let known = tags::by_names(db, &in_box.iter().map(String::as_str).collect::<Vec<_>>()).await?;

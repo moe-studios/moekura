@@ -1,5 +1,121 @@
 // Built from frontend/src by npm run build. Do not edit.
 
+// src/suggestions.ts
+function withTag(tags, tag) {
+  const words = tags.split(/\s+/).filter((word) => word !== "");
+  if (words.includes(tag)) return tags;
+  const kept = tags.trimEnd();
+  return kept === "" ? `${tag} ` : `${kept} ${tag} `;
+}
+function enableSuggestions(root = document) {
+  const box = root.querySelector("[data-suggestions]");
+  const form = box?.closest("form");
+  const field = form?.querySelector("textarea[name=tags]");
+  if (!box || !form || !field) return;
+  const hint = box.querySelector("[data-suggestions-hint]");
+  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
+  box.addEventListener("click", (event) => {
+    const button = event.target.closest("button[name]");
+    if (!button) return;
+    event.preventDefault();
+    if (button.name === "add") {
+      field.value = withTag(field.value, button.value);
+    } else if (button.name === "suggested_rating") {
+      for (const radio of form.querySelectorAll("input[name=rating]")) {
+        radio.checked = radio.value === button.value;
+      }
+    }
+    button.classList.add("chosen");
+    button.disabled = true;
+  });
+}
+
+// src/artist-finder.ts
+var DEBOUNCE_MS = 400;
+function firstUrl(values) {
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (/^https?:\/\/\S+$/i.test(trimmed)) return trimmed;
+  }
+  return null;
+}
+function enableArtistFinder(root = document) {
+  const box = root.querySelector("[data-artist-finder]");
+  const form = box?.closest("form");
+  const tags = form?.querySelector("textarea[name=tags]");
+  if (!box || !form || !tags) return;
+  const inputs = (box.dataset["artistFinder"] ?? "").split(/\s+/).map((name) => form.querySelector(`input[name="${name}"]`)).filter((input) => input !== null);
+  let timer;
+  let request;
+  let last = "";
+  const show = ({ artists: found, unknown }) => {
+    if (found.length === 0 && unknown) {
+      const label2 = document.createElement("span");
+      label2.className = "hint";
+      label2.textContent = `By ${unknown.name}, who has no artist entry yet: `;
+      const link = document.createElement("a");
+      link.href = unknown.new_url;
+      link.target = "_blank";
+      link.textContent = "start one";
+      box.replaceChildren(label2, link);
+      box.hidden = false;
+      return;
+    }
+    if (found.length === 0) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    const label = document.createElement("span");
+    label.className = "hint";
+    label.textContent = found.length === 1 ? "Artist: " : "Artists: ";
+    const buttons = found.map((artist) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tag tag-artist link";
+      button.dataset["tag"] = artist.name;
+      button.textContent = artist.name;
+      button.title = "Add to the tags";
+      return button;
+    });
+    box.replaceChildren(label, ...buttons);
+    box.hidden = false;
+  };
+  const update2 = async () => {
+    const url = firstUrl(inputs.map((input) => input.value));
+    if (url === null) {
+      last = "";
+      show({ artists: [] });
+      return;
+    }
+    if (url === last) return;
+    last = url;
+    request?.abort();
+    request = new AbortController();
+    try {
+      const response = await fetch(`/artists/finder?${new URLSearchParams({ url }).toString()}`, {
+        signal: request.signal,
+        headers: { Accept: "application/json" }
+      });
+      if (!response.ok) return;
+      show(await response.json());
+    } catch {
+    }
+  };
+  const schedule = () => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(() => void update2(), DEBOUNCE_MS);
+  };
+  for (const input of inputs) input.addEventListener("input", schedule);
+  box.addEventListener("click", (event) => {
+    const tag = event.target.closest("button[data-tag]")?.dataset["tag"];
+    if (!tag) return;
+    tags.value = withTag(tags.value, tag);
+    tags.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  void update2();
+}
+
 // src/metatags.ts
 var METATAGS = {
   id: [],
@@ -98,6 +214,11 @@ var METATAGS = {
   approver: ["any", "none"],
   commenter: [],
   comment: [],
+  commentary: ["true", "false", "translated", "untranslated"],
+  exif: [],
+  embedded: ["true", "false"],
+  pixiv: ["any", "none"],
+  pixiv_id: [],
   noter: [],
   flagger: [],
   gentags: [],
@@ -132,7 +253,7 @@ function metatagsOf(mode) {
   if (mode === "edit") return EDIT_METATAGS;
   return {};
 }
-var DEBOUNCE_MS = 120;
+var DEBOUNCE_MS2 = 120;
 var cache = /* @__PURE__ */ new Map();
 var nextId = 0;
 function target(value, caret, mode) {
@@ -233,7 +354,7 @@ var Autocomplete = class {
   }
   schedule() {
     window.clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => void this.update(), DEBOUNCE_MS);
+    this.timer = window.setTimeout(() => void this.update(), DEBOUNCE_MS2);
   }
   async update() {
     const caret = this.field.selectionStart ?? this.field.value.length;
@@ -406,34 +527,50 @@ function enableConfirm() {
   );
 }
 
-// src/suggestions.ts
-function withTag(tags, tag) {
-  const words = tags.split(/\s+/).filter((word) => word !== "");
-  if (words.includes(tag)) return tags;
-  const kept = tags.trimEnd();
-  return kept === "" ? `${tag} ` : `${kept} ${tag} `;
+// src/crop-picker.ts
+function centred(x, y, side, width, height) {
+  const s = Math.max(1, Math.min(side, width, height));
+  const clamp = (n, max) => Math.max(0, Math.min(Math.round(n), max));
+  return { left: clamp(x - s / 2, width - s), top: clamp(y - s / 2, height - s), side: s };
 }
-function enableSuggestions(root = document) {
-  const box = root.querySelector("[data-suggestions]");
-  const form = box?.closest("form");
-  const field = form?.querySelector("textarea[name=tags]");
-  if (!box || !form || !field) return;
-  const hint = box.querySelector("[data-suggestions-hint]");
-  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
-  box.addEventListener("click", (event) => {
-    const button = event.target.closest("button[name]");
-    if (!button) return;
+function enableCropPicker(root = document) {
+  const form = root.querySelector("[data-crop-form]");
+  const details = form?.closest("details");
+  const layer = root.querySelector("[data-notes]");
+  const image = layer?.querySelector("img");
+  if (!form || !details || !layer || !image) return;
+  const width = Number(form.dataset["width"]);
+  const height = Number(form.dataset["height"]);
+  const field = (name) => form.querySelector(`[data-crop="${name}"]`);
+  const [left, top, side] = [field("left"), field("top"), field("side")];
+  if (!left || !top || !side || !width || !height) return;
+  const outline = root.createElement("div");
+  outline.className = "crop-outline";
+  outline.hidden = true;
+  layer.append(outline);
+  const draw = () => {
+    outline.hidden = !details.open;
+    const [l, t, s] = [Number(left.value), Number(top.value), Number(side.value)];
+    outline.style.left = `${l / width * 100}%`;
+    outline.style.top = `${t / height * 100}%`;
+    outline.style.width = `${s / width * 100}%`;
+    outline.style.height = `${s / height * 100}%`;
+  };
+  details.addEventListener("toggle", draw);
+  form.addEventListener("input", draw);
+  image.addEventListener("click", (event) => {
+    if (!details.open) return;
     event.preventDefault();
-    if (button.name === "add") {
-      field.value = withTag(field.value, button.value);
-    } else if (button.name === "suggested_rating") {
-      for (const radio of form.querySelectorAll("input[name=rating]")) {
-        radio.checked = radio.value === button.value;
-      }
-    }
-    button.classList.add("chosen");
-    button.disabled = true;
+    const box = image.getBoundingClientRect();
+    const x = (event.clientX - box.left) / box.width * width;
+    const y = (event.clientY - box.top) / box.height * height;
+    const square = centred(x, y, Number(side.value), width, height);
+    left.value = String(square.left);
+    top.value = String(square.top);
+    side.value = String(square.side);
+    draw();
   });
+  draw();
 }
 
 // src/copy-tags.ts
@@ -829,10 +966,42 @@ function popupPosition(box, layerWidth, popupWidth) {
   const left = Math.max(0, Math.min(box.left, layerWidth - popupWidth));
   return { left, top: box.top + box.height + 4 };
 }
+function embeddedPlace(box, imageWidth, imageHeight) {
+  const percent = (n, of) => `${(n / of * 100).toFixed(3)}%`;
+  return {
+    left: percent(box.x, imageWidth),
+    top: percent(box.y, imageHeight),
+    width: percent(box.width, imageWidth),
+    height: percent(box.height, imageHeight)
+  };
+}
+function embed(root, layer, svg) {
+  const [, , imageWidth = 1, imageHeight = 1] = (svg.getAttribute("viewBox") ?? "").split(/\s+/).map(Number);
+  for (const rect of svg.querySelectorAll("rect.note-box")) {
+    const text = root.querySelector(`[data-note-text="${rect.dataset["note"]}"] .markup`);
+    if (!text) continue;
+    const note = root.createElement("div");
+    note.className = "note-embedded";
+    note.dataset["embeddedNote"] = rect.dataset["note"] ?? "";
+    note.append(text.cloneNode(true));
+    const number = (name) => Number(rect.getAttribute(name) ?? 0);
+    Object.assign(
+      note.style,
+      embeddedPlace(
+        { x: number("x"), y: number("y"), width: number("width"), height: number("height") },
+        imageWidth,
+        imageHeight
+      )
+    );
+    layer.append(note);
+  }
+}
 function enableNotes(root = document) {
   const layer = root.querySelector("[data-notes]");
   const svg = layer?.querySelector("svg.notes");
   if (!layer || !svg) return;
+  const embedded = layer.dataset["notesEmbedded"] !== void 0;
+  if (embedded) embed(root, layer, svg);
   const popup = root.createElement("div");
   popup.className = "note-popup";
   popup.hidden = true;
@@ -869,7 +1038,7 @@ function enableNotes(root = document) {
     popup.style.left = `${place.left}px`;
     popup.style.top = `${place.top}px`;
   };
-  for (const rect of svg.querySelectorAll("rect.note-box")) {
+  for (const rect of embedded ? [] : svg.querySelectorAll("rect.note-box")) {
     rect.querySelector("title")?.remove();
     rect.setAttribute("tabindex", "0");
     rect.addEventListener("mouseenter", () => show(rect));
@@ -1045,7 +1214,7 @@ function enableReader(root = document) {
 }
 
 // src/related-tags.ts
-var DEBOUNCE_MS2 = 400;
+var DEBOUNCE_MS3 = 400;
 function chosenTag(value, caret) {
   let start = caret;
   while (start > 0 && !/\s/.test(value.charAt(start - 1))) start--;
@@ -1061,6 +1230,16 @@ function withoutTag(tags, tag) {
 }
 function hasTag(tags, tag) {
   return tags.split(/\s+/).some((word) => word.toLowerCase() === tag);
+}
+function sourceOf(field) {
+  const form = field.form;
+  if (!form) return null;
+  for (const name of ["url", "source"]) {
+    const input = form.querySelector(`input[name="${name}"]`);
+    const value = input?.value.trim() ?? "";
+    if (/^https?:\/\/\S+$/i.test(value)) return value;
+  }
+  return null;
 }
 function enableRelatedTags(root = document) {
   for (const panel of root.querySelectorAll("[data-related-tags]")) {
@@ -1105,6 +1284,8 @@ function attach(panel, field) {
     const chosen = chosenTag(field.value, field.selectionStart ?? field.value.length);
     const params = new URLSearchParams({ tags: field.value });
     if (chosen) params.set("tag", chosen);
+    const source = sourceOf(field);
+    if (source) params.set("source", source);
     const url = `/tags/related?${params.toString()}`;
     if (url === lastUrl) return;
     lastUrl = url;
@@ -1120,9 +1301,12 @@ function attach(panel, field) {
   };
   const schedule = () => {
     window.clearTimeout(timer);
-    timer = window.setTimeout(() => void update2(), DEBOUNCE_MS2);
+    timer = window.setTimeout(() => void update2(), DEBOUNCE_MS3);
   };
   field.addEventListener("input", schedule);
+  for (const input of field.form?.querySelectorAll('input[name="url"], input[name="source"]') ?? []) {
+    input.addEventListener("change", schedule);
+  }
   field.addEventListener("click", schedule);
   field.addEventListener("keyup", (event) => {
     if (event.key.startsWith("Arrow") || event.key === "Home" || event.key === "End") schedule();
@@ -1343,3 +1527,5 @@ enableCopyTags();
 enableRelatedTags();
 enableSelectAll();
 enableUpload();
+enableArtistFinder();
+enableCropPicker();

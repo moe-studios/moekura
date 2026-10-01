@@ -58,6 +58,12 @@ pub(crate) fn locked_message(lock: moekura_core::posts::PostLock) -> String {
     .to_owned()
 }
 
+/// Whether a file of `media_type` is played as a video: videos, and
+/// ugoira (as the video made of their frames).
+pub(crate) fn is_video(media_type: &str) -> bool {
+    matches!(media_type, "mp4" | "webm" | "ugoira")
+}
+
 /// Which posts `current` may see.
 pub fn visibility(current: &CurrentUser) -> Visibility {
     let mut statuses = vec![PostStatus::Active, PostStatus::Flagged];
@@ -68,6 +74,7 @@ pub fn visibility(current: &CurrentUser) -> Visibility {
         statuses.push(PostStatus::Deleted);
     }
     Visibility {
+        hidden_tags: current.hidden_tags.clone(),
         deleted_by_default: statuses.contains(&PostStatus::Deleted)
             && current
                 .user
@@ -543,14 +550,20 @@ impl Thumbs {
         let sizes = &state.media.config().thumbnail_sizes;
         let small = sizes.first().copied().unwrap_or(250);
         let large = sizes.get(1).copied().unwrap_or(small);
-        let wants_large = current
+        let prefs = current
             .user
             .as_ref()
-            .is_some_and(|u| UserSettings::from_json(&u.settings).large_thumbnails);
-        let size = if wants_large { large } else { small };
+            .map(|u| UserSettings::from_json(&u.settings))
+            .unwrap_or_default();
+        let size = if prefs.large_thumbnails { large } else { small };
+        let kind = if prefs.square_thumbnails {
+            "crop"
+        } else {
+            "thumb"
+        };
         Self {
             size,
-            kinds: (format!("thumb-{size}"), format!("thumb-{large}")),
+            kinds: (format!("{kind}-{size}"), format!("{kind}-{large}")),
         }
     }
 
@@ -633,11 +646,13 @@ pub(crate) async fn displays(
                 .iter()
                 .find(|v| v.asset_id == asset.id && v.kind == kind)
         };
-        let video = matches!(asset.media_type.as_str(), "mp4" | "webm");
-        let display = match variant("sample") {
-            Some(sample) if !video && asset.frames <= 1 => {
+        let video = is_video(&asset.media_type);
+        let display = match (variant("sample"), variant("video")) {
+            (Some(sample), _) if !video && asset.frames <= 1 => {
                 (&sample.storage_key, sample.width, sample.height)
             }
+            // An ugoira plays its video.
+            (_, Some(played)) => (&played.storage_key, played.width, played.height),
             _ => (&asset.storage_key, asset.width, asset.height),
         };
         shown.push(context! {
@@ -657,7 +672,11 @@ pub(crate) async fn displays(
 /// page can lead back to the search.
 fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option<&str>) -> Value {
     let url = |key: &Option<String>| key.as_deref().and_then(|k| file_url(state, k));
-    let (width, height) = fit(card.width, card.height, box_size);
+    let (width, height) = if card.square {
+        (box_size, box_size)
+    } else {
+        fit(card.width, card.height, box_size)
+    };
     let href = match post_query {
         Some(query) => format!("/posts/{}?{query}", card.id),
         None => format!("/posts/{}", card.id),
@@ -672,7 +691,7 @@ fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option
         rating => card.rating,
         pending => card.status == "pending",
         deleted => card.status == "deleted",
-        video => matches!(card.media_type.as_str(), "mp4" | "webm"),
+        video => is_video(&card.media_type),
         animated => card.frames > 1,
     }
 }
@@ -964,8 +983,14 @@ pub(crate) async fn render_post(
     let url_of = |key: &str| file_url(state, key);
     let variant = |kind: &str| variants.iter().find(|v: &&Variant| v.kind == kind);
     let original = url_of(&asset.storage_key);
-    let video = matches!(asset.media_type.as_str(), "mp4" | "webm");
+    let video = is_video(&asset.media_type);
     let animated = asset.frames > 1;
+    // What the player plays: an ugoira's video, once made.
+    let play = if asset.media_type == "ugoira" {
+        variant("video").and_then(|v| url_of(&v.storage_key))
+    } else {
+        original.clone()
+    };
     // Stills show the resized sample when there is one, unless the viewer
     // wants the original; animations and videos always use the original.
     let sample = variant("sample").filter(|_| !video && !animated);
@@ -1005,6 +1030,8 @@ pub(crate) async fn render_post(
     let file = context! {
         original => original,
         display => display,
+        play => play,
+        ugoira => asset.media_type == "ugoira",
         resized => resized,
         poster => poster,
         video => video,
@@ -1027,6 +1054,7 @@ pub(crate) async fn render_post(
         source_link => is_web_url(&post.source),
         description => post.description,
         has_notes => post.last_noted_at.is_some(),
+        embedded_notes => post.has_embedded_notes,
         created => crate::dates::day(post.created_at),
         created_iso => created,
     };
@@ -1078,6 +1106,12 @@ pub(crate) async fn render_post(
         .iter()
         .map(|r| context! { code => r.code(), label => r.label() })
         .collect();
+    let commentary = crate::commentary::for_post(db, id, edit.is_some()).await?;
+    let crop = if page.current.can(Permission::ApprovePosts) {
+        media::crop(db, asset.id).await?
+    } else {
+        None
+    };
     let comments =
         crate::comments::thread(state, &page.current, &post, extra.comment.as_ref()).await?;
     let pools = crate::pools::for_post(
@@ -1118,6 +1152,7 @@ pub(crate) async fn render_post(
         status,
         "post.html",
         context! {
+            commentary => commentary,
             post => post_context,
             file => file,
             uploader => uploader,
@@ -1133,6 +1168,11 @@ pub(crate) async fn render_post(
             comments => comments,
             notes => notes,
             preview => preview,
+            can_replace => page.current.can(Permission::ReplacePosts),
+            crop => page.current.can(Permission::ApprovePosts).then(|| {
+                let [left, top, side] = crop.unwrap_or([0, 0, asset.width.min(asset.height)]);
+                context! { left => left, top => top, side => side, chosen => crop.is_some() }
+            }),
             can_edit_notes => !video
                 && page.current.is_logged_in()
                 && page.current.can(Permission::EditNotes)
@@ -1726,6 +1766,51 @@ mod tests {
             .body;
         assert!(post.contains("Your settings hide comments"), "{post}");
         assert!(!post.contains("id=\"new-comment\""));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn square_thumbnails(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let with = upload(&app, &alice, &fixture::png(40, 20), &[]).await;
+        let without = upload(&app, &alice, &fixture::png(24, 20), &[]).await;
+        // As processing leaves them: thumbnails for both, squares for one.
+        for (post, kinds) in [
+            (with, &["thumb-250", "crop-250"][..]),
+            (without, &["thumb-250"][..]),
+        ] {
+            let asset = media::for_post(&pool, post).await.unwrap().unwrap();
+            for kind in kinds {
+                media::save_variant(
+                    &pool,
+                    &Variant {
+                        asset_id: asset.id,
+                        kind: (*kind).to_owned(),
+                        format: "webp".into(),
+                        width: 20,
+                        height: 20,
+                        file_size: 1,
+                        storage_key: format!("{kind}/aa/bb/aabb{post:04}.webp"),
+                    },
+                )
+                .await
+                .unwrap();
+            }
+        }
+        set_user_settings(
+            &pool,
+            "alice",
+            serde_json::json!({ "square_thumbnails": true }),
+        )
+        .await;
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(
+            grid.contains(&format!("crop-250/aa/bb/aabb{with:04}")),
+            "{grid}"
+        );
+        // Older posts keep their usual thumbnails.
+        assert!(grid.contains(&format!("aabb{without:04}")), "{grid}");
+        assert!(grid.contains("width=\"250\" height=\"250\""), "{grid}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

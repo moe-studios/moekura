@@ -35,6 +35,7 @@
       <label class="choice"><input type="checkbox" name="original_images" value="1"{% if prefs_form.original_images %} checked{% endif %}> Show original images on post pages, not resized ones</label>
       {% if can_view_deleted %}<label class="choice"><input type="checkbox" name="show_deleted" value="1"{% if prefs_form.show_deleted %} checked{% endif %}> Include deleted posts in searches</label>{% endif %}
       {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> Large thumbnails ({{ large_thumbnail_size }} pixels)</label>{% endif %}
+      <label class="choice"><input type="checkbox" name="square_thumbnails" value="1"{% if prefs_form.square_thumbnails %} checked{% endif %}> Square thumbnails, cropped to the picture's most interesting part</label>
       <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> Hide comments on post pages</label>
       <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> Suggest tags while typing</label>
       <label class="choice"><input type="checkbox" name="shortcuts" value="1"{% if prefs_form.shortcuts %} checked{% endif %}> Keyboard shortcuts</label>

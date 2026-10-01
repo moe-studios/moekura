@@ -35,9 +35,13 @@
     {% endfor %}
     {% if blacklisted %}
     <p class="notice blacklisted">This post matches your blacklist (<code>{{ blacklisted.rule }}</code>). <a href="{{ blacklisted.show_url }}">Show it anyway</a></p>
+    {% elif file.ugoira and not file.play %}
+    <p class="notice">This animation is still being prepared; it plays here once it's ready.</p>
+    {% if file.poster %}<img src="{{ file.poster }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">{% endif %}
     {% elif file.video %}
-    <video src="{{ file.original }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
-           width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
+    <video src="{{ file.play }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
+           width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline{% if file.ugoira %} autoplay muted{% endif %}></video>
+    {% if file.ugoira %}<p class="hint">An ugoira, played from its frames. <a href="{{ file.original }}" download>Download the frames</a> (a zip).</p>{% endif %}
     {% else %}
     {% if file.resized %}
     <p class="notice resized" data-resized data-percent="{{ file.resized.percent }}" data-sample="{{ file.resized.sample }}" data-original="{{ file.original }}">
@@ -45,7 +49,7 @@
       <a href="{{ file.resized.toggle_url }}">{% if file.resized.showing_original %}Show the resized image{% else %}View the original{% endif %}</a>
     </p>
     {% endif %}
-    <div class="note-layer" data-notes{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
+    <div class="note-layer" data-notes{% if post.embedded_notes %} data-notes-embedded{% endif %}{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
       <a href="{{ file.original }}">
         <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="Post #{{ post.id }}">
       </a>
@@ -61,10 +65,64 @@
       <ol>
         {% for n in notes %}<li id="note-{{ n.id }}" data-note-text="{{ n.id }}"><div class="markup">{{ n.html }}</div></li>{% endfor %}
       </ol>
+      {% if can_edit_notes %}
+      <form method="post" action="/posts/{{ post.id }}/notes/embed" class="inline">
+        <input type="hidden" name="embedded" value="{{ '0' if post.embedded_notes else '1' }}">
+        <button type="submit" class="secondary">{% if post.embedded_notes %}Show the notes' text when pointed at{% else %}Draw the notes' text on the picture{% endif %}</button>
+      </form>
+      {% endif %}
     </details>
     {% endif %}
     {% endif %}
     {% if post.description %}<p class="description">{{ post.description }}</p>{% endif %}
+    {% if commentary %}
+    <section id="commentary" class="commentary" aria-labelledby="commentary-heading">
+      {% if commentary.shown %}
+      {% set c = commentary.shown %}
+      <h2 id="commentary-heading">Artist's commentary</h2>
+      {% if c.translated %}
+      <div class="commentary-text">
+        {% if c.translated_title %}<h3>{{ c.translated_title }}</h3>{% endif %}
+        {% if c.translated_html %}<div class="markup">{{ c.translated_html }}</div>{% endif %}
+      </div>
+      {% if c.original %}
+      <details class="commentary-original">
+        <summary>Original</summary>
+        {% if c.original_title %}<h3>{{ c.original_title }}</h3>{% endif %}
+        {% if c.original_html %}<div class="markup">{{ c.original_html }}</div>{% endif %}
+      </details>
+      {% endif %}
+      {% else %}
+      <div class="commentary-text">
+        {% if c.original_title %}<h3>{{ c.original_title }}</h3>{% endif %}
+        {% if c.original_html %}<div class="markup">{{ c.original_html }}</div>{% endif %}
+      </div>
+      {% endif %}
+      {% if commentary.history_url %}<p class="hint"><a href="{{ commentary.history_url }}">Commentary history</a></p>{% endif %}
+      {% else %}
+      <h2 id="commentary-heading" class="visually-hidden">Artist's commentary</h2>
+      {% endif %}
+      {% if commentary.form %}
+      {% set f = commentary.form %}
+      <details class="edit">
+        <summary>{% if commentary.shown %}Edit the commentary{% else %}Add the artist's commentary{% endif %}</summary>
+        <form method="post" action="/posts/{{ post.id }}/commentary">
+          <input type="hidden" name="base" value="{{ f.base }}">
+          <label for="commentary-original-title">Original title</label>
+          <input id="commentary-original-title" name="original_title" value="{{ f.original_title }}" maxlength="1000">
+          <label for="commentary-original-description">Original description</label>
+          <textarea id="commentary-original-description" name="original_description" rows="4">{{ f.original_description }}</textarea>
+          <label for="commentary-translated-title">Translated title</label>
+          <input id="commentary-translated-title" name="translated_title" value="{{ f.translated_title }}" maxlength="1000">
+          <label for="commentary-translated-description">Translated description</label>
+          <textarea id="commentary-translated-description" name="translated_description" rows="4">{{ f.translated_description }}</textarea>
+          <p class="hint">What the artist wrote where they posted this, as they wrote it, and a translation. Descriptions use the wiki's markup.</p>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+      {% endif %}
+    </section>
+    {% endif %}
     {% if family %}
     <section class="family" aria-label="Related posts">
       <p>{% if family.is_child %}This post belongs to <a href="/posts/{{ family.root }}">a parent post</a>.{% else %}This post has child posts.{% endif %}</p>
@@ -121,6 +179,40 @@
         <label for="appeal-reason">Why should this post come back?</label>
         <input id="appeal-reason" name="reason" maxlength="2000" required>
         <button type="submit">Appeal</button>
+      </form>
+    </details>
+    {% endif %}
+    {% if crop %}
+    <details class="edit">
+      <summary>Square thumbnail</summary>
+      <form method="post" action="/posts/{{ post.id }}/crop" data-crop-form data-width="{{ file.width }}" data-height="{{ file.height }}">
+        <p class="hint">Square thumbnails show {% if crop.chosen %}this square{% else %}the part of the picture that looks most interesting; choose a square instead{% endif %}, in the picture's pixels ({{ file.width }}×{{ file.height }}). With scripts, click the picture to centre the square there.</p>
+        <label for="crop-left">Left</label>
+        <input id="crop-left" name="left" type="number" min="0" value="{{ crop.left }}" data-crop="left">
+        <label for="crop-top">Top</label>
+        <input id="crop-top" name="top" type="number" min="0" value="{{ crop.top }}" data-crop="top">
+        <label for="crop-side">Side</label>
+        <input id="crop-side" name="side" type="number" min="1" value="{{ crop.side }}" data-crop="side">
+        <div class="actions">
+          <button type="submit">Use this square</button>
+          {% if crop.chosen %}<button type="submit" class="secondary" name="reset" value="1">Back to automatic</button>{% endif %}
+        </div>
+      </form>
+    </details>
+    {% endif %}
+    {% if can_replace %}
+    <details class="edit">
+      <summary>Replace the file</summary>
+      <form method="post" action="/posts/{{ post.id }}/replace" enctype="multipart/form-data">
+        <label for="replace-file">New file</label>
+        <input id="replace-file" name="file" type="file">
+        <label for="replace-url">…or a link to it</label>
+        <input id="replace-url" name="url" type="url" placeholder="https://">
+        <label for="replace-reason">Why</label>
+        <input id="replace-reason" name="reason" maxlength="1000" placeholder="Higher resolution, uncropped, …">
+        <label class="choice"><input type="checkbox" name="rescale_notes" checked> Move and resize the notes to fit the new size</label>
+        <p class="hint">The post keeps its tags, comments, notes, pools and favourites; the old file is kept in its <a href="/posts/{{ post.id }}/replacements">replacements</a>.</p>
+        <button type="submit" data-confirm="Replace this post's file?">Replace</button>
       </form>
     </details>
     {% endif %}
@@ -292,7 +384,7 @@
       <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
-    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>Edit</a>{% endif %}<a href="{{ file.original }}" download>Download original</a><a href="/posts/{{ post.id }}/history">History</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
+    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>Edit</a>{% endif %}<a href="{{ file.original }}" download>Download original</a><a href="/posts/{{ post.id }}/history">History</a><a href="/posts/{{ post.id }}/metadata">Metadata</a><a href="/posts/{{ post.id }}/replacements">Replacements</a><a href="/iqdb_queries?post_id={{ post.id }}">Look-alikes</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">Note history</a>{% endif %}</p>
     {% if favorite_groups %}
     <section class="tag-group post-favorite-groups">
       <h2>Your favorite groups</h2>

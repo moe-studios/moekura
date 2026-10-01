@@ -60,6 +60,8 @@ pub struct ApiPost {
     pub last_noted_at: Option<OffsetDateTime>,
     /// The uploader's name, unless their account is gone.
     pub uploader: Option<String>,
+    /// The Pixiv work the source links to.
+    pub pixiv_id: Option<i64>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     /// Sorted by name.
@@ -197,6 +199,7 @@ pub(crate) async fn load(
                 last_comment_bumped_at: post.last_comment_bumped_at,
                 note_count: post.note_count,
                 last_noted_at: post.last_noted_at,
+                pixiv_id: post.pixiv_id,
                 created_at: post.created_at,
                 tags,
                 file: ApiFile {
@@ -1210,4 +1213,76 @@ mod tests {
         let post = json(&app.get(&format!("/api/v1/posts/{id}"), None).await.body);
         assert_eq!(post["status"], json!("flagged"));
     }
+}
+
+/// What to search by image with: one of these.
+#[derive(ToSchema)]
+#[allow(dead_code)]
+pub struct SimilarRequest {
+    /// A picture.
+    #[schema(value_type = Option<String>, format = Binary)]
+    file: Option<Vec<u8>>,
+    /// A link to a picture, or to a work's page on a site Moekura reads.
+    url: Option<String>,
+    /// A post, to find others like it.
+    post_id: Option<i64>,
+}
+
+/// A post that looks like the picture searched with.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SimilarPost {
+    pub post: ApiPost,
+    /// How alike, in percent.
+    pub similarity: f64,
+    /// How many of the 64 bits of the perceptual hashes differ.
+    pub distance: u32,
+}
+
+/// Search by image.
+///
+/// Hashes the picture as uploads are and lists the visible posts that
+/// look most like it (at most 20, at least 75% alike), closest first,
+/// without making a post. Searches are rate limited on their own, as
+/// each compares the picture with every post.
+#[utoipa::path(
+    post,
+    path = "/posts/similar",
+    operation_id = "search_by_image",
+    tag = "posts",
+    request_body(content = SimilarRequest, content_type = "multipart/form-data"),
+    responses(
+        (status = 200, body = Vec<SimilarPost>),
+        (status = 422, body = ErrorBody, description = "Nothing to search with, or a file that can't be read"),
+        (status = 429, body = ErrorBody, description = "Too many searches by image; wait and try again"),
+    ),
+)]
+pub(crate) async fn similar(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    info: crate::auth::RequestInfo,
+    form: Multipart,
+) -> Result<Json<Vec<SimilarPost>>, AppError> {
+    current.require(Permission::ViewPosts)?;
+    let asked = crate::image_search::Asked::from_multipart(&state, form).await?;
+    let matches = asked
+        .run(&state, &current, &info)
+        .await?
+        .ok_or_else(|| AppError::Unprocessable("Send a `file`, a `url` or a `post_id`.".into()))?;
+    let db = state.reader(&current);
+    let ids: Vec<i64> = matches.iter().map(|m| m.post_id).collect();
+    let found = posts::by_ids(db, &ids).await?;
+    let mut loaded = load(&state, db, found).await?;
+    Ok(Json(
+        matches
+            .iter()
+            .filter_map(|m| {
+                let at = loaded.iter().position(|p| p.id == m.post_id)?;
+                Some(SimilarPost {
+                    post: loaded.swap_remove(at),
+                    similarity: m.similarity(),
+                    distance: m.distance,
+                })
+            })
+            .collect(),
+    ))
 }

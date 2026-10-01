@@ -53,10 +53,12 @@ pub enum Permission {
     LockPosts = 22,
     /// Undo all of a user's post edits in a range of days (vandalism).
     UndoEdits = 23,
+    /// Replace a post's file (a better version, a fixed crop).
+    ReplacePosts = 24,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 24] = [
+    pub const ALL: [Permission; 25] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -81,6 +83,7 @@ impl Permission {
         Permission::MassEditTags,
         Permission::LockPosts,
         Permission::UndoEdits,
+        Permission::ReplacePosts,
     ];
 
     const fn bit(self) -> u64 {
@@ -114,6 +117,7 @@ impl Permission {
             Permission::MassEditTags => "mass_edit_tags",
             Permission::LockPosts => "lock_posts",
             Permission::UndoEdits => "undo_edits",
+            Permission::ReplacePosts => "replace_posts",
         }
     }
 
@@ -127,7 +131,7 @@ impl Permission {
             Permission::Favorite => "Favorite",
             Permission::Vote => "Vote",
             Permission::Flag => "Flag posts",
-            Permission::EditWiki => "Edit the wiki",
+            Permission::EditWiki => "Edit the wiki and artists",
             Permission::ApprovePosts => "Approve posts and handle flags",
             Permission::DeletePosts => "Delete and restore posts",
             Permission::PurgePosts => "Purge posts",
@@ -144,6 +148,7 @@ impl Permission {
             Permission::MassEditTags => "Mass edit tags",
             Permission::LockPosts => "Lock posts and change locked ones",
             Permission::UndoEdits => "Undo a user's post edits",
+            Permission::ReplacePosts => "Replace posts' files",
         }
     }
 }
@@ -300,6 +305,7 @@ impl SystemRole {
             MassEditTags,
             LockPosts,
             UndoEdits,
+            ReplacePosts,
         ]));
         match self {
             SystemRole::Anonymous => ANONYMOUS,

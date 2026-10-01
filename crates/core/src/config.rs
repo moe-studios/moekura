@@ -552,9 +552,9 @@ pub struct MediaConfig {
     /// bombs).
     pub max_pixels: u64,
     pub max_duration_secs: u64,
-    /// Accepted types: jpeg, png, gif, webp, avif, jxl, mp4, webm. `jxl` is
-    /// off by default because libvips considers its JPEG XL decoder less
-    /// hardened against malicious files.
+    /// Accepted types: jpeg, png, gif, webp, avif, jxl, mp4, webm, ugoira
+    /// (Pixiv's zips of frames). `jxl` is off by default because libvips
+    /// considers its JPEG XL decoder less hardened against malicious files.
     pub allowed_types: Vec<String>,
     /// Bounding boxes for thumbnails, e.g. 1x and 2x for high-DPI screens.
     pub thumbnail_sizes: Vec<u32>,
@@ -586,9 +586,11 @@ impl Default for MediaConfig {
             max_upload_mb: 100,
             max_pixels: 200_000_000,
             max_duration_secs: 600,
-            allowed_types: ["jpeg", "png", "gif", "webp", "avif", "mp4", "webm"]
-                .map(String::from)
-                .to_vec(),
+            allowed_types: [
+                "jpeg", "png", "gif", "webp", "avif", "mp4", "webm", "ugoira",
+            ]
+            .map(String::from)
+            .to_vec(),
             thumbnail_sizes: vec![250, 500],
             sample_size: 1600,
             variant_format: "webp".to_owned(),

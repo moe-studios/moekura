@@ -9,15 +9,21 @@
 //! Danbooru's shape ([`error_response`]).
 
 mod ai_tags;
+mod artists;
+mod commentaries;
 mod community;
 mod explore;
+mod iqdb;
+mod media_assets;
 mod missing;
 mod notes;
 mod posts;
 mod reactions;
+mod replacements;
 mod tags;
 mod uploads;
 mod users;
+mod versions;
 
 use axum::Router;
 use axum::extract::Request;
@@ -39,19 +45,27 @@ pub(crate) const PREFIX: &str = "/__danbooru";
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DanbooruRequest;
 
-pub fn routes() -> Router<AppState> {
+/// The Danbooru API's routes; files to search by image may be up to
+/// `max_upload_bytes`.
+pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new().nest(
         PREFIX,
         posts::routes()
+            .merge(iqdb::routes(max_upload_bytes))
             .merge(ai_tags::routes())
             .merge(community::routes())
             .merge(missing::routes())
             .merge(explore::routes())
+            .merge(artists::routes())
+            .merge(commentaries::routes())
+            .merge(media_assets::routes())
+            .merge(replacements::routes())
             .merge(notes::routes())
             .merge(reactions::routes())
             .merge(tags::routes())
             .merge(uploads::routes())
-            .merge(users::routes()),
+            .merge(users::routes())
+            .merge(versions::routes()),
     )
 }
 
@@ -316,7 +330,7 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn routes() -> Router<AppState> {
-        super::routes()
+        super::routes(100 * 1024 * 1024)
             .merge(crate::upload::routes(100 * 1024 * 1024))
             .merge(crate::posts::routes())
     }

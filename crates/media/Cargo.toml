@@ -10,6 +10,9 @@ publish.workspace = true
 
 [dependencies]
 moekura-core.workspace = true
+base64.workspace = true
+quick-xml.workspace = true
+zip.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

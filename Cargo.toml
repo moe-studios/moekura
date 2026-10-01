@@ -38,6 +38,10 @@ http-body-util = "0.1.5"
 jiff = { version = "0.2.37", default-features = false, features = ["std", "tzdb-bundle-always"] }
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
 md-5 = "0.11.0"
+# Pixiv ugoira: zips of frames.
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Reading XMP metadata from uploaded files.
+quick-xml = "0.42.0"
 # ONNX Runtime for the tagger, loaded at run time (libonnxruntime.so), so
 # building needs no download and other builds don't carry it.
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "tracing"] }

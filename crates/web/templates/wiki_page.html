@@ -10,6 +10,7 @@
       {% if tag %}<a href="{{ search_url }}">{{ tag.count }} post{% if tag.count != 1 %}s{% endif %}</a>{% if tag.deprecated %} · deprecated tag{% endif %}{% endif %}
       {% if wiki %}{% if tag %} · {% endif %}version {{ wiki.version }}, {{ wiki.date }}{% if wiki.updater %} by {{ wiki.updater }}{% endif %}
       · <a href="{{ url }}/history">History</a>{% endif %}
+      {% if artist %} · <a href="{{ artist.url }}">Artist entry</a>{% if artist.banned %} (banned){% endif %}{% elif can_edit and tag and tag.category == "artist" %} · <a href="/artists/new?name={{ name|urlencode }}">Start an artist entry</a>{% endif %}
       {% if can_edit %} · <a href="{{ url }}/edit">{% if wiki %}Edit{% else %}Start this page{% endif %}</a>{% endif %}
     </p>
   </header>

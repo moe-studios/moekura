@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Invites · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/settings">« Settings</a></p>
+<h1>Invites</h1>
+{% if not invite_mode %}<p class="hint">Signing up doesn't need an invite at the moment, but codes keep working if that changes.</p>{% endif %}
+{% if created %}
+<div class="notice" role="status">
+  <p>Your new invite. Copy it now: it won't be shown again.</p>
+  <p><code class="secret">{{ created.code }}</code></p>
+  <p>Or send this link, which signs up with it: <code class="secret">{{ created.link }}</code></p>
+</div>
+{% endif %}
+<section class="card medium">
+  <h2>New invite</h2>
+  {% if manager %}
+  <p class="hint">You can make as many as you like.</p>
+  {% else %}
+  <p class="hint">You can make {{ quota }} every {{ quota_days }} days, each for one person; {{ remaining }} left now.</p>
+  {% endif %}
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/invites">
+    {% if manager %}
+    <label for="uses">Uses</label>
+    <input id="uses" name="uses" type="number" min="1" max="{{ max_uses }}" value="{{ form.uses }}" required>
+    {% endif %}
+    <label for="expires_days">Lasts this many days</label>
+    <input id="expires_days" name="expires_days" type="number" min="{{ 0 if manager else 1 }}" max="{{ max_days }}" value="{{ form.expires_days }}" required>
+    {% if manager %}<p class="hint">0 for an invite that never expires.</p>{% endif %}
+    <label for="note">Note <span class="optional">(optional)</span></label>
+    <input id="note" name="note" value="{{ form.note }}" maxlength="{{ note_max }}" placeholder="Who it's for">
+    <button type="submit">Make an invite</button>
+  </form>
+</section>
+{% if invites %}
+<table class="tag-table">
+  <thead><tr>{% if manager %}<th scope="col">By</th>{% endif %}<th scope="col">Note</th><th scope="col">Made</th><th scope="col">Uses</th><th scope="col">Expires</th><th scope="col">Used by</th><th scope="col">State</th><th scope="col"></th></tr></thead>
+  <tbody>
+    {% for i in invites %}
+    <tr id="invite-{{ i.id }}">
+      {% if manager %}<td>{% if i.creator %}<a href="/users/{{ i.creator|urlencode }}">{{ i.creator }}</a>{% else %}<span class="hint">command line</span>{% endif %}</td>{% endif %}
+      <td>{{ i.note }}</td>
+      <td>{{ i.created }}</td>
+      <td>{{ i.uses }} of {{ i.max_uses }}</td>
+      <td>{{ i.expires or "never" }}</td>
+      <td>{% for name in i.used_by %}<a href="/users/{{ name|urlencode }}">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      <td>{{ i.state }}</td>
+      <td>{% if i.can_revoke %}<form method="post" action="/invites/{{ i.id }}/revoke"><button type="submit" class="link" data-confirm="Revoke this invite? Its code stops working.">Revoke</button></form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="empty">No invites yet.</p>
+{% endif %}
+{% endblock %}

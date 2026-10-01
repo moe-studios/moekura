@@ -96,6 +96,9 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             names
         });
     let can_rename = crate::name_changes::may_rename(page.state(), &page.current, &user);
+    let invited_by = moekura_db::invites::inviter(db, user.id)
+        .await?
+        .map(|(_, name)| name);
     let [positive, neutral, negative] = moekura_db::user_feedbacks::counts(db, user.id).await?;
     let feedback = context! {
         positive => positive,
@@ -116,6 +119,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             messages => messages,
             feedback => feedback,
             former_names => former_names,
+            invited_by => invited_by,
             can_rename => can_rename,
             user => context! {
                 name => user.name,
@@ -237,6 +241,7 @@ fn render_settings(
             error => error,
             blacklist => blacklist,
             has_feed_token => has_feed_token,
+            can_invite => crate::invites::may_invite(&page.current),
             per_page => settings.per_page,
             default_per_page => page.state().config.search.per_page,
             per_page_choices => PER_PAGE_CHOICES.iter().filter(|&&n| n <= max).collect::<Vec<_>>(),

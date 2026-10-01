@@ -30,6 +30,9 @@ pub fn routes() -> Router<AppState> {
 #[derive(Debug, Default, Deserialize)]
 struct NextQuery {
     next: Option<String>,
+    /// An invite code, from a link that comes with it.
+    #[serde(default)]
+    invite: String,
 }
 
 /// Where to send the user after logging in: a local path only, so the
@@ -94,6 +97,7 @@ async fn register_form(page: Page, Query(query): Query<NextQuery>) -> Result<Res
     }
     let form = RegisterForm {
         next: query.next,
+        invite: query.invite,
         ..Default::default()
     };
     Ok(render_register(
@@ -212,12 +216,18 @@ async fn register(
 
     // One transaction, so a failed signup doesn't use up the invite.
     let mut tx = state.db.primary().begin().await?;
-    if mode == RegistrationMode::Invite && !invites::redeem(&mut *tx, &form.invite).await? {
-        return invalid(RegisterErrors {
-            invite: Some("That invite code is invalid, expired or already used.".into()),
-            ..Default::default()
-        });
-    }
+    let invite = match mode {
+        RegistrationMode::Invite => match invites::redeem(&mut *tx, &form.invite).await? {
+            Some(id) => Some(id),
+            None => {
+                return invalid(RegisterErrors {
+                    invite: Some("That invite code is invalid, expired or already used.".into()),
+                    ..Default::default()
+                });
+            }
+        },
+        _ => None,
+    };
     let account = NewAccount {
         name: form.name.trim(),
         password: &form.password,
@@ -244,6 +254,9 @@ async fn register(
             return invalid(errors);
         }
     };
+    if let Some(invite) = invite {
+        invites::record_use(&mut *tx, invite, user.id).await?;
+    }
     if let (UserStatus::Unverified, Some(email)) = (status, user.email.clone()) {
         crate::email::send_verification(&mut tx, &state, &user, &email).await?;
     }
@@ -493,6 +506,7 @@ mod tests {
                 created_by: None,
                 max_uses: 1,
                 expires_in: None,
+                note: String::new(),
             },
         )
         .await

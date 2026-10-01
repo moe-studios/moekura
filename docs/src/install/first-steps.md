@@ -46,9 +46,24 @@ moekura admin settings set registration_mode closed
 | Mode | Who can create an account |
 |---|---|
 | `open` | anyone |
-| `invite` | people with an invite code (`moekura admin create-invite`) |
+| `invite` | people with an invite code (see [Invites](#invites)) |
 | `approval` | anyone, but staff approve new accounts before they can log in (**Admin → Users**, filter *pending*) |
 | `closed` | nobody; admins create accounts from the shell |
+
+## Invites
+
+Invite codes are made at **Settings → Invites** (`/invites`), or with
+`moekura admin create-invite`. Each code comes with a sign-up link that
+fills it in, and is shown only once. The list shows each invite's uses,
+expiry and the accounts made with it, which also show **Invited by** on
+their profiles.
+
+Roles with *Invite people* (moderators, by default) make single-use
+invites lasting up to 30 days, up to **Invites each person may make
+every 30 days** in **Admin → Settings** (5 to start with), and revoke
+their own. Those who can manage users have no limit, choose how many
+times an invite can be used and how long it lasts (or that it never
+expires), and see and revoke everyone's.
 
 ## Email
 

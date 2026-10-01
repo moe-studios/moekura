@@ -117,6 +117,7 @@ impl Default for SiteSettings {
                 edits: 0,
                 account_days: 30,
                 max_recent_deletions: 0,
+                max_negative_feedback: 0,
             },
             preview_all_ratings: false,
             default_blacklist: String::new(),

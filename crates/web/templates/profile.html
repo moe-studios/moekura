@@ -4,10 +4,13 @@
 <section class="card medium">
   <h1>{{ user.name }}</h1>
   {% if record_url %}<p><a href="{{ record_url }}">Moderation record</a></p>{% endif %}
-  {% if messages %}
+  {% if messages or feedback.can_give %}
   <div class="actions">
-    {% if messages.can_send and not messages.blocked %}<a class="button" href="/dmails/new?to={{ user.name|urlencode }}">Send a message</a>{% endif %}
+    {% if messages and messages.can_send and not messages.blocked %}<a class="button" href="/dmails/new?to={{ user.name|urlencode }}">Send a message</a>{% endif %}
+    {% if feedback.can_give %}<a class="button secondary" href="/user_feedbacks/new?user={{ user.name|urlencode }}">Leave feedback</a>{% endif %}
+    {% if messages %}
     <form method="post" action="/users/{{ user.name }}/block"><input type="hidden" name="blocked" value="{{ '0' if messages.blocked else '1' }}"><button type="submit" class="secondary">{% if messages.blocked %}Unblock{% else %}Block messages{% endif %}</button></form>
+    {% endif %}
   </div>
   {% endif %}
   <dl class="facts">
@@ -18,6 +21,7 @@
     <dt>Favorites</dt><dd><a href="{{ favorites_url }}">{{ favorites }}</a></dd>
     <dt>Favorite groups</dt><dd><a href="{{ favorite_groups_url }}">{{ favorite_groups }}</a></dd>
     <dt>Comments</dt><dd><a href="{{ comments_url }}">{{ comments }}</a></dd>
+    <dt>Feedback</dt><dd><a href="{{ feedback.url }}">{% if feedback.positive or feedback.neutral or feedback.negative %}<span class="status-positive">{{ feedback.positive }} positive</span>, {{ feedback.neutral }} neutral, <span class="status-negative">{{ feedback.negative }} negative</span>{% else %}None{% endif %}</a></dd>
     <dt>Post changes</dt><dd><a href="{{ changes_url }}">View</a></dd>
   </dl>
   {% if promotion.promoted %}<p class="hint">Promoted automatically on {{ promotion.promoted }}.</p>{% endif %}

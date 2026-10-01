@@ -14,6 +14,9 @@ pub struct Rules {
     pub account_days: u32,
     /// Most of their uploads deleted in the last 30 days.
     pub max_recent_deletions: u32,
+    /// Most negative feedback records (not deleted) on their account.
+    #[serde(default)]
+    pub max_negative_feedback: u32,
 }
 
 /// A member's record, as the rules look at it.
@@ -23,6 +26,7 @@ pub struct Record {
     pub edits: i64,
     pub account_days: i64,
     pub recent_deletions: i64,
+    pub negative_feedback: i64,
 }
 
 impl Rules {
@@ -31,6 +35,7 @@ impl Rules {
             && record.edits >= i64::from(self.edits)
             && record.account_days >= i64::from(self.account_days)
             && record.recent_deletions <= i64::from(self.max_recent_deletions)
+            && record.negative_feedback <= i64::from(self.max_negative_feedback)
     }
 }
 
@@ -45,12 +50,14 @@ mod tests {
             edits: 10,
             account_days: 30,
             max_recent_deletions: 1,
+            max_negative_feedback: 0,
         };
         let good = Record {
             uploads: 50,
             edits: 10,
             account_days: 30,
             recent_deletions: 1,
+            negative_feedback: 0,
         };
         assert!(rules.met_by(&good));
         assert!(!rules.met_by(&Record {
@@ -64,6 +71,10 @@ mod tests {
         }));
         assert!(!rules.met_by(&Record {
             recent_deletions: 2,
+            ..good
+        }));
+        assert!(!rules.met_by(&Record {
+            negative_feedback: 1,
             ..good
         }));
     }

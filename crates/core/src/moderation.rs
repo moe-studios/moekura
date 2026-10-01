@@ -162,10 +162,12 @@ pub enum ActionKind {
     ForumPostUnhide,
     HeldApprove,
     HeldReject,
+    FeedbackDelete,
+    FeedbackRestore,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 47] = [
+    pub const ALL: [ActionKind; 49] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -213,6 +215,8 @@ impl ActionKind {
         ActionKind::ForumPostUnhide,
         ActionKind::HeldApprove,
         ActionKind::HeldReject,
+        ActionKind::FeedbackDelete,
+        ActionKind::FeedbackRestore,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -264,6 +268,8 @@ impl ActionKind {
             ActionKind::ForumPostUnhide => "forum_post.unhide",
             ActionKind::HeldApprove => "held.approve",
             ActionKind::HeldReject => "held.reject",
+            ActionKind::FeedbackDelete => "user_feedback.delete",
+            ActionKind::FeedbackRestore => "user_feedback.restore",
         }
     }
 
@@ -317,6 +323,8 @@ impl ActionKind {
             ActionKind::ForumPostUnhide => "restored a forum post by",
             ActionKind::HeldApprove => "let through writing held as spam, by",
             ActionKind::HeldReject => "turned away writing held as spam, by",
+            ActionKind::FeedbackDelete => "deleted feedback on",
+            ActionKind::FeedbackRestore => "restored feedback on",
         }
     }
 

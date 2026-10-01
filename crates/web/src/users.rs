@@ -74,6 +74,14 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
         }),
         None => None,
     };
+    let [positive, neutral, negative] = moekura_db::user_feedbacks::counts(db, user.id).await?;
+    let feedback = context! {
+        positive => positive,
+        neutral => neutral,
+        negative => negative,
+        url => crate::templates::url_value(&crate::user_feedbacks::list_url(&user.name)),
+        can_give => crate::user_feedbacks::may_give(page.state(), &page.current, &user),
+    };
     let comments_url = format!(
         "/comments?{}",
         url::form_urlencoded::Serializer::new(String::new())
@@ -84,6 +92,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
         "profile.html",
         context! {
             messages => messages,
+            feedback => feedback,
             user => context! {
                 name => user.name,
                 role => role,

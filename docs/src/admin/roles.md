@@ -26,6 +26,7 @@ roles can't be deleted and keep their ranks.
 | Lock posts and change locked ones | locking a post's rating, tags, notes or status, and changing them anyway |
 | Undo a user's post edits | taking back every post edit a user made in a range of days (Moderation → Post changes) |
 | Send private messages | writing to other users ([Messages](../using/messages.md)) |
+| Leave feedback on users of lower rank | positive, neutral or negative notes on someone's account ([Feedback](../using/account.md#feedback)) |
 | Replace posts' files | swapping a post's file for a better one, keeping everything else ([Posts and files](../using/posts.md#replacing-a-posts-file)) |
 | Edit notes | adding, moving, changing and deleting notes on posts |
 | Create and edit pools | making pools, and changing their posts, names and descriptions (deleting a pool takes *Delete and restore posts*) |
@@ -47,7 +48,7 @@ The built-in roles and what they start with:
 |---|---|---|
 | Anonymous | 0 | View posts |
 | Member | 10 | Anonymous, plus Upload, Edit posts and tags, Comment, Favorite, Vote, Flag posts, Edit the wiki and artists, Create and edit pools, Edit notes, Send private messages |
-| Contributor | 20 | Member, plus Upload without approval |
+| Contributor | 20 | Member, plus Upload without approval, Leave feedback |
 | Janitor | 30 | Contributor, plus Approve posts, Delete and restore posts, Manage tags, See deleted posts, Hide comments |
 | Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits, Replace posts' files |
 | Admin | 50 | everything |
@@ -78,8 +79,9 @@ contributors (who upload without approval) once their record is good
 enough. Every hour, members are promoted who have at least the set
 number of approved uploads and post edits, have been registered for the
 set number of days, and have had at most the set number of uploads
-deleted in the last 30 days. Defaults: 50 uploads, no edits needed, 30
-days, no recent deletions.
+deleted in the last 30 days and at most the set number of negative
+[feedback](../using/account.md#feedback) records. Defaults: 50 uploads,
+no edits needed, 30 days, no recent deletions, no negative feedback.
 
 Banned members aren't promoted. Staff who manage users can keep someone
 from automatic promotion with **Never promote automatically** on their

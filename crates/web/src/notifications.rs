@@ -45,6 +45,7 @@ fn describe(kind: &str) -> &'static str {
         "reply" => "replied to you in",
         "message" => "sent you a message:",
         "forum" => "posted in",
+        "feedback" => "left",
         _ => "decided on",
     }
 }

@@ -42,11 +42,24 @@ when someone:
   **Reply** writes);
 - sends you a [message](messages.md);
 - posts in a [forum](forum.md) topic you've posted in;
-- approves or rejects a request you made or voted on.
+- approves or rejects a request you made or voted on;
+- leaves [feedback](#feedback) on your account.
 
 Opening one marks it read and goes to what it's about; **Mark all read**
 clears the count. Nobody you've blocked from messaging you can notify
 you either. Read notifications are forgotten after 90 days.
+
+## Feedback
+
+Staff and senior users (with *Leave feedback on users of lower rank*;
+contributors and up, by default) can leave **positive**, **neutral** or
+**negative** feedback on someone ranked below them, with **Leave
+feedback** on their profile. Profiles count it, linking to the whole
+list at `/user_feedbacks?user=name`; anyone can read it, and the person
+it's about is notified. Its writer can edit it. Staff who can ban users
+can delete and restore it, which goes in the moderation log. Negative
+feedback can keep a member from [automatic
+promotion](../admin/roles.md#automatic-promotion).
 
 ## Email address and password
 

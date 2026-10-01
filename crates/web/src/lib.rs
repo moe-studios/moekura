@@ -68,6 +68,7 @@ mod themes;
 mod thumbnail_crop;
 mod two_factor;
 mod upload;
+mod user_feedbacks;
 mod user_moderation;
 mod users;
 mod webhooks;
@@ -286,6 +287,7 @@ pub fn router(state: AppState) -> Router {
         .merge(file_metadata::routes())
         .merge(forum::routes())
         .merge(held::routes())
+        .merge(user_feedbacks::routes())
         .merge(history::routes())
         .merge(image_search::routes(max_upload_bytes))
         .merge(mass_edit::routes())

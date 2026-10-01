@@ -42,6 +42,19 @@ impl Job for PurgePost {
     const KIND: &'static str = "posts.purge";
 }
 
+/// Work through a moderation of many posts (`post_batches` row `id`),
+/// such as deleting every upload of a user.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PostBatch {
+    pub id: i64,
+}
+
+impl Job for PostBatch {
+    const KIND: &'static str = "posts.batch";
+    /// Retries carry on where the last attempt stopped.
+    const MAX_ATTEMPTS: i32 = 3;
+}
+
 /// Send an email (only queued when `mail` is configured).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SendMail {

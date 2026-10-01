@@ -130,6 +130,25 @@ dismissed; reports about their comments and their hidden comments; and,
 for those who read the log, what was logged about them and what they
 did themselves.
 
+### Deleting all of a user's uploads
+
+To clean up after a spam account, staff with *Delete posts* can delete
+every upload of a user ranked below them at once: **Delete all uploads**
+under *Uploads* on the record says how many posts that is, and asks for a
+reason (the same presets as deleting one post) and a tick to confirm.
+A background job then deletes the user's active, flagged and pending
+posts in batches, just as deleting each one would: the posts show the
+reason, open flags on them are upheld, tag counts drop, each deletion is
+logged as yours, and every post can still be restored (webhooks aren't
+sent a `post.deleted` event for each, though). Posts already
+deleted are left out; those whose status is locked are skipped unless
+you have *Lock posts*. The record shows the progress: how many posts
+were deleted, skipped (dealt with meanwhile, or locked) and failed. Only
+one such deletion runs per user at a time, and the account itself stays;
+ban it separately. The API has the same operation
+(`POST /api/v1/users/{name}/delete-uploads`, followed with
+`GET /api/v1/moderation/post-batches/{id}`).
+
 ### Staff notes
 
 The same staff keep private notes about users, on the profile and the

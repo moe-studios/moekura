@@ -4,8 +4,10 @@
 {% include "tag_nav.html" %}
 <h1>Find an artist by URL</h1>
 <form class="filters" method="get" action="/artists/finder">
-  <label for="finder-url">URL</label>
-  <input id="finder-url" name="url" type="url" value="{{ query }}" size="40" placeholder="https://" required>
+  <div class="filter-field">
+    <label for="finder-url">URL</label>
+    <input id="finder-url" name="url" type="url" value="{{ query }}" size="40" placeholder="https://" required>
+  </div>
   <button type="submit">Find</button>
 </form>
 <p class="hint">A profile, or a page of one of their works: artists whose URLs it falls under are listed.</p>

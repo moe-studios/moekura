@@ -59,6 +59,7 @@
 <section class="card">
   <h2>Addresses</h2>
   {% if addresses %}
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Moderation user table">
   <table class="tag-table">
     <thead><tr><th scope="col">Address</th><th scope="col">First seen</th><th scope="col">Last seen</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
@@ -68,6 +69,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="hint">No addresses recorded.</p>
   {% endif %}

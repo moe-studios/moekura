@@ -3,19 +3,24 @@
 {% block content %}
 <h1>Pools</h1>
 <form class="filters" method="get" action="/pools">
-  <label for="pool-name">Name</label>
-  <input id="pool-name" name="name" value="{{ query.name }}" placeholder="my_comic or *comic" autocomplete="off" spellcheck="false">
-  <label for="pool-category">Kind</label>
-  <select id="pool-category" name="category">
-    <option value="">Any</option>
-    <option value="series"{% if query.category == "series" %} selected{% endif %}>Series</option>
-    <option value="collection"{% if query.category == "collection" %} selected{% endif %}>Collection</option>
-  </select>
+  <div class="filter-field">
+    <label for="pool-name">Name</label>
+    <input id="pool-name" name="name" value="{{ query.name }}" placeholder="my_comic or *comic" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="filter-field">
+    <label for="pool-category">Kind</label>
+    <select id="pool-category" name="category">
+      <option value="">Any</option>
+      <option value="series"{% if query.category == "series" %} selected{% endif %}>Series</option>
+      <option value="collection"{% if query.category == "collection" %} selected{% endif %}>Collection</option>
+    </select>
+  </div>
   <button type="submit">Search</button>
 </form>
 <p class="hint"><a href="/pool_versions">Recent changes</a> to every pool.</p>
 {% if can_create %}<p><a class="button" href="/pools/new">New pool</a></p>{% endif %}
 {% if pools %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Pools table">
 <table class="tag-table">
   <thead><tr><th scope="col">Name</th><th scope="col">Kind</th><th scope="col" class="num">Posts</th><th scope="col">Last changed</th></tr></thead>
   <tbody>
@@ -29,6 +34,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No pools found.</p>
 {% endif %}

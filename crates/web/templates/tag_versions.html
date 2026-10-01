@@ -4,10 +4,14 @@
 {% include "tag_nav.html" %}
 <h1>Tag changes</h1>
 <form class="filters" method="get" action="/tag_versions">
-  <label for="tv-tag">Tag</label>
-  <input id="tv-tag" name="tag" value="{{ query.tag }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
-  <label for="tv-user">By</label>
-  <input id="tv-user" name="user" value="{{ query.user }}" size="12">
+  <div class="filter-field">
+    <label for="tv-tag">Tag</label>
+    <input id="tv-tag" name="tag" value="{{ query.tag }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  </div>
+  <div class="filter-field">
+    <label for="tv-user">By</label>
+    <input id="tv-user" name="user" value="{{ query.user }}" size="12">
+  </div>
   <button type="submit">Filter</button>
 </form>
 {% if versions %}

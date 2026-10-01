@@ -4,24 +4,31 @@
 {% include "tag_nav.html" %}
 <h1>Tags</h1>
 <form class="filters" method="get" action="/tags">
-  <label for="tag-name">Name</label>
-  <input id="tag-name" name="name" value="{{ query.name }}" placeholder="long_ha or *_hair">
-  <label for="tag-category">Category</label>
-  <select id="tag-category" name="category">
-    <option value="">Any</option>
-    {% for category in categories %}
-    <option value="{{ category.name }}"{% if query.category == category.name %} selected{% endif %}>{{ category.label }}</option>
-    {% endfor %}
-  </select>
-  <label for="tag-order">Order</label>
-  <select id="tag-order" name="order">
-    <option value="count">Most used</option>
-    <option value="name"{% if query.order == "name" %} selected{% endif %}>Name</option>
-    <option value="newest"{% if query.order == "newest" %} selected{% endif %}>Newest</option>
-  </select>
+  <div class="filter-field">
+    <label for="tag-name">Name</label>
+    <input id="tag-name" name="name" value="{{ query.name }}" placeholder="long_ha or *_hair">
+  </div>
+  <div class="filter-field">
+    <label for="tag-category">Category</label>
+    <select id="tag-category" name="category">
+      <option value="">Any</option>
+      {% for category in categories %}
+      <option value="{{ category.name }}"{% if query.category == category.name %} selected{% endif %}>{{ category.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label for="tag-order">Order</label>
+    <select id="tag-order" name="order">
+      <option value="count">Most used</option>
+      <option value="name"{% if query.order == "name" %} selected{% endif %}>Name</option>
+      <option value="newest"{% if query.order == "newest" %} selected{% endif %}>Newest</option>
+    </select>
+  </div>
   <button type="submit">Search</button>
 </form>
 {% if tags %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Tags table">
 <table class="tag-table">
   <thead><tr><th scope="col">Name</th><th scope="col">Category</th><th scope="col" class="num">Posts</th>{% if can_edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
   <tbody>
@@ -35,6 +42,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No tags found.</p>
 {% endif %}

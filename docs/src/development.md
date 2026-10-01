@@ -1,8 +1,7 @@
 # Development
 
 Moekura is written in Rust, with pages rendered on the server and a little
-TypeScript on top. The plan and roadmap are in
-[`docs/design.md`](https://github.com/moe-studios/moekura/blob/main/docs/design.md).
+TypeScript on top.
 
 You need Rust 1.94+, the [media tools](install/bare-metal.md), and a
 PostgreSQL server for the database tests:

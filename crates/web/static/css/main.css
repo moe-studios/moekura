@@ -79,7 +79,11 @@ main {
 .account { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .account form { margin: 0; }
 .who { color: var(--muted); }
-.dmail-list tr.unread td { font-weight: 600; }
+.forum-posts { list-style: none; padding: 0; }
+.forum-post { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.forum-post.is-hidden { opacity: 0.6; }
+.forum-post .score { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.forum-topics tr.unread a, .dmail-list tr.unread td { font-weight: 600; }
 .count-badge { display: inline-block; min-width: 1.4em; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 0.75rem; font-weight: 700; text-align: center; line-height: 1.4; }
 /* Phones: brand and account on the first row, search on its own row,
    then the links, wrapping as needed. */

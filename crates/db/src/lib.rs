@@ -16,6 +16,7 @@ pub mod favorite_groups;
 pub mod favorites;
 pub mod feeds;
 pub mod flags;
+pub mod forum;
 pub mod identities;
 pub mod invites;
 pub mod jobs;

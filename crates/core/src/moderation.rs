@@ -158,10 +158,14 @@ pub enum ActionKind {
     DeleteUploads,
     PurgePosts,
     DmailReportSettle,
+    ForumTopicModerate,
+    ForumTopicMerge,
+    ForumPostHide,
+    ForumPostUnhide,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 43] = [
+    pub const ALL: [ActionKind; 47] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -205,6 +209,10 @@ impl ActionKind {
         ActionKind::DeleteUploads,
         ActionKind::PurgePosts,
         ActionKind::DmailReportSettle,
+        ActionKind::ForumTopicModerate,
+        ActionKind::ForumTopicMerge,
+        ActionKind::ForumPostHide,
+        ActionKind::ForumPostUnhide,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -252,6 +260,10 @@ impl ActionKind {
             ActionKind::DeleteUploads => "posts.delete_uploads",
             ActionKind::PurgePosts => "posts.purge_batch",
             ActionKind::DmailReportSettle => "dmail_report.settle",
+            ActionKind::ForumTopicModerate => "forum_topic.moderate",
+            ActionKind::ForumTopicMerge => "forum_topic.merge",
+            ActionKind::ForumPostHide => "forum_post.hide",
+            ActionKind::ForumPostUnhide => "forum_post.unhide",
         }
     }
 
@@ -301,6 +313,10 @@ impl ActionKind {
             ActionKind::DeleteUploads => "started deleting the uploads of",
             ActionKind::PurgePosts => "started purging deleted posts",
             ActionKind::DmailReportSettle => "settled a report about a message from",
+            ActionKind::ForumTopicModerate => "changed a forum topic",
+            ActionKind::ForumTopicMerge => "merged forum topics",
+            ActionKind::ForumPostHide => "hid a forum post by",
+            ActionKind::ForumPostUnhide => "restored a forum post by",
         }
     }
 

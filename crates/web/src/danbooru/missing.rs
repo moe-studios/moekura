@@ -12,9 +12,6 @@ use crate::error::AppError;
 
 /// Lists of things Moekura doesn't have.
 pub(crate) const EMPTY_LISTS: &[&str] = &[
-    "/forum_topics",
-    "/forum_posts",
-    "/forum_post_votes",
     "/user_feedbacks",
     "/user_name_change_requests",
     "/users/{id}/uploads",
@@ -46,7 +43,7 @@ mod tests {
             assert_eq!(response.status, StatusCode::OK, "{path}");
             assert_eq!(response.body, "[]", "{path}");
         }
-        let missing = app.get("/forum_topics/1.json", None).await;
+        let missing = app.get("/user_feedbacks/1.json", None).await;
         assert_eq!(missing.status, StatusCode::NOT_FOUND);
         let body: Value = serde_json::from_str(&missing.body).unwrap();
         assert_eq!(body["success"], json!(false));

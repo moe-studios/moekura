@@ -112,6 +112,10 @@ async fn discussion(
             }
         })
         .collect();
+    let forum_topic = match target {
+        Target::Relation(id) => moekura_db::forum::request_topic(db, Some(id), None).await?,
+        Target::Request(id) => moekura_db::forum::request_topic(db, None, Some(id)).await?,
+    };
     let (vote_url, comment_url) = match target {
         Target::Relation(id) => (
             format!("/tags/relations/{id}/vote"),
@@ -123,6 +127,7 @@ async fn discussion(
         ),
     };
     Ok(context! {
+        forum_topic => forum_topic,
         vote => vote,
         can_vote => open && current.is_logged_in() && current.can(Permission::Vote),
         vote_url => url_value(&vote_url),
@@ -436,6 +441,24 @@ pub(crate) async fn make_request(
     )
     .await?;
     tracing::info!(id, user = user.name, "bulk update requested");
+    let body = format!(
+        "[quote]\n{}\n[/quote]\n\n{}",
+        normalized.join("\n"),
+        if reason.trim().is_empty() {
+            "No reason given."
+        } else {
+            reason.trim()
+        }
+    );
+    crate::forum::open_request_topic(
+        state,
+        current,
+        &format!("Bulk update request: {title}"),
+        &body,
+        None,
+        Some(id),
+    )
+    .await;
     Ok(id)
 }
 

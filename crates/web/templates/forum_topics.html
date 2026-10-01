@@ -18,6 +18,7 @@
   {% if logged_in %}<form method="post" action="/forum_topics/mark_all_read"><button type="submit" class="secondary">Mark all read</button></form>{% endif %}
 </div>
 {% if topics %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Forum topics table">
 <table class="tag-table forum-topics">
   <thead><tr><th scope="col">Topic</th><th scope="col">Category</th><th scope="col" class="num">Posts</th><th scope="col">Last post</th></tr></thead>
   <tbody>
@@ -31,6 +32,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No topics yet.</p>
 {% endif %}

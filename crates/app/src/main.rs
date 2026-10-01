@@ -18,6 +18,7 @@ use moekura_db::site_cache::SiteCache;
 use moekura_jobs::mail::{MailJobs, Mailer};
 use moekura_jobs::media::MediaJobs;
 use moekura_jobs::posts::PostJobs;
+use moekura_jobs::stats::StatsJobs;
 use moekura_jobs::tags::TagJobs;
 use moekura_jobs::users::UserJobs;
 use moekura_jobs::versions::VersionJobs;
@@ -236,6 +237,10 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
     PostJobs {
         db: db.primary().clone(),
         storage: Storage::from_config(&config.storage).context("could not open file storage")?,
+    }
+    .register(&mut registry);
+    StatsJobs {
+        db: db.primary().clone(),
     }
     .register(&mut registry);
     TagJobs {

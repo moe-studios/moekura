@@ -1,0 +1,8 @@
+<svg class="bar-chart" viewBox="0 0 {{ chart.width }} {{ chart.height }}" role="img" aria-label="{{ chart_label }}, at most {{ chart.most }}">
+  {% for b in chart.bars %}
+  <g><title>{{ b.title }}</title>
+    <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ chart.bar_width }}" height="{{ b.height }}"></rect>
+    {% if b.label %}<text x="{{ b.label_x }}" y="{{ chart.label_y }}" text-anchor="middle">{{ b.label }}</text>{% endif %}
+  </g>
+  {% endfor %}
+</svg>

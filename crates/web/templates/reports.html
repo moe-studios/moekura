@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Reports · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/stats">« Stats</a></p>
+<h1>{{ metric }}{% if user %} by {{ user }}{% endif %}</h1>
+<nav class="subnav" aria-label="What to chart">
+  {% for m in metrics %}<a href="{{ m.url }}"{% if m.current %} aria-current="page"{% endif %}>{{ m.label }}</a>{% endfor %}
+</nav>
+<nav class="subnav" aria-label="Period">
+  {% for p in periods %}<a href="{{ p.url }}"{% if p.current %} aria-current="page"{% endif %}>{{ p.label }}</a>{% endfor %}
+</nav>
+{% if all_url %}<p><a href="{{ all_url }}">Everyone's</a></p>{% endif %}
+<p>{{ total }} in the last {{ days }} days{% if per_week %}, by the week{% else %}, by the day{% endif %} (UTC). Counted hourly.</p>
+{% if chart %}
+{% with chart_label = metric ~ (" by " ~ user if user else "") ~ " over the last " ~ days ~ " days" %}{% include "bar_chart.html" %}{% endwith %}
+{% endif %}
+{% if top %}
+<h2>Most active</h2>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Most active users table">
+<table class="tag-table">
+  <thead><tr><th scope="col">User</th><th scope="col">{{ metric }}</th></tr></thead>
+  <tbody>
+    {% for u in top %}<tr><td><a href="{{ u.url }}">{{ u.name }}</a></td><td>{{ u.count }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}

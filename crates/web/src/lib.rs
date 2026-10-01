@@ -11,6 +11,7 @@ pub mod auth;
 mod bans;
 mod blacklist;
 mod captcha;
+mod charts;
 mod client_ip;
 mod commentary;
 mod comments;
@@ -55,10 +56,12 @@ mod recent_changes;
 mod related_tags;
 pub mod remote_import;
 mod replacements;
+mod reports;
 mod requests;
 mod saved_searches;
 pub mod shared;
 mod site;
+mod sitemap;
 pub(crate) mod sources;
 mod suggestions;
 mod tag_history;
@@ -309,9 +312,11 @@ pub fn router(state: AppState) -> Router {
         .merge(recent_changes::routes())
         .merge(related_tags::routes())
         .merge(replacements::routes(max_upload_bytes))
+        .merge(reports::routes())
         .merge(requests::routes())
         .merge(saved_searches::routes())
         .merge(site::routes())
+        .merge(sitemap::routes())
         .merge(tags::routes())
         .merge(tag_history::routes())
         .merge(tag_relations::routes())

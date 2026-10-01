@@ -35,14 +35,7 @@
   </dl>
   {% if chart %}
   <h2>Uploads by month</h2>
-  <svg class="upload-chart" viewBox="0 0 {{ chart.width }} {{ chart.height }}" role="img" aria-label="Uploads in each of the last 12 months, at most {{ chart.most }}">
-    {% for b in chart.bars %}
-    <g><title>{{ b.title }}</title>
-      <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ chart.bar_width }}" height="{{ b.height }}"></rect>
-      <text x="{{ b.label_x }}" y="{{ chart.label_y }}" text-anchor="middle">{{ b.label }}</text>
-    </g>
-    {% endfor %}
-  </svg>
+  {% with chart_label = "Uploads in each of the last 12 months" %}{% include "bar_chart.html" %}{% endwith %}
   {% endif %}
   {% if top_tags %}
   <h2>Most used in uploads</h2>

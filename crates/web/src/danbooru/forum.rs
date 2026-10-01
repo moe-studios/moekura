@@ -231,7 +231,9 @@ async fn create_post(
         .and_then(|v| v.trim().parse().ok())
         .ok_or_else(|| AppError::Unprocessable("`forum_post[topic_id]` is required".into()))?;
     let body = fields.get("forum_post[body]").unwrap_or_default();
-    let id = crate::forum::add_post(&state, &current, topic, body).await?;
+    let id = crate::forum::add_post(&state, &current, topic, body)
+        .await?
+        .id;
     let p = forum::post(state.db.primary(), id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -258,8 +260,14 @@ async fn create_topic(
     let body = fields
         .get("forum_topic[original_post_attributes][body]")
         .unwrap_or_default();
-    let id = crate::forum::start_topic(&state, &current, category, title, body).await?;
-    let topic = crate::forum::visible_topic(&state, &current, id).await?;
+    let id = crate::forum::start_topic(&state, &current, category, title, body)
+        .await?
+        .id;
+    // Held topics are deleted, so not visible to their creator.
+    let viewer = current.user.as_ref().map(|u| u.id);
+    let topic = forum::topic(state.db.primary(), viewer, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok((StatusCode::CREATED, axum::Json(DanbooruTopic::from(topic))).into_response())
 }
 

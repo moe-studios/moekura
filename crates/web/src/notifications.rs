@@ -113,17 +113,16 @@ pub(crate) async fn notify(
 }
 
 /// Notifies those `text` mentions (`@name`) or quotes, as written by
-/// `actor` at `url`, and then `also` (with their own kind) unless already
-/// notified.
+/// `actor_id` at `url`, and then `also` (with their own kind) unless
+/// already notified.
 pub(crate) async fn notify_text(
     state: &AppState,
-    actor: &CurrentUser,
+    actor_id: Option<i64>,
     text: &str,
     subject: &str,
     url: &str,
     also: (&[i64], Kind),
 ) {
-    let actor_id = actor.user.as_ref().map(|u| u.id);
     let db = state.db.primary();
     let mut done: Vec<i64> = Vec::new();
     let named = async |names: Vec<String>| -> Vec<i64> {
@@ -157,7 +156,7 @@ pub(crate) async fn notify_text(
 /// After a comment on post `post_id`: those it mentions or quotes.
 pub(crate) async fn comment_posted(
     state: &AppState,
-    actor: &CurrentUser,
+    actor: Option<i64>,
     comment_id: i64,
     post_id: i64,
     body: &str,

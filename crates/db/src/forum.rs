@@ -218,40 +218,51 @@ pub async fn position(
     .await
 }
 
-/// Starts a topic with its first post; returns both ids.
+/// Starts a topic with its first post; returns both ids. When `held`
+/// (for review, with why), the post is hidden and the topic deleted until
+/// the staff approve it.
 pub async fn create_topic(
     db: &PgPool,
     category_id: i16,
     creator_id: Option<i64>,
     title: &str,
     body: &str,
+    held: Option<&str>,
 ) -> sqlx::Result<(i64, i64)> {
     let mut tx = db.begin().await?;
     let topic: i64 = sqlx::query_scalar(
-        "INSERT INTO forum_topics (category_id, creator_id, title) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO forum_topics (category_id, creator_id, title, is_deleted, is_held)
+         VALUES ($1, $2, $3, $4, $4) RETURNING id",
     )
     .bind(category_id)
     .bind(creator_id)
     .bind(title)
+    .bind(held.is_some())
     .fetch_one(&mut *tx)
     .await?;
-    let post = create_post(&mut *tx, topic, creator_id, body).await?;
+    let post = create_post(&mut *tx, topic, creator_id, body, held).await?;
     tx.commit().await?;
     Ok((topic, post))
 }
 
+/// Adds a post; when `held` (for review, with why), it's hidden until the
+/// staff approve it.
 pub async fn create_post(
     db: impl PgExecutor<'_>,
     topic_id: i64,
     creator_id: Option<i64>,
     body: &str,
+    held: Option<&str>,
 ) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "INSERT INTO forum_posts (topic_id, creator_id, body) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO forum_posts (topic_id, creator_id, body, is_hidden, held_reason)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(topic_id)
     .bind(creator_id)
     .bind(body)
+    .bind(held.is_some())
+    .bind(held)
     .fetch_one(db)
     .await
 }
@@ -273,13 +284,27 @@ pub async fn update_post(
     Ok(done.rows_affected() > 0)
 }
 
-pub async fn set_post_hidden(db: impl PgExecutor<'_>, id: i64, hidden: bool) -> sqlx::Result<bool> {
-    let done = sqlx::query("UPDATE forum_posts SET is_hidden = $2 WHERE id = $1")
-        .bind(id)
-        .bind(hidden)
-        .execute(db)
+/// Hides or shows a post, which settles it if it was held; showing a held
+/// topic's opening post shows the topic too.
+pub async fn set_post_hidden(db: &PgPool, id: i64, hidden: bool) -> sqlx::Result<bool> {
+    let mut tx = db.begin().await?;
+    let topic: Option<i64> = sqlx::query_scalar(
+        "UPDATE forum_posts SET is_hidden = $2, held_reason = NULL WHERE id = $1 RETURNING topic_id",
+    )
+    .bind(id)
+    .bind(hidden)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let (Some(topic), false) = (topic, hidden) {
+        sqlx::query(
+            "UPDATE forum_topics SET is_deleted = false, is_held = false WHERE id = $1 AND is_held",
+        )
+        .bind(topic)
+        .execute(&mut *tx)
         .await?;
-    Ok(done.rows_affected() > 0)
+    }
+    tx.commit().await?;
+    Ok(topic.is_some())
 }
 
 /// Changes a topic's title and category.
@@ -312,7 +337,8 @@ pub async fn set_flags(db: impl PgExecutor<'_>, id: i64, flags: Flags) -> sqlx::
     let done = sqlx::query(
         "UPDATE forum_topics SET is_sticky = coalesce($2, is_sticky),
                                  is_locked = coalesce($3, is_locked),
-                                 is_deleted = coalesce($4, is_deleted), updated_at = now()
+                                 is_deleted = coalesce($4, is_deleted),
+                                 is_held = is_held AND $4 IS NULL, updated_at = now()
          WHERE id = $1",
     )
     .bind(id)
@@ -533,7 +559,7 @@ mod tests {
         let alice = user(&pool, "alice").await;
         let bob = user(&pool, "bob").await;
         let general = categories(&pool).await.unwrap()[0].id;
-        let (topic, first) = create_topic(&pool, general, Some(alice), "Hello", "First post")
+        let (topic, first) = create_topic(&pool, general, Some(alice), "Hello", "First post", None)
             .await
             .unwrap();
         let found = super::topic(&pool, Some(bob), topic)
@@ -550,7 +576,7 @@ mod tests {
                 .unwrap()
                 .unread
         );
-        let reply = create_post(&pool, topic, Some(bob), "A reply about cats")
+        let reply = create_post(&pool, topic, Some(bob), "A reply about cats", None)
             .await
             .unwrap();
         let found = super::topic(&pool, Some(alice), topic)
@@ -592,7 +618,7 @@ mod tests {
             1
         );
 
-        let (other, _) = create_topic(&pool, general, Some(bob), "Hello again", "Dup")
+        let (other, _) = create_topic(&pool, general, Some(bob), "Hello again", "Dup", None)
             .await
             .unwrap();
         set_flags(

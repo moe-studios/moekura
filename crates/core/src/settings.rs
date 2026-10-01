@@ -65,6 +65,8 @@ pub struct SiteSettings {
     pub email_domains: crate::spam::EmailDomains,
     /// Where the captcha is asked for, if one is configured.
     pub captcha: crate::spam::CaptchaSettings,
+    /// What writing is held for review as likely spam.
+    pub spam_filter: crate::spam::SpamFilter,
     /// Reasons offered for deleting, rejecting and flagging posts.
     pub post_reasons: crate::moderation::PostReasons,
     /// Uploads and edits get `artist_request` while a post has no artist
@@ -124,6 +126,7 @@ impl Default for SiteSettings {
             ip_history_days: 365,
             email_domains: crate::spam::EmailDomains::default(),
             captcha: crate::spam::CaptchaSettings::default(),
+            spam_filter: crate::spam::SpamFilter::default(),
             post_reasons: crate::moderation::PostReasons::default(),
             request_tags: false,
             banned_artists: BannedArtists::default(),
@@ -301,6 +304,7 @@ impl SiteSettings {
         }
         self.tagger.validate()?;
         self.email_domains.validate()?;
+        self.spam_filter.validate()?;
         self.post_reasons.validate()?;
         if self.ip_history_days > MAX_IP_HISTORY_DAYS {
             return Err(format!(
@@ -340,6 +344,7 @@ mod tests {
                 "rules",
                 "site_description",
                 "site_name",
+                "spam_filter",
                 "tagger",
                 "upload_approval",
                 "upload_limit_scaling",

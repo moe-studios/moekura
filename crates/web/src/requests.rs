@@ -197,7 +197,7 @@ pub(crate) async fn comment(
     requests::add_comment(state.db.primary(), target, user.id, &body).await?;
     crate::notifications::notify_text(
         state,
-        current,
+        Some(user.id),
         &body,
         "a tag request's discussion",
         &url,

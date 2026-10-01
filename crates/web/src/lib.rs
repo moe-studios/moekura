@@ -31,6 +31,7 @@ mod files;
 pub mod flash;
 mod forum;
 mod health;
+mod held;
 mod history;
 mod image_search;
 pub mod import;
@@ -285,6 +286,7 @@ pub fn router(state: AppState) -> Router {
         .merge(feeds::routes())
         .merge(file_metadata::routes())
         .merge(forum::routes())
+        .merge(held::routes())
         .merge(history::routes())
         .merge(image_search::routes(max_upload_bytes))
         .merge(mass_edit::routes())

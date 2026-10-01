@@ -126,14 +126,22 @@ fn topic_context(t: &Topic) -> Value {
     }
 }
 
-/// Starts a topic as `current`; returns its id. Used for requests too.
+/// What [`start_topic`] or [`add_post`] made, and whether the spam filter
+/// held it for review.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Posted {
+    pub id: i64,
+    pub held: bool,
+}
+
+/// Starts a topic as `current`.
 pub(crate) async fn start_topic(
     state: &AppState,
     current: &CurrentUser,
     category_id: i16,
     title: &str,
     body: &str,
-) -> Result<i64, AppError> {
+) -> Result<Posted, AppError> {
     let me = require_poster(current)?;
     let title = clean_title(title)?;
     let body = clean_body(body)?;
@@ -146,26 +154,37 @@ pub(crate) async fn start_topic(
         return Err(AppError::Unprocessable("Choose a category.".into()));
     }
     state.rate_limits.check_comment(me).await?;
-    let (topic, post) = forum::create_topic(db, category_id, Some(me), &title, &body).await?;
+    let held = crate::held::check(state, current, &body).await?;
+    let (topic, post) =
+        forum::create_topic(db, category_id, Some(me), &title, &body, held.as_deref()).await?;
+    if held.is_some() {
+        return Ok(Posted {
+            id: topic,
+            held: true,
+        });
+    }
     crate::notifications::notify_text(
         state,
-        current,
+        Some(me),
         &body,
         &format!("the forum topic “{title}”"),
         &format!("/forum_posts/{post}"),
         (&[], moekura_db::notifications::Kind::Forum),
     )
     .await;
-    Ok(topic)
+    Ok(Posted {
+        id: topic,
+        held: false,
+    })
 }
 
-/// Adds a post to topic `topic_id` as `current`; returns its id.
+/// Adds a post to topic `topic_id` as `current`.
 pub(crate) async fn add_post(
     state: &AppState,
     current: &CurrentUser,
     topic_id: i64,
     body: &str,
-) -> Result<i64, AppError> {
+) -> Result<Posted, AppError> {
     let me = require_poster(current)?;
     let topic = visible_topic(state, current, topic_id).await?;
     if topic.is_deleted {
@@ -177,20 +196,38 @@ pub(crate) async fn add_post(
     let body = clean_body(body)?;
     state.rate_limits.check_comment(me).await?;
     let db = state.db.primary();
-    let id = forum::create_post(db, topic.id, Some(me), &body).await?;
+    let held = crate::held::check(state, current, &body).await?;
+    let id = forum::create_post(db, topic.id, Some(me), &body, held.as_deref()).await?;
     forum::visit(db, me, topic.id).await?;
-    // Everyone else who posted in the topic hears of it.
-    let participants = forum::participants(db, topic.id).await?;
+    if held.is_none() {
+        post_published(state, Some(me), id, &topic, &body).await?;
+    }
+    Ok(Posted {
+        id,
+        held: held.is_some(),
+    })
+}
+
+/// Tells those concerned of a new post: those it mentions or quotes, and
+/// everyone else who posted in its topic.
+pub(crate) async fn post_published(
+    state: &AppState,
+    creator: Option<i64>,
+    id: i64,
+    topic: &forum::Topic,
+    body: &str,
+) -> Result<(), AppError> {
+    let participants = forum::participants(state.db.primary(), topic.id).await?;
     crate::notifications::notify_text(
         state,
-        current,
-        &body,
+        creator,
+        body,
         &format!("the forum topic “{}”", topic.title),
         &format!("/forum_posts/{id}"),
         (&participants, moekura_db::notifications::Kind::Forum),
     )
     .await;
-    Ok(id)
+    Ok(())
 }
 
 /// Starts the forum topic for a tag request (an alias or implication, or
@@ -216,7 +253,7 @@ pub(crate) async fn open_request_topic(
         let me = require_poster(current)?;
         let title: String = title.chars().take(TITLE_MAX_LEN).collect();
         let body = clean_body(body)?;
-        let (topic, _) = forum::create_topic(db, category, Some(me), &title, &body).await?;
+        let (topic, _) = forum::create_topic(db, category, Some(me), &title, &body, None).await?;
         forum::link_request(db, relation_id, request_id, topic).await?;
         Ok::<_, AppError>(())
     }
@@ -339,7 +376,12 @@ async fn create_topic(
     )
     .await
     {
-        Ok(id) => Ok((flash::set(jar, Flash::Saved), Redirect::to(&topic_url(id))).into_response()),
+        Ok(Posted { held: true, .. }) => {
+            Ok((flash::set(jar, Flash::Held), Redirect::to("/forum_topics")).into_response())
+        }
+        Ok(Posted { id, .. }) => {
+            Ok((flash::set(jar, Flash::Saved), Redirect::to(&topic_url(id))).into_response())
+        }
         Err(AppError::Unprocessable(message)) => {
             let categories = forum::categories(page.state().db.primary()).await?;
             Ok(page.render_with_status(
@@ -623,7 +665,10 @@ async fn reply(
 ) -> Result<Response, AppError> {
     let state = page.state();
     let post = add_post(state, &page.current, id, &form.body).await?;
-    let location = post_location(state, &page.current, post).await?;
+    if post.held {
+        return Ok((flash::set(jar, Flash::Held), Redirect::to(&topic_url(id))).into_response());
+    }
+    let location = post_location(state, &page.current, post.id).await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
 }
 

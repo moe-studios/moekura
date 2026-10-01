@@ -58,6 +58,7 @@ pub async fn send(
     to_id: i64,
     title: &str,
     body: &str,
+    held: Option<&str>,
 ) -> Result<Sent, SendError> {
     let mut tx = db.begin().await?;
     if is_blocked(&mut *tx, to_id, from_id).await? {
@@ -78,15 +79,20 @@ pub async fn send(
     let received = if from_id == to_id {
         sent
     } else {
-        sqlx::query_scalar(insert)
-            .bind(to_id)
-            .bind(from_id)
-            .bind(to_id)
-            .bind(title)
-            .bind(body)
-            .bind(false)
-            .fetch_one(&mut *tx)
-            .await?
+        // A held copy stays deleted until the staff approve it.
+        sqlx::query_scalar(
+            "INSERT INTO dmails (owner_id, from_id, to_id, title, body, is_read, is_deleted, held_reason)
+             VALUES ($1, $2, $3, $4, $5, false, $6, $7) RETURNING id",
+        )
+        .bind(to_id)
+        .bind(from_id)
+        .bind(to_id)
+        .bind(title)
+        .bind(body)
+        .bind(held.is_some())
+        .bind(held)
+        .fetch_one(&mut *tx)
+        .await?
     };
     tx.commit().await?;
     Ok(Sent {
@@ -137,13 +143,16 @@ pub async fn list(
     .await
 }
 
-/// Message `id`, if it's `owner_id`'s copy (deleted ones included).
+/// Message `id`, if it's `owner_id`'s copy (deleted ones included, but
+/// not those held for review).
 pub async fn by_id(db: impl PgExecutor<'_>, owner_id: i64, id: i64) -> sqlx::Result<Option<Dmail>> {
-    sqlx::query_as(select_dmails!("WHERE d.id = $1 AND d.owner_id = $2"))
-        .bind(id)
-        .bind(owner_id)
-        .fetch_optional(db)
-        .await
+    sqlx::query_as(select_dmails!(
+        "WHERE d.id = $1 AND d.owner_id = $2 AND d.held_reason IS NULL"
+    ))
+    .bind(id)
+    .bind(owner_id)
+    .fetch_optional(db)
+    .await
 }
 
 /// Any copy `id`, for staff looking at a report.
@@ -335,7 +344,7 @@ mod tests {
     async fn sending_reading_and_blocking(pool: PgPool) {
         let alice = user(&pool, "alice").await;
         let bob = user(&pool, "bob").await;
-        let id = send(&pool, alice, bob, "Hi", "Hello there")
+        let id = send(&pool, alice, bob, "Hi", "Hello there", None)
             .await
             .unwrap()
             .recipient_copy;
@@ -369,12 +378,12 @@ mod tests {
 
         set_blocked(&pool, bob, alice, true).await.unwrap();
         assert!(matches!(
-            send(&pool, alice, bob, "Hi", "Again").await,
+            send(&pool, alice, bob, "Hi", "Again", None).await,
             Err(SendError::Blocked)
         ));
         assert_eq!(blocked(&pool, bob).await.unwrap(), ["alice"]);
         set_blocked(&pool, bob, alice, false).await.unwrap();
-        send(&pool, alice, bob, "Hi", "Again").await.unwrap();
+        send(&pool, alice, bob, "Hi", "Again", None).await.unwrap();
         assert_eq!(mark_all_read(&pool, bob).await.unwrap(), 1);
         assert!(set_deleted(&pool, bob, id, true).await.unwrap());
         assert_eq!(

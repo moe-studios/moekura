@@ -65,6 +65,21 @@ their own. Those who can manage users have no limit, choose how many
 times an invite can be used and how long it lasts (or that it never
 expires), and see and revoke everyone's.
 
+## Search engines
+
+The site serves a `robots.txt` and a sitemap at `/sitemap.xml` (using
+`server.public_url` for its links). The sitemap is an index of files of
+up to 10,000 posts, tags in use, wiki pages, pools, artists or forum
+topics each, so it stays quick on large sites; it lists only what
+visitors can see.
+
+The default `robots.txt` points crawlers at the sitemap and asks them to
+leave out accounts, staff pages, history, the APIs, and searches with
+more than one tag or past the first page. Replace it under **Admin →
+Settings → robots.txt** (which shows the default); leave it empty to go
+back. On a [private site](../admin/private-sites.md) the default asks
+crawlers to stay out entirely, and there's no sitemap.
+
 ## Email
 
 With [`[mail]`](../configuration.md#mail) set up, people can reset a

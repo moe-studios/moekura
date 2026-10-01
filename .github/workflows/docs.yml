@@ -19,6 +19,8 @@ jobs:
         with:
           tool: mdbook@0.5.4
       - run: mdbook build docs
+      - name: Configure custom domain
+        run: printf '%s\n' 'docs.moekura.net' > docs/book/CNAME
       - name: Check links
         uses: lycheeverse/lychee-action@v2
         with:

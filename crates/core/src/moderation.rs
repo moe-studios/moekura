@@ -155,10 +155,12 @@ pub enum ActionKind {
     ArtistBan,
     ArtistUnban,
     PostReplace,
+    DeleteUploads,
+    PurgePosts,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 40] = [
+    pub const ALL: [ActionKind; 42] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -199,6 +201,8 @@ impl ActionKind {
         ActionKind::ArtistBan,
         ActionKind::ArtistUnban,
         ActionKind::PostReplace,
+        ActionKind::DeleteUploads,
+        ActionKind::PurgePosts,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -243,6 +247,8 @@ impl ActionKind {
             ActionKind::ArtistBan => "artist.ban",
             ActionKind::ArtistUnban => "artist.unban",
             ActionKind::PostReplace => "post.replace",
+            ActionKind::DeleteUploads => "posts.delete_uploads",
+            ActionKind::PurgePosts => "posts.purge_batch",
         }
     }
 
@@ -289,6 +295,8 @@ impl ActionKind {
             ActionKind::ArtistBan => "banned an artist",
             ActionKind::ArtistUnban => "unbanned an artist",
             ActionKind::PostReplace => "replaced the file of post",
+            ActionKind::DeleteUploads => "started deleting the uploads of",
+            ActionKind::PurgePosts => "started purging deleted posts",
         }
     }
 

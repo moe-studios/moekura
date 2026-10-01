@@ -11,7 +11,7 @@ use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Filter};
 use moekura_db::user_notes::{self, UserNote};
 use moekura_db::user_record::{self, Tally};
-use moekura_db::{bans, user_ips, users};
+use moekura_db::{bans, post_batches, user_ips, users};
 use serde::Deserialize;
 
 use crate::AppState;
@@ -23,6 +23,9 @@ use crate::templates::url_value;
 
 /// Entries of each list the page shows.
 const RECENT: i64 = 20;
+
+/// Deletions of all their uploads the page shows.
+const BATCHES: i64 = 5;
 
 /// Addresses, and other accounts on them, the page shows.
 const ADDRESSES: i64 = 50;
@@ -202,6 +205,15 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     };
     let uploads = user_record::uploads(db, user.id).await?;
     let deletions = user_record::deletions(db, user.id, RECENT).await?;
+    let delete_uploads = if crate::post_batches::may_delete_uploads(state, &page.current, &user) {
+        Some(context! {
+            count => post_batches::count_deletable(db, user.id).await?,
+            open => post_batches::deletion_open(db, user.id).await?,
+        })
+    } else {
+        None
+    };
+    let upload_deletions = post_batches::recent(db, "delete", Some(user.id), BATCHES).await?;
     let flags_received = user_record::flags_received(db, user.id).await?;
     let recent_flags = user_record::recent_flags_received(db, user.id, RECENT).await?;
     let flags_filed = user_record::flags_filed(db, user.id).await?;
@@ -256,6 +268,8 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 by => d.actor_name,
                 when => d.deleted_at.map(crate::dates::day),
             }).collect::<Vec<_>>(),
+            delete_uploads => delete_uploads,
+            upload_deletions => upload_deletions.iter().map(crate::post_batches::batch_context).collect::<Vec<_>>(),
             show_addresses => page.current.can(Permission::BanUsers),
             addresses => addresses.iter().map(|a| {
                 let range = network_of(a.ip.addr());

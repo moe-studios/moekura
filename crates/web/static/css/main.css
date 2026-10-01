@@ -240,6 +240,8 @@ label.choice { display: flex; align-items: center; gap: 6px; font-weight: normal
 .post-grid .is-pending { border-style: dashed; }
 .post-grid .is-deleted { opacity: 0.5; }
 .post-grid .is-blacklisted .thumb { filter: blur(16px); }
+.post-grid.tickable > li { position: relative; }
+.post-grid.tickable > li > input[type="checkbox"] { position: absolute; top: 6px; left: 6px; z-index: 1; }
 [data-thumbs="large"] .post-grid { grid-template-columns: repeat(auto-fill, minmax(min(400px, 90vw), 1fr)); }
 .badge {
   position: absolute;

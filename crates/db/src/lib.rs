@@ -23,6 +23,7 @@ pub mod media;
 pub mod mod_actions;
 pub mod notes;
 pub mod pools;
+pub mod post_batches;
 pub mod post_versions;
 pub mod posts;
 pub mod promotion;

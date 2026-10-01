@@ -28,6 +28,7 @@ use tracing::Instrument;
 
 pub mod mail;
 pub mod media;
+pub mod posts;
 pub mod tags;
 pub mod users;
 pub mod versions;

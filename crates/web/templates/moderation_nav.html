@@ -4,6 +4,7 @@
   <a href="/moderation/appeals"{% if path == "/moderation/appeals" or path is startingwith("/moderation/appeals/") %} aria-current="page"{% endif %}>Appeals</a>
   <a href="/moderation/comments"{% if path == "/moderation/comments" or path is startingwith("/moderation/comments/") %} aria-current="page"{% endif %}>Reported comments</a>
   <a href="/posts?tags=status%3Adeleted">Deleted posts</a>
+  {% if can_purge %}<a href="/moderation/purge"{% if path == "/moderation/purge" %} aria-current="page"{% endif %}>Purge</a>{% endif %}
   <a href="/post_versions">Post changes</a>
   <a href="/moderation/mass-edit"{% if path == "/moderation/mass-edit" or path is startingwith("/moderation/mass-edit/") %} aria-current="page"{% endif %}>Mass edit</a>
   <a href="/moderation/bans"{% if path == "/moderation/bans" or path is startingwith("/moderation/bans/") %} aria-current="page"{% endif %}>Bans</a>

@@ -59,7 +59,8 @@ engine, then log in with your name and your API key.
 | `/profile.json`, `/users.json`, `/users/{id}.json` | levels follow roles: Member 20, Contributor 35, Janitor 37, Moderator 40, Admin 50 |
 | `/favorites.json`, `/favorites/{post_id}.json`, `/posts/{id}/favorites.json` | |
 | `/posts/{id}/votes.json`, `/post_votes.json` | only your own votes are listed |
-| `/explore/posts/popular.json` | the best-scored posts of a day, week or month |
+| `/explore/posts/popular.json`, `/explore/posts/viewed.json` | the best-scored and most viewed posts of a `date`'s day, or with `scale`, week or month |
+| `/explore/posts/searches.json`, `/explore/posts/missed_searches.json` | `[query, count]` pairs: the searches made most, and those that most often found nothing, by `date` and `scale` like the posts |
 | `/comments.json`, `/comments/{id}.json` | listed newest first, by `search[post_id]`, `search[creator_id]` or `search[creator_name]`; `page` takes numbers and `b<id>`; post with `comment[post_id]` and `comment[body]`, and change or delete your own |
 | `/comments/{id}/votes.json`, `/comment_votes.json` | only your own votes are listed |
 | `/pools.json`, `/pools/{id}.json` | by `search[name_matches]`, `search[name_contains]`, `search[id]` or `search[category]`; `post_ids` lists the posts you can see |

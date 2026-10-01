@@ -90,6 +90,7 @@ fn section(path: &str) -> Option<&'static str> {
         "tags" | "wiki" => "tags",
         "pools" => "pools",
         "comments" => "comments",
+        "explore" => "explore",
         "upload" => "upload",
         "moderation" => "moderation",
         "admin" => "admin",
@@ -125,6 +126,14 @@ pub(crate) fn render(
         section => section(path),
         site => context! {
             name => settings.site_name,
+            description => Some(&settings.site_description).filter(|d| !d.is_empty()),
+            logo => crate::site::logo_url(state),
+            has_rules => !settings.rules.trim().is_empty(),
+            footer_links => settings.footer_links.iter().map(|link| context! {
+                label => link.label,
+                url => link.url,
+                external => !link.url.starts_with('/'),
+            }).collect::<Vec<_>>(),
             registration_open => settings.registration_mode != RegistrationMode::Closed,
         },
         // Preset reasons for deleting, rejecting and flagging posts.

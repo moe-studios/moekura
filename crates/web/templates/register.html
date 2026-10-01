@@ -31,6 +31,7 @@
     <div class="{{ captcha.class }}" data-sitekey="{{ captcha.site_key }}"></div>
     {{ field_error(errors.captcha) }}
     {% endif %}
+    {% if site.has_rules %}<p class="hint">By registering, you agree to follow the site's <a href="/rules">rules</a>.</p>{% endif %}
     <button type="submit">Register</button>
   </form>
   <p class="aside">Already registered? <a href="/login">Log in</a></p>

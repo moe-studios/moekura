@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Rules · {{ site.name }}{% endblock %}
+{% block content %}
+<article class="card medium">
+  <h1>Rules</h1>
+  <div class="markup">{{ html }}</div>
+  {% if can_edit %}<p class="hint"><a href="/admin/settings#rules">Edit the rules</a></p>{% endif %}
+</article>
+{% endblock %}

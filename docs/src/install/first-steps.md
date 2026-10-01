@@ -13,6 +13,27 @@ docker compose -f deploy/compose.tiny.yml exec app moekura admin create-user you
 
 Log in, then open **Admin** in the menu.
 
+## Name, logo and rules
+
+Under **Admin → Settings**:
+
+- **Site name** and **Description** show in the header, the footer and to
+  search engines (`<meta name="description">`).
+- **Logo**: an image (PNG, JPEG, GIF, WebP or AVIF, up to 1 MB) shown
+  beside the name in the header.
+- **Rules**: what may be posted and how to behave, in the same
+  [markup](../using/wiki.md) as the wiki. They're shown at `/rules`, which
+  anyone can read (on private sites too), and linked from the footer, the
+  sign-up form and the upload page. Leave them empty for no rules page.
+- **Footer links**: one per line, the link's text then its address, like
+  `Discord https://discord.gg/abc` or `Help /wiki/help`.
+
+From the shell, the footer links are a JSON list:
+
+```sh
+moekura admin settings set footer_links '[{"label": "Discord", "url": "https://discord.gg/abc"}]'
+```
+
 ## Who can register
 
 Registration is open by default. Change it under **Admin → Settings**, or

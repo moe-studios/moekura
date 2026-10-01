@@ -44,6 +44,13 @@ pub struct ServerConfig {
     pub trusted_proxies: Vec<IpNet>,
     /// Requests running longer than this are aborted with `408`.
     pub request_timeout_secs: u64,
+    /// Requests a minute each API client may make (per account, or per
+    /// address for visitors) to `/api/v1` and the Danbooru-compatible
+    /// API, on average. 0: no limit.
+    pub api_requests_per_minute: u32,
+    /// How many of those may come at once, before the per-minute rate
+    /// applies.
+    pub api_burst: u32,
 }
 
 impl Default for ServerConfig {
@@ -53,6 +60,8 @@ impl Default for ServerConfig {
             public_url: Url::parse("http://localhost:8080").expect("valid default URL"),
             trusted_proxies: Vec::new(),
             request_timeout_secs: 30,
+            api_requests_per_minute: 300,
+            api_burst: 60,
         }
     }
 }
@@ -703,6 +712,12 @@ impl Config {
                     }
                 }
             }
+        }
+        if self.server.api_requests_per_minute > 0 && self.server.api_burst == 0 {
+            problems.push(ConfigProblem {
+                key: "server.api_burst",
+                message: "must be at least 1 while api_requests_per_minute is set".into(),
+            });
         }
         if db.max_connections == 0 {
             problems.push(ConfigProblem {

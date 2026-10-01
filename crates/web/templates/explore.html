@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% set headings = {"popular": "Popular posts", "viewed": "Most viewed posts", "searches": "Popular searches", "missed_searches": "Searches that found nothing"} %}
+{% block title %}{{ headings[kind] }} · {{ site.name }}{% endblock %}
+{% block content %}
+<nav class="subnav" aria-label="Explore">
+  <a href="/explore/posts/popular"{% if kind == "popular" %} aria-current="page"{% endif %}>Popular</a>
+  <a href="/explore/posts/viewed"{% if kind == "viewed" %} aria-current="page"{% endif %}>Most viewed</a>
+  <a href="/explore/posts/searches"{% if kind == "searches" %} aria-current="page"{% endif %}>Searches</a>
+  <a href="/explore/posts/missed_searches"{% if kind == "missed_searches" %} aria-current="page"{% endif %}>Missed searches</a>
+</nav>
+<header class="explore-head">
+  <h1>{{ headings[kind] }}</h1>
+  <p class="hint">{{ range.label }}</p>
+  <nav class="explore-range" aria-label="Dates">
+    <a href="{{ range.previous_url }}" rel="prev">« Earlier</a>
+    {% for s in range.scales %}<a href="{{ s.url }}"{% if s.name == range.scale %} aria-current="page"{% endif %}>{{ s.name|capitalize }}</a>{% endfor %}
+    {% if range.next_url %}<a href="{{ range.next_url }}" rel="next">Later »</a>{% endif %}
+  </nav>
+</header>
+{% if kind == "searches" or kind == "missed_searches" %}
+{% if kind == "missed_searches" %}<p class="hint">Tag searches that found no posts: often a misspelling or another name for a tag, which an alias could fix.</p>{% endif %}
+{% if searches %}
+<table class="tag-table">
+  <thead><tr><th scope="col">Search</th><th scope="col" class="num">{% if kind == "missed_searches" %}Times missed{% else %}Searches{% endif %}</th></tr></thead>
+  <tbody>
+    {% for s in searches %}<tr><td><a href="{{ s.url }}">{{ s.query }}</a></td><td class="num">{{ s.count }}</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No searches counted then.</p>
+{% endif %}
+{% elif cards %}
+<ul class="post-grid">
+  {% for card in cards %}<li>{% include "card.html" %}</li>{% endfor %}
+</ul>
+{% else %}
+<p class="empty">No posts {% if kind == "viewed" %}viewed{% else %}posted{% endif %} then.</p>
+{% endif %}
+{% endblock %}

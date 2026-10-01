@@ -49,7 +49,7 @@ pub struct CurrentUser {
 }
 
 impl CurrentUser {
-    fn anonymous(site: &SiteSnapshot) -> Self {
+    pub(crate) fn anonymous(site: &SiteSnapshot) -> Self {
         Self {
             user: None,
             role: anonymous_role(site),

@@ -5,12 +5,31 @@
 <section class="card medium">
   <h1>Site settings</h1>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/admin/settings/logo" enctype="multipart/form-data" class="logo-form">
+    <label for="logo">Logo</label>
+    {% if logo %}<p><img class="logo-preview" src="{{ logo }}" alt="The current logo" height="48"></p>{% endif %}
+    <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif">
+    <p class="hint">Shown beside the site's name. PNG, JPEG, GIF, WebP or AVIF, up to 1 MB; it is shown 32 pixels high.</p>
+    <div class="actions">
+      <button type="submit" class="secondary">Upload logo</button>
+      {% if logo %}<button type="submit" class="secondary" name="remove" value="1">Remove logo</button>{% endif %}
+    </div>
+  </form>
   <form method="post" action="/admin/settings">
     <label for="site_name">Site name</label>
     <input id="site_name" name="site_name" value="{{ settings.site_name }}" maxlength="64" required>
+    <label for="site_description">Description</label>
+    <textarea id="site_description" name="site_description" rows="2" maxlength="300">{{ settings.site_description }}</textarea>
+    <p class="hint">A sentence or two about the site, shown in the footer and to search engines.</p>
+    <label for="rules">Rules</label>
+    <textarea id="rules" name="rules" rows="8">{{ settings.rules }}</textarea>
+    <p class="hint">What may be posted, and how to behave, in the same markup as the wiki. Shown at <a href="/rules">/rules</a> and linked from the footer, sign-up and uploads. Leave it empty for no rules page.</p>
+    <label for="footer_links">Footer links</label>
+    <textarea id="footer_links" name="footer_links" rows="3" spellcheck="false" placeholder="Discord https://discord.gg/…">{{ settings.footer_links }}</textarea>
+    <p class="hint">One per line: the link's text, then its address (<code>https://…</code> or a path on this site, like <code>/wiki/help</code>).</p>
     <label for="registration_mode">Registration</label>
     <select id="registration_mode" name="registration_mode">
-      {% for m in modes %}<option value="{{ m }}"{% if settings.registration_mode == m %} selected{% endif %}>{{ {"open": "Open to anyone", "invite": "Invite code needed", "approval": "Staff approve new accounts", "closed": "Closed"}[m] }}</option>{% endfor %}
+      {% for m in registration_modes %}<option value="{{ m }}"{% if settings.registration_mode == m %} selected{% endif %}>{{ {"open": "Open to anyone", "invite": "Invite code needed", "approval": "Staff approve new accounts", "closed": "Closed"}[m] }}</option>{% endfor %}
     </select>
     <label class="choice"><input type="checkbox" name="email_verification"{% if settings.email_verification %} checked{% endif %}> New accounts must confirm their email address</label>
     {% if not mail_enabled %}<p class="hint">Mail isn't set up (<code>[mail]</code> in the server configuration), so addresses aren't checked.</p>{% endif %}

@@ -55,7 +55,11 @@ pub fn is_api_path(path: &str) -> bool {
                        `{\"error\": {\"status\": 404, \"message\": \"Not found\"}}`.\n\n\
                        Send an API key (created in your account settings) as \
                        `Authorization: Bearer <key>`. Without one, requests are made as a \
-                       logged-out visitor and can do what visitors can on the site.",
+                       logged-out visitor and can do what visitors can on the site.\n\n\
+                       Requests are rate limited per account (or, without a key, per \
+                       address). Responses carry `X-RateLimit-Limit`, `X-RateLimit-Remaining` \
+                       and `X-RateLimit-Reset` (Unix time when the full burst is back); past \
+                       the limit, requests get a 429 with `Retry-After`.",
         license(name = "AGPL-3.0-only", identifier = "AGPL-3.0-only"),
     ),
     servers((url = "/api/v1")),

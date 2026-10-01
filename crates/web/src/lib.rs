@@ -18,6 +18,7 @@ mod dates;
 mod edit;
 mod email;
 pub mod error;
+pub mod explore;
 mod favorite_groups;
 mod favorites;
 mod feeds;
@@ -45,6 +46,7 @@ pub mod remote_import;
 mod requests;
 mod saved_searches;
 pub mod shared;
+mod site;
 mod suggestions;
 mod tag_history;
 mod tag_relations;
@@ -122,6 +124,8 @@ pub struct AppState {
     pub site: SiteCache,
     pub rate_limits: Arc<RateLimits>,
     pub(crate) counts: Arc<counts::CountCache>,
+    /// Post views and searches not yet written to the database.
+    pub(crate) tallies: Arc<explore::Tallies>,
     pub storage: Storage,
     pub media: Media,
     pub(crate) fetcher: fetch::Fetcher,
@@ -190,12 +194,17 @@ impl AppState {
             .captcha
             .clone()
             .map(|c| Arc::new(captcha::Captcha::new(c)));
+        let rate_limits = RateLimits::new(valkey).with_api_limit(
+            config.server.api_requests_per_minute,
+            config.server.api_burst,
+        );
         Ok(Self {
             config: Arc::new(config),
             db,
             site,
-            rate_limits: Arc::new(RateLimits::new(valkey)),
+            rate_limits: Arc::new(rate_limits),
             counts: Arc::new(counts),
+            tallies: Arc::default(),
             storage,
             media,
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
@@ -254,6 +263,7 @@ pub fn router(state: AppState) -> Router {
         .merge(comments::routes())
         .merge(edit::routes())
         .merge(email::routes())
+        .merge(explore::routes())
         .merge(favorite_groups::routes())
         .merge(favorites::routes())
         .merge(feeds::routes())
@@ -270,6 +280,7 @@ pub fn router(state: AppState) -> Router {
         .merge(related_tags::routes())
         .merge(requests::routes())
         .merge(saved_searches::routes())
+        .merge(site::routes())
         .merge(tags::routes())
         .merge(tag_history::routes())
         .merge(tag_relations::routes())
@@ -330,6 +341,11 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth::block_banned_networks,
+        ))
+        // Knows the requester, and its refusals become JSON errors.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::limit_api,
         ))
         // Inner layer: runs after the session is known, so error pages can
         // show who is logged in.

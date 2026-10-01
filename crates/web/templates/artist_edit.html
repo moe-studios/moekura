@@ -1,22 +1,22 @@
 {% extends "base.html" %}
-{% block title %}{% if artist %}Edit {{ artist.title }}{% else %}New artist{% endif %} · {{ site.name }}{% endblock %}
+{% block title %}{% if artist %}{{ t("edit-thing", name=artist.title) }}{% else %}{{ t("artist-new") }}{% endif %} · {{ site.name }}{% endblock %}
 {% block content %}
-<p class="back">{% if artist %}<a href="{{ artist.url }}">« {{ artist.title }}</a>{% else %}<a href="/artists">« Artists</a>{% endif %}</p>
-<h1>{% if artist %}Edit {{ artist.title }}{% else %}New artist{% endif %}</h1>
-{% if error %}<p class="form-error" role="alert">{{ error }}{% if artist %} <a href="{{ artist.url }}/history">History</a>{% endif %}</p>{% endif %}
+<p class="back">{% if artist %}<a href="{{ artist.url }}">« {{ artist.title }}</a>{% else %}<a href="/artists">« {{ t("tag-nav-artists") }}</a>{% endif %}</p>
+<h1>{% if artist %}{{ t("edit-thing", name=artist.title) }}{% else %}{{ t("artist-new") }}{% endif %}</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}{% if artist %} <a href="{{ artist.url }}/history">{{ t("tag-nav-history") }}</a>{% endif %}</p>{% endif %}
 <form class="wiki-form" method="post" action="{{ action }}">
   {% if artist %}<input type="hidden" name="base" value="{{ base }}">{% endif %}
-  <label for="artist-name">Name</label>
+  <label for="artist-name">{{ t("account-name") }}</label>
   <input id="artist-name" name="name" value="{{ name }}" maxlength="170" required autocapitalize="none" spellcheck="false" data-autocomplete="edit">
-  <p class="hint">The artist's tag. A new tag, or one no post uses yet, becomes an artist tag.</p>
-  <label for="artist-other-names">Other names</label>
+  <p class="hint">{{ t("artist-name-hint") }}</p>
+  <label for="artist-other-names">{{ t("other-names") }}</label>
   <input id="artist-other-names" name="other_names" value="{{ other_names }}" spellcheck="false">
-  <p class="hint">Separated by spaces, with underscores for spaces in a name: the artist's names elsewhere, and in other scripts.</p>
-  <label for="artist-group">Group</label>
+  <p class="hint">{{ t("artist-other-names-hint") }}</p>
+  <label for="artist-group">{{ t("artist-group") }}</label>
   <input id="artist-group" name="group_name" value="{{ group_name }}" maxlength="170">
-  <label for="artist-urls">URLs</label>
+  <label for="artist-urls">{{ t("artist-urls") }}</label>
   <textarea id="artist-urls" name="urls" rows="6" spellcheck="false" placeholder="https://twitter.com/…">{{ urls }}</textarea>
-  <p class="hint">One per line: their profiles and galleries. Put <code>-</code> in front of ones no longer in use; they still identify the artist. Uploads from any page under these addresses suggest this artist.</p>
-  <button type="submit">Save</button>
+  <p class="hint">{{ t("artist-urls-hint") }}</p>
+  <button type="submit">{{ t("common-save") }}</button>
 </form>
 {% endblock %}

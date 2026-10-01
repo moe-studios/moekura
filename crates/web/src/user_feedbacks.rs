@@ -167,7 +167,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
             user => user.as_ref().map(|u| &u.name),
             creator => creator.as_ref().map(|u| &u.name),
             category => category,
-            categories => std::iter::once(context! { label => "All", url => link(None, 1), current => category.is_none() })
+            categories => std::iter::once(context! { label => "all", url => link(None, 1), current => category.is_none() })
                 .chain(CATEGORIES.iter().map(|c| context! {
                     label => c,
                     url => link(Some(c), 1),

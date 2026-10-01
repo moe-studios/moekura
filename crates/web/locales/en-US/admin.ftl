@@ -1,0 +1,229 @@
+## Admin pages
+
+admin-nav-overview = Overview
+admin-nav-settings = Settings
+admin-nav-users = Users
+admin-nav-roles = Roles
+admin-nav-news = News
+admin-nav-webhooks = Webhooks
+
+news-field-body = News
+news-field-body-hint = A sentence or two, in the same markup as the wiki.
+news-field-until = Show until
+news-field-until-hint = The last day (UTC) it's shown. Without one, it's shown until deleted or replaced by newer news.
+news-edit-title = Edit news
+news-edit-hint = Readers who dismissed it don't see it again; post new news for something they should.
+
+reports-title = Reports
+reports-by = { $metric } by { $user }
+reports-what = What to chart
+reports-period = Period
+reports-days = { $days } days
+reports-everyone = Everyone's
+reports-total-daily = { $total } in the last { $days } days, by the day (UTC). Counted hourly.
+reports-total-weekly = { $total } in the last { $days } days, by the week (UTC). Counted hourly.
+reports-chart = { $metric } over the last { $days } days
+reports-most-active = Most active
+reports-most-active-table = Most active users table
+metric-uploads = Uploads
+metric-post_changes = Post changes
+metric-approvals = Approvals
+metric-comments = Comments
+metric-forum_posts = Forum posts
+metric-wiki_edits = Wiki edits
+metric-note_changes = Note changes
+metric-favorites = Favorites
+metric-votes = Post votes
+metric-signups = New accounts
+
+news-hint = The newest news that hasn't expired is shown at the top of every page until each reader dismisses it.
+news-post = Post news
+news-state-shown = shown
+news-state-expired = expired
+news-state-deleted = deleted
+news-until = until { $day }
+news-none = No news yet.
+
+webhooks-hint = Webhooks tell other services (a Discord bot, a mirror, your own scripts) about events here, as signed JSON POSTs.
+webhooks-table = Admin webhooks table
+webhooks-events = Events
+webhooks-none = No webhooks yet.
+webhooks-add = Add a webhook
+webhooks-send = Send
+webhooks-add-button = Add webhook
+webhook-event-post_created = A post is uploaded
+webhook-event-post_approved = A post is approved
+webhook-event-post_deleted = A post is deleted
+webhook-event-post_flagged = A post is flagged
+webhook-event-comment_created = A comment is posted
+webhook-event-user_registered = Someone registers
+webhook-event-ping = A test
+
+overview-pending = Pending
+overview-flagged = Flagged
+overview-deleted = Deleted
+overview-files = Files
+overview-database = Database
+overview-jobs = Background jobs
+overview-jobs-table = Admin overview table
+overview-kind = Kind
+overview-job-count = Jobs
+overview-queue-empty = The queue is empty.
+overview-failed = Failed jobs
+overview-failed-hint = These ran out of attempts. Retry once the cause is fixed, or discard them.
+overview-attempts = { $count } attempts
+webhook = Webhook
+webhook-secret = Secret
+webhook-secret-hint = Each delivery has <code>X-Moekura-Signature: sha256=…</code>, the HMAC-SHA256 of <code>{ "{" }timestamp{ "}" }.{ "{" }body{ "}" }</code> with this secret, and the timestamp in <code>X-Moekura-Timestamp</code>. Check both.
+webhook-new-secret = Make a new secret
+webhook-test = Send a test
+webhook-delete-confirm = Delete this webhook?
+webhook-delete = Delete webhook
+webhook-deliveries = Deliveries
+webhook-deliveries-table = Admin webhook table
+webhook-event = Event
+webhook-result = Result
+webhook-sent = Sent
+webhook-tries = after { $count } tries
+webhook-none-sent = Nothing sent yet.
+
+## Permissions, as `permission-<key>`
+
+permission-view_posts = View posts
+permission-upload = Upload
+permission-edit_posts = Edit posts and tags
+permission-comment = Comment
+permission-favorite = Favorite
+permission-vote = Vote
+permission-flag = Flag posts
+permission-edit_wiki = Edit the wiki and artists
+permission-approve_posts = Approve posts and handle flags
+permission-delete_posts = Delete and restore posts
+permission-purge_posts = Purge posts
+permission-manage_tags = Manage tags, aliases and implications
+permission-view_deleted = See deleted posts
+permission-ban_users = Ban users and networks
+permission-manage_users = Manage users
+permission-manage_settings = Manage site settings and roles
+permission-view_audit_log = Read the moderation log
+permission-upload_without_approval = Upload without approval
+permission-moderate_comments = Hide comments and handle reports about them
+permission-edit_pools = Create and edit pools
+permission-edit_notes = Edit notes
+permission-mass_edit_tags = Mass edit tags
+permission-lock_posts = Lock posts and change locked ones
+permission-undo_edits = Undo a user's post edits
+permission-replace_posts = Replace posts' files
+permission-send_messages = Send private messages
+permission-give_feedback = Leave feedback on users of lower rank
+permission-invite_users = Invite people
+
+not-banned = Not banned
+users-table = Users table
+role-and-status = Role and status
+role-of = Role of { $user }
+status-of = Status of { $user }
+reason-for-changing = Reason for changing { $user }
+tfa-reset-hint = For someone who lost their authenticator app and recovery codes
+tfa-reset = Turn off 2FA
+users-none = No users found.
+roles-hint = You can change roles ranked below your own, and hand on only permissions you have yourself. Anonymous is what logged-out visitors (and banned users) get.
+roles-built-in = (built in, rank { $rank })
+rank = Rank
+roles-rank-hint = (1 to { $max }; higher ranks act on lower ones)
+roles-rank-range = (1 to { $max })
+roles-rank = (rank { $rank })
+roles-can = Can
+roles-not-yours = You don't have this permission yourself
+roles-limits = Upload limits
+roles-limits-hint = (empty for none)
+roles-limits-label = Upload limits:
+roles-pending-limit = Waiting for approval at once
+roles-daily-limit = Per day
+roles-pending = { $count } waiting for approval
+roles-daily = { $count } a day
+roles-move-to = Move its users to
+roles-new = New role
+roles-copy = Start with the permissions of
+roles-copy-none = No role (nothing allowed)
+roles-add = Add role
+
+## Admin → Settings
+
+as-title = Site settings
+as-logo = Logo
+as-logo-alt = The current logo
+as-logo-hint = Shown beside the site's name. PNG, JPEG, GIF, WebP or AVIF, up to 1 MB; it is shown 32 pixels high.
+as-logo-upload = Upload logo
+as-logo-remove = Remove logo
+as-site-name = Site name
+as-description-hint = A sentence or two about the site, shown in the footer and to search engines.
+as-rules-hint = What may be posted, and how to behave, in the same markup as the wiki. Shown at <a href="/rules">/rules</a> and linked from the footer, sign-up and uploads. Leave it empty for no rules page.
+as-footer-links = Footer links
+as-footer-links-hint = One per line: the link's text, then its address (<code>https://…</code> or a path on this site, like <code>/wiki/help</code>).
+as-registration = Registration
+as-invite-quota = Invites each person may make every 30 days
+as-invite-quota-hint = For roles with <em>Invite people</em>, at <a href="/invites">/invites</a>; those who can manage users have no limit.
+as-email-verification = New accounts must confirm their email address
+as-no-mail = Mail isn't set up (<code>[mail]</code> in the server configuration), so addresses aren't checked.
+as-upload-approval = New uploads wait for approval (unless the uploader's role skips it)
+as-request-tags = Tag posts <code>artist_request</code> while they have no artist tag, and <code>tagme</code> while they have fewer than 10 general tags
+as-banned-artists = Banned artists
+as-banned-hide = Hide their posts
+as-banned-refuse = Refuse uploads, and edits adding their tag
+as-banned-hint = Staff who approve posts still see and post them. Artists are banned from their <a href="/artists">artist entry</a>.
+as-limit-scaling = Limits on uploads waiting for approval grow with a user's approved uploads and shrink with deleted ones
+as-limits-hint = Each role's limits are set under <a href="/admin/roles">Roles</a>.
+as-promote = Promote members to contributors (hourly) once they have
+as-promote-uploads = Approved uploads
+as-promote-edits = Post edits
+as-promote-days = Days since registering
+as-promote-deletions = At most this many uploads deleted in the last 30 days
+as-promote-feedback = At most this many negative feedback records
+as-promote-hint = Banned members, and those staff keep from promotion on their profile, aren't promoted.
+as-preview-all = Link previews (in chat apps and social networks) show questionable and explicit posts' images too
+as-visitor-ratings = Ratings visitors see
+as-visitor-ratings-hint = Logged-out visitors only see posts with these ratings, in searches, on post pages, in feeds and through the APIs. Tick all of them to show everything.
+as-default-blacklist = Default blacklist
+as-default-blacklist-hint = For visitors, and users who haven't set their own. One rule per line, like <code>rating:e</code>.
+as-reasons = Moderation reasons
+as-reasons-hint = Offered when deleting, rejecting and flagging posts, one per line; anyone can still give another reason, or add details.
+as-reasons-deletion = For deleting and rejecting posts
+as-reasons-flag = For flagging posts
+as-spam = Spam
+as-domain-mode = Email domains listed below are
+as-domain-refused = Refused
+as-domain-only = The only ones accepted
+as-domains = Email domains
+as-domains-hint = One per line; each covers its subdomains. Applies to signing up and changing addresses. An empty list accepts any domain.
+as-no-captcha = No captcha service is set up (<code>[auth.captcha]</code> in the server configuration), so these only matter once one is.
+as-captcha-sign-up = Ask for a captcha when signing up
+as-captcha-comments = Ask for one on comments by accounts younger than this many days (0 for never)
+as-spam-filter = Hold likely spam in comments, forum posts and messages for review
+as-spam-auto = Unless the site is private
+as-spam-on = Always
+as-spam-off = Never
+as-spam-hint = Held writing waits under <a href="/moderation/held">Moderation → Held for review</a>. Staff who can hide comments are never held.
+as-spam-links = Hold links from accounts younger than this many days (0 for never)
+as-spam-repeats = Hold text its writer already posted this many times today (0 for never)
+as-spam-words = Spam words
+as-spam-words-hint = One word or phrase per line; writing that contains any is held, whatever the case.
+as-robots-placeholder = Empty for the default
+as-robots-default = The default
+as-ip-days = Keep the addresses accounts use for this many days
+as-ip-days-hint = Staff who can ban users see them on a user's moderation record, with other accounts seen on the same addresses. 0 keeps none.
+as-default-theme = Default theme
+as-default-theme-hint = For visitors, and users who haven't picked one. To add a theme, put <code>themes/&lt;name&gt;.css</code> in the <code>static_override</code> directory and restart.
+as-tagger = Tagger
+as-no-tagger = The tagger isn't set up (<code>[tagger]</code> in the server configuration), so these only matter once it is.
+as-tagger-hint = How sure the tagger must be, in percent, to suggest a tag of each category. Categories left blank use General's.
+as-tagger-auto = Add suggested tags to posts when the tagger is at least this sure, as the <code>{ $account }</code> account
+as-tagger-percent = Percent sure
+as-tagger-rating = Change the rating too, when it is that sure of another
+as-private-hint = To make the site private, take “View posts” away from the Anonymous role under <a href="/admin/roles">Roles</a>.
+as-registration-open = Open to anyone
+as-registration-invite = Invite code needed
+as-registration-approval = Staff approve new accounts
+as-registration-closed = Closed
+
+as-spam-words-placeholder = cheap pills

@@ -1,67 +1,67 @@
 {% extends "base.html" %}
-{% block title %}Roles · {{ site.name }}{% endblock %}
+{% block title %}{{ t("admin-nav-roles") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "admin_nav.html" %}
-<h1>Roles</h1>
-<p class="hint">You can change roles ranked below your own, and hand on only permissions you have yourself. Anonymous is what logged-out visitors (and banned users) get.</p>
+<h1>{{ t("admin-nav-roles") }}</h1>
+<p class="hint">{{ t("roles-hint") }}</p>
 {% for role in roles %}
 <section class="card role" id="role-{{ role.id }}">
   {% if role.editable %}
   <form method="post" action="/admin/roles/{{ role.id }}">
-    <label for="role-name-{{ role.id }}">Name{% if not role.custom %} <span class="optional">(built in, rank {{ role.rank }})</span>{% endif %}</label>
+    <label for="role-name-{{ role.id }}">{{ t("account-name") }}{% if not role.custom %} <span class="optional">{{ t("roles-built-in", rank=role.rank) }}</span>{% endif %}</label>
     <input id="role-name-{{ role.id }}" name="name" value="{{ role.name }}" maxlength="32" required>
     {% if role.custom %}
-    <label for="role-rank-{{ role.id }}">Rank <span class="optional">(1 to {{ max_rank }}; higher ranks act on lower ones)</span></label>
+    <label for="role-rank-{{ role.id }}">{{ t("rank") }} <span class="optional">{{ t("roles-rank-hint", max=max_rank) }}</span></label>
     <input id="role-rank-{{ role.id }}" name="rank" type="number" min="1" max="{{ max_rank }}" value="{{ role.rank }}" required>
     {% endif %}
     <fieldset class="permissions">
-      <legend>Can</legend>
+      <legend>{{ t("roles-can") }}</legend>
       {% for p in role.permissions %}
-      <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.granted %} checked{% endif %}{% if not p.grantable %} disabled title="You don't have this permission yourself"{% endif %}> {{ p.label }}</label>
+      <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.granted %} checked{% endif %}{% if not p.grantable %} disabled title="{{ t('roles-not-yours') }}"{% endif %}> {{ t("permission-" ~ p.key) }}</label>
       {% endfor %}
     </fieldset>
     <fieldset class="limits">
-      <legend>Upload limits <span class="optional">(empty for none)</span></legend>
-      <label for="pending-{{ role.id }}">Waiting for approval at once</label>
+      <legend>{{ t("roles-limits") }} <span class="optional">{{ t("roles-limits-hint") }}</span></legend>
+      <label for="pending-{{ role.id }}">{{ t("roles-pending-limit") }}</label>
       <input id="pending-{{ role.id }}" name="pending_upload_limit" type="number" min="0" value="{{ role.pending_limit if role.pending_limit is not none else '' }}">
-      <label for="daily-{{ role.id }}">Per day</label>
+      <label for="daily-{{ role.id }}">{{ t("roles-daily-limit") }}</label>
       <input id="daily-{{ role.id }}" name="daily_upload_limit" type="number" min="0" value="{{ role.daily_limit if role.daily_limit is not none else '' }}">
     </fieldset>
-    <button type="submit">Save {{ role.name }}</button>
+    <button type="submit">{{ t("save-thing", name=role.name) }}</button>
   </form>
   {% if role.custom and role.move_targets %}
   <details class="edit">
-    <summary>Delete {{ role.name }}</summary>
+    <summary>{{ t("delete-thing", name=role.name) }}</summary>
     <form method="post" action="/admin/roles/{{ role.id }}/delete">
-      <label for="role-move-{{ role.id }}">Move its users to</label>
+      <label for="role-move-{{ role.id }}">{{ t("roles-move-to") }}</label>
       <select id="role-move-{{ role.id }}" name="move_to">
-        {% for t in role.move_targets %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+        {% for target in role.move_targets %}<option value="{{ target.id }}">{{ target.name }}</option>{% endfor %}
       </select>
-      <button type="submit" class="danger">Delete {{ role.name }}</button>
+      <button type="submit" class="danger">{{ t("delete-thing", name=role.name) }}</button>
     </form>
   </details>
   {% endif %}
   {% else %}
-  <h2>{{ role.name }} <span class="optional">(rank {{ role.rank }})</span></h2>
-  <p class="hint">{% for p in role.permissions if p.granted %}{{ p.label }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
-  {% if role.pending_limit is not none or role.daily_limit is not none %}<p class="hint">Upload limits: {% if role.pending_limit is not none %}{{ role.pending_limit }} waiting for approval{% endif %}{% if role.pending_limit is not none and role.daily_limit is not none %}, {% endif %}{% if role.daily_limit is not none %}{{ role.daily_limit }} a day{% endif %}</p>{% endif %}
+  <h2>{{ role.name }} <span class="optional">{{ t("roles-rank", rank=role.rank) }}</span></h2>
+  <p class="hint">{% for p in role.permissions if p.granted %}{{ t("permission-" ~ p.key) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  {% if role.pending_limit is not none or role.daily_limit is not none %}<p class="hint">{{ t("roles-limits-label") }} {% if role.pending_limit is not none %}{{ t("roles-pending", count=role.pending_limit) }}{% endif %}{% if role.pending_limit is not none and role.daily_limit is not none %}, {% endif %}{% if role.daily_limit is not none %}{{ t("roles-daily", count=role.daily_limit) }}{% endif %}</p>{% endif %}
   {% endif %}
 </section>
 {% endfor %}
 {% if max_rank >= 1 %}
 <section class="card role">
-  <h2>New role</h2>
+  <h2>{{ t("roles-new") }}</h2>
   <form method="post" action="/admin/roles/new">
-    <label for="new-role-name">Name</label>
+    <label for="new-role-name">{{ t("account-name") }}</label>
     <input id="new-role-name" name="name" maxlength="32" required>
-    <label for="new-role-rank">Rank <span class="optional">(1 to {{ max_rank }})</span></label>
+    <label for="new-role-rank">{{ t("rank") }} <span class="optional">{{ t("roles-rank-range", max=max_rank) }}</span></label>
     <input id="new-role-rank" name="rank" type="number" min="1" max="{{ max_rank }}" required>
-    <label for="new-role-copy">Start with the permissions of</label>
+    <label for="new-role-copy">{{ t("roles-copy") }}</label>
     <select id="new-role-copy" name="copy_from">
-      <option value="">No role (nothing allowed)</option>
-      {% for t in templates %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+      <option value="">{{ t("roles-copy-none") }}</option>
+      {% for template in templates %}<option value="{{ template.id }}">{{ template.name }}</option>{% endfor %}
     </select>
-    <button type="submit">Add role</button>
+    <button type="submit">{{ t("roles-add") }}</button>
   </form>
 </section>
 {% endif %}

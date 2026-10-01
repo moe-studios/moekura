@@ -23,6 +23,8 @@
   off.
 - **Time zone** is used for the dates pages show. Otherwise they're in
   UTC.
+- **Language**, on sites with more than one, sets the language pages
+  are shown in; otherwise your browser's choice is followed.
 - **Custom CSS** is applied after the site's styles, for you alone.
 - **Email me my notifications** (on sites that send mail, and once your
   address is confirmed) sends each [notification](#notifications) to

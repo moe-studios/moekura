@@ -1,27 +1,27 @@
 {% extends "base.html" %}
-{% block title %}Wiki · {{ site.name }}{% endblock %}
+{% block title %}{{ t("tag-nav-wiki") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
-<h1>Wiki</h1>
+<h1>{{ t("tag-nav-wiki") }}</h1>
 <form class="filters" method="get" action="/wiki">
   <div class="filter-field">
-    <label for="wiki-title">Title</label>
-    <input id="wiki-title" name="title" value="{{ query.title }}" placeholder="long_ha, *_hair or an other name"
+    <label for="wiki-title">{{ t("field-title") }}</label>
+    <input id="wiki-title" name="title" value="{{ query.title }}" placeholder="{{ t('wiki-search-placeholder') }}"
            autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
   </div>
-  <button type="submit">Search</button>
+  <button type="submit">{{ t("search") }}</button>
 </form>
-<p class="hint"><a href="/wiki_page_versions">Recent changes</a> to every page.</p>
-{% if create_url %}<p><a class="button" href="{{ create_url }}">Start a page for {{ create_title }}</a></p>{% endif %}
+<p class="hint">{{ t("wiki-recent-changes") }}</p>
+{% if create_url %}<p><a class="button" href="{{ create_url }}">{{ t("wiki-start-page", title=create_title) }}</a></p>{% endif %}
 {% if pages %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Wiki index table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('wiki-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">Title</th><th scope="col">Last changed</th><th scope="col" class="num">Version</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("field-title") }}</th><th scope="col">{{ t("last-changed") }}</th><th scope="col" class="num">{{ t("version-heading") }}</th></tr></thead>
   <tbody>
     {% for p in pages %}
     <tr>
       <td><a href="{{ p.url }}">{{ p.title }}</a>{% if p.other_names %} <span class="hint">{{ p.other_names | join(" · ") }}</span>{% endif %}</td>
-      <td>{{ p.date }}{% if p.updater %} <span class="hint">by {{ p.updater }}</span>{% endif %}</td>
+      <td>{{ p.date }}{% if p.updater %} <span class="hint">{{ t("by-user", user=p.updater) }}</span>{% endif %}</td>
       <td class="num">{{ p.version }}</td>
     </tr>
     {% endfor %}
@@ -29,12 +29,12 @@
 </table>
 </div>
 {% else %}
-<p class="empty">No wiki pages found.</p>
+<p class="empty">{{ t("wiki-none-found") }}</p>
 {% endif %}
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

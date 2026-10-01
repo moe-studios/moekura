@@ -1,33 +1,33 @@
 {% extends "base.html" %}
-{% block title %}Search the forum · {{ site.name }}{% endblock %}
+{% block title %}{{ t("forum-search-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "forum_nav.html" %}
-<h1>Search the forum</h1>
+<h1>{{ t("forum-search-title") }}</h1>
 <form class="filters" method="get" action="/forum_posts">
-  <label for="forum-body">Words</label>
+  <label for="forum-body">{{ t("words") }}</label>
   <input id="forum-body" name="body" value="{{ query.body }}" size="24">
-  <label for="forum-user">By</label>
+  <label for="forum-user">{{ t("by") }}</label>
   <input id="forum-user" name="user" value="{{ query.user }}" size="12">
-  <button type="submit">Search</button>
+  <button type="submit">{{ t("search") }}</button>
 </form>
 {% if searched %}
 {% if posts %}
 <ol class="history">
   {% for p in posts %}
   <li>
-    <div class="history-head"><a href="/forum_posts/{{ p.id }}">{{ p.topic }}</a> <span class="hint">{{ p.date }}{% if p.creator %} · by {{ p.creator }}{% endif %}</span></div>
+    <div class="history-head"><a href="/forum_posts/{{ p.id }}">{{ p.topic }}</a> <span class="hint">{{ p.date }}{% if p.creator %} · {{ t("by-user", user=p.creator) }}{% endif %}</span></div>
     <div class="markup">{{ p.html }}</div>
   </li>
   {% endfor %}
 </ol>
 {% else %}
-<p class="empty">No posts found.</p>
+<p class="empty">{{ t("forum-search-none") }}</p>
 {% endif %}
 {% endif %}
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

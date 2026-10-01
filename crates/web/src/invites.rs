@@ -73,7 +73,7 @@ fn invite_context(invite: &Invite, current: &CurrentUser) -> Value {
     let state = if invite.revoked_at.is_some() {
         "revoked"
     } else if invite.uses >= invite.max_uses {
-        "used up"
+        "used_up"
     } else if invite.expires_at.is_some_and(|at| at <= now) {
         "expired"
     } else {

@@ -930,11 +930,11 @@ pub(crate) async fn render_post(
     let appeal = crate::moderation::appeal_context(state, &page.current, &post).await?;
     let locks: Vec<Value> = moekura_core::posts::PostLock::ALL
         .iter()
-        .map(|l| context! { name => l.as_str(), label => l.label(), on => post.is_locked(*l) })
+        .map(|l| context! { name => l.as_str(), on => post.is_locked(*l) })
         .collect();
     let moderate = context! {
         locks => locks,
-        locked => post.locks.iter().map(|l| l.label()).collect::<Vec<_>>(),
+        locked => post.locks.iter().map(|l| l.as_str()).collect::<Vec<_>>(),
         can_lock => page.current.can(Permission::LockPosts) && !limited,
         disapprovals => disapprovals,
         appeal => appeal,

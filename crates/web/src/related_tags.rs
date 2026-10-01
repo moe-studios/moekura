@@ -165,7 +165,7 @@ async fn related(
         if !tags.is_empty() {
             groups.push(Group {
                 kind: "source",
-                title: format!("From {}", info.site),
+                title: page.say("related-from", &[("site", info.site)]),
                 tags,
             });
         }
@@ -174,7 +174,7 @@ async fn related(
     // Tags used with the chosen tag, or with the box's most telling tags.
     let known = tags::by_names(db, &in_box.iter().map(String::as_str).collect::<Vec<_>>()).await?;
     let (search, title) = match &chosen {
-        Some(tag) => (tag.clone(), format!("Related to {tag}")),
+        Some(tag) => (tag.clone(), page.say("related-to", &[("tag", tag)])),
         None => {
             let mut used: Vec<&Tag> = known.iter().filter(|t| t.post_count > 0).collect();
             used.sort_by_key(|t| t.post_count);
@@ -189,7 +189,7 @@ async fn related(
                     }
                 })
                 .collect();
-            (terms.join(" "), "Related".to_owned())
+            (terms.join(" "), page.say("related", &[]))
         }
     };
     if !search.is_empty() {
@@ -251,7 +251,7 @@ async fn related(
         if !tags.is_empty() {
             groups.push(Group {
                 kind: "translated",
-                title: "Translated".to_owned(),
+                title: page.say("related-translated", &[]),
                 tags,
             });
         }
@@ -262,12 +262,12 @@ async fn related(
         for (kind, title, ids) in [
             (
                 "recent",
-                "Your recent tags",
+                "related-recent",
                 post_versions::recent_tags(db, user.id, GROUP_SIZE as i64).await?,
             ),
             (
                 "frequent",
-                "Your frequent tags",
+                "related-frequent",
                 post_versions::frequent_tags(db, user.id, GROUP_SIZE as i64).await?,
             ),
         ] {
@@ -277,7 +277,7 @@ async fn related(
             if !tags.is_empty() {
                 groups.push(Group {
                     kind,
-                    title: title.to_owned(),
+                    title: page.say(title, &[]),
                     tags,
                 });
             }
@@ -300,7 +300,7 @@ async fn related(
         if !tags.is_empty() {
             groups.push(Group {
                 kind: "wiki",
-                title: format!("From the {tag} wiki page"),
+                title: page.say("related-wiki", &[("tag", tag)]),
                 tags,
             });
         }

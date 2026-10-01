@@ -1,17 +1,14 @@
 {% extends "base.html" %}
-{% block title %}Saved searches · {{ site.name }}{% endblock %}
+{% block title %}{{ t("saved-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<h1>Saved searches</h1>
-<p class="hint">
-  <code>search:all</code> shows the newest posts of all your saved searches together, and
-  <code>search:label</code> those of the searches with that label.
-</p>
+<h1>{{ t("saved-title") }}</h1>
+<p class="hint">{{ t("saved-hint") }}</p>
 {% if searches %}
-<p><a class="button" href="{{ all_url }}">All together</a>
+<p><a class="button" href="{{ all_url }}">{{ t("saved-all") }}</a>
   {% for l in labels %}<a class="tag" href="{{ l.url }}">{{ l.label }}</a> {% endfor %}</p>
-<div class="table-scroll" tabindex="0" role="region" aria-label="Saved searches table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('saved-table') }}">
 <table class="tag-table saved-searches">
-  <thead><tr><th scope="col">Search</th><th scope="col">Labels</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+  <thead><tr><th scope="col">{{ t("search") }}</th><th scope="col">{{ t("saved-labels") }}</th><th scope="col"><span class="visually-hidden">{{ t("actions") }}</span></th></tr></thead>
   <tbody>
     {% for s in searches %}
     <tr>
@@ -19,16 +16,16 @@
       <td>{% for l in s.label_links %}<a href="{{ l.url }}">{{ l.label }}</a> {% endfor %}</td>
       <td>
         <details class="inline">
-          <summary>Edit</summary>
+          <summary>{{ t("edit") }}</summary>
           <form method="post" action="/saved_searches/{{ s.id }}">
-            <label for="query-{{ s.id }}">Search</label>
+            <label for="query-{{ s.id }}">{{ t("search") }}</label>
             <input id="query-{{ s.id }}" name="query" value="{{ s.query }}" required data-autocomplete="search" autocomplete="off" autocapitalize="none" spellcheck="false">
-            <label for="labels-{{ s.id }}">Labels</label>
+            <label for="labels-{{ s.id }}">{{ t("saved-labels") }}</label>
             <input id="labels-{{ s.id }}" name="labels" value="{{ s.labels }}" autocomplete="off" spellcheck="false">
-            <button type="submit">Save</button>
+            <button type="submit">{{ t("common-save") }}</button>
           </form>
         </details>
-        <form class="inline" method="post" action="/saved_searches/{{ s.id }}/delete"><button type="submit" class="link">Remove</button></form>
+        <form class="inline" method="post" action="/saved_searches/{{ s.id }}/delete"><button type="submit" class="link">{{ t("remove") }}</button></form>
       </td>
     </tr>
     {% endfor %}
@@ -36,16 +33,16 @@
 </table>
 </div>
 {% else %}
-<p class="empty">You haven't saved any searches yet.</p>
+<p class="empty">{{ t("saved-none") }}</p>
 {% endif %}
-<h2>Save a search</h2>
+<h2>{{ t("saved-new") }}</h2>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 <form class="wiki-form" method="post" action="/saved_searches">
-  <label for="new-query">Search</label>
+  <label for="new-query">{{ t("search") }}</label>
   <input id="new-query" name="query" value="{{ form.query }}" required data-autocomplete="search" autocomplete="off" autocapitalize="none" spellcheck="false">
-  <label for="new-labels">Labels <span class="hint">(optional, separated by spaces)</span></label>
+  <label for="new-labels">{{ t("saved-labels") }} <span class="hint">{{ t("saved-labels-hint") }}</span></label>
   <input id="new-labels" name="labels" value="{{ form.labels }}" autocomplete="off" spellcheck="false">
-  <button type="submit">Save</button>
-  <p class="hint">Up to {{ max }} searches.</p>
+  <button type="submit">{{ t("common-save") }}</button>
+  <p class="hint">{{ t("saved-max", max=max) }}</p>
 </form>
 {% endblock %}

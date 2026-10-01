@@ -1,0 +1,38 @@
+## Text the page's scripts show. Variables like {$page} are left for the
+## script to fill in, so these can't use selectors (plurals).
+
+js-close = Close
+js-error-status = Error {$status}
+js-too-quick = That was too quick. Wait a moment, then try again.
+js-copy-tags-hint = Clicking one adds that post's tags to the form; save to keep them.
+js-suggestions-hint = Clicking one adds it to the form; save to keep it.
+js-artist-finder-unknown = By {$name}, who has no artist entry yet:{" "}
+js-artist-finder-start = start one
+js-artist-finder-one = Artist:{" "}
+js-artist-finder-many = Artists:{" "}
+js-artist-finder-add = Add to the tags
+js-reader-continue = Continue reading from page {$page}
+js-upload-one-file = Choose one file at a time. Your current selection has not changed.
+js-upload-selected = Selected: {$name}
+js-shortcuts-title = Keyboard shortcuts
+js-shortcut-previous = Previous post or page
+js-shortcut-next = Next post or page
+js-shortcut-edit = Edit the post
+js-shortcut-favorite = Favorite the post
+js-shortcut-notes = Show or hide notes
+js-shortcut-search = Search
+js-shortcut-help = Show these shortcuts
+js-resized-original = Showing the original.
+js-resized-to = Resized to {$percent}% of the original.
+js-resized-show-resized = Show the resized image
+js-resized-show-original = View the original
+js-notes-show = Show notes
+js-notes-hide = Hide notes
+js-notes-edit = Edit notes
+js-notes-done = Done editing notes
+js-tag-script-rating = Unknown rating in “{$word}”.
+js-tag-script-empty = Type a script first.
+js-tag-script-changed = Post #{$id} changed.
+js-tag-script-error = Post #{$id}: {$error}
+js-tag-script-failed = Post #{$id} couldn't be changed.
+js-related-posts = {$count} posts

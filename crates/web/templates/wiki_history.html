@@ -1,21 +1,21 @@
 {% extends "base.html" %}
-{% block title %}History of {{ title }} · Wiki · {{ site.name }}{% endblock %}
+{% block title %}{{ t("history-of", name=title) }} · {{ t("tag-nav-wiki") }} · {{ site.name }}{% endblock %}
 {% block content %}
 <p class="back"><a href="{{ url }}">« {{ title }}</a></p>
-<h1>History of {{ title }}</h1>
-<p class="hint"><a href="/wiki_page_versions">All wiki changes</a>, with a filter by user.</p>
+<h1>{{ t("history-of", name=title) }}</h1>
+<p class="hint">{{ t("wiki-history-all") }}</p>
 <ol class="history">
   {% for v in versions %}
   <li>
     <div class="history-head">
-      <strong><a href="{{ v.url }}">Version {{ v.version }}</a></strong>{% if v.current %} <span class="hint">(current)</span>{% endif %}
+      <strong><a href="{{ v.url }}">{{ t("version", number=v.version) }}</a></strong>{% if v.current %} <span class="hint">{{ t("current") }}</span>{% endif %}
       <span class="hint">
-        {{ v.date }}{% if v.updater %} · by {{ v.updater }}{% endif %}
-        {% if v.change is not none %} · {% if v.change >= 0 %}+{% endif %}{{ v.change }} characters{% endif %}
-        {% if v.other_names_changed %} · other names changed{% endif %}
+        {{ v.date }}{% if v.updater %} · {{ t("by-user", user=v.updater) }}{% endif %}
+        {% if v.change is not none %} · {{ t("characters-changed", change=v.change, sign=("+" if v.change >= 0 else "")) }}{% endif %}
+        {% if v.other_names_changed %} · {{ t("wiki-other-names-changed") }}{% endif %}
       </span>
       {% if v.can_revert %}
-      <form method="post" action="{{ url }}/revert/{{ v.version }}"><button type="submit" class="secondary">Revert to this</button></form>
+      <form method="post" action="{{ url }}/revert/{{ v.version }}"><button type="submit" class="secondary">{{ t("revert-to-this") }}</button></form>
       {% endif %}
     </div>
   </li>

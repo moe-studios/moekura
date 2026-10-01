@@ -26,14 +26,32 @@ pub struct Page {
     target: String,
 }
 
-/// What the layout shows above the page, from the request's cookies.
-#[derive(Debug, Clone, Copy, Default)]
+/// What the layout takes from the request: its language, and what it
+/// shows above the page.
+#[derive(Debug, Clone, Default)]
 pub(crate) struct Notices {
+    /// The language tag pages are shown in.
+    pub lang: String,
     pub flash: Option<Flash>,
     /// Site news is shown (it isn't on error pages).
     pub news: bool,
     /// The newest site news this browser dismissed.
     pub dismissed_news: Option<i64>,
+}
+
+/// The language to show `current` pages in, given the request's headers.
+pub(crate) fn language(
+    state: &AppState,
+    current: Option<&CurrentUser>,
+    headers: &axum::http::HeaderMap,
+) -> String {
+    let chosen = current
+        .and_then(|c| c.user.as_ref())
+        .and_then(|u| UserSettings::from_json(&u.settings).language);
+    let accept = headers
+        .get(axum::http::header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+    state.locales.negotiate(chosen.as_deref(), accept)
 }
 
 impl FromRequestParts<AppState> for Page {
@@ -46,6 +64,7 @@ impl FromRequestParts<AppState> for Page {
         let current = CurrentUser::from_request_parts(parts, state).await?;
         let jar = CookieJar::from_headers(&parts.headers);
         let notices = Notices {
+            lang: language(state, Some(&current), &parts.headers),
             flash: Flash::from_jar(&jar),
             news: true,
             dismissed_news: crate::news::dismissed(&jar),
@@ -68,6 +87,16 @@ impl Page {
         &self.state
     }
 
+    /// The language the page is shown in.
+    pub(crate) fn lang(&self) -> &str {
+        &self.notices.lang
+    }
+
+    /// Message `key` in the page's language (see [`crate::i18n::Locales::say`]).
+    pub(crate) fn say(&self, key: &str, args: &[(&str, &str)]) -> String {
+        self.state.locales.say(self.lang(), key, args)
+    }
+
     pub fn render(&self, template: &str, context: Value) -> Response {
         self.render_with_status(StatusCode::OK, template, context)
     }
@@ -81,7 +110,7 @@ impl Page {
         let mut response = render(
             &self.state,
             Some(&self.current),
-            self.notices,
+            self.notices.clone(),
             &self.target,
             status,
             template,
@@ -137,6 +166,9 @@ pub(crate) fn render(
         &settings.default_theme,
     );
     let layout = context! {
+        lang => notices.lang,
+        // Messages for scripts, by key, `{$name}` left for them to fill.
+        js_messages => state.locales.with_prefix(&notices.lang, "js-"),
         path => path,
         target => target,
         section => section(path),
@@ -186,7 +218,10 @@ pub(crate) fn render(
                 custom_css => crate::users::custom_css_url(&prefs).map(|url| crate::templates::url_value(&url)),
             }
         },
-        flash => notices.flash.map(Flash::text),
+        // Messages are HTML.
+        flash => notices.flash.map(|f| {
+            Value::from_safe_string(state.locales.format(&notices.lang, &format!("flash-{}", f.key()), None))
+        }),
         news => notices.news.then(|| {
             crate::news::banner(&site, current.and_then(|c| c.user.as_ref()), notices.dismissed_news)
         }).flatten(),
@@ -209,10 +244,11 @@ pub(crate) fn render(
             }
         }),
     };
-    match state
-        .templates
-        .render(template, context! { ..context, ..layout })
-    {
+    match crate::i18n::rendering_in(&notices.lang, || {
+        state
+            .templates
+            .render(template, context! { ..context, ..layout })
+    }) {
         Ok(html) => (status, Html(html)).into_response(),
         Err(error) => {
             tracing::error!(%error, template, "template rendering failed");
@@ -279,6 +315,70 @@ mod tests {
         assert_eq!(
             response.location.as_deref(),
             Some("/login?next=%2F%3Fpage%3D2")
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn pages_follow_the_chosen_language(pool: PgPool) {
+        let dir =
+            std::env::temp_dir().join(format!("moekura-pages-locales-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("de")).unwrap();
+        std::fs::write(
+            dir.join("de/main.ftl"),
+            "language-name = Deutsch\nnav-posts = Beiträge\nflash-saved = Gespeichert.\njs-close = Schließen\nerror-not-found = Nicht gefunden\n",
+        )
+        .unwrap();
+        let mut config = crate::test_support::test_config();
+        config.paths.locales_override = Some(dir.clone());
+        let state = crate::test_support::test_state_with(&pool, config).await;
+        let app = TestApp::new(state, crate::posts::routes().merge(crate::users::routes()));
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // Browsers ask.
+        let german = app
+            .get_with_headers("/", &[("accept-language", "fr, de-CH;q=0.8")])
+            .await
+            .body;
+        assert!(german.contains("<html lang=\"de\""), "{german}");
+        assert!(german.contains(">Beiträge</a>"), "{german}");
+        // What German lacks is in English, and scripts get their messages.
+        assert!(german.contains(">Tags</a>"));
+        assert!(german.contains("Schließen"));
+        let missing = app
+            .get_with_headers("/nope", &[("accept-language", "de")])
+            .await
+            .body;
+        assert!(missing.contains("Nicht gefunden"), "{missing}");
+        let english = app.get("/", None).await.body;
+        assert!(english.contains("<html lang=\"en-US\"") && english.contains(">Posts</a>"));
+
+        // Users choose, whatever their browser says.
+        let alice = crate::test_support::session_for(
+            &pool,
+            "alice",
+            moekura_core::permissions::SystemRole::Member,
+        )
+        .await;
+        let settings = app.get("/settings", Some(&alice)).await.body;
+        assert!(
+            settings.contains("<option value=\"de\">Deutsch</option>"),
+            "{settings}"
+        );
+        let saved = app
+            .post_form("/settings", Some(&alice), &[], "mode=system&language=de")
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER);
+        assert!(
+            app.get("/", Some(&alice))
+                .await
+                .body
+                .contains(">Beiträge</a>")
+        );
+        assert_eq!(
+            app.post_form("/settings", Some(&alice), &[], "mode=system&language=xx")
+                .await
+                .status,
+            StatusCode::BAD_REQUEST
         );
     }
 

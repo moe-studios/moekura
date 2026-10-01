@@ -4,6 +4,8 @@
 // a click adds it to the tags box. An artist without an entry yet gets a
 // link to start one.
 
+import { t } from "./i18n.ts";
+
 import { withTag } from "./suggestions.ts";
 
 interface Found {
@@ -51,11 +53,11 @@ export function enableArtistFinder(root: Document = document): void {
     if (found.length === 0 && unknown) {
       const label = document.createElement("span");
       label.className = "hint";
-      label.textContent = `By ${unknown.name}, who has no artist entry yet: `;
+      label.textContent = t("artist-finder-unknown", "By {$name}, who has no artist entry yet: ", { name: unknown.name });
       const link = document.createElement("a");
       link.href = unknown.new_url;
       link.target = "_blank";
-      link.textContent = "start one";
+      link.textContent = t("artist-finder-start", "start one");
       box.replaceChildren(label, link);
       box.hidden = false;
       return;
@@ -67,14 +69,14 @@ export function enableArtistFinder(root: Document = document): void {
     }
     const label = document.createElement("span");
     label.className = "hint";
-    label.textContent = found.length === 1 ? "Artist: " : "Artists: ";
+    label.textContent = found.length === 1 ? t("artist-finder-one", "Artist: ") : t("artist-finder-many", "Artists: ");
     const buttons = found.map((artist) => {
       const button = document.createElement("button");
       button.type = "button";
       button.className = "tag tag-artist link";
       button.dataset["tag"] = artist.name;
       button.textContent = artist.name;
-      button.title = "Add to the tags";
+      button.title = t("artist-finder-add", "Add to the tags");
       return button;
     });
     box.replaceChildren(label, ...buttons);

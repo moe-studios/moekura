@@ -1,63 +1,62 @@
 {% extends "base.html" %}
-{% block title %}Upload · {{ site.name }}{% endblock %}
+{% block title %}{{ t("nav-upload") }} · {{ site.name }}{% endblock %}
 {% block content %}
 <section class="card medium">
-  <h1>Upload</h1>
-  {% if site.has_rules %}<p class="hint">Check the <a href="/rules">rules</a> for what may be uploaded.</p>{% endif %}
+  <h1>{{ t("nav-upload") }}</h1>
+  {% if site.has_rules %}<p class="hint">{{ t("upload-rules") }}</p>{% endif %}
   {% if allowance and allowance.refusal %}<p class="notice" role="status">{{ allowance.refusal }}</p>
-  {% elif allowance and (allowance.pending_left is not none or allowance.today_left is not none) %}<p class="hint">You can upload
-    {% if allowance.pending_left is not none %}{{ allowance.pending_left }} more before some are approved{% endif %}{% if allowance.pending_left is not none and allowance.today_left is not none %}, and {% endif %}{% if allowance.today_left is not none %}{{ allowance.today_left }} more today{% endif %}.</p>{% endif %}
+  {% elif allowance and (allowance.pending_left is not none or allowance.today_left is not none) %}<p class="hint">{% if allowance.pending_left is not none and allowance.today_left is not none %}{{ t("upload-left-both", pending=allowance.pending_left, today=allowance.today_left) }}{% elif allowance.pending_left is not none %}{{ t("upload-left-pending", pending=allowance.pending_left) }}{% else %}{{ t("upload-left-today", today=allowance.today_left) }}{% endif %}</p>{% endif %}
   {% if duplicate_of %}
-  <p class="form-error" role="alert">This file was already uploaded as <a href="/posts/{{ duplicate_of }}">post #{{ duplicate_of }}</a>.</p>
+  <p class="form-error" role="alert">{{ t("upload-duplicate", id=duplicate_of) }}</p>
   {% elif error %}
   <p class="form-error" role="alert">{{ error }}</p>
   {% endif %}
   <form method="post" action="/upload" enctype="multipart/form-data" data-upload>
     <div class="upload-drop-zone" data-upload-drop-zone>
-      <label for="file">File</label>
+      <label for="file">{{ t("upload-file") }}</label>
       <input id="file" name="file" type="file"
              accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/jxl,video/mp4,video/webm,application/zip,.zip">
-      <p class="hint" data-upload-hint hidden>Choose a file, drop it onto this form, or paste it from your clipboard. One file at a time.</p>
+      <p class="hint" data-upload-hint hidden>{{ t("upload-drop-hint") }}</p>
       <p class="hint" data-upload-status role="status" aria-live="polite"></p>
     </div>
-    <label for="url">…or a link to it</label>
+    <label for="url">{{ t("upload-url") }}</label>
     <input id="url" name="url" type="url" value="{{ form.url }}" placeholder="https://">
-    <p class="hint">Images or videos up to {{ max_mb }} MB. A work's page on Pixiv, X, Bluesky, DeviantArt, Fanbox or Skeb works too: its best file is downloaded, and the page becomes the source.</p>
+    <p class="hint">{{ t("upload-url-hint", mb=max_mb) }}</p>
 
     <fieldset class="ratings">
-      <legend>Rating</legend>
+      <legend>{{ t("rating") }}</legend>
       {% for rating in ratings %}
       <label class="choice">
         <input type="radio" name="rating" value="{{ rating.code }}" required{% if form.rating == rating.code %} checked{% endif %}>
-        {{ rating.label }}
+        {{ t("rating-" ~ rating.code) }}
       </label>
       {% endfor %}
     </fieldset>
 
-    <label for="tags">Tags</label>
+    <label for="tags">{{ t("nav-tags") }}</label>
     <textarea id="tags" name="tags" rows="3" autocapitalize="none" spellcheck="false" data-autocomplete="edit">{{ form.tags }}</textarea>
-    <p class="hint">Separate tags with spaces. Give a new tag a category with a prefix, like <code>artist:name</code>. <code>-tag</code> and metatags like <code>rating:s</code> or <code>pool:name</code> work too.</p>
+    <p class="hint">{{ t("upload-tags-hint") }}</p>
     <p class="artist-finder" data-artist-finder="url source" aria-live="polite" hidden></p>
-    <div class="related-tags" data-related-tags="tags"><a class="hint" href="/tags/related">Related tags</a></div>
+    <div class="related-tags" data-related-tags="tags"><a class="hint" href="/tags/related">{{ t("related-title") }}</a></div>
 
-    <label for="source">Source <span class="optional">(optional)</span></label>
+    <label for="source">{{ t("source") }} <span class="optional">{{ t("optional") }}</span></label>
     <input id="source" name="source" type="url" value="{{ form.source }}" placeholder="https://" maxlength="2048">
 
-    <label for="description">Description <span class="optional">(optional)</span></label>
+    <label for="description">{{ t("description") }} <span class="optional">{{ t("optional") }}</span></label>
     <textarea id="description" name="description" rows="4" maxlength="20000">{{ form.description }}</textarea>
 
     <details class="edit"{% if form.commentary_title or form.commentary_description %} open{% endif %}>
-      <summary>Artist's commentary <span class="optional">(optional)</span></summary>
+      <summary>{{ t("commentary") }} <span class="optional">{{ t("optional") }}</span></summary>
       <div class="edit-fields">
-        <label for="commentary_title">Title</label>
+        <label for="commentary_title">{{ t("field-title") }}</label>
         <input id="commentary_title" name="commentary_title" value="{{ form.commentary_title }}" maxlength="1000">
-        <label for="commentary_description">Description</label>
+        <label for="commentary_description">{{ t("description") }}</label>
         <textarea id="commentary_description" name="commentary_description" rows="3">{{ form.commentary_description }}</textarea>
-        <p class="hint">What the artist wrote with the work, as they wrote it. Left empty, it's taken from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt, Fanbox, Skeb, or a page with its image in its preview tags).</p>
+        <p class="hint">{{ t("upload-commentary-hint") }}</p>
       </div>
     </details>
 
-    <button type="submit">Upload</button>
+    <button type="submit">{{ t("nav-upload") }}</button>
   </form>
 </section>
 {% endblock %}

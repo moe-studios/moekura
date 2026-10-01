@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Edit {{ tag.name }} · {{ site.name }}{% endblock %}
+{% block title %}{{ t("edit-thing", name=tag.name) }} · {{ site.name }}{% endblock %}
 {% block content %}
 <section class="card narrow">
-  <h1>Edit <a href="{{ tag.url }}">{{ tag.name }}</a></h1>
-  <p class="hint">Used on {{ tag.count }} post{% if tag.count != 1 %}s{% endif %}. <a href="/tag_versions?tag={{ tag.name | urlencode }}">History</a></p>
+  <h1>{{ t("edit-link", url=tag.url, name=tag.name) }}</h1>
+  <p class="hint">{{ t("tag-used-on", count=tag.count) }} <a href="/tag_versions?tag={{ tag.name | urlencode }}">{{ t("tag-nav-history") }}</a></p>
   <form method="post" action="/tags/{{ tag.id }}/edit">
-    <label for="category">Category</label>
+    <label for="category">{{ t("tag-category") }}</label>
     <select id="category" name="category">
       {% for category in categories %}
       <option value="{{ category.id }}"{% if category.id == category_id %} selected{% endif %}>{{ category.label }}</option>
@@ -13,9 +13,9 @@
     </select>
     <label class="choice">
       <input type="checkbox" name="deprecated"{% if tag.deprecated %} checked{% endif %}>
-      Deprecated (can no longer be added to posts)
+      {{ t("tag-deprecated") }}
     </label>
-    <button type="submit">Save</button>
+    <button type="submit">{{ t("common-save") }}</button>
   </form>
 </section>
 {% endblock %}

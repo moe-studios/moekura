@@ -1,9 +1,9 @@
-<nav class="subnav" aria-label="Tags">
-  <a href="/tags"{% if path == "/tags" %} aria-current="page"{% endif %}>All tags</a>
-  <a href="/tags/aliases"{% if path == "/tags/aliases" or path is startingwith("/tags/aliases/") %} aria-current="page"{% endif %}>Aliases</a>
-  <a href="/tags/implications"{% if path == "/tags/implications" or path is startingwith("/tags/implications/") %} aria-current="page"{% endif %}>Implications</a>
-  <a href="/tags/requests"{% if path == "/tags/requests" or path is startingwith("/tags/requests/") %} aria-current="page"{% endif %}>Requests</a>
-  <a href="/tag_versions"{% if path == "/tag_versions" %} aria-current="page"{% endif %}>History</a>
-  <a href="/artists"{% if path == "/artists" or path is startingwith("/artists/") or path == "/artist_versions" %} aria-current="page"{% endif %}>Artists</a>
-  <a href="/wiki"{% if path == "/wiki" or path is startingwith("/wiki/") %} aria-current="page"{% endif %}>Wiki</a>
+<nav class="subnav" aria-label="{{ t('nav-tags') }}">
+  <a href="/tags"{% if path == "/tags" %} aria-current="page"{% endif %}>{{ t("tag-nav-all") }}</a>
+  <a href="/tags/aliases"{% if path == "/tags/aliases" or path is startingwith("/tags/aliases/") %} aria-current="page"{% endif %}>{{ t("tag-nav-aliases") }}</a>
+  <a href="/tags/implications"{% if path == "/tags/implications" or path is startingwith("/tags/implications/") %} aria-current="page"{% endif %}>{{ t("tag-nav-implications") }}</a>
+  <a href="/tags/requests"{% if path == "/tags/requests" or path is startingwith("/tags/requests/") %} aria-current="page"{% endif %}>{{ t("tag-nav-requests") }}</a>
+  <a href="/tag_versions"{% if path == "/tag_versions" %} aria-current="page"{% endif %}>{{ t("tag-nav-history") }}</a>
+  <a href="/artists"{% if path == "/artists" or path is startingwith("/artists/") or path == "/artist_versions" %} aria-current="page"{% endif %}>{{ t("tag-nav-artists") }}</a>
+  <a href="/wiki"{% if path == "/wiki" or path is startingwith("/wiki/") %} aria-current="page"{% endif %}>{{ t("tag-nav-wiki") }}</a>
 </nav>

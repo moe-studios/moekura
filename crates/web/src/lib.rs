@@ -34,6 +34,7 @@ mod forum;
 mod health;
 mod held;
 mod history;
+mod i18n;
 mod image_search;
 pub mod import;
 mod invites;
@@ -158,6 +159,8 @@ pub struct AppState {
     pub(crate) captcha: Option<Arc<captcha::Captcha>>,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
+    /// Translations.
+    pub(crate) locales: Arc<i18n::Locales>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -166,6 +169,8 @@ pub enum StartupError {
     Assets(#[from] io::Error),
     #[error("could not load templates: {0:#}")]
     Templates(#[from] minijinja::Error),
+    #[error("could not load translations: {0}")]
+    Locales(#[from] i18n::LocaleError),
     #[error("could not create the media work directory: {0}")]
     WorkDir(io::Error),
     #[error("could not open file storage: {0}")]
@@ -189,9 +194,13 @@ impl AppState {
         let work_dir = config.media.work_dir_or_default();
         std::fs::create_dir_all(&work_dir).map_err(StartupError::WorkDir)?;
         let assets = Arc::new(Assets::load(config.paths.static_override.as_deref())?);
+        let locales = Arc::new(i18n::Locales::load(
+            config.paths.locales_override.as_deref(),
+        )?);
         let templates = Arc::new(Templates::load(
             config.paths.templates_override.clone(),
             assets.clone(),
+            locales.clone(),
         )?);
         let media = Media::new(config.media.clone());
         let valkey = match (&config.cache.backend, &config.cache.url) {
@@ -235,6 +244,7 @@ impl AppState {
             captcha,
             templates,
             assets,
+            locales,
         })
     }
 }

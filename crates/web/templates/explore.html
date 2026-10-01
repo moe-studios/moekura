@@ -1,42 +1,42 @@
 {% extends "base.html" %}
-{% set headings = {"popular": "Popular posts", "viewed": "Most viewed posts", "searches": "Popular searches", "missed_searches": "Searches that found nothing"} %}
-{% block title %}{{ headings[kind] }} · {{ site.name }}{% endblock %}
+{% macro long_date(d) %}{{ t("date-long", day=d.day, month=t("month-" ~ d.month), year=d.year) }}{% endmacro %}
+{% block title %}{{ t("explore-heading-" ~ kind) }} · {{ site.name }}{% endblock %}
 {% block content %}
-<nav class="subnav" aria-label="Explore">
-  <a href="/explore/posts/popular"{% if kind == "popular" %} aria-current="page"{% endif %}>Popular</a>
-  <a href="/explore/posts/viewed"{% if kind == "viewed" %} aria-current="page"{% endif %}>Most viewed</a>
-  <a href="/explore/posts/searches"{% if kind == "searches" %} aria-current="page"{% endif %}>Searches</a>
-  <a href="/explore/posts/missed_searches"{% if kind == "missed_searches" %} aria-current="page"{% endif %}>Missed searches</a>
-  <a href="/iqdb_queries">Search by image</a>
+<nav class="subnav" aria-label="{{ t('explore') }}">
+  <a href="/explore/posts/popular"{% if kind == "popular" %} aria-current="page"{% endif %}>{{ t("nav-popular") }}</a>
+  <a href="/explore/posts/viewed"{% if kind == "viewed" %} aria-current="page"{% endif %}>{{ t("explore-viewed") }}</a>
+  <a href="/explore/posts/searches"{% if kind == "searches" %} aria-current="page"{% endif %}>{{ t("explore-searches") }}</a>
+  <a href="/explore/posts/missed_searches"{% if kind == "missed_searches" %} aria-current="page"{% endif %}>{{ t("explore-missed") }}</a>
+  <a href="/iqdb_queries">{{ t("image-search-title") }}</a>
 </nav>
 <header class="explore-head">
-  <h1>{{ headings[kind] }}</h1>
-  <p class="hint">{{ range.label }}</p>
-  <nav class="explore-range" aria-label="Dates">
-    <a href="{{ range.previous_url }}" rel="prev">« Earlier</a>
-    {% for s in range.scales %}<a href="{{ s.url }}"{% if s.name == range.scale %} aria-current="page"{% endif %}>{{ s.name|capitalize }}</a>{% endfor %}
-    {% if range.next_url %}<a href="{{ range.next_url }}" rel="next">Later »</a>{% endif %}
+  <h1>{{ t("explore-heading-" ~ kind) }}</h1>
+  <p class="hint">{% set l = range.label %}{% if l.scale == "week" %}{{ t("explore-week", from=long_date(l.from), to=long_date(l.to)) }}{% elif l.scale == "month" %}{{ t("date-month", month=t("month-" ~ l.day.month), year=l.day.year) }}{% else %}{{ long_date(l.day) }}{% endif %}</p>
+  <nav class="explore-range" aria-label="{{ t('explore-dates') }}">
+    <a href="{{ range.previous_url }}" rel="prev">{{ t("explore-earlier") }}</a>
+    {% for s in range.scales %}<a href="{{ s.url }}"{% if s.name == range.scale %} aria-current="page"{% endif %}>{{ t("scale-" ~ s.name) }}</a>{% endfor %}
+    {% if range.next_url %}<a href="{{ range.next_url }}" rel="next">{{ t("explore-later") }}</a>{% endif %}
   </nav>
 </header>
 {% if kind == "searches" or kind == "missed_searches" %}
-{% if kind == "missed_searches" %}<p class="hint">Tag searches that found no posts: often a misspelling or another name for a tag, which an alias could fix.</p>{% endif %}
+{% if kind == "missed_searches" %}<p class="hint">{{ t("explore-missed-hint") }}</p>{% endif %}
 {% if searches %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Explore table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('explore-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">Search</th><th scope="col" class="num">{% if kind == "missed_searches" %}Times missed{% else %}Searches{% endif %}</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("search") }}</th><th scope="col" class="num">{% if kind == "missed_searches" %}{{ t("explore-times-missed") }}{% else %}{{ t("explore-searches") }}{% endif %}</th></tr></thead>
   <tbody>
     {% for s in searches %}<tr><td><a href="{{ s.url }}">{{ s.query }}</a></td><td class="num">{{ s.count }}</td></tr>{% endfor %}
   </tbody>
 </table>
 </div>
 {% else %}
-<p class="empty">No searches counted then.</p>
+<p class="empty">{{ t("explore-no-searches") }}</p>
 {% endif %}
 {% elif cards %}
 <ul class="post-grid">
   {% for card in cards %}<li>{% include "card.html" %}</li>{% endfor %}
 </ul>
 {% else %}
-<p class="empty">No posts {% if kind == "viewed" %}viewed{% else %}posted{% endif %} then.</p>
+<p class="empty">{% if kind == "viewed" %}{{ t("explore-none-viewed") }}{% else %}{{ t("explore-none-posted") }}{% endif %}</p>
 {% endif %}
 {% endblock %}

@@ -1,69 +1,69 @@
 {% extends "base.html" %}
-{% block title %}Users · {{ site.name }}{% endblock %}
+{% block title %}{{ t("admin-nav-users") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "admin_nav.html" %}
-<h1>Users</h1>
+<h1>{{ t("admin-nav-users") }}</h1>
 <form class="filters" method="get" action="/admin/users">
   <div class="filter-field">
-    <label for="user-name">Name</label>
+    <label for="user-name">{{ t("account-name") }}</label>
     <input id="user-name" name="name" value="{{ query.name }}">
   </div>
   <div class="filter-field">
-    <label for="user-status">Status</label>
+    <label for="user-status">{{ t("status") }}</label>
     <select id="user-status" name="status">
-      <option value="">Any</option>
-      {% for s in ["active", "pending", "unverified", "deactivated"] %}<option value="{{ s }}"{% if query.status == s %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
+      <option value="">{{ t("any") }}</option>
+      {% for s in ["active", "pending", "unverified", "deactivated"] %}<option value="{{ s }}"{% if query.status == s %} selected{% endif %}>{{ t("status-" ~ s)|capitalize }}</option>{% endfor %}
     </select>
   </div>
   <div class="filter-field">
-    <label for="user-role">Role</label>
+    <label for="user-role">{{ t("role") }}</label>
     <select id="user-role" name="role">
-      <option value="">Any</option>
+      <option value="">{{ t("any") }}</option>
       {% for r in all_roles %}<option value="{{ r.id }}"{% if query.role == r.id %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
     </select>
   </div>
   <div class="filter-field">
-    <label for="user-email">Email</label>
+    <label for="user-email">{{ t("account-email") }}</label>
     <input id="user-email" name="email" value="{{ query.email }}" size="16">
   </div>
   <div class="filter-field">
-    <label for="user-banned">Banned</label>
+    <label for="user-banned">{{ t("artists-banned") }}</label>
     <select id="user-banned" name="banned">
-      <option value="">Either</option>
-      <option value="yes"{% if query.banned == "yes" %} selected{% endif %}>Banned</option>
-      <option value="no"{% if query.banned == "no" %} selected{% endif %}>Not banned</option>
+      <option value="">{{ t("either") }}</option>
+      <option value="yes"{% if query.banned == "yes" %} selected{% endif %}>{{ t("artists-banned") }}</option>
+      <option value="no"{% if query.banned == "no" %} selected{% endif %}>{{ t("not-banned") }}</option>
     </select>
   </div>
-  <button type="submit">Find</button>
+  <button type="submit">{{ t("finder-find") }}</button>
 </form>
 {% if users %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Admin users table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('users-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">Name</th><th scope="col">Joined</th><th scope="col">Role and status</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("account-name") }}</th><th scope="col">{{ t("joined") }}</th><th scope="col">{{ t("role-and-status") }}</th></tr></thead>
   <tbody>
     {% for u in users %}
     <tr>
-      <td><a href="/users/{{ u.name }}">{{ u.name }}</a>{% if u.banned %} <span class="status status-open">banned</span>{% endif %}{% if u.email %}<br><span class="hint">{{ u.email }}</span>{% endif %}</td>
+      <td><a href="/users/{{ u.name }}">{{ u.name }}</a>{% if u.banned %} <span class="status status-open">{{ t("banned-word") }}</span>{% endif %}{% if u.email %}<br><span class="hint">{{ u.email }}</span>{% endif %}</td>
       <td>{{ u.joined }}</td>
       <td>
         {% if u.editable %}
         <form class="inline" method="post" action="/admin/users/{{ u.name }}">
-          <select name="role" aria-label="Role of {{ u.name }}">
+          <select name="role" aria-label="{{ t('role-of', user=u.name) }}">
             {% if not u.role_assignable %}<option value="{{ u.role_id }}" selected>{{ u.role or "—" }}</option>{% endif %}
             {% for r in roles %}<option value="{{ r.id }}"{% if r.id == u.role_id %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
           </select>
-          <select name="status" aria-label="Status of {{ u.name }}">
-            {% for s in ["active", "pending", "unverified", "deactivated"] %}<option value="{{ s }}"{% if u.status == s %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
+          <select name="status" aria-label="{{ t('status-of', user=u.name) }}">
+            {% for s in ["active", "pending", "unverified", "deactivated"] %}<option value="{{ s }}"{% if u.status == s %} selected{% endif %}>{{ t("status-" ~ s)|capitalize }}</option>{% endfor %}
           </select>
-          <input name="reason" placeholder="Reason (optional)" maxlength="2000" size="16" aria-label="Reason for changing {{ u.name }}">
-          <button type="submit" class="secondary">Save</button>
+          <input name="reason" placeholder="{{ t('reason-optional') }}" maxlength="2000" size="16" aria-label="{{ t('reason-for-changing', user=u.name) }}">
+          <button type="submit" class="secondary">{{ t("common-save") }}</button>
         </form>
         {% if u.two_factor %}
         <form class="inline" method="post" action="/admin/users/{{ u.name }}/reset-two-factor">
-          <button type="submit" class="secondary" title="For someone who lost their authenticator app and recovery codes">Turn off 2FA</button>
+          <button type="submit" class="secondary" title="{{ t('tfa-reset-hint') }}">{{ t("tfa-reset") }}</button>
         </form>
         {% endif %}
-        {% else %}{{ u.role or "—" }} · {{ u.status }}{% endif %}
+        {% else %}{{ u.role or "—" }} · {{ t("status-" ~ u.status) }}{% endif %}
       </td>
     </tr>
     {% endfor %}
@@ -71,12 +71,12 @@
 </table>
 </div>
 {% else %}
-<p class="empty">No users found.</p>
+<p class="empty">{{ t("users-none") }}</p>
 {% endif %}
 {% if previous_url or next_url %}
-<nav class="pager">
-  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

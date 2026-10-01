@@ -7,11 +7,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use minijinja::{Environment, Error, ErrorKind, Value};
+use minijinja::value::Kwargs;
+use minijinja::{Environment, Error, ErrorKind, State, Value};
 use rust_embed::RustEmbed;
 use serde::Serialize;
 
 use crate::assets::Assets;
+use crate::i18n::{self, Locales};
 
 #[derive(RustEmbed)]
 #[folder = "templates/"]
@@ -24,8 +26,33 @@ pub struct Templates {
 impl Templates {
     /// Builds the environment and compiles every template, so a syntax error
     /// (including in an override) fails startup rather than a page view.
-    pub fn load(override_dir: Option<PathBuf>, assets: Arc<Assets>) -> Result<Self, Error> {
+    pub fn load(
+        override_dir: Option<PathBuf>,
+        assets: Arc<Assets>,
+        locales: Arc<Locales>,
+    ) -> Result<Self, Error> {
         let mut env = Environment::new();
+        // `t("key", name=value, …)`: message `key` in the page's language
+        // (`lang`), its values escaped unless safe.
+        env.add_function(
+            "t",
+            move |state: &State, key: &str, kwargs: Kwargs| -> Result<Value, Error> {
+                let lang = i18n::rendering()
+                    .or_else(|| state.lookup("lang")?.as_str().map(str::to_owned))
+                    .unwrap_or_else(|| i18n::DEFAULT.to_owned());
+                let lang = lang.as_str();
+                let mut args = fluent_bundle::FluentArgs::new();
+                for name in kwargs.args() {
+                    let value: Value = kwargs.get(name)?;
+                    args.set(name.to_owned(), i18n::argument(&value));
+                }
+                Ok(Value::from_safe_string(locales.format(
+                    lang,
+                    key,
+                    Some(&args),
+                )))
+            },
+        );
         env.add_global("build_version", env!("MOEKURA_BUILD_VERSION"));
         env.set_loader(move |name| load_source(override_dir.as_ref(), name));
         // Asset URLs are built by us from hex hashes and embedded paths, so
@@ -102,14 +129,51 @@ mod tests {
         Arc::new(Assets::load(None).unwrap())
     }
 
+    fn locales() -> Arc<Locales> {
+        Arc::new(Locales::load(None).unwrap())
+    }
+
+    /// Every `t("key")` with a literal key names a message.
+    #[test]
+    fn templates_use_existing_messages() {
+        let locales = locales();
+        let mut missing = Vec::new();
+        for name in Embedded::iter() {
+            let file = Embedded::get(&name).unwrap();
+            let text = String::from_utf8_lossy(&file.data);
+            for (i, _) in text.match_indices("t(") {
+                // Only calls: `t(` not ending another name.
+                if text[..i].ends_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+                    continue;
+                }
+                let rest = &text[i + 2..];
+                let Some(quote) = rest.chars().next().filter(|c| *c == '"' || *c == '\'') else {
+                    continue;
+                };
+                let Some(end) = rest[1..].find(quote) else {
+                    continue;
+                };
+                let key = &rest[1..=end];
+                // Keys built at render time (`"status-" ~ …`) can't be checked.
+                if rest[end + 2..].trim_start().starts_with('~') {
+                    continue;
+                }
+                if !locales.has_message(key) {
+                    missing.push(format!("{name}: {key}"));
+                }
+            }
+        }
+        assert!(missing.is_empty(), "missing messages: {missing:#?}");
+    }
+
     #[test]
     fn built_in_templates_compile() {
-        Templates::load(None, assets()).unwrap();
+        Templates::load(None, assets(), locales()).unwrap();
     }
 
     #[test]
     fn escapes_html_by_default() {
-        let templates = Templates::load(None, assets()).unwrap();
+        let templates = Templates::load(None, assets(), locales()).unwrap();
         let html = templates
             .render(
                 "error.html",
@@ -130,7 +194,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
 
         std::fs::write(dir.join("error.html"), "custom {{ status }}").unwrap();
-        let templates = Templates::load(Some(dir.clone()), assets()).unwrap();
+        let templates = Templates::load(Some(dir.clone()), assets(), locales()).unwrap();
         assert_eq!(
             templates
                 .render("error.html", context! { status => 404 })
@@ -139,7 +203,7 @@ mod tests {
         );
 
         std::fs::write(dir.join("error.html"), "{% if %}").unwrap();
-        assert!(Templates::load(Some(dir.clone()), assets()).is_err());
+        assert!(Templates::load(Some(dir.clone()), assets(), locales()).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

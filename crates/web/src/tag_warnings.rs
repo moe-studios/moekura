@@ -77,13 +77,10 @@ pub(crate) fn warnings(
     let has = |name: &str| {
         category_id(categories, name).is_none_or(|id| post_tags.iter().any(|t| t.category_id == id))
     };
-    for (name, what) in [
-        ("artist", "an artist tag, or artist_unknown"),
-        ("copyright", "a copyright tag, or original"),
-        ("character", "a character tag, if anyone appears in it"),
-    ] {
+    // Each warning is a message key (`tag-warning-…`) and its arguments.
+    for name in ["artist", "copyright", "character"] {
         if !has(name) {
-            out.push(context! { text => format!("It has no {name} tag: add {what}.") });
+            out.push(context! { key => format!("no-{name}") });
         }
     }
     let general = category_id(categories, "general").map_or(0, |id| {
@@ -93,12 +90,7 @@ pub(crate) fn warnings(
             .count()
     });
     if general < MIN_GENERAL_TAGS {
-        out.push(context! {
-            text => format!(
-                "It has {general} general tag{}; well-tagged posts have at least {MIN_GENERAL_TAGS}.",
-                if general == 1 { "" } else { "s" }
-            ),
-        });
+        out.push(context! { key => "few-general", count => general, min => MIN_GENERAL_TAGS });
     }
     // Only this post has them (or none yet, when it isn't counted).
     let counted = matches!(post.status, PostStatus::Active | PostStatus::Flagged);
@@ -109,7 +101,7 @@ pub(crate) fn warnings(
     new.sort_by(|a, b| a.name.cmp(&b.name));
     if !new.is_empty() {
         out.push(context! {
-            text => "No other post has these tags yet; check their spelling:",
+            key => "new-tags",
             tags => new.iter().map(|t| context! {
                 name => t.name,
                 url => Value::from_safe_string(search_url(&t.name)),
@@ -134,10 +126,12 @@ pub(crate) fn warnings(
             .find(|c| c.id == tag.category_id)
             .map_or("general", |c| c.name.as_str());
         out.push(context! {
-            text => format!(
-                "{name} is already a{} {actual} tag, so {wanted}: didn't change it; ask someone who manages tags if it's wrong.",
-                if actual.starts_with(['a', 'e', 'i', 'o', 'u']) { "n" } else { "" }
-            ),
+            key => "kept",
+            name => name,
+            actual => actual,
+            wanted => wanted,
+            // For English's "a" or "an".
+            vowel => if actual.starts_with(['a', 'e', 'i', 'o', 'u']) { "yes" } else { "no" },
         });
     }
     out
@@ -238,7 +232,7 @@ mod tests {
             "It has 2 general tags",
             "check their spelling",
             ">catt</a>",
-            "cat is already a general tag, so artist: didn&#x27;t change it",
+            "cat is already a general tag, so artist: didn't change it",
         ] {
             assert!(page.contains(warning), "{warning}: {page}");
         }

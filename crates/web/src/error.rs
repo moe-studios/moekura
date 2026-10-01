@@ -65,6 +65,20 @@ impl AppError {
             AppError::Internal(_) => "Something went wrong on our side",
         }
     }
+
+    /// The message key for [`AppError::public_message`], when the text is
+    /// fixed (handlers' own messages aren't translated).
+    fn message_key(&self) -> Option<&'static str> {
+        Some(match self {
+            AppError::NotFound => "error-not-found",
+            AppError::Unauthorized => "error-unauthorized",
+            AppError::Forbidden => "error-forbidden",
+            AppError::Duplicate(_) => "error-duplicate",
+            AppError::TooManyRequests { .. } => "error-too-many",
+            AppError::Internal(_) => "error-internal",
+            _ => return None,
+        })
+    }
 }
 
 impl IntoResponse for AppError {
@@ -75,6 +89,7 @@ impl IntoResponse for AppError {
         let page = ErrorPage {
             status: self.status(),
             message: self.public_message().to_owned(),
+            key: self.message_key(),
             post_id: match self {
                 AppError::Duplicate(id) => Some(id),
                 _ => None,
@@ -97,6 +112,8 @@ impl IntoResponse for AppError {
 struct ErrorPage {
     status: StatusCode,
     message: String,
+    /// The message's translation key, if it has one.
+    key: Option<&'static str>,
     /// The post the error is about, for API clients.
     post_id: Option<i64>,
 }
@@ -116,6 +133,7 @@ pub async fn render_errors(
         return crate::danbooru::error_response(next.run(request).await).await;
     }
     let current = request.extensions().get::<CurrentUser>().cloned();
+    let lang = crate::pages::language(&state, current.as_ref(), request.headers());
     let is_get = request.method() == Method::GET;
     let target = request
         .uri()
@@ -131,11 +149,18 @@ pub async fn render_errors(
         let next: String = url::form_urlencoded::byte_serialize(target.as_bytes()).collect();
         Redirect::to(&format!("/login?next={next}")).into_response()
     } else {
-        let context = context! { status => page.status.as_u16(), message => page.message };
+        let message = match page.key {
+            Some(key) => state.locales.format(&lang, key, None),
+            None => page.message.clone(),
+        };
+        let context = context! { status => page.status.as_u16(), message => message };
         crate::pages::render(
             &state,
             current.as_ref(),
-            crate::pages::Notices::default(),
+            crate::pages::Notices {
+                lang: lang.clone(),
+                ..Default::default()
+            },
             &target,
             page.status,
             "error.html",

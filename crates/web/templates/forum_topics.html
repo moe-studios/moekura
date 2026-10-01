@@ -1,45 +1,45 @@
 {% extends "base.html" %}
-{% block title %}Forum · {{ site.name }}{% endblock %}
+{% block title %}{{ t("nav-forum") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "forum_nav.html" %}
-<h1>Forum</h1>
+<h1>{{ t("nav-forum") }}</h1>
 <form class="filters" method="get" action="/forum_topics">
-  <label for="forum-category">Category</label>
+  <label for="forum-category">{{ t("forum-category") }}</label>
   <select id="forum-category" name="category">
-    <option value="">All</option>
+    <option value="">{{ t("all") }}</option>
     {% for c in categories %}<option value="{{ c.id }}"{% if query.category == c.id %} selected{% endif %}>{{ c.name }}</option>{% endfor %}
   </select>
-  <label for="forum-title">Title</label>
+  <label for="forum-title">{{ t("field-title") }}</label>
   <input id="forum-title" name="title" value="{{ query.title }}" size="20">
-  <button type="submit">Search</button>
+  <button type="submit">{{ t("search") }}</button>
 </form>
 <div class="actions">
-  {% if can_post %}<a class="button" href="/forum_topics/new{% if query.category %}?category={{ query.category }}{% endif %}">New topic</a>{% endif %}
-  {% if logged_in %}<form method="post" action="/forum_topics/mark_all_read"><button type="submit" class="secondary">Mark all read</button></form>{% endif %}
+  {% if can_post %}<a class="button" href="/forum_topics/new{% if query.category %}?category={{ query.category }}{% endif %}">{{ t("forum-topic-new-title") }}</a>{% endif %}
+  {% if logged_in %}<form method="post" action="/forum_topics/mark_all_read"><button type="submit" class="secondary">{{ t("mark-all-read") }}</button></form>{% endif %}
 </div>
 {% if topics %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Forum topics table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('forum-topics-table') }}">
 <table class="tag-table forum-topics">
-  <thead><tr><th scope="col">Topic</th><th scope="col">Category</th><th scope="col" class="num">Posts</th><th scope="col">Last post</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("forum-topic") }}</th><th scope="col">{{ t("forum-category") }}</th><th scope="col" class="num">{{ t("nav-posts") }}</th><th scope="col">{{ t("forum-last-post") }}</th></tr></thead>
   <tbody>
-    {% for t in topics %}
-    <tr{% if t.unread %} class="unread"{% endif %}>
-      <td>{% if t.sticky %}<span class="badge">sticky</span> {% endif %}{% if t.locked %}<span class="badge">locked</span> {% endif %}<a href="{{ t.url }}">{{ t.title }}</a>{% if t.unread %} <span class="badge">unread</span>{% endif %}<br><span class="hint">by {{ t.creator or "(gone)" }}</span></td>
-      <td><a href="/forum_topics?category={{ t.category_id }}">{{ t.category }}</a></td>
-      <td class="num">{{ t.posts }}</td>
-      <td>{{ t.last_posted }}{% if t.last_poster %}<br><span class="hint">by {{ t.last_poster }}</span>{% endif %}</td>
+    {% for topic in topics %}
+    <tr{% if topic.unread %} class="unread"{% endif %}>
+      <td>{% if topic.sticky %}<span class="badge">{{ t("forum-sticky") }}</span> {% endif %}{% if topic.locked %}<span class="badge">{{ t("forum-locked") }}</span> {% endif %}<a href="{{ topic.url }}">{{ topic.title }}</a>{% if topic.unread %} <span class="badge">{{ t("forum-unread") }}</span>{% endif %}<br><span class="hint">{{ t("by-user", user=topic.creator or t("gone")) }}</span></td>
+      <td><a href="/forum_topics?category={{ topic.category_id }}">{{ topic.category }}</a></td>
+      <td class="num">{{ topic.posts }}</td>
+      <td>{{ topic.last_posted }}{% if topic.last_poster %}<br><span class="hint">{{ t("by-user", user=topic.last_poster) }}</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% else %}
-<p class="empty">No topics yet.</p>
+<p class="empty">{{ t("forum-no-topics") }}</p>
 {% endif %}
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

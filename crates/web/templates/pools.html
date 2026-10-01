@@ -1,47 +1,47 @@
 {% extends "base.html" %}
-{% block title %}Pools · {{ site.name }}{% endblock %}
+{% block title %}{{ t("nav-pools") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<h1>Pools</h1>
+<h1>{{ t("nav-pools") }}</h1>
 <form class="filters" method="get" action="/pools">
   <div class="filter-field">
-    <label for="pool-name">Name</label>
-    <input id="pool-name" name="name" value="{{ query.name }}" placeholder="my_comic or *comic" autocomplete="off" spellcheck="false">
+    <label for="pool-name">{{ t("account-name") }}</label>
+    <input id="pool-name" name="name" value="{{ query.name }}" placeholder="{{ t('pools-placeholder') }}" autocomplete="off" spellcheck="false">
   </div>
   <div class="filter-field">
-    <label for="pool-category">Kind</label>
+    <label for="pool-category">{{ t("pool-kind") }}</label>
     <select id="pool-category" name="category">
-      <option value="">Any</option>
-      <option value="series"{% if query.category == "series" %} selected{% endif %}>Series</option>
-      <option value="collection"{% if query.category == "collection" %} selected{% endif %}>Collection</option>
+      <option value="">{{ t("any") }}</option>
+      <option value="series"{% if query.category == "series" %} selected{% endif %}>{{ t("pool-series") }}</option>
+      <option value="collection"{% if query.category == "collection" %} selected{% endif %}>{{ t("pool-collection") }}</option>
     </select>
   </div>
-  <button type="submit">Search</button>
+  <button type="submit">{{ t("search") }}</button>
 </form>
-<p class="hint"><a href="/pool_versions">Recent changes</a> to every pool.</p>
-{% if can_create %}<p><a class="button" href="/pools/new">New pool</a></p>{% endif %}
+<p class="hint">{{ t("pools-recent") }}</p>
+{% if can_create %}<p><a class="button" href="/pools/new">{{ t("pool-new") }}</a></p>{% endif %}
 {% if pools %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Pools table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('pools-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">Name</th><th scope="col">Kind</th><th scope="col" class="num">Posts</th><th scope="col">Last changed</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("account-name") }}</th><th scope="col">{{ t("pool-kind") }}</th><th scope="col" class="num">{{ t("nav-posts") }}</th><th scope="col">{{ t("last-changed") }}</th></tr></thead>
   <tbody>
     {% for p in pools %}
     <tr{% if p.deleted %} class="is-deleted"{% endif %}>
-      <td><a href="{{ p.url }}">{{ p.name }}</a>{% if p.deleted %} <span class="status status-deleted">deleted</span>{% endif %}</td>
-      <td>{{ p.category }}</td>
+      <td><a href="{{ p.url }}">{{ p.name }}</a>{% if p.deleted %} <span class="status status-deleted">{{ t("status-deleted") }}</span>{% endif %}</td>
+      <td>{{ t("pool-kind-" ~ p.category) }}</td>
       <td class="num">{{ p.post_count }}</td>
-      <td>{{ p.date }}{% if p.updater %} <span class="hint">by {{ p.updater }}</span>{% endif %}</td>
+      <td>{{ p.date }}{% if p.updater %} <span class="hint">{{ t("by-user", user=p.updater) }}</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% else %}
-<p class="empty">No pools found.</p>
+<p class="empty">{{ t("pools-none") }}</p>
 {% endif %}
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% endblock %}

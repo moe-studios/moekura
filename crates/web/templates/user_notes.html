@@ -1,23 +1,23 @@
 {# Staff notes about `user`; `notes` is none for everyone else. #}
 {% if notes is not none %}
 <section class="staff-notes" aria-labelledby="staff-notes-heading">
-  <h2 id="staff-notes-heading">Staff notes</h2>
-  <p class="hint">Only staff see these.</p>
+  <h2 id="staff-notes-heading">{{ t("staff-notes") }}</h2>
+  <p class="hint">{{ t("staff-notes-hint") }}</p>
   {% if notes %}
   <ol class="log">
     {% for n in notes %}
     <li>
       <span class="hint">{{ n.when }}{% if n.by %} · {{ n.by }}{% endif %}</span>
       <div class="markup">{{ n.html }}</div>
-      {% if n.can_delete %}<form class="inline" method="post" action="/moderation/user-notes/{{ n.id }}/delete?back={{ path | urlencode }}"><button type="submit" class="secondary">Delete</button></form>{% endif %}
+      {% if n.can_delete %}<form class="inline" method="post" action="/moderation/user-notes/{{ n.id }}/delete?back={{ path | urlencode }}"><button type="submit" class="secondary">{{ t("delete") }}</button></form>{% endif %}
     </li>
     {% endfor %}
   </ol>
   {% endif %}
   <form method="post" action="/users/{{ user.name }}/notes?back={{ path | urlencode }}">
-    <label for="staff-note">Add a note</label>
+    <label for="staff-note">{{ t("staff-notes-add") }}</label>
     <textarea id="staff-note" name="body" rows="3" maxlength="5000" required></textarea>
-    <button type="submit">Add note</button>
+    <button type="submit">{{ t("staff-notes-add-button") }}</button>
   </form>
 </section>
 {% endif %}

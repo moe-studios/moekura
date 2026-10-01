@@ -6,6 +6,8 @@
 // the box as it changes. Without scripts, the panel is a link to the
 // related tags page.
 
+import { t } from "./i18n.ts";
+
 import { withTag } from "./suggestions.ts";
 
 interface RelatedTag {
@@ -89,7 +91,9 @@ function attach(panel: HTMLElement, field: HTMLTextAreaElement): void {
           button.dataset["tag"] = tag.name;
           button.setAttribute("aria-pressed", String(hasTag(field.value, tag.name)));
           button.textContent = tag.name;
-          button.title = tag.from ? `${tag.from} → ${tag.name}` : `${tag.post_count} posts`;
+          button.title = tag.from
+            ? `${tag.from} → ${tag.name}`
+            : t("related-posts", "{$count} posts", { count: tag.post_count });
           item.append(button);
           items.append(item);
         }

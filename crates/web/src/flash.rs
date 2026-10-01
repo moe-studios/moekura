@@ -44,7 +44,8 @@ impl Flash {
         Flash::Held,
     ];
 
-    fn key(self) -> &'static str {
+    /// As in the cookie; the message is `flash-<key>`.
+    pub(crate) fn key(self) -> &'static str {
         match self {
             Flash::LoggedIn => "logged_in",
             Flash::LoggedOut => "logged_out",
@@ -58,29 +59,6 @@ impl Flash {
             Flash::SomeSkipped => "some_skipped",
             Flash::Queued => "queued",
             Flash::Held => "held",
-        }
-    }
-
-    pub fn text(self) -> &'static str {
-        match self {
-            Flash::LoggedIn => "Welcome back!",
-            Flash::LoggedOut => "You have been logged out.",
-            Flash::Registered => "Your account is ready. Welcome!",
-            Flash::AwaitingApproval => {
-                "Your account was created and is waiting for approval by the staff."
-            }
-            Flash::Saved => "Saved.",
-            Flash::ApiKeyRevoked => "The API key was revoked.",
-            Flash::CheckEmail => {
-                "We've sent you an email. Follow the link in it to confirm your address."
-            }
-            Flash::EmailConfirmed => "Your email address is confirmed.",
-            Flash::PasswordChanged => "Your password was changed.",
-            Flash::SomeSkipped => "Done. Some had been dealt with meanwhile, and were skipped.",
-            Flash::Queued => "Started; it runs in the background.",
-            Flash::Held => {
-                "Thanks! It looked like it might be spam, so the staff will check it before anyone sees it."
-            }
         }
     }
 

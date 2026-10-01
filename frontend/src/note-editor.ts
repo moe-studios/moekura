@@ -5,6 +5,8 @@
 // the page reloads to show it. Without scripts, notes can't be drawn, but
 // their history can still be reverted.
 
+import { t } from "./i18n.ts";
+
 import { toast } from "./toast.ts";
 
 export interface Box {
@@ -57,9 +59,9 @@ async function send(method: string, url: string, body?: unknown): Promise<string
   if (response.ok) return null;
   try {
     const error = (await response.json()) as { error?: { message?: string } };
-    return error.error?.message ?? `Error ${response.status}`;
+    return error.error?.message ?? t("error-status", "Error {$status}", { status: response.status });
   } catch {
-    return `Error ${response.status}`;
+    return t("error-status", "Error {$status}", { status: response.status });
   }
 }
 
@@ -88,7 +90,7 @@ export function enableNoteEditor(root: Document = document): void {
   const toggle = root.createElement("button");
   toggle.type = "button";
   toggle.className = "secondary note-toggle";
-  toggle.textContent = "Edit notes";
+  toggle.textContent = t("notes-edit", "Edit notes");
   toggle.setAttribute("aria-pressed", "false");
   (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
   toggle.addEventListener("click", () => {
@@ -96,7 +98,7 @@ export function enableNoteEditor(root: Document = document): void {
     layer.classList.toggle("editing-notes", on);
     layer.classList.remove("notes-hidden");
     toggle.setAttribute("aria-pressed", String(on));
-    toggle.textContent = on ? "Done editing notes" : "Edit notes";
+    toggle.textContent = on ? t("notes-done", "Done editing notes") : t("notes-edit", "Edit notes");
     if (!on) closeForm();
   });
 

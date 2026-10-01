@@ -1,24 +1,24 @@
 {% extends "base.html" %}
 {% from "reason_fields.html" import reason_fields %}
-{% block title %}Flags · {{ site.name }}{% endblock %}
+{% block title %}{{ t("mod-nav-flags") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "moderation_nav.html" %}
-<h1>Flagged posts</h1>
+<h1>{{ t("mod-flags-title") }}</h1>
 {% if posts %}
 <ul class="review">
   {% for p in posts %}
   <li>
-    <a class="review-thumb" href="/posts/{{ p.id }}">{% if p.thumb %}<img src="{{ p.thumb }}" alt="Post #{{ p.id }}" loading="lazy">{% else %}#{{ p.id }}{% endif %}</a>
+    <a class="review-thumb" href="/posts/{{ p.id }}">{% if p.thumb %}<img src="{{ p.thumb }}" alt="{{ t('post-number', id=p.id) }}" loading="lazy">{% else %}#{{ p.id }}{% endif %}</a>
     <div class="review-body">
-      <p><a href="/posts/{{ p.id }}">#{{ p.id }}</a> · rating {{ p.rating }}</p>
+      <p><a href="/posts/{{ p.id }}">#{{ p.id }}</a> · {{ t("rating-is", rating=p.rating) }}</p>
       <ul class="plain">
         {% for f in p.flags %}<li>“{{ f.reason }}”{% if f.by %} <span class="hint">— {{ f.by }}</span>{% endif %}</li>{% endfor %}
       </ul>
       <div class="actions">
-        <form method="post" action="/posts/{{ p.id }}/flags/dismiss"><button type="submit" class="secondary">Dismiss</button></form>
+        <form method="post" action="/posts/{{ p.id }}/flags/dismiss"><button type="submit" class="secondary">{{ t("dismiss") }}</button></form>
         <form class="reject" method="post" action="/posts/{{ p.id }}/delete">
-          {{ reason_fields("delete-" ~ p.id, reasons.deletion, "Reason for deleting #" ~ p.id, compact=true) }}
-          <button type="submit">Delete post</button>
+          {{ reason_fields("delete-" ~ p.id, reasons.deletion, t("reason-for-deleting", id=p.id), compact=true) }}
+          <button type="submit">{{ t("delete-post") }}</button>
         </form>
       </div>
     </div>
@@ -26,7 +26,7 @@
   {% endfor %}
 </ul>
 {% elif not more_url %}
-<p class="empty">No open flags.</p>
+<p class="empty">{{ t("mod-flags-none") }}</p>
 {% endif %}
-{% if more_url %}<nav class="pager"><a class="button" href="{{ more_url }}" rel="next">More</a></nav>{% endif %}
+{% if more_url %}<nav class="pager"><a class="button" href="{{ more_url }}" rel="next">{{ t("more") }}</a></nav>{% endif %}
 {% endblock %}

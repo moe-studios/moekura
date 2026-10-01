@@ -1,43 +1,43 @@
 {% extends "base.html" %}
-{% block title %}Post changes · {{ site.name }}{% endblock %}
+{% block title %}{{ t("mod-nav-changes") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<h1>Post changes</h1>
+<h1>{{ t("mod-nav-changes") }}</h1>
 <form class="filters" method="get" action="/post_versions">
   <div class="filter-field">
-    <label for="pv-user">By</label>
+    <label for="pv-user">{{ t("by") }}</label>
     <input id="pv-user" name="user" value="{{ query.user }}" size="12">
   </div>
   <div class="filter-field">
-    <label for="pv-post">Post</label>
+    <label for="pv-post">{{ t("forum-post-field") }}</label>
     <input id="pv-post" name="post" value="{{ query.post }}" size="8" inputmode="numeric">
   </div>
   <div class="filter-field">
-    <label for="pv-added">Added</label>
+    <label for="pv-added">{{ t("added") }}</label>
     <input id="pv-added" name="added" value="{{ query.added }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
   </div>
   <div class="filter-field">
-    <label for="pv-removed">Removed</label>
+    <label for="pv-removed">{{ t("removed") }}</label>
     <input id="pv-removed" name="removed" value="{{ query.removed }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
   </div>
   <div class="filter-field">
-    <label for="pv-since">From</label>
+    <label for="pv-since">{{ t("from") }}</label>
     <input id="pv-since" name="since" value="{{ query.since }}" type="date">
   </div>
   <div class="filter-field">
-    <label for="pv-until">To</label>
+    <label for="pv-until">{{ t("dmail-to") }}</label>
     <input id="pv-until" name="until" value="{{ query.until }}" type="date">
   </div>
-  <button type="submit">Filter</button>
+  <button type="submit">{{ t("filter") }}</button>
 </form>
 {% if undo %}
 <section class="card request-form">
-  <h2>Undo {{ undo.user }}'s edits</h2>
-  <p class="hint">Takes back every post edit {{ undo.user }} made{% if undo.since %} from {{ undo.since }}{% endif %}{% if undo.until %} until {{ undo.until }}{% endif %}, in the background: tags they added come off and tags they removed go back, and a rating, source, description or parent they set is restored where nobody changed it since. Uploads stay. Each post's history credits you.</p>
+  <h2>{{ t("undo-title", user=undo.user) }}</h2>
+  <p class="hint">{{ t("undo-hint", user=undo.user, range=(t("undo-from", day=undo.since) if undo.since else "") ~ (t("undo-until", day=undo.until) if undo.until else "")) }}</p>
   <form method="post" action="/post_versions/undo">
     <input type="hidden" name="user" value="{{ undo.user }}">
     <input type="hidden" name="since" value="{{ undo.since }}">
     <input type="hidden" name="until" value="{{ undo.until }}">
-    <button type="submit" class="danger" data-confirm="Undo every post edit {{ undo.user }} made in this range?">Undo their edits</button>
+    <button type="submit" class="danger" data-confirm="{{ t('undo-confirm', user=undo.user) }}">{{ t("undo-button") }}</button>
   </form>
 </section>
 {% endif %}
@@ -46,28 +46,28 @@
   {% for v in versions %}
   <li>
     <div class="history-head">
-      <a href="/posts/{{ v.post_id }}">#{{ v.post_id }}</a> <a class="hint" href="/posts/{{ v.post_id }}/history">version {{ v.version }}</a>
+      <a href="/posts/{{ v.post_id }}">#{{ v.post_id }}</a> <a class="hint" href="/posts/{{ v.post_id }}/history">{{ t("version-lower", number=v.version) }}</a>
       <span class="hint">
         {{ v.date }} {{ v.time }}
-        {% if v.relation %}· {{ v.relation.kind }} {{ v.relation.antecedent }} → {{ v.relation.consequent }}
-        {% elif v.updater %}· by <a href="/post_versions?user={{ v.updater | urlencode }}">{{ v.updater }}</a>{% endif %}
-        {% if v.upload %}· upload{% endif %}
+        {% if v.relation %}· {{ t("history-relation-" ~ v.relation.kind, antecedent=v.relation.antecedent, consequent=v.relation.consequent) }}
+        {% elif v.updater %}· {{ t("by-link", url="/post_versions?user=" ~ v.updater|urlencode, user=v.updater) }}{% endif %}
+        {% if v.upload %}· {{ t("upload-word") }}{% endif %}
       </span>
     </div>
     <ul class="changes">
       {% for tag in v.added %}<li class="added">+<a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a></li>{% endfor %}
       {% for tag in v.removed %}<li class="removed">−<a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a></li>{% endfor %}
-      {% if v.rating %}<li>rating: {{ v.rating }}</li>{% endif %}
-      {% if v.source is not none %}<li class="source">source: {{ v.source or "none" }}</li>{% endif %}
-      {% if v.parent %}<li>parent: {{ v.parent }}</li>{% endif %}
-      {% if v.description_changed %}<li>description changed</li>{% endif %}
-      {% if v.locks %}<li>locked: {{ v.locks }}</li>{% endif %}
+      {% if v.rating %}<li>{{ t("history-rating", rating=v.rating) }}</li>{% endif %}
+      {% if v.source is not none %}<li class="source">{{ t("history-source", source=v.source or t("none")) }}</li>{% endif %}
+      {% if v.parent %}<li>{{ t("history-parent", parent=v.parent) }}</li>{% endif %}
+      {% if v.description_changed %}<li>{{ t("description-changed") }}</li>{% endif %}
+      {% if v.locks %}<li>{{ t("history-locked", locks=v.locks) }}</li>{% endif %}
     </ul>
   </li>
   {% endfor %}
 </ol>
-{% if older_url %}<nav class="pager"><a class="button" href="{{ older_url }}" rel="next">Older</a></nav>{% endif %}
+{% if older_url %}<nav class="pager"><a class="button" href="{{ older_url }}" rel="next">{{ t("older-plain") }}</a></nav>{% endif %}
 {% else %}
-<p class="empty">No changes found.</p>
+<p class="empty">{{ t("changes-none") }}</p>
 {% endif %}
 {% endblock %}

@@ -196,6 +196,7 @@ if they aren't on `PATH`.
 |---|---|
 | `templates_override` | a directory whose files replace built-in templates with the same path, e.g. `base.html` |
 | `static_override` | the same for static files, e.g. `css/main.css`; also where [themes](admin/themes.md) are added |
+| `locales_override` | [translations](admin/translations.md): a directory per language (`de/*.ftl`), adding languages or replacing built-in messages |
 
 ## `[tagger]`
 

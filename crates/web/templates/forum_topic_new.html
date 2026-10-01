@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block title %}New topic · Forum · {{ site.name }}{% endblock %}
+{% block title %}{{ t("forum-topic-new-title") }} · {{ t("nav-forum") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<p class="back"><a href="/forum_topics">« Forum</a></p>
-<h1>New topic</h1>
+<p class="back"><a href="/forum_topics">« {{ t("nav-forum") }}</a></p>
+<h1>{{ t("forum-topic-new-title") }}</h1>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 <form class="wiki-form" method="post" action="/forum_topics">
-  <label for="topic-category">Category</label>
+  <label for="topic-category">{{ t("forum-category") }}</label>
   <select id="topic-category" name="category" required>
     {% for c in categories %}<option value="{{ c.id }}"{% if category == c.id %} selected{% endif %}>{{ c.name }}</option>{% endfor %}
   </select>
-  <label for="topic-title">Title</label>
+  <label for="topic-title">{{ t("field-title") }}</label>
   <input id="topic-title" name="title" value="{{ title }}" maxlength="200" required>
-  <label for="topic-body">First post</label>
+  <label for="topic-body">{{ t("forum-first-post") }}</label>
   <textarea id="topic-body" name="body" rows="10" required>{{ body }}</textarea>
   {% include "comment_help.html" %}
-  <button type="submit">Post</button>
+  <button type="submit">{{ t("forum-post-button") }}</button>
 </form>
 {% endblock %}

@@ -61,21 +61,6 @@ impl Metric {
         Self::ALL.into_iter().find(|m| m.as_str() == s)
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Metric::Uploads => "Uploads",
-            Metric::PostChanges => "Post changes",
-            Metric::Approvals => "Approvals",
-            Metric::Comments => "Comments",
-            Metric::ForumPosts => "Forum posts",
-            Metric::WikiEdits => "Wiki edits",
-            Metric::NoteChanges => "Note changes",
-            Metric::Favorites => "Favorites",
-            Metric::Votes => "Post votes",
-            Metric::Signups => "New accounts",
-        }
-    }
-
     /// Whether it's counted by user too.
     pub fn by_user(self) -> bool {
         self.source().user.is_some()

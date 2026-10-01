@@ -1,39 +1,39 @@
 {% extends "base.html" %}
-{% block title %}{% if artist %}History of {{ artist.title }}{% else %}Artist changes{% endif %} · {{ site.name }}{% endblock %}
+{% block title %}{% if artist %}{{ t("history-of", name=artist.title) }}{% else %}{{ t("artist-changes") }}{% endif %} · {{ site.name }}{% endblock %}
 {% block content %}
 {% if artist %}<p class="back"><a href="{{ artist.url }}">« {{ artist.title }}</a></p>{% else %}{% include "tag_nav.html" %}{% endif %}
-<h1>{% if artist %}History of {{ artist.title }}{% else %}Artist changes{% endif %}</h1>
+<h1>{% if artist %}{{ t("history-of", name=artist.title) }}{% else %}{{ t("artist-changes") }}{% endif %}</h1>
 <form class="filters" method="get" action="{{ path }}">
   <div class="filter-field">
-    <label for="av-user">By</label>
+    <label for="av-user">{{ t("by") }}</label>
     <input id="av-user" name="user" value="{{ query.user }}" size="12">
   </div>
-  <button type="submit">Filter</button>
+  <button type="submit">{{ t("filter") }}</button>
 </form>
-{% if artist %}<p class="hint"><a href="/artist_versions">All artist changes</a></p>{% endif %}
+{% if artist %}<p class="hint"><a href="/artist_versions">{{ t("artist-changes-all") }}</a></p>{% endif %}
 {% if versions %}
 <ol class="history">
   {% for v in versions %}
   <li>
     <div class="history-head">
-      {% if not artist %}<a href="/artists/{{ v.artist_id }}">{{ v.title }}</a> {% endif %}<strong>version {{ v.version }}</strong>
-      <span class="hint">{{ v.date }} {{ v.time }}{% if v.updater %} · by <a href="{{ path }}?user={{ v.updater|urlencode }}">{{ v.updater }}</a>{% endif %}{% if v.created %} · created{% endif %}</span>
+      {% if not artist %}<a href="/artists/{{ v.artist_id }}">{{ v.title }}</a> {% endif %}<strong>{{ t("version-lower", number=v.version) }}</strong>
+      <span class="hint">{{ v.date }} {{ v.time }}{% if v.updater %} · {{ t("by-link", url=path ~ "?user=" ~ v.updater|urlencode, user=v.updater) }}{% endif %}{% if v.created %} · {{ t("created") }}{% endif %}</span>
     </div>
     <ul class="changes">
-      {% if v.name %}<li>name: {{ v.name }}</li>{% endif %}
-      {% if v.group is not none %}<li>group: {{ v.group or "(none)" }}</li>{% endif %}
+      {% if v.name %}<li>{{ t("pool-history-name", name=v.name) }}</li>{% endif %}
+      {% if v.group is not none %}<li>{{ t("artist-history-group", group=v.group or t("none-parenthesized")) }}</li>{% endif %}
       {% for n in v.names_added %}<li class="added">+{{ n }}</li>{% endfor %}
       {% for n in v.names_removed %}<li class="removed">−{{ n }}</li>{% endfor %}
       {% for u in v.urls_added %}<li class="added">+{{ u }}</li>{% endfor %}
       {% for u in v.urls_removed %}<li class="removed">−{{ u }}</li>{% endfor %}
-      {% if v.banned is not none %}<li>{{ "banned" if v.banned else "unbanned" }}</li>{% endif %}
-      {% if v.deleted is not none %}<li>{{ "deleted" if v.deleted else "restored" }}</li>{% endif %}
+      {% if v.banned is not none %}<li>{{ t("banned-word") if v.banned else t("unbanned") }}</li>{% endif %}
+      {% if v.deleted is not none %}<li>{{ t("status-deleted") if v.deleted else t("restored") }}</li>{% endif %}
     </ul>
   </li>
   {% endfor %}
 </ol>
 {% else %}
-<p class="empty">No changes found.</p>
+<p class="empty">{{ t("changes-none") }}</p>
 {% endif %}
-{% if next_url %}<nav class="pager" aria-label="Pages"><a class="button" href="{{ next_url }}" rel="next">Older</a></nav>{% endif %}
+{% if next_url %}<nav class="pager" aria-label="{{ t('pages') }}"><a class="button" href="{{ next_url }}" rel="next">{{ t("older-plain") }}</a></nav>{% endif %}
 {% endblock %}

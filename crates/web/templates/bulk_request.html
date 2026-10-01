@@ -1,23 +1,23 @@
 {% extends "base.html" %}
-{% block title %}{{ request.title }} · Bulk update requests · {{ site.name }}{% endblock %}
+{% block title %}{{ request.title }} · {{ t("bur-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
-<p class="back"><a href="/tags/requests">« Bulk update requests</a></p>
+<p class="back"><a href="/tags/requests">« {{ t("bur-title") }}</a></p>
 <h1>{{ request.title }}</h1>
-<p><span class="status status-{{ request.status }}">{{ request.status }}</span>
-  <span class="hint">requested {{ request.created }}{% if request.creator %} by {{ request.creator }}{% endif %}{% if request.approver %} · decided by {{ request.approver }}{% endif %}</span></p>
-{% if error %}<p class="form-error" role="alert">Applying it stopped at {{ error }}</p>{% endif %}
+<p><span class="status status-{{ request.status }}">{{ t("status-" ~ request.status) }}</span>
+  <span class="hint">{% if request.creator %}{{ t("requested-by", date=request.created, user=request.creator) }}{% else %}{{ t("requested", date=request.created) }}{% endif %}{% if request.approver %} · {{ t("decided-by", user=request.approver) }}{% endif %}</span></p>
+{% if error %}<p class="form-error" role="alert">{{ t("bur-stopped", error=error) }}</p>{% endif %}
 <pre class="bulk-script">{% for line in commands %}{{ line }}
 {% endfor %}</pre>
 {% if reason %}<div class="markup">{{ reason }}</div>{% endif %}
 {% if can_decide or can_withdraw %}
 <div class="actions">
   {% if can_decide %}
-  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="approve">Approve and apply</button></form>
-  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="reject" class="secondary">Reject</button></form>
+  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="approve">{{ t("bur-approve") }}</button></form>
+  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="reject" class="secondary">{{ t("reject") }}</button></form>
   {% endif %}
   {% if can_withdraw %}
-  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="withdraw" class="secondary">Withdraw</button></form>
+  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="withdraw" class="secondary">{{ t("withdraw") }}</button></form>
   {% endif %}
 </div>
 {% endif %}

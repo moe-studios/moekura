@@ -11,7 +11,7 @@ use crate::AppState;
 use crate::error::AppError;
 
 /// Lists of things Moekura doesn't have.
-pub(crate) const EMPTY_LISTS: &[&str] = &["/user_name_change_requests", "/users/{id}/uploads"];
+pub(crate) const EMPTY_LISTS: &[&str] = &["/users/{id}/uploads"];
 
 pub(super) fn routes() -> Router<AppState> {
     EMPTY_LISTS.iter().fold(Router::new(), |router, path| {
@@ -39,7 +39,7 @@ mod tests {
             assert_eq!(response.status, StatusCode::OK, "{path}");
             assert_eq!(response.body, "[]", "{path}");
         }
-        let missing = app.get("/user_name_change_requests/1.json", None).await;
+        let missing = app.get("/users/1/uploads/1.json", None).await;
         assert_eq!(missing.status, StatusCode::NOT_FOUND);
         let body: Value = serde_json::from_str(&missing.body).unwrap();
         assert_eq!(body["success"], json!(false));

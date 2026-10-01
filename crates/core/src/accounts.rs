@@ -9,6 +9,9 @@ use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 
 pub const NAME_MIN_LEN: usize = 2;
 pub const NAME_MAX_LEN: usize = 32;
+/// Days between changes of one's own name (staff can rename anyone below
+/// them any time).
+pub const NAME_CHANGE_DAYS: i64 = 7;
 pub const PASSWORD_MIN_LEN: usize = 8;
 /// Caps hashing work per attempt; long passphrases still fit comfortably.
 pub const PASSWORD_MAX_LEN: usize = 256;

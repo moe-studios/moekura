@@ -78,12 +78,11 @@ engine, then log in with your name and your API key.
 | `POST /posts.json` | the second step: `upload_media_asset_id` with `post[tag_string]`, `post[rating]`, `post[source]` and optionally `post[parent_id]`; upload limits apply. Uploads not made into posts within a day are removed |
 | `/ai_tags.json` | the [tagger's](../admin/tagger.md) suggestions, newest posts first, by `search[post_id]` (or `search[media_asset_id]`, the same number), `search[tag_name]`, `search[tag_id]`, `search[is_posted]` and `search[score]` (`>=50`, `50..90`); `score` is 0 to 100 |
 | `/user_feedbacks.json`, `/user_feedbacks/{id}.json` | feedback on users, newest first, by `search[user_id]`, `search[user_name]`, `search[creator_id]`, `search[creator_name]` and `search[category]` (`positive`, `neutral` or `negative`); read-only |
+| `/user_name_change_requests.json`, `/user_name_change_requests/{id}.json` | users' name changes, newest first, by `search[user_id]`, `search[original_name]` and `search[desired_name]`; they take effect at once, so there's nothing to approve |
 | `/saved_searches.json` | yours; add with `saved_search[query]` and `saved_search[label_string]`, and delete |
 
 ## What doesn't
 
-- Name change requests don't exist in Moekura yet: their list is empty,
-  and single ones are "not found".
 - Favorites and your votes on posts and comments have no ids of their
   own: their `id` is the post's or comment's.
 - Pools, favorite groups and notes are read-only here; change them on

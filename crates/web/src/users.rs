@@ -35,10 +35,20 @@ pub fn routes() -> Router<AppState> {
 async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let db = page.state().reader(&page.current);
-    let user = users::by_name(db, &name)
-        .await?
-        .filter(|u| u.status == UserStatus::Active || page.current.can(Permission::ManageUsers))
-        .ok_or(AppError::NotFound)?;
+    let Some(user) = users::by_name(db, &name).await? else {
+        // Someone who has since changed their name.
+        return match users::by_name_or_former(page.state().db.primary(), &name).await? {
+            Some(user) => Ok(Redirect::permanent(&format!(
+                "/users/{}",
+                url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>()
+            ))
+            .into_response()),
+            None => Err(AppError::NotFound),
+        };
+    };
+    if user.status != UserStatus::Active && !page.current.can(Permission::ManageUsers) {
+        return Err(AppError::NotFound);
+    }
     let site = page.state().site.get();
     let role = site.role(user.role_id).map(|r| r.name.clone());
     let uploads = posts::count_by_uploader(db, user.id).await?;
@@ -74,6 +84,18 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
         }),
         None => None,
     };
+    let former_names: Vec<String> = moekura_db::name_changes::for_user(db, user.id)
+        .await?
+        .into_iter()
+        .map(|c| c.old_name)
+        .filter(|old| !old.eq_ignore_ascii_case(&user.name))
+        .fold(Vec::new(), |mut names, old| {
+            if !names.iter().any(|n: &String| n.eq_ignore_ascii_case(&old)) {
+                names.push(old);
+            }
+            names
+        });
+    let can_rename = crate::name_changes::may_rename(page.state(), &page.current, &user);
     let [positive, neutral, negative] = moekura_db::user_feedbacks::counts(db, user.id).await?;
     let feedback = context! {
         positive => positive,
@@ -93,6 +115,8 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
         context! {
             messages => messages,
             feedback => feedback,
+            former_names => former_names,
+            can_rename => can_rename,
             user => context! {
                 name => user.name,
                 role => role,

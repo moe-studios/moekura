@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use moekura_core::moderation::ActionKind;
 use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Entry, Filter};
+use moekura_db::post_batches::{self, PostBatch};
 use moekura_db::{bans, flags, users};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -219,6 +220,114 @@ pub(crate) async fn purge(
 ) -> Result<StatusCode, AppError> {
     crate::moderation::moderate(&state, &current, id, PostAction::Purge, "").await?;
     Ok(StatusCode::ACCEPTED)
+}
+
+/// A moderation of many posts, worked through in the background.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ApiPostBatch {
+    pub id: i64,
+    /// `delete`: deleting every upload of `user`.
+    #[schema(example = "delete")]
+    pub kind: String,
+    /// Who started it.
+    pub creator: Option<String>,
+    /// Whose uploads, for deletions.
+    pub user: Option<String>,
+    pub reason: String,
+    /// `queued`, `running`, `done` or `failed`.
+    #[schema(example = "running")]
+    pub status: String,
+    /// Posts it applied to when started.
+    pub total: i32,
+    /// Posts dealt with so far.
+    pub done: i32,
+    /// Posts left alone: dealt with meanwhile, or with a locked status.
+    pub skipped: i32,
+    pub failed: i32,
+    /// Why it failed.
+    pub error: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub finished_at: Option<OffsetDateTime>,
+}
+
+impl From<PostBatch> for ApiPostBatch {
+    fn from(b: PostBatch) -> Self {
+        Self {
+            id: b.id,
+            kind: b.kind,
+            creator: b.creator_name,
+            user: b.user_name,
+            reason: b.reason,
+            status: b.status,
+            total: b.total,
+            done: b.done,
+            skipped: b.skipped,
+            failed: b.failed,
+            error: b.error,
+            created_at: b.created_at,
+            finished_at: b.finished_at,
+        }
+    }
+}
+
+/// Delete every upload of a user.
+///
+/// Needs `delete_posts`, a role ranked above the user's, and a reason,
+/// which each post shows in its place. Their active, flagged and pending
+/// posts are deleted in the background, as deleting each would: open
+/// flags are upheld, each deletion is logged as yours, and the posts can
+/// be restored. Posts with a locked status are skipped unless you have
+/// `lock_posts`. Follow the progress with `get_post_batch`.
+#[utoipa::path(
+    post,
+    path = "/users/{name}/delete-uploads",
+    operation_id = "delete_user_uploads",
+    tag = "moderation",
+    params(("name" = String, Path, description = "Case-insensitive")),
+    request_body = Reason,
+    responses(
+        (status = 202, body = ApiPostBatch, description = "Started"),
+        (status = 400, body = ErrorBody, description = "No reason, nothing to delete, or already being deleted"),
+        (status = 403, body = ErrorBody, description = "You can't delete this user's uploads"),
+    ),
+)]
+pub(crate) async fn delete_uploads(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(name): Path<String>,
+    Json(body): Json<Reason>,
+) -> Result<(StatusCode, Json<ApiPostBatch>), AppError> {
+    current.require(Permission::DeletePosts)?;
+    let user = users::by_name(state.db.primary(), &name)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let batch = crate::post_batches::delete_uploads(&state, &current, &user, &body.reason).await?;
+    Ok((StatusCode::ACCEPTED, Json(batch.into())))
+}
+
+/// Follow a moderation of many posts.
+///
+/// Needs `delete_posts`.
+#[utoipa::path(
+    get,
+    path = "/moderation/post-batches/{id}",
+    operation_id = "get_post_batch",
+    tag = "moderation",
+    params(("id" = i64, Path)),
+    responses((status = 200, body = ApiPostBatch)),
+)]
+pub(crate) async fn post_batch(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<Json<ApiPostBatch>, AppError> {
+    current.require(Permission::DeletePosts)?;
+    let batch = post_batches::by_id(state.db.primary(), id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    Ok(Json(batch.into()))
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -763,6 +872,65 @@ mod tests {
 
     use crate::api::test_support::{app, json, upload};
     use crate::test_support::{fixture, session_for};
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn deletes_a_users_uploads(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        upload(&app, &alice, &fixture::png(20, 20), "cat").await;
+        upload(&app, &alice, &fixture::png(24, 20), "dog").await;
+        let url = "/api/v1/users/alice/delete-uploads";
+        let reason = Some(json!({"reason": "spam"}));
+        assert_eq!(
+            app.json("POST", url, Some(&alice), reason.clone())
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.json("POST", url, Some(&moderator), Some(json!({"reason": " "})))
+                .await
+                .status,
+            StatusCode::BAD_REQUEST
+        );
+        let started = app.json("POST", url, Some(&moderator), reason).await;
+        assert_eq!(started.status, StatusCode::ACCEPTED, "{}", started.body);
+        let batch = json(&started.body);
+        assert_eq!(
+            (
+                &batch["kind"],
+                &batch["user"],
+                &batch["status"],
+                &batch["total"]
+            ),
+            (
+                &json!("delete"),
+                &json!("alice"),
+                &json!("queued"),
+                &json!(2)
+            )
+        );
+        // The job deletes them (moekura_jobs::posts); here it's queued.
+        let progress = json(
+            &app.get_json(
+                &format!("/api/v1/moderation/post-batches/{}", batch["id"]),
+                Some(&moderator),
+            )
+            .await
+            .body,
+        );
+        assert_eq!(progress["id"], batch["id"]);
+        assert_eq!(
+            app.get_json(
+                &format!("/api/v1/moderation/post-batches/{}", batch["id"]),
+                Some(&alice),
+            )
+            .await
+            .status,
+            StatusCode::FORBIDDEN
+        );
+    }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn reviews_posts_and_flags(pool: PgPool) {

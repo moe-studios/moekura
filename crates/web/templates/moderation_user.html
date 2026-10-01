@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "reason_fields.html" import reason_fields %}
 {% block title %}{{ user.name }} · Moderation · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "moderation_nav.html" %}
@@ -94,6 +95,28 @@
       {{ "rejected" if d.rejected else "deleted" }}{% if d.by %} by {{ d.by }}{% endif %}{% if d.reason %}: {{ d.reason }}{% endif %}</li>
     {% endfor %}
   </ul>
+  {% endif %}
+  {% if upload_deletions %}
+  <h3>Deleting all uploads</h3>
+  <ul class="plain">
+    {% for b in upload_deletions %}
+    <li><span class="status status-{{ b.status }}">{{ b.status }}</span>
+      {{ b.done }} of {{ b.total }} deleted{% if b.skipped %}, {{ b.skipped }} skipped{% endif %}{% if b.failed %}, {{ b.failed }} failed{% endif %}
+      <span class="hint">{{ b.when }}{% if b.by %} by {{ b.by }}{% endif %}</span>: {{ b.reason }}
+      {% if b.error %}<div class="hint">{{ b.error }}</div>{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  {% if delete_uploads and delete_uploads.count and not delete_uploads.open %}
+  <details class="edit">
+    <summary>Delete all {{ delete_uploads.count }} upload{{ "s" if delete_uploads.count != 1 }}</summary>
+    <p class="hint">Deletes every active, flagged and pending post {{ user.name }} uploaded, in the background, with one reason; open flags on them are upheld. Each deletion is logged as yours, and the posts can be restored. The account stays.</p>
+    <form method="post" action="/users/{{ user.name | urlencode }}/delete-uploads">
+      {{ reason_fields("delete-uploads-reason", reasons.deletion, "Reason") }}
+      <label class="choice"><input type="checkbox" name="confirm" value="yes" required> Delete {{ delete_uploads.count }} upload{{ "s" if delete_uploads.count != 1 }} by {{ user.name }}</label>
+      <button type="submit" class="danger">Delete all uploads</button>
+    </form>
+  </details>
   {% endif %}
 </section>
 

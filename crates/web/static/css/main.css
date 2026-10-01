@@ -739,6 +739,22 @@ html:not(.js) .select-all { display: none; }
 .status-positive { color: var(--tag-character); }
 .status-neutral { color: var(--muted); }
 .status-negative { color: var(--danger); }
+.news {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  max-width: var(--max-width);
+  margin: var(--gutter) auto 0;
+  width: calc(100% - 2 * var(--gutter));
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--tag-character);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.news .markup { flex: 1; min-width: 0; }
+.news .markup > :first-child { margin-top: 0; }
+.news .markup > :last-child { margin-bottom: 0; }
 .upload-chart { display: block; width: 100%; max-width: 40rem; height: auto; margin-bottom: 16px; }
 .upload-chart rect { fill: var(--accent); }
 .upload-chart g:hover rect { fill: var(--text); }

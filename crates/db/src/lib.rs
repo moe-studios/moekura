@@ -25,6 +25,7 @@ pub mod mass_updates;
 pub mod media;
 pub mod mod_actions;
 pub mod name_changes;
+pub mod news;
 pub mod notes;
 pub mod notifications;
 pub mod pools;

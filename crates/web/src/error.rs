@@ -135,7 +135,7 @@ pub async fn render_errors(
         crate::pages::render(
             &state,
             current.as_ref(),
-            None,
+            crate::pages::Notices::default(),
             &target,
             page.status,
             "error.html",

@@ -1,16 +1,16 @@
 {% extends "base.html" %}
-{% block title %}{% if own %}Your favorite groups{% else %}{{ owner }}'s favorite groups{% endif %} · {{ site.name }}{% endblock %}
+{% block title %}{% if own %}{{ t("fav-groups-yours") }}{% else %}{{ t("fav-groups-of", user=owner) }}{% endif %} · {{ site.name }}{% endblock %}
 {% block content %}
-<h1>{% if own %}Your favorite groups{% else %}{{ owner }}'s favorite groups{% endif %}</h1>
-{% if can_create %}<p><a class="button" href="/favorite_groups/new">New group</a></p>{% endif %}
+<h1>{% if own %}{{ t("fav-groups-yours") }}{% else %}{{ t("fav-groups-of", user=owner) }}{% endif %}</h1>
+{% if can_create %}<p><a class="button" href="/favorite_groups/new">{{ t("fav-group-new-button") }}</a></p>{% endif %}
 {% if groups %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Favorite groups table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('fav-groups-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">Name</th><th scope="col" class="num">Posts</th><th scope="col">Last changed</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("account-name") }}</th><th scope="col" class="num">{{ t("nav-posts") }}</th><th scope="col">{{ t("last-changed") }}</th></tr></thead>
   <tbody>
     {% for g in groups %}
     <tr>
-      <td><a href="{{ g.url }}">{{ g.name }}</a>{% if not g.public %} <span class="hint">(private)</span>{% endif %}</td>
+      <td><a href="{{ g.url }}">{{ g.name }}</a>{% if not g.public %} <span class="hint">{{ t("private") }}</span>{% endif %}</td>
       <td class="num">{{ g.post_count }}</td>
       <td>{{ g.date }}</td>
     </tr>
@@ -19,6 +19,6 @@
 </table>
 </div>
 {% else %}
-<p class="empty">No favorite groups{% if own %} yet{% endif %}.</p>
+<p class="empty">{% if own %}{{ t("fav-groups-none-yet") }}{% else %}{{ t("fav-groups-none") }}{% endif %}</p>
 {% endif %}
 {% endblock %}

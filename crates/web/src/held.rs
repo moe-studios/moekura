@@ -56,31 +56,18 @@ pub(crate) async fn check(
 }
 
 fn item_context(h: &Held) -> Value {
-    let (what, url) = match h.kind.as_str() {
-        "comment" => (
-            format!("A comment on post #{}", h.parent_id.unwrap_or_default()),
-            Some(format!("/comments/{}", h.id)),
-        ),
-        "forum_post" => (
-            format!(
-                "A forum post in “{}”",
-                h.title.as_deref().unwrap_or_default()
-            ),
-            Some(format!("/forum_posts/{}", h.id)),
-        ),
-        _ => (
-            format!(
-                "A message to {}: “{}”",
-                h.recipient_name.as_deref().unwrap_or("(gone)"),
-                h.title.as_deref().unwrap_or_default()
-            ),
-            None,
-        ),
+    // What it is, said by the template from the kind.
+    let url = match h.kind.as_str() {
+        "comment" => Some(format!("/comments/{}", h.id)),
+        "forum_post" => Some(format!("/forum_posts/{}", h.id)),
+        _ => None,
     };
     context! {
         kind => h.kind,
         id => h.id,
-        what => what,
+        post_id => h.parent_id,
+        title => h.title,
+        recipient => h.recipient_name,
         url => url.as_deref().map(url_value),
         creator => h.creator_name,
         reason => h.reason,
@@ -268,7 +255,12 @@ mod tests {
             "to=bob&title=Hi&body=Best+CASINO",
         )
         .await;
-        assert!(!app.get("/dmails", Some(&bob)).await.body.contains("Hi"));
+        assert!(
+            !app.get("/dmails", Some(&bob))
+                .await
+                .body
+                .contains(">Hi</a>")
+        );
         let general = moekura_db::forum::categories(&pool).await.unwrap()[0].id;
         let topic = app
             .post_form(
@@ -346,7 +338,12 @@ mod tests {
             "",
         )
         .await;
-        assert!(!app.get("/dmails", Some(&bob)).await.body.contains("Hi"));
+        assert!(
+            !app.get("/dmails", Some(&bob))
+                .await
+                .body
+                .contains(">Hi</a>")
+        );
         assert_eq!(
             app.get(&format!("/dmails/{dmail}"), Some(&bob))
                 .await

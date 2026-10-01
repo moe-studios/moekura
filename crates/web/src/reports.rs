@@ -29,22 +29,6 @@ pub fn routes() -> Router<AppState> {
         .route("/reports", get(index))
 }
 
-fn total_label(key: &str) -> &'static str {
-    match key {
-        "posts" => "Posts",
-        "tags" => "Tags in use",
-        "users" => "Users",
-        "favorites" => "Favorites",
-        "comments" => "Comments",
-        "forum_posts" => "Forum posts",
-        "wiki_pages" => "Wiki pages",
-        "pools" => "Pools",
-        "artists" => "Artists",
-        "notes" => "Notes",
-        _ => "",
-    }
-}
-
 async fn stats(page: Page) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let totals = reports::totals(page.state().reader(&page.current)).await?;
@@ -53,7 +37,7 @@ async fn stats(page: Page) -> Result<Response, AppError> {
         "stats.html",
         context! {
             totals => totals.iter().map(|(key, value, _)| context! {
-                label => total_label(key),
+                key => key,
                 value => value,
             }).collect::<Vec<_>>(),
             counted => counted.map(crate::dates::day),
@@ -137,14 +121,14 @@ async fn index(page: Page, Query(query): Query<ReportQuery>) -> Result<Response,
     Ok(page.render(
         "reports.html",
         context! {
-            metric => metric.label(),
+            metric => metric.as_str(),
             metrics => Metric::ALL.iter().map(|&m| context! {
-                label => m.label(),
+                key => m.as_str(),
                 url => link(m, days, user_name),
                 current => m == metric,
             }).collect::<Vec<_>>(),
             periods => PERIODS.iter().map(|&d| context! {
-                label => format!("{d} days"),
+                days => d,
                 url => link(metric, d, user_name),
                 current => d == days,
             }).collect::<Vec<_>>(),

@@ -1,4 +1,4 @@
-<svg class="bar-chart" viewBox="0 0 {{ chart.width }} {{ chart.height }}" role="img" aria-label="{{ chart_label }}, at most {{ chart.most }}">
+<svg class="bar-chart" viewBox="0 0 {{ chart.width }} {{ chart.height }}" role="img" aria-label="{{ t('chart-label', label=chart_label, most=chart.most) }}">
   {% for b in chart.bars %}
   <g><title>{{ b.title }}</title>
     <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ chart.bar_width }}" height="{{ b.height }}"></rect>

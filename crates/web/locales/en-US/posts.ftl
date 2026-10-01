@@ -1,0 +1,239 @@
+## Posts, favorites and favorite groups
+
+fav-group-new = New favorite group
+fav-groups-yours = Your favorite groups
+fav-group-public = Public: anyone can see it
+
+fav-groups-of = { $user }'s favorite groups
+fav-group-new-button = New group
+fav-groups-table = Favorite groups table
+fav-groups-none = No favorite groups.
+fav-groups-none-yet = No favorite groups yet.
+image-search-title = Search by image
+image-search-file = A picture
+image-search-url = …or a link to one
+image-search-hint = Finds posts that look like it, even resized or recompressed, without uploading anything. A work's page on Pixiv, X and the like works too.
+image-search-like-post = Posts like #{ $id }
+image-search-like-it = Posts like it
+image-search-alike = { $percent }% alike
+image-search-none = No posts look like it.
+note-history-title = Note history of post #{ $id }
+note-history-all = <a href="/note_versions">All note changes</a>, with a filter by user.
+note-version = Note { $note }, version { $version }
+note-history-none = This post has no notes.
+metadata-title = Metadata of post #{ $id }
+metadata-table = Post metadata table
+metadata-field-posts = Posts with this field
+metadata-value-posts = Posts with this value
+metadata-hint = Locations, serial numbers and owners' names aren't shown. The original file is kept as uploaded, with whatever it contains.
+metadata-none = This file has no metadata to show, or it hasn't been read yet.
+replacements-title = Replacements of post #{ $id }
+replacements-from = from { $source }
+replacements-none = This post's file was never replaced.
+
+fav-group-empty = This group has no posts yet.
+fav-group-delete-confirm = Delete this favorite group? The posts stay, but the group and its order are gone.
+fav-group-delete = Delete group
+
+post-history-title = History of post #{ $id }
+post-history-hint = <a href="/post_versions">All post changes</a>, with filters by user, tag and date. Changes to the file itself are under <a href="/posts/{ $id }/replacements">replacements</a>.
+history-relation-alias = alias { $antecedent } → { $consequent }
+history-relation-implication = implication { $antecedent } → { $consequent }
+history-rating = rating: { $rating }
+history-source = source: { $source }
+history-parent = parent: { $parent }
+history-locked = locked: { $locks }
+history-none = No history recorded.
+
+explore = Explore
+explore-heading-popular = Popular posts
+explore-heading-viewed = Most viewed posts
+explore-heading-searches = Popular searches
+explore-heading-missed_searches = Searches that found nothing
+explore-viewed = Most viewed
+explore-searches = Searches
+explore-missed = Missed searches
+explore-week = { $from } to { $to }
+explore-dates = Dates
+explore-earlier = « Earlier
+explore-later = Later »
+scale-day = Day
+scale-week = Week
+scale-month = Month
+explore-missed-hint = Tag searches that found no posts: often a misspelling or another name for a tag, which an alias could fix.
+explore-table = Explore table
+explore-times-missed = Times missed
+explore-no-searches = No searches counted then.
+explore-none-viewed = No posts viewed then.
+explore-none-posted = No posts posted then.
+
+saved-title = Saved searches
+saved-hint = <code>search:all</code> shows the newest posts of all your saved searches together, and
+    <code>search:label</code> those of the searches with that label.
+saved-all = All together
+saved-table = Saved searches table
+saved-labels = Labels
+saved-none = You haven't saved any searches yet.
+saved-new = Save a search
+saved-labels-hint = (optional, separated by spaces)
+saved-max = Up to { $max } searches.
+
+undo-title = Undo { $user }'s edits
+undo-from = { " " }from { $day }
+undo-until = { " " }until { $day }
+undo-hint = Takes back every post edit { $user } made{ $range }, in the background: tags they added come off and tags they removed go back, and a rating, source, description or parent they set is restored where nobody changed it since. Uploads stay. Each post's history credits you.
+undo-confirm = Undo every post edit { $user } made in this range?
+undo-button = Undo their edits
+upload-rules = Check the <a href="/rules">rules</a> for what may be uploaded.
+upload-left-both = You can upload { $pending } more before some are approved, and { $today } more today.
+upload-left-pending = You can upload { $pending } more before some are approved.
+upload-left-today = You can upload { $today } more today.
+upload-duplicate = This file was already uploaded as <a href="/posts/{ $id }">post #{ $id }</a>.
+upload-file = File
+upload-drop-hint = Choose a file, drop it onto this form, or paste it from your clipboard. One file at a time.
+upload-url = …or a link to it
+upload-url-hint = Images or videos up to { $mb } MB. A work's page on Pixiv, X, Bluesky, DeviantArt, Fanbox or Skeb works too: its best file is downloaded, and the page becomes the source.
+upload-tags-hint = Separate tags with spaces. Give a new tag a category with a prefix, like <code>artist:name</code>. <code>-tag</code> and metatags like <code>rating:s</code> or <code>pool:name</code> work too.
+commentary = Artist's commentary
+upload-commentary-hint = What the artist wrote with the work, as they wrote it. Left empty, it's taken from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt, Fanbox, Skeb, or a page with its image in its preview tags).
+
+posts-newest = Newest posts
+posts-syntax = See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.
+tag-script = Tag script
+tag-script-apply = Apply by clicking posts
+posts-save-search = Save this search
+posts-labels-placeholder = e.g. artists
+posts-your-saved = Your saved searches
+posts-add-to-search = Add to search
+posts-add-tag = Add { $tag } to search
+posts-exclude = Exclude from search
+posts-exclude-tag = Exclude { $tag } from search
+posts-wiki-for = Wiki page for { $tag }
+posts-read-wiki = Read the wiki page for { $title }
+posts-blacklist-hidden = { $count } hidden by your blacklist (<a href="{ $url }">show</a>)
+posts-blacklist-blurred = { $count } blurred by your blacklist (<a href="{ $url }">show</a>)
+posts-deleted-hidden = { $count } hidden (<a href="{ $url }">show</a>)
+posts-blacklist-showing = showing blacklisted posts (<a href="{ $url }">hide</a>)
+posts-nothing-found = Nothing found
+posts-no-match = No posts match <strong>{ $tags }</strong>.
+posts-did-you-mean = Did you mean { $options }?
+posts-did-you-mean-instead = Did you mean { $options } instead of { $term }?
+posts-try-without = Try without the last term: <a href="{ $url }">{ $terms }</a>.
+posts-look-for-tags = <a href="{ $url }">Look for tags starting with { $term }</a>, in case of a typo.
+posts-none-yet = No posts yet
+posts-upload-first = Upload the first one
+
+## The post page
+
+post-is = This post is { $status }.
+post-locked = Locked: { $locks }.
+lock-rating = Rating
+lock-tags = Tags
+lock-notes = Notes
+lock-status = Status
+post-processing = Thumbnails are still being generated.
+post-warnings = Worth a look before moving on:
+tag-warning-no-artist = It has no artist tag: add an artist tag, or artist_unknown.
+tag-warning-no-copyright = It has no copyright tag: add a copyright tag, or original.
+tag-warning-no-character = It has no character tag: add a character tag, if anyone appears in it.
+tag-warning-few-general = It has { $count } general { $count ->
+    [one] tag
+   *[other] tags
+}; well-tagged posts have at least { $min }.
+tag-warning-new-tags = No other post has these tags yet; check their spelling:
+tag-warning-kept = { $name } is already { $vowel ->
+    [yes] an
+   *[no] a
+} { $actual } tag, so { $wanted }: didn't change it; ask someone who manages tags if it's wrong.
+post-pool = Pool { $name }
+first = First
+last = Last
+post-pool-prev = ‹ prev
+post-pool-next = next ›
+post-blacklisted = This post matches your blacklist (<code>{ $rule }</code>). <a href="{ $url }">Show it anyway</a>
+post-ugoira-preparing = This animation is still being prepared; it plays here once it's ready.
+post-ugoira = An ugoira, played from its frames. <a href="{ $url }" download>Download the frames</a> (a zip).
+post-resized-to = Resized to { $percent }% of the original.
+post-notes = Notes ({ $count })
+post-notes-hover = Show the notes' text when pointed at
+post-notes-embed = Draw the notes' text on the picture
+post-commentary-history = Commentary history
+post-commentary-edit = Edit the commentary
+post-commentary-add = Add the artist's commentary
+post-commentary-original-title = Original title
+post-commentary-original-description = Original description
+post-commentary-translated-title = Translated title
+post-commentary-translated-description = Translated description
+post-commentary-hint = What the artist wrote where they posted this, as they wrote it, and a translation. Descriptions use the wiki's markup.
+post-family = Related posts
+post-has-parent = This post belongs to <a href="/posts/{ $id }">a parent post</a>.
+post-has-children = This post has child posts.
+post-similar = Similar posts
+post-similar-search = (search)
+post-disapprovals = Disapprovals
+post-disapprovals-intro = Approvers passed on this post:
+appeal = Appeal
+post-appeal-why = Why should this post come back?
+post-crop = Square thumbnail
+post-crop-hint-chosen = Square thumbnails show this square, in the picture's pixels ({ $width }×{ $height }). With scripts, click the picture to centre the square there.
+post-crop-hint-auto = Square thumbnails show the part of the picture that looks most interesting; choose a square instead, in the picture's pixels ({ $width }×{ $height }). With scripts, click the picture to centre the square there.
+post-crop-left = Left
+post-crop-top = Top
+post-crop-side = Side
+post-crop-use = Use this square
+post-crop-auto = Back to automatic
+post-replace = Replace the file
+post-replace-file = New file
+post-replace-why = Why
+post-replace-placeholder = Higher resolution, uncropped, …
+post-replace-notes = Move and resize the notes to fit the new size
+post-replace-hint = The post keeps its tags, comments, notes, pools and favourites; the old file is kept in its <a href="/posts/{ $id }/replacements">replacements</a>.
+post-replace-confirm = Replace this post's file?
+post-replace-button = Replace
+flag = Flag
+post-flag-why = What's wrong with this post?
+post-flag = Flag for review
+post-waiting = This post is waiting for approval.
+reason-rejecting = Reason for rejecting
+reason-deleting = Reason for deleting
+post-locks = Locked against changes
+post-locks-save = Save locks
+post-purge-hint = Purging removes the post and its files for good.
+post-purge-confirm = Purge post #{ $id }? It and its files are removed for good; this can't be undone.
+post-tags-locked = The tags are locked.
+post-parent = Parent post
+post-copy-tags = Copy tags
+post-copy-from-parent = From the parent #{ $id }
+post-copy-from-child = From child #{ $id }
+post-copy-hint = Clicking one adds that post's tags and saves the form.
+post-suggested = Suggested by the tagger
+post-suggested-pending = The tagger hasn't looked at this post yet. Its suggestions show here once it has, usually within a minute.
+post-suggested-add = Add { $tag } ({ $percent }% sure)
+post-suggested-rating = Rating:
+post-rate-it = Rate it { $rating }
+post-suggested-hint = Clicking one adds it and saves the form.
+post-comments-hidden = Your settings hide comments. <a href="{ $url }">Read them</a>
+post-older-comments = { $count } older { $count ->
+    [one] comment
+   *[other] comments
+}
+post-do-not-bump = Don't bump the post
+post-log-in-to-comment = <a href="/login?next=%2Fposts%2F{ $id }">Log in</a> to comment.
+post-search-results = Search results
+post-previous-key = Previous (a)
+post-next-key = Next (d)
+post-all-posts = All posts
+post-size = Size
+post-no-sound = no sound
+post-animated = animated
+favorite = Favorite
+post-uploaded = Uploaded
+post-download = Download original
+post-metadata = Metadata
+post-replacements = Replacements
+post-look-alikes = Look-alikes
+post-note-history = Note history
+post-remove-from = Remove from { $name }
+remove-lower = remove
+post-add-to-pool = Add to a pool
+post-pool-field = Pool name or number

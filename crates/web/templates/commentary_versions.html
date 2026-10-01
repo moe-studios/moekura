@@ -1,34 +1,34 @@
 {% extends "base.html" %}
-{% block title %}{% if post_id %}Commentary history of post #{{ post_id }}{% else %}Commentary changes{% endif %} · {{ site.name }}{% endblock %}
+{% block title %}{% if post_id %}{{ t("commentary-history-title", id=post_id) }}{% else %}{{ t("commentary-changes") }}{% endif %} · {{ site.name }}{% endblock %}
 {% block content %}
-{% if post_id %}<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>{% endif %}
-<h1>{% if post_id %}Commentary history of post #{{ post_id }}{% else %}Commentary changes{% endif %}</h1>
+{% if post_id %}<p class="back"><a href="/posts/{{ post_id }}">« {{ t("post-number", id=post_id) }}</a></p>{% endif %}
+<h1>{% if post_id %}{{ t("commentary-history-title", id=post_id) }}{% else %}{{ t("commentary-changes") }}{% endif %}</h1>
 <form class="filters" method="get" action="{{ path }}">
   <div class="filter-field">
-    <label for="cv-user">By</label>
+    <label for="cv-user">{{ t("by") }}</label>
     <input id="cv-user" name="user" value="{{ query.user }}" size="12">
   </div>
-  <button type="submit">Filter</button>
+  <button type="submit">{{ t("filter") }}</button>
 </form>
-{% if post_id %}<p class="hint"><a href="/artist_commentary_versions">All commentary changes</a></p>{% endif %}
+{% if post_id %}<p class="hint"><a href="/artist_commentary_versions">{{ t("commentary-all") }}</a></p>{% endif %}
 {% if versions %}
 <ol class="history">
   {% for v in versions %}
   <li>
     <div class="history-head">
-      {% if not post_id %}<a href="/posts/{{ v.post_id }}">#{{ v.post_id }}</a> {% endif %}<strong>version {{ v.version }}</strong>
-      <span class="hint">{{ v.date }} {{ v.time }}{% if v.updater %} · by <a href="{{ path }}?user={{ v.updater|urlencode }}">{{ v.updater }}</a>{% endif %}</span>
+      {% if not post_id %}<a href="/posts/{{ v.post_id }}">#{{ v.post_id }}</a> {% endif %}<strong>{{ t("version-lower", number=v.version) }}</strong>
+      <span class="hint">{{ v.date }} {{ v.time }}{% if v.updater %} · {{ t("by-link", url=path ~ "?user=" ~ v.updater|urlencode, user=v.updater) }}{% endif %}</span>
     </div>
     <div class="commentary-version">
-      {% if v.texts.original %}<div><p class="hint">Original</p>{% if v.texts.original_title %}<h3>{{ v.texts.original_title }}</h3>{% endif %}{% if v.texts.original_html %}<div class="markup">{{ v.texts.original_html }}</div>{% endif %}</div>{% endif %}
-      {% if v.texts.translated %}<div><p class="hint">Translated</p>{% if v.texts.translated_title %}<h3>{{ v.texts.translated_title }}</h3>{% endif %}{% if v.texts.translated_html %}<div class="markup">{{ v.texts.translated_html }}</div>{% endif %}</div>{% endif %}
-      {% if not v.texts.original and not v.texts.translated %}<p class="hint">Cleared.</p>{% endif %}
+      {% if v.texts.original %}<div><p class="hint">{{ t("commentary-original") }}</p>{% if v.texts.original_title %}<h3>{{ v.texts.original_title }}</h3>{% endif %}{% if v.texts.original_html %}<div class="markup">{{ v.texts.original_html }}</div>{% endif %}</div>{% endif %}
+      {% if v.texts.translated %}<div><p class="hint">{{ t("commentary-translated") }}</p>{% if v.texts.translated_title %}<h3>{{ v.texts.translated_title }}</h3>{% endif %}{% if v.texts.translated_html %}<div class="markup">{{ v.texts.translated_html }}</div>{% endif %}</div>{% endif %}
+      {% if not v.texts.original and not v.texts.translated %}<p class="hint">{{ t("commentary-cleared") }}</p>{% endif %}
     </div>
   </li>
   {% endfor %}
 </ol>
 {% else %}
-<p class="empty">No changes found.</p>
+<p class="empty">{{ t("changes-none") }}</p>
 {% endif %}
-{% if next_url %}<nav class="pager" aria-label="Pages"><a class="button" href="{{ next_url }}" rel="next">Older</a></nav>{% endif %}
+{% if next_url %}<nav class="pager" aria-label="{{ t('pages') }}"><a class="button" href="{{ next_url }}" rel="next">{{ t("older-plain") }}</a></nav>{% endif %}
 {% endblock %}

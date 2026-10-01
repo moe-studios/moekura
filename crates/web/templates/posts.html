@@ -1,43 +1,43 @@
 {% extends "base.html" %}
 {% block title %}{% if search.tags %}{{ search.tags }} · {% endif %}{{ site.name }}{% endblock %}
-{% block head %}{% if feed_url %}<link rel="alternate" type="application/atom+xml" title="{{ search.tags or 'Newest posts' }}" href="{{ feed_url }}">{% endif %}{% endblock %}
+{% block head %}{% if feed_url %}<link rel="alternate" type="application/atom+xml" title="{{ search.tags or t('posts-newest') }}" href="{{ feed_url }}">{% endif %}{% endblock %}
 {% block content %}
 {% if search.error %}
 <p class="form-error" role="alert">{{ search.error }}</p>
-<p class="hint">See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.</p>
+<p class="hint">{{ t("posts-syntax") }}</p>
 {% else %}
 <div class="results-layout">
   <aside class="results-sidebar">
     {% if can_tag_script %}
     <section class="tag-script" data-tag-script hidden>
-      <h2>Tag script</h2>
-      <label for="tag-script">Script</label>
+      <h2>{{ t("tag-script") }}</h2>
+      <label for="tag-script">{{ t("bur-script") }}</label>
       <input id="tag-script" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="tag -tag rating:s">
-      <label class="choice"><input type="checkbox"> Apply by clicking posts</label>
+      <label class="choice"><input type="checkbox"> {{ t("tag-script-apply") }}</label>
       <p class="hint" data-tag-script-status aria-live="polite"></p>
     </section>
     {% endif %}
     {% if save_search %}
     <details class="edit save-search">
-      <summary>Save this search</summary>
+      <summary>{{ t("posts-save-search") }}</summary>
       <form method="post" action="/saved_searches">
         <input type="hidden" name="query" value="{{ save_search.query }}">
         <input type="hidden" name="back" value="true">
-        <label for="save-labels">Labels <span class="hint">(optional)</span></label>
-        <input id="save-labels" name="labels" autocomplete="off" spellcheck="false" placeholder="e.g. artists">
-        <button type="submit">Save</button>
+        <label for="save-labels">{{ t("saved-labels") }} <span class="hint">{{ t("optional") }}</span></label>
+        <input id="save-labels" name="labels" autocomplete="off" spellcheck="false" placeholder="{{ t('posts-labels-placeholder') }}">
+        <button type="submit">{{ t("common-save") }}</button>
       </form>
-      <p class="hint"><a href="{{ save_search.list_url }}">Your saved searches</a></p>
+      <p class="hint"><a href="{{ save_search.list_url }}">{{ t("posts-your-saved") }}</a></p>
     </details>
     {% endif %}
     {% if sidebar %}
-    <h2>Tags</h2>
+    <h2>{{ t("nav-tags") }}</h2>
     <ul class="tag-list">
       {% for tag in sidebar %}
       <li>
-        <a class="refine" href="{{ tag.include_url }}" title="Add to search" aria-label="Add {{ tag.name }} to search">+</a>
-        <a class="refine" href="{{ tag.exclude_url }}" title="Exclude from search" aria-label="Exclude {{ tag.name }} from search">–</a>
-        <a class="refine" href="{{ tag.wiki_url }}" title="Wiki" aria-label="Wiki page for {{ tag.name }}">?</a>
+        <a class="refine" href="{{ tag.include_url }}" title="{{ t('posts-add-to-search') }}" aria-label="{{ t('posts-add-tag', tag=tag.name) }}">+</a>
+        <a class="refine" href="{{ tag.exclude_url }}" title="{{ t('posts-exclude') }}" aria-label="{{ t('posts-exclude-tag', tag=tag.name) }}">–</a>
+        <a class="refine" href="{{ tag.wiki_url }}" title="{{ t('tag-nav-wiki') }}" aria-label="{{ t('posts-wiki-for', tag=tag.name) }}">?</a>
         <a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span>
       </li>
       {% endfor %}
@@ -48,13 +48,13 @@
     {% if wiki %}
     <aside class="wiki-excerpt">
       <div class="markup">{{ wiki.html }}</div>
-      <p class="hint"><a href="{{ wiki.url }}">Read the wiki page for {{ wiki.title }}</a></p>
+      <p class="hint"><a href="{{ wiki.url }}">{{ t("posts-read-wiki", title=wiki.title) }}</a></p>
     </aside>
     {% endif %}
-    {% if count %}<p class="result-count">{{ count }}{% if feed_url %} · <a href="{{ feed_url }}">Feed</a>{% endif %}
-      {% if blacklisted.show_url %}· {% if blacklisted.hidden %}{{ blacklisted.hidden }} hidden{% else %}{{ blacklisted.blurred }} blurred{% endif %} by your blacklist (<a href="{{ blacklisted.show_url }}">show</a>){% endif %}
-      {% if deleted %}· {{ deleted.count }} hidden (<a href="{{ deleted.show_url }}">show</a>){% endif %}
-      {% if blacklisted.hide_url %}· showing blacklisted posts (<a href="{{ blacklisted.hide_url }}">hide</a>){% endif %}
+    {% if count %}<p class="result-count">{{ count }}{% if feed_url %} · <a href="{{ feed_url }}">{{ t("feed") }}</a>{% endif %}
+      {% if blacklisted.show_url %}· {% if blacklisted.hidden %}{{ t("posts-blacklist-hidden", count=blacklisted.hidden, url=blacklisted.show_url) }}{% else %}{{ t("posts-blacklist-blurred", count=blacklisted.blurred, url=blacklisted.show_url) }}{% endif %}{% endif %}
+      {% if deleted %}· {{ t("posts-deleted-hidden", count=deleted.count, url=deleted.show_url) }}{% endif %}
+      {% if blacklisted.hide_url %}· {{ t("posts-blacklist-showing", url=blacklisted.hide_url) }}{% endif %}
     </p>{% endif %}
     {% if cards or blacklisted.hidden %}
     <ul class="post-grid">
@@ -65,34 +65,35 @@
       {% endfor %}
     </ul>
     {% if pager.previous or pager.next or pager.numbers %}
-    <nav class="pager" aria-label="Pages">
-      {% if pager.previous %}<a class="button" href="{{ pager.previous }}" rel="prev">Previous</a>{% endif %}
+    <nav class="pager" aria-label="{{ t('pages') }}">
+      {% if pager.previous %}<a class="button" href="{{ pager.previous }}" rel="prev">{{ t("previous") }}</a>{% endif %}
       {% for n in pager.numbers %}
         {% if n.gap %}<span class="gap">…</span>
         {% elif n.current %}<span class="current" aria-current="page">{{ n.number }}</span>
         {% else %}<a href="{{ n.url }}">{{ n.number }}</a>{% endif %}
       {% endfor %}
-      {% if pager.next %}<a class="button" href="{{ pager.next }}" rel="next">Next</a>{% endif %}
+      {% if pager.next %}<a class="button" href="{{ pager.next }}" rel="next">{{ t("next") }}</a>{% endif %}
     </nav>
     {% endif %}
     {% elif search.tags %}
     <section class="empty">
-      <h1>Nothing found</h1>
-      <p>No posts match <strong>{{ search.tags }}</strong>.</p>
+      <h1>{{ t("posts-nothing-found") }}</h1>
+      <p>{{ t("posts-no-match", tags=search.tags) }}</p>
       {% for item in did_you_mean %}
-      <p>Did you mean {% for r in item.replacements %}<a href="{{ r.url }}"><strong>{{ r.name }}</strong></a>{% if not loop.last %} or {% endif %}{% endfor %}{% if did_you_mean|length > 1 or search.tags != item.term %} instead of {{ item.term }}{% endif %}?</p>
+      {% set options %}{% for r in item.replacements %}<a href="{{ r.url }}"><strong>{{ r.name }}</strong></a>{% if not loop.last %} {{ t("or") }} {% endif %}{% endfor %}{% endset %}
+      <p>{% if did_you_mean|length > 1 or search.tags != item.term %}{{ t("posts-did-you-mean-instead", options=options, term=item.term) }}{% else %}{{ t("posts-did-you-mean", options=options) }}{% endif %}</p>
       {% endfor %}
       {% set terms = search.tags|split %}
       <p>
-        {% if terms|length > 1 %}{% if terms[-2]|lower != "or" and terms[-1] is not endingwith(")") %}Try without the last term: <a href="{{ search_url(terms[:-1]|join(' ')) }}">{{ terms[:-1]|join(' ') }}</a>.{% endif %}
-        {% elif not did_you_mean and terms[0] is not startingwith("-") and ":" not in terms[0] %}<a href="/tags?name={{ terms[0]|urlencode }}*">Look for tags starting with {{ terms[0] }}</a>, in case of a typo.{% endif %}
+        {% if terms|length > 1 %}{% if terms[-2]|lower != "or" and terms[-1] is not endingwith(")") %}{{ t("posts-try-without", url=search_url(terms[:-1]|join(' ')), terms=terms[:-1]|join(' ')) }}{% endif %}
+        {% elif not did_you_mean and terms[0] is not startingwith("-") and ":" not in terms[0] %}{{ t("posts-look-for-tags", url="/tags?name=" ~ terms[0]|urlencode ~ "*", term=terms[0]) }}{% endif %}
       </p>
-      <p class="hint">See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.</p>
+      <p class="hint">{{ t("posts-syntax") }}</p>
     </section>
     {% else %}
     <section class="empty">
-      <h1>No posts yet</h1>
-      {% if can_upload %}<p><a href="/upload">Upload the first one</a></p>{% endif %}
+      <h1>{{ t("posts-none-yet") }}</h1>
+      {% if can_upload %}<p><a href="/upload">{{ t("posts-upload-first") }}</a></p>{% endif %}
     </section>
     {% endif %}
   </section>

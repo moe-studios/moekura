@@ -1257,7 +1257,7 @@ mod tests {
         let form = app.get("/upload", Some(&member)).await;
         assert!(
             form.body
-                .contains("You can upload\n    1 more before some are approved"),
+                .contains("You can upload 1 more before some are approved"),
             "{}",
             form.body
         );

@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}News · {{ site.name }}{% endblock %}
+{% block title %}{{ t("admin-nav-news") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "admin_nav.html" %}
-<h1>News</h1>
-<p class="hint">The newest news that hasn't expired is shown at the top of every page until each reader dismisses it.</p>
+<h1>{{ t("admin-nav-news") }}</h1>
+<p class="hint">{{ t("news-hint") }}</p>
 <section class="card medium">
-  <h2>Post news</h2>
+  <h2>{{ t("news-post") }}</h2>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/admin/news">
     {% include "news_fields.html" %}
-    <button type="submit">Post</button>
+    <button type="submit">{{ t("forum-post-button") }}</button>
   </form>
 </section>
 {% if news %}
@@ -17,22 +17,22 @@
   {% for n in news %}
   <li id="news-{{ n.id }}"{% if n.deleted %} class="deleted"{% endif %}>
     <div class="history-head">
-      <span class="status">{{ n.state }}</span>
-      <span class="hint">{% if n.creator %}by <a href="/users/{{ n.creator|urlencode }}">{{ n.creator }}</a> · {% endif %}{{ n.date }}{% if n.until %} · until {{ n.until }}{% endif %}</span>
-      <a href="/admin/news/{{ n.id }}">Edit</a>
-      <form method="post" action="/admin/news/{{ n.id }}/{{ 'restore' if n.deleted else 'delete' }}"><button type="submit" class="secondary">{{ "Restore" if n.deleted else "Delete" }}</button></form>
+      <span class="status">{{ t("news-state-" ~ n.state) }}</span>
+      <span class="hint">{% if n.creator %}{{ t("by-link", url="/users/" ~ n.creator|urlencode, user=n.creator) }} · {% endif %}{{ n.date }}{% if n.until %} · {{ t("news-until", day=n.until) }}{% endif %}</span>
+      <a href="/admin/news/{{ n.id }}">{{ t("edit") }}</a>
+      <form method="post" action="/admin/news/{{ n.id }}/{{ 'restore' if n.deleted else 'delete' }}"><button type="submit" class="secondary">{{ t("restore") if n.deleted else t("delete") }}</button></form>
     </div>
     <div class="markup">{{ n.html }}</div>
   </li>
   {% endfor %}
 </ol>
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% else %}
-<p class="empty">No news yet.</p>
+<p class="empty">{{ t("news-none") }}</p>
 {% endif %}
 {% endblock %}

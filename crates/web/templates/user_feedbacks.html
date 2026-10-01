@@ -1,34 +1,34 @@
 {% extends "base.html" %}
-{% block title %}{% if user %}Feedback on {{ user }}{% else %}User feedback{% endif %} · {{ site.name }}{% endblock %}
+{% block title %}{% if user %}{{ t("feedback-on", user=user) }}{% else %}{{ t("feedback-user") }}{% endif %} · {{ site.name }}{% endblock %}
 {% block content %}
 {% if user %}<p class="back"><a href="/users/{{ user|urlencode }}">« {{ user }}</a></p>{% endif %}
-<h1>{% if user %}Feedback on {{ user }}{% elif creator %}Feedback by {{ creator }}{% else %}User feedback{% endif %}</h1>
-<nav class="subnav" aria-label="Categories">
-  {% for c in categories %}<a href="{{ c.url }}"{% if c.current %} aria-current="page"{% endif %}>{{ c.label|capitalize }}</a>{% endfor %}
+<h1>{% if user %}{{ t("feedback-on", user=user) }}{% elif creator %}{{ t("feedback-by", user=creator) }}{% else %}{{ t("feedback-user") }}{% endif %}</h1>
+<nav class="subnav" aria-label="{{ t('categories') }}">
+  {% for c in categories %}<a href="{{ c.url }}"{% if c.current %} aria-current="page"{% endif %}>{{ t("feedback-category-" ~ c.label) }}</a>{% endfor %}
 </nav>
-{% if new_url %}<p><a class="button" href="{{ new_url }}">Leave feedback</a></p>{% endif %}
+{% if new_url %}<p><a class="button" href="{{ new_url }}">{{ t("feedback-leave") }}</a></p>{% endif %}
 {% if feedbacks %}
 <ol class="history">
   {% for f in feedbacks %}
   <li id="feedback-{{ f.id }}"{% if f.deleted %} class="deleted"{% endif %}>
     <div class="history-head">
-      <span class="status status-{{ f.category }}">{{ f.category }}</span>
-      {% if not user %}<strong>on <a href="/users/{{ f.user|urlencode }}">{{ f.user }}</a></strong>{% endif %}
-      <span class="hint">by {% if f.creator %}<a href="/users/{{ f.creator|urlencode }}">{{ f.creator }}</a>{% else %}(gone){% endif %} · {{ f.date }}{% if f.edited %} · edited{% endif %}{% if f.deleted %} · deleted{% endif %}</span>
-      {% if f.can_edit %}<a href="/user_feedbacks/{{ f.id }}/edit">Edit</a>{% endif %}
-      {% if f.can_delete %}<form method="post" action="/user_feedbacks/{{ f.id }}/{{ 'restore' if f.deleted else 'delete' }}"><button type="submit" class="secondary">{{ "Restore" if f.deleted else "Delete" }}</button></form>{% endif %}
+      <span class="status status-{{ f.category }}">{{ t("feedback-kind-" ~ f.category) }}</span>
+      {% if not user %}<strong>{{ t("feedback-on-link", url="/users/" ~ f.user|urlencode, user=f.user) }}</strong>{% endif %}
+      <span class="hint">{% if f.creator %}{{ t("by-link", url="/users/" ~ f.creator|urlencode, user=f.creator) }}{% else %}{{ t("by-user", user=t("gone")) }}{% endif %} · {{ f.date }}{% if f.edited %} · {{ t("edited") }}{% endif %}{% if f.deleted %} · {{ t("status-deleted") }}{% endif %}</span>
+      {% if f.can_edit %}<a href="/user_feedbacks/{{ f.id }}/edit">{{ t("edit") }}</a>{% endif %}
+      {% if f.can_delete %}<form method="post" action="/user_feedbacks/{{ f.id }}/{{ 'restore' if f.deleted else 'delete' }}"><button type="submit" class="secondary">{{ t("restore") if f.deleted else t("delete") }}</button></form>{% endif %}
     </div>
     <div class="markup">{{ f.html }}</div>
   </li>
   {% endfor %}
 </ol>
 {% if previous_url or next_url %}
-<nav class="pager" aria-label="Pages">
-  {% if previous_url %}<a href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
-  {% if next_url %}<a href="{{ next_url }}" rel="next">Next</a>{% endif %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% else %}
-<p class="empty">No feedback.</p>
+<p class="empty">{{ t("feedback-none") }}</p>
 {% endif %}
 {% endblock %}

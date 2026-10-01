@@ -1,6 +1,8 @@
 // Sends the vote and favorite forms in the background and updates the
 // counts in place. Without scripts, the forms submit and reload the page.
 
+import { t } from "./i18n.ts";
+
 import { toast } from "./toast.ts";
 
 // A post's reactions, or a comment's (score and vote only).
@@ -18,7 +20,7 @@ function update(root: ParentNode, state: Reactions): void {
   if (favCount && state.fav_count !== undefined) favCount.textContent = String(state.fav_count);
   for (const button of root.querySelectorAll<HTMLButtonElement>(".vote button[name=score]")) {
     // Each button votes its way, or takes the vote back when pressed.
-    const direction = button.getAttribute("aria-label") === "Vote up" ? 1 : -1;
+    const direction = button.dataset.vote === "up" ? 1 : -1;
     const pressed = state.vote === direction;
     button.setAttribute("aria-pressed", String(pressed));
     button.value = String(pressed ? 0 : direction);
@@ -50,7 +52,7 @@ export function enhanceReactions(root: Document = document): void {
         .then(async (response) => {
           // Nothing to show on a page of its own: say so and stay.
           if (response.status === 429) {
-            toast("That was too quick. Wait a moment, then try again.");
+            toast(t("too-quick", "That was too quick. Wait a moment, then try again."));
             return;
           }
           if (!response.ok) throw new Error(String(response.status));

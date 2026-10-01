@@ -131,7 +131,6 @@ async fn index(
         context! {
             kind => kind.as_str(),
             path => Value::from_safe_string(path(kind).to_owned()),
-            title => match kind { Kind::Alias => "Tag aliases", Kind::Implication => "Tag implications" },
             relations => rows,
             statuses => Status::ALL.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
             query => context! { name => query.name, status => query.status },

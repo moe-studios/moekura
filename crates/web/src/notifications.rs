@@ -234,7 +234,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
             notifications => found.iter().map(|n| context! {
                 id => n.id,
                 actor => n.actor_name,
-                says => describe(&n.kind),
+                kind => n.kind,
                 subject => n.subject,
                 read => n.is_read,
                 date => crate::dates::day(n.created_at),

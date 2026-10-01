@@ -1,56 +1,56 @@
 {% extends "base.html" %}
-{% block title %}Purge deleted posts · {{ site.name }}{% endblock %}
+{% block title %}{{ t("purge-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "moderation_nav.html" %}
-<h1>Purge deleted posts</h1>
-<p class="hint">Purging removes deleted posts, their files and their history for good, in the background; it can't be undone. Search the deleted posts (<code>user:name</code>, tags and so on; <code>status:deleted</code> is implied), or leave the search empty for all of them, then purge those you tick or every match.</p>
+<h1>{{ t("purge-title") }}</h1>
+<p class="hint">{{ t("purge-hint") }}</p>
 <form class="filters" method="get" action="/moderation/purge">
   <div class="filter-field">
-    <label for="purge-tags">Search</label>
-    <input id="purge-tags" name="tags" value="{{ tags or '' }}" placeholder="user:name, tags…" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+    <label for="purge-tags">{{ t("search") }}</label>
+    <input id="purge-tags" name="tags" value="{{ tags or '' }}" placeholder="{{ t('purge-placeholder') }}" autocapitalize="none" spellcheck="false" data-autocomplete="search">
   </div>
-  <button type="submit">Preview</button>
+  <button type="submit">{{ t("preview") }}</button>
 </form>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 {% if preview %}
 <section class="mass-preview">
   <h2><a href="{{ preview.search_url }}">{{ preview.count }}</a></h2>
   {% if preview.empty %}
-  <p class="empty">No deleted posts match.</p>
+  <p class="empty">{{ t("purge-none-match") }}</p>
   {% else %}
   <form id="purge" class="bulk-review" method="post" action="/moderation/purge">
     <input type="hidden" name="tags" value="{{ preview.query }}">
-    <label class="choice select-all"><input type="checkbox" data-select-all="purge"> Tick every post shown</label>
-    <label class="choice"><input type="checkbox" name="confirm" value="yes" required> Remove these posts, their files and their history for good</label>
-    <button type="submit" name="scope" value="ticked" class="danger" data-confirm="Purge the ticked posts for good?">Purge ticked</button>
-    <button type="submit" name="scope" value="all" class="danger" data-confirm="Purge all {{ preview.count }} for good?">Purge all {{ preview.count }}</button>
-    <p class="hint">Up to {{ ticked_max }} ticked posts at once. Posts restored before the purge gets to them are left alone.</p>
+    <label class="choice select-all"><input type="checkbox" data-select-all="purge"> {{ t("tick-every-shown") }}</label>
+    <label class="choice"><input type="checkbox" name="confirm" value="yes" required> {{ t("purge-confirm") }}</label>
+    <button type="submit" name="scope" value="ticked" class="danger" data-confirm="{{ t('purge-ticked-confirm') }}">{{ t("purge-ticked") }}</button>
+    <button type="submit" name="scope" value="all" class="danger" data-confirm="{{ t('purge-all-confirm', count=preview.count) }}">{{ t("purge-all", count=preview.count) }}</button>
+    <p class="hint">{{ t("purge-limit", max=ticked_max) }}</p>
   </form>
   <ul class="post-grid tickable">
     {% for p in preview.posts %}
-    <li><input type="checkbox" name="ids" value="{{ p.id }}" form="purge" aria-label="Tick #{{ p.id }}">{% with card = p.card %}{% include "card.html" %}{% endwith %}</li>
+    <li><input type="checkbox" name="ids" value="{{ p.id }}" form="purge" aria-label="{{ t('tick-post', id=p.id) }}">{% with card = p.card %}{% include "card.html" %}{% endwith %}</li>
     {% endfor %}
   </ul>
   {% endif %}
 </section>
 {% endif %}
-<h2>Recent purges</h2>
+<h2>{{ t("purge-recent") }}</h2>
 {% if recent %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Moderation purge table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('purge-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">Posts</th><th scope="col">Progress</th><th scope="col">Started</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("nav-posts") }}</th><th scope="col">{{ t("progress") }}</th><th scope="col">{{ t("started") }}</th></tr></thead>
   <tbody>
     {% for b in recent %}
     <tr>
-      <td>{% if b.query %}<a href="{{ b.search_url }}">{{ b.query }}</a>{% else %}{{ b.ticked }} ticked post{{ "s" if b.ticked != 1 }}{% endif %}</td>
-      <td><span class="status status-{{ b.status }}">{{ b.status }}</span> {{ b.done }} of {{ b.total }} purged{% if b.skipped %}, {{ b.skipped }} skipped{% endif %}{% if b.failed %}, {{ b.failed }} failed{% endif %}{% if b.error %}<div class="hint">{{ b.error }}</div>{% endif %}</td>
-      <td>{{ b.when }}{% if b.by %} by {{ b.by }}{% endif %}</td>
+      <td>{% if b.query %}<a href="{{ b.search_url }}">{{ b.query }}</a>{% else %}{{ t("purge-ticked-count", count=b.ticked) }}{% endif %}</td>
+      <td><span class="status status-{{ b.status }}">{{ t("status-" ~ b.status) }}</span> {{ t("purge-progress", done=b.done, total=b.total) }}{% if b.skipped %}{{ t("batch-skipped", count=b.skipped) }}{% endif %}{% if b.failed %}{{ t("batch-failed", count=b.failed) }}{% endif %}{% if b.error %}<div class="hint">{{ b.error }}</div>{% endif %}</td>
+      <td>{{ b.when }}{% if b.by %} {{ t("by-user", user=b.by) }}{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% else %}
-<p class="empty">No purges yet.</p>
+<p class="empty">{{ t("purge-none") }}</p>
 {% endif %}
 {% endblock %}

@@ -1,19 +1,19 @@
 {% extends "base.html" %}
-{% block title %}Your name · {{ site.name }}{% endblock %}
+{% block title %}{{ t("name-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<p class="back"><a href="/settings">« Settings</a></p>
+<p class="back"><a href="/settings">« {{ t("nav-settings") }}</a></p>
 <section class="card medium">
-  <h1>Your name</h1>
-  <p>You're <strong>{{ current }}</strong>.</p>
+  <h1>{{ t("name-title") }}</h1>
+  <p>{{ t("name-current", name=current) }}</p>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   {% if next %}
-  {% if not error %}<p>You can change your name once every {{ days }} days; you can next change it on {{ next }}.</p>{% endif %}
+  {% if not error %}<p>{{ t("name-wait", days=days, next=next) }}</p>{% endif %}
   {% else %}
   <form method="post" action="/settings/name">
-    <label for="name">New name</label>
+    <label for="name">{{ t("name-new") }}</label>
     <input id="name" name="name" value="{{ name }}" required minlength="2" maxlength="32" autocomplete="username" autocapitalize="none" spellcheck="false">
-    <p class="hint">Letters, digits, <code>_</code>, <code>.</code> and <code>-</code>. You log in with it from now on. Your old name stays on your profile, and links and searches using it keep finding you, unless someone else takes it. You can change it again after {{ days }} days.</p>
-    <button type="submit">Change name</button>
+    <p class="hint">{{ t("name-hint", days=days) }}</p>
+    <button type="submit">{{ t("name-change") }}</button>
   </form>
   {% endif %}
 </section>

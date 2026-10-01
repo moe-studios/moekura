@@ -1,5 +1,7 @@
 // Files from the clipboard and drag-and-drop use the same native multipart
 // field as the picker. Selecting a file never submits the form.
+
+import { t } from "./i18n.ts";
 export function enableUpload(root: Document = document): void {
   const form = root.querySelector<HTMLFormElement>("form[data-upload]");
   const input = form?.querySelector<HTMLInputElement>('input[type="file"]');
@@ -13,7 +15,7 @@ export function enableUpload(root: Document = document): void {
 
   const select = (files: FileList): void => {
     if (files.length !== 1) {
-      status.textContent = "Choose one file at a time. Your current selection has not changed.";
+      status.textContent = t("upload-one-file", "Choose one file at a time. Your current selection has not changed.");
       return;
     }
     const transfer = new DataTransfer();
@@ -22,7 +24,7 @@ export function enableUpload(root: Document = document): void {
     input.dispatchEvent(new Event("change", { bubbles: true }));
   };
   input.addEventListener("change", () => {
-    status.textContent = input.files?.[0] ? `Selected: ${input.files[0].name}` : "";
+    status.textContent = input.files?.[0] ? t("upload-selected", "Selected: {$name}", { name: input.files[0].name }) : "";
   });
 
   root.addEventListener("paste", (event) => {

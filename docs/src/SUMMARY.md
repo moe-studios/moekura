@@ -22,6 +22,7 @@
 - [Site news](admin/news.md)
 - [Webhooks](admin/webhooks.md)
 - [Themes](admin/themes.md)
+- [Translations](admin/translations.md)
 - [Backups](admin/backups.md)
 - [Bulk import](admin/import.md)
 - [The tagger](admin/tagger.md)

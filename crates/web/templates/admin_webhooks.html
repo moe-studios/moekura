@@ -1,41 +1,41 @@
 {% extends "base.html" %}
-{% block title %}Webhooks · {{ site.name }}{% endblock %}
+{% block title %}{{ t("admin-nav-webhooks") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "admin_nav.html" %}
-<h1>Webhooks</h1>
-<p class="hint">Webhooks tell other services (a Discord bot, a mirror, your own scripts) about events here, as signed JSON POSTs.</p>
+<h1>{{ t("admin-nav-webhooks") }}</h1>
+<p class="hint">{{ t("webhooks-hint") }}</p>
 {% if hooks %}
-<div class="table-scroll" tabindex="0" role="region" aria-label="Admin webhooks table">
+<div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('webhooks-table') }}">
 <table class="tag-table">
-  <thead><tr><th scope="col">URL</th><th scope="col">Events</th><th scope="col">State</th></tr></thead>
+  <thead><tr><th scope="col">{{ t("url") }}</th><th scope="col">{{ t("webhooks-events") }}</th><th scope="col">{{ t("state") }}</th></tr></thead>
   <tbody>
     {% for h in hooks %}
     <tr>
       <td><a href="/admin/webhooks/{{ h.id }}">{{ h.url }}</a>{% if h.description %}<div class="hint">{{ h.description }}</div>{% endif %}</td>
       <td>{{ h.events|join(", ") }}</td>
-      <td>{% if h.enabled %}on{% else %}<span class="hint">off</span>{% endif %}</td>
+      <td>{% if h.enabled %}{{ t("on") }}{% else %}<span class="hint">{{ t("off") }}</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 </div>
 {% else %}
-<p class="empty">No webhooks yet.</p>
+<p class="empty">{{ t("webhooks-none") }}</p>
 {% endif %}
 <section class="card medium">
-  <h2>Add a webhook</h2>
+  <h2>{{ t("webhooks-add") }}</h2>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/admin/webhooks">
-    <label for="hook-url">URL</label>
+    <label for="hook-url">{{ t("url") }}</label>
     <input id="hook-url" name="url" type="url" value="{{ form.url }}" required>
-    <label for="hook-description">Description <span class="optional">(optional)</span></label>
+    <label for="hook-description">{{ t("description") }} <span class="optional">{{ t("optional") }}</span></label>
     <input id="hook-description" name="description" value="{{ form.description }}" maxlength="200">
     <fieldset class="permissions">
-      <legend>Send</legend>
-      {% for e in form.events %}<label class="choice"><input type="checkbox" name="{{ e.name }}"{% if e.chosen %} checked{% endif %}> {{ e.label }} <code>{{ e.name }}</code></label>{% endfor %}
+      <legend>{{ t("webhooks-send") }}</legend>
+      {% for e in form.events %}<label class="choice"><input type="checkbox" name="{{ e.name }}"{% if e.chosen %} checked{% endif %}> {{ t("webhook-event-" ~ e.name|replace(".", "_")) }} <code>{{ e.name }}</code></label>{% endfor %}
     </fieldset>
     <input type="hidden" name="enabled" value="on">
-    <button type="submit">Add webhook</button>
+    <button type="submit">{{ t("webhooks-add-button") }}</button>
   </form>
 </section>
 {% endblock %}

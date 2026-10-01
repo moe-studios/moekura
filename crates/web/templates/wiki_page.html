@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ title }} · Wiki · {{ site.name }}{% endblock %}
+{% block title %}{{ title }} · {{ t("tag-nav-wiki") }} · {{ site.name }}{% endblock %}
 {% block head %}{% include "preview_meta.html" %}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
@@ -7,20 +7,20 @@
   <header class="wiki-head">
     <h1 class="tag-{{ tag.category if tag else 'general' }}">{{ title }}</h1>
     <p class="hint">
-      {% if tag %}<a href="{{ search_url }}">{{ tag.count }} post{% if tag.count != 1 %}s{% endif %}</a>{% if tag.deprecated %} · deprecated tag{% endif %}{% endif %}
-      {% if wiki %}{% if tag %} · {% endif %}version {{ wiki.version }}, {{ wiki.date }}{% if wiki.updater %} by {{ wiki.updater }}{% endif %}
-      · <a href="{{ url }}/history">History</a>{% endif %}
-      {% if artist %} · <a href="{{ artist.url }}">Artist entry</a>{% if artist.banned %} (banned){% endif %}{% elif can_edit and tag and tag.category == "artist" %} · <a href="/artists/new?name={{ name|urlencode }}">Start an artist entry</a>{% endif %}
-      {% if can_edit %} · <a href="{{ url }}/edit">{% if wiki %}Edit{% else %}Start this page{% endif %}</a>{% endif %}
+      {% if tag %}<a href="{{ search_url }}">{{ t("post-count", count=tag.count) }}</a>{% if tag.deprecated %} · {{ t("wiki-deprecated-tag") }}{% endif %}{% endif %}
+      {% if wiki %}{% if tag %} · {% endif %}{% if wiki.updater %}{{ t("wiki-version-by", version=wiki.version, date=wiki.date, user=wiki.updater) }}{% else %}{{ t("wiki-version", version=wiki.version, date=wiki.date) }}{% endif %}
+      · <a href="{{ url }}/history">{{ t("tag-nav-history") }}</a>{% endif %}
+      {% if artist %} · <a href="{{ artist.url }}">{{ t("wiki-artist-entry") }}</a>{% if artist.banned %} {{ t("wiki-artist-banned") }}{% endif %}{% elif can_edit and tag and tag.category == "artist" %} · <a href="/artists/new?name={{ name|urlencode }}">{{ t("wiki-artist-start") }}</a>{% endif %}
+      {% if can_edit %} · <a href="{{ url }}/edit">{% if wiki %}{{ t("edit") }}{% else %}{{ t("wiki-start-this") }}{% endif %}</a>{% endif %}
     </p>
   </header>
-  {% if other_names %}<p class="other-names"><span class="hint">Other names:</span> {% for name in other_names %}{{ name }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
-  {% if alias_of %}<p class="notice">This tag is an alias of <a href="{{ alias_of.url }}">{{ alias_of.title }}</a>.</p>{% endif %}
-  {% if old_version %}<p class="notice">This is an old version ({{ old_version }}) of the page. <a href="{{ url }}">See the current one</a>.</p>{% endif %}
+  {% if other_names %}<p class="other-names"><span class="hint">{{ t("wiki-other-names") }}</span> {% for name in other_names %}{{ name }}{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  {% if alias_of %}<p class="notice">{{ t("wiki-alias-of", url=alias_of.url, title=alias_of.title) }}</p>{% endif %}
+  {% if old_version %}<p class="notice">{{ t("wiki-old-version", version=old_version, url=url) }}</p>{% endif %}
   {% if html %}
   <div class="markup">{{ html }}</div>
   {% else %}
-  <p class="empty">There's no wiki page for {{ title }} yet.</p>
+  <p class="empty">{{ t("wiki-none", title=title) }}</p>
   {% endif %}
 </article>
 {% endblock %}

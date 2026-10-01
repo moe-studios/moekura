@@ -1,41 +1,41 @@
 {% extends "base.html" %}
-{% block title %}Tag changes · {{ site.name }}{% endblock %}
+{% block title %}{{ t("tag-changes") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
-<h1>Tag changes</h1>
+<h1>{{ t("tag-changes") }}</h1>
 <form class="filters" method="get" action="/tag_versions">
   <div class="filter-field">
-    <label for="tv-tag">Tag</label>
+    <label for="tv-tag">{{ t("tag") }}</label>
     <input id="tv-tag" name="tag" value="{{ query.tag }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
   </div>
   <div class="filter-field">
-    <label for="tv-user">By</label>
+    <label for="tv-user">{{ t("by") }}</label>
     <input id="tv-user" name="user" value="{{ query.user }}" size="12">
   </div>
-  <button type="submit">Filter</button>
+  <button type="submit">{{ t("filter") }}</button>
 </form>
 {% if versions %}
 <ol class="history">
   {% for v in versions %}
   <li>
     <div class="history-head">
-      <a class="tag tag-{{ v.category }}" href="{{ v.url }}">{{ v.name }}</a> <a class="hint" href="/tag_versions?tag={{ v.name | urlencode }}">version {{ v.version }}</a>
+      <a class="tag tag-{{ v.category }}" href="{{ v.url }}">{{ v.name }}</a> <a class="hint" href="/tag_versions?tag={{ v.name | urlencode }}">{{ t("version-lower", number=v.version) }}</a>
       <span class="hint">
         {{ v.date }} {{ v.time }}
-        {% if v.updater %}· by <a href="/tag_versions?user={{ v.updater | urlencode }}">{{ v.updater }}</a>{% endif %}
-        {% if v.created %}· created{% endif %}
+        {% if v.updater %}· {{ t("by-link", url="/tag_versions?user=" ~ v.updater|urlencode, user=v.updater) }}{% endif %}
+        {% if v.created %}· {{ t("created") }}{% endif %}
       </span>
     </div>
     <ul class="changes">
-      {% if v.renamed_from %}<li>renamed from {{ v.renamed_from }}</li>{% endif %}
-      {% if v.category_label %}<li>category: {% if v.previous_category_label %}{{ v.previous_category_label }} → {% endif %}{{ v.category_label }}</li>{% endif %}
-      {% if v.deprecated is true %}<li class="removed">deprecated</li>{% elif v.deprecated is false and not v.created %}<li class="added">no longer deprecated</li>{% endif %}
+      {% if v.renamed_from %}<li>{{ t("renamed-from", name=v.renamed_from) }}</li>{% endif %}
+      {% if v.category_label %}<li>{{ t("tag-history-category") }} {% if v.previous_category_label %}{{ v.previous_category_label }} → {% endif %}{{ v.category_label }}</li>{% endif %}
+      {% if v.deprecated is true %}<li class="removed">{{ t("deprecated") }}</li>{% elif v.deprecated is false and not v.created %}<li class="added">{{ t("no-longer-deprecated") }}</li>{% endif %}
     </ul>
   </li>
   {% endfor %}
 </ol>
-{% if older_url %}<nav class="pager"><a class="button" href="{{ older_url }}" rel="next">Older</a></nav>{% endif %}
+{% if older_url %}<nav class="pager"><a class="button" href="{{ older_url }}" rel="next">{{ t("older-plain") }}</a></nav>{% endif %}
 {% else %}
-<p class="empty">No changes found.</p>
+<p class="empty">{{ t("changes-none") }}</p>
 {% endif %}
 {% endblock %}

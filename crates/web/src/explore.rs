@@ -307,21 +307,18 @@ impl Range {
         }
     }
 
-    fn label(&self) -> String {
-        let long = time::macros::format_description!("[day padding:none] [month repr:long] [year]");
-        let day = |d: Date| d.format(long).unwrap_or_default();
+    /// What the range covers, as parts for the template to word: a day,
+    /// the first and last days of a week, or a month.
+    fn label(&self) -> Value {
+        let day =
+            |d: Date| context! { day => d.day(), month => u8::from(d.month()), year => d.year() };
         match self.scale {
-            Scale::Day => day(self.date),
+            Scale::Day => context! { scale => "day", day => day(self.date) },
             Scale::Week => {
                 let (from, to) = self.days();
-                format!("{} to {}", day(from), day(to))
+                context! { scale => "week", from => day(from), to => day(to) }
             }
-            Scale::Month => self
-                .date
-                .format(time::macros::format_description!(
-                    "[month repr:long] [year]"
-                ))
-                .unwrap_or_default(),
+            Scale::Month => context! { scale => "month", day => day(self.date) },
         }
     }
 
@@ -551,9 +548,21 @@ mod tests {
         let month = Range::parse("2026-01-31", "month", today).unwrap();
         assert_eq!(month.step(true), date!(2026 - 02 - 28));
         assert_eq!(month.step(false), date!(2025 - 12 - 31));
-        assert_eq!(month.label(), "January 2026");
+        let label = month.label();
+        assert_eq!(label.get_attr("scale").unwrap(), Value::from("month"));
+        assert_eq!(
+            label.get_attr("day").unwrap().get_attr("month").unwrap(),
+            Value::from(1)
+        );
         let day = Range::parse("", "", today).unwrap();
-        assert_eq!(day.label(), "10 March 2026");
+        assert_eq!(
+            day.label()
+                .get_attr("day")
+                .unwrap()
+                .get_attr("day")
+                .unwrap(),
+            Value::from(10)
+        );
         assert!(day.context("/x").get_attr("next_url").unwrap().is_none());
     }
 

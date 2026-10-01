@@ -3,6 +3,8 @@
 // so several can be taken before saving. Without scripts, each click
 // saves.
 
+import { t } from "./i18n.ts";
+
 /** `tags` with `tag` added at the end, unless it is there already. */
 export function withTag(tags: string, tag: string): string {
   const words = tags.split(/\s+/).filter((word) => word !== "");
@@ -17,7 +19,7 @@ export function enableSuggestions(root: Document = document): void {
   const field = form?.querySelector<HTMLTextAreaElement>("textarea[name=tags]");
   if (!box || !form || !field) return;
   const hint = box.querySelector("[data-suggestions-hint]");
-  if (hint) hint.textContent = "Clicking one adds it to the form; save to keep it.";
+  if (hint) hint.textContent = t("suggestions-hint", "Clicking one adds it to the form; save to keep it.");
 
   box.addEventListener("click", (event) => {
     const button = (event.target as Element).closest<HTMLButtonElement>("button[name]");

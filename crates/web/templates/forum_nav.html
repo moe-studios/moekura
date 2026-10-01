@@ -1,4 +1,4 @@
-<nav class="subnav" aria-label="Forum">
-  <a href="/forum_topics"{% if path == "/forum_topics" %} aria-current="page"{% endif %}>Topics</a>
-  <a href="/forum_posts"{% if path == "/forum_posts" %} aria-current="page"{% endif %}>Search posts</a>
+<nav class="subnav" aria-label="{{ t('nav-forum') }}">
+  <a href="/forum_topics"{% if path == "/forum_topics" %} aria-current="page"{% endif %}>{{ t("forum-nav-topics") }}</a>
+  <a href="/forum_posts"{% if path == "/forum_posts" %} aria-current="page"{% endif %}>{{ t("forum-nav-search") }}</a>
 </nav>

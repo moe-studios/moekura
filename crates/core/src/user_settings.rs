@@ -96,6 +96,9 @@ pub struct UserSettings {
     pub shortcuts: bool,
     /// A stylesheet applied after the site's; empty for none.
     pub custom_css: String,
+    /// The language pages are shown in (a tag like `en-US`); `None`
+    /// follows the browser. It may name one the site no longer has.
+    pub language: Option<String>,
 }
 
 impl Default for UserSettings {
@@ -117,8 +120,14 @@ impl Default for UserSettings {
             autocomplete: true,
             shortcuts: true,
             custom_css: String::new(),
+            language: None,
         }
     }
+}
+
+/// Whether `tag` could be a language tag: letters, digits and dashes.
+pub fn is_language_tag(tag: &str) -> bool {
+    (2..=35).contains(&tag.len()) && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 /// Boolean settings that are on unless turned off. The rest are off
@@ -162,6 +171,11 @@ impl UserSettings {
             .filter(|css| css.len() <= MAX_CUSTOM_CSS)
             .unwrap_or_default()
             .to_owned();
+        let language = value
+            .get("language")
+            .and_then(Value::as_str)
+            .filter(|tag| is_language_tag(tag))
+            .map(str::to_owned);
         Self {
             per_page,
             mode,
@@ -179,6 +193,7 @@ impl UserSettings {
             autocomplete: flag("autocomplete"),
             shortcuts: flag("shortcuts"),
             custom_css,
+            language,
         }
     }
 
@@ -227,6 +242,10 @@ impl UserSettings {
         } else {
             map.insert("custom_css".into(), self.custom_css.as_str().into());
         }
+        match &self.language {
+            Some(tag) => map.insert("language".into(), tag.as_str().into()),
+            None => map.remove("language"),
+        };
         Value::Object(map)
     }
 }

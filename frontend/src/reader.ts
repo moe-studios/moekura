@@ -1,6 +1,8 @@
 // Remembers the last page read of each pool, in this browser, and offers
 // to continue from it on the pool's page. Nothing is sent to the server.
 
+import { t } from "./i18n.ts";
+
 const PREFIX = "moekura:read:";
 
 function load(pool: string): number | null {
@@ -50,7 +52,7 @@ export function enableReader(root: Document = document): void {
     const page = load(resumePool);
     if (page !== null && page > 1) {
       link.href = `/pools/${resumePool}/read/${page}`;
-      link.textContent = `Continue reading from page ${page}`;
+      link.textContent = t("reader-continue", "Continue reading from page {$page}", { page });
       resume.hidden = false;
     }
   }

@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 // Exercise the real form and committed browser bundle without a database.
 const template = readFileSync(new URL("../../crates/web/templates/upload.html", import.meta.url), "utf8");
 const form = template.slice(template.indexOf("  <form"), template.indexOf("</form>") + 7)
-  .replace(/{%[\s\S]*?%}/g, "").replace(/{{[\s\S]*?}}/g, "");
+  .replace(/{%[\s\S]*?%}/g, "").replace(/{{\s*t\("([\w-]+)"[\s\S]*?}}/g, "$1").replace(/{{[\s\S]*?}}/g, "");
 const script = readFileSync(new URL("../../crates/web/static/js/main.js", import.meta.url), "utf8");
 
 async function transfer(page: Page, kind: "paste" | "drop", names = ["picture.png"]): Promise<boolean> {

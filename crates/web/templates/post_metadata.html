@@ -1,25 +1,25 @@
 {% extends "base.html" %}
-{% block title %}Metadata of post #{{ post_id }} · {{ site.name }}{% endblock %}
+{% block title %}{{ t("metadata-title", id=post_id) }} · {{ site.name }}{% endblock %}
 {% block content %}
-<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>
-<h1>Metadata of post #{{ post_id }}</h1>
+<p class="back"><a href="/posts/{{ post_id }}">« {{ t("post-number", id=post_id) }}</a></p>
+<h1>{{ t("metadata-title", id=post_id) }}</h1>
 {% if groups %}
 {% for group in groups %}
 <section class="metadata-group">
   <h2>{{ group.label }}</h2>
-  <div class="table-scroll" tabindex="0" role="region" aria-label="Post metadata table">
+  <div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('metadata-table') }}">
   <table class="tag-table">
     <tbody>
       {% for f in group.fields %}
-      <tr><th scope="row"><a href="{{ search_url('exif:' ~ f.key|lower) }}" title="Posts with this field">{{ f.tag }}</a></th><td><a href="{{ search_url('exif:' ~ f.key|lower ~ '=' ~ f.value|lower|replace(' ', '_')) }}" title="Posts with this value">{{ f.value }}</a></td></tr>
+      <tr><th scope="row"><a href="{{ search_url('exif:' ~ f.key|lower) }}" title="{{ t('metadata-field-posts') }}">{{ f.tag }}</a></th><td><a href="{{ search_url('exif:' ~ f.key|lower ~ '=' ~ f.value|lower|replace(' ', '_')) }}" title="{{ t('metadata-value-posts') }}">{{ f.value }}</a></td></tr>
       {% endfor %}
     </tbody>
   </table>
   </div>
 </section>
 {% endfor %}
-<p class="hint">Locations, serial numbers and owners' names aren't shown. The original file is kept as uploaded, with whatever it contains.</p>
+<p class="hint">{{ t("metadata-hint") }}</p>
 {% else %}
-<p class="empty">This file has no metadata to show, or it hasn't been read yet.</p>
+<p class="empty">{{ t("metadata-none") }}</p>
 {% endif %}
 {% endblock %}

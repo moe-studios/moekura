@@ -4,6 +4,8 @@
 // box; the server reads them. Each change is in the post's history as
 // usual. Without scripts the panel stays hidden.
 
+import { t } from "./i18n.ts";
+
 import { NEGATABLE } from "./metatags.ts";
 
 export interface Script {
@@ -31,7 +33,7 @@ export function parseScript(text: string): Script {
     const lower = word.toLowerCase();
     if (lower.startsWith("rating:")) {
       const rating = RATINGS[lower.slice("rating:".length)];
-      if (!rating) throw new Error(`Unknown rating in “${word}”.`);
+      if (!rating) throw new Error(t("tag-script-rating", "Unknown rating in “{$word}”.", { word }));
       script.rating = rating;
     } else if (word.startsWith("-") && word.length > 1 && !isNegatedMetatag(lower)) {
       script.remove.push(word.slice(1));
@@ -84,7 +86,7 @@ export function enableTagScript(root: Document = document): void {
         return;
       }
       if (script.add.length === 0 && script.remove.length === 0 && script.rating === null) {
-        say("Type a script first.");
+        say(t("tag-script-empty", "Type a script first."));
         return;
       }
       const body: Record<string, unknown> = { add_tags: script.add, remove_tags: script.remove };
@@ -101,17 +103,22 @@ export function enableTagScript(root: Document = document): void {
           card.classList.remove("script-busy");
           if (response.ok) {
             card.classList.add("script-ok");
-            say(`Post #${id} changed.`);
+            say(t("tag-script-changed", "Post #{$id} changed.", { id }));
           } else {
             card.classList.add("script-failed");
             const error = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
-            say(`Post #${id}: ${error?.error?.message ?? `error ${response.status}`}`);
+            say(
+              t("tag-script-error", "Post #{$id}: {$error}", {
+                id,
+                error: error?.error?.message ?? t("error-status", "Error {$status}", { status: response.status }),
+              }),
+            );
           }
         })
         .catch(() => {
           card.classList.remove("script-busy");
           card.classList.add("script-failed");
-          say(`Post #${id} couldn't be changed.`);
+          say(t("tag-script-failed", "Post #{$id} couldn't be changed.", { id }));
         });
     },
     true,

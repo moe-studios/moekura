@@ -32,6 +32,7 @@
 </section>
 <h2>Deliveries</h2>
 {% if deliveries %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Admin webhook table">
 <table class="tag-table">
   <thead><tr><th scope="col">Event</th><th scope="col">Result</th><th scope="col">Sent</th></tr></thead>
   <tbody>
@@ -46,6 +47,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">Nothing sent yet.</p>
 {% endif %}

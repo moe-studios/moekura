@@ -11,6 +11,7 @@
   </div>
   {% endif %}
   {% if keys %}
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Api keys table">
   <table class="tag-table">
     <thead><tr><th>Name</th><th>Key</th><th>Created</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
     <tbody>
@@ -30,6 +31,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p class="hint">You have no API keys.</p>
   {% endif %}

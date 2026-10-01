@@ -4,29 +4,40 @@
 {% include "admin_nav.html" %}
 <h1>Users</h1>
 <form class="filters" method="get" action="/admin/users">
-  <label for="user-name">Name</label>
-  <input id="user-name" name="name" value="{{ query.name }}">
-  <label for="user-status">Status</label>
-  <select id="user-status" name="status">
-    <option value="">Any</option>
-    {% for s in ["active", "pending", "unverified", "deactivated"] %}<option value="{{ s }}"{% if query.status == s %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
-  </select>
-  <label for="user-role">Role</label>
-  <select id="user-role" name="role">
-    <option value="">Any</option>
-    {% for r in all_roles %}<option value="{{ r.id }}"{% if query.role == r.id %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
-  </select>
-  <label for="user-email">Email</label>
-  <input id="user-email" name="email" value="{{ query.email }}" size="16">
-  <label for="user-banned">Banned</label>
-  <select id="user-banned" name="banned">
-    <option value="">Either</option>
-    <option value="yes"{% if query.banned == "yes" %} selected{% endif %}>Banned</option>
-    <option value="no"{% if query.banned == "no" %} selected{% endif %}>Not banned</option>
-  </select>
+  <div class="filter-field">
+    <label for="user-name">Name</label>
+    <input id="user-name" name="name" value="{{ query.name }}">
+  </div>
+  <div class="filter-field">
+    <label for="user-status">Status</label>
+    <select id="user-status" name="status">
+      <option value="">Any</option>
+      {% for s in ["active", "pending", "unverified", "deactivated"] %}<option value="{{ s }}"{% if query.status == s %} selected{% endif %}>{{ s|capitalize }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label for="user-role">Role</label>
+    <select id="user-role" name="role">
+      <option value="">Any</option>
+      {% for r in all_roles %}<option value="{{ r.id }}"{% if query.role == r.id %} selected{% endif %}>{{ r.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label for="user-email">Email</label>
+    <input id="user-email" name="email" value="{{ query.email }}" size="16">
+  </div>
+  <div class="filter-field">
+    <label for="user-banned">Banned</label>
+    <select id="user-banned" name="banned">
+      <option value="">Either</option>
+      <option value="yes"{% if query.banned == "yes" %} selected{% endif %}>Banned</option>
+      <option value="no"{% if query.banned == "no" %} selected{% endif %}>Not banned</option>
+    </select>
+  </div>
   <button type="submit">Find</button>
 </form>
 {% if users %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Admin users table">
 <table class="tag-table">
   <thead><tr><th scope="col">Name</th><th scope="col">Joined</th><th scope="col">Role and status</th></tr></thead>
   <tbody>
@@ -58,6 +69,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No users found.</p>
 {% endif %}

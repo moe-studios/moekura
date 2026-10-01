@@ -4,10 +4,14 @@
 {% include "tag_nav.html" %}
 <h1>Related tags</h1>
 <form class="filters" method="get" action="/tags/related">
-  <label for="rt-tags">Tags</label>
-  <input id="rt-tags" name="tags" value="{{ query.tags }}" size="30" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
-  <label for="rt-tag">Related to</label>
-  <input id="rt-tag" name="tag" value="{{ query.tag }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags" placeholder="all of them">
+  <div class="filter-field">
+    <label for="rt-tags">Tags</label>
+    <input id="rt-tags" name="tags" value="{{ query.tags }}" size="30" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  </div>
+  <div class="filter-field">
+    <label for="rt-tag">Related to</label>
+    <input id="rt-tag" name="tag" value="{{ query.tag }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags" placeholder="all of them">
+  </div>
   <button type="submit">Show</button>
 </form>
 {% if groups %}

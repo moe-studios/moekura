@@ -160,10 +160,12 @@ pub enum ActionKind {
     ForumTopicMerge,
     ForumPostHide,
     ForumPostUnhide,
+    HeldApprove,
+    HeldReject,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 45] = [
+    pub const ALL: [ActionKind; 47] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -209,6 +211,8 @@ impl ActionKind {
         ActionKind::ForumTopicMerge,
         ActionKind::ForumPostHide,
         ActionKind::ForumPostUnhide,
+        ActionKind::HeldApprove,
+        ActionKind::HeldReject,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -258,6 +262,8 @@ impl ActionKind {
             ActionKind::ForumTopicMerge => "forum_topic.merge",
             ActionKind::ForumPostHide => "forum_post.hide",
             ActionKind::ForumPostUnhide => "forum_post.unhide",
+            ActionKind::HeldApprove => "held.approve",
+            ActionKind::HeldReject => "held.reject",
         }
     }
 
@@ -309,6 +315,8 @@ impl ActionKind {
             ActionKind::ForumTopicMerge => "merged forum topics",
             ActionKind::ForumPostHide => "hid a forum post by",
             ActionKind::ForumPostUnhide => "restored a forum post by",
+            ActionKind::HeldApprove => "let through writing held as spam, by",
+            ActionKind::HeldReject => "turned away writing held as spam, by",
         }
     }
 

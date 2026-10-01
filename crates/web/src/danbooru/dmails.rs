@@ -129,7 +129,8 @@ async fn create(
         }
         name => name.to_owned(),
     };
-    let copies = crate::dmails::send(&state, &current, &to, field("title"), field("body")).await?;
+    let (copies, _) =
+        crate::dmails::send(&state, &current, &to, field("title"), field("body")).await?;
     let sent = dmails::by_id(state.db.primary(), me, copies.sender_copy)
         .await?
         .ok_or(AppError::NotFound)?;

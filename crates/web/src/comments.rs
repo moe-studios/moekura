@@ -127,6 +127,51 @@ pub(crate) async fn commenter(
     Ok(user.id)
 }
 
+/// Posts `current`'s comment (already checked by [`commenter`]) as user
+/// `user`, unless the spam filter holds it; returns its id and whether it
+/// was held.
+pub(crate) async fn publish(
+    state: &AppState,
+    current: &CurrentUser,
+    post_id: i64,
+    user: i64,
+    body: &str,
+    bump: bool,
+) -> Result<(i64, bool), AppError> {
+    let held = crate::held::check(state, current, body).await?;
+    let id = comments::create_held(
+        state.db.primary(),
+        post_id,
+        user,
+        body,
+        bump,
+        held.as_deref(),
+    )
+    .await?;
+    tracing::info!(
+        post = post_id,
+        comment = id,
+        held = held.is_some(),
+        "comment posted"
+    );
+    if held.is_none() {
+        published(state, Some(user), id, post_id, body).await;
+    }
+    Ok((id, held.is_some()))
+}
+
+/// Tells webhooks and those mentioned or quoted of a new comment.
+pub(crate) async fn published(
+    state: &AppState,
+    creator: Option<i64>,
+    id: i64,
+    post_id: i64,
+    body: &str,
+) {
+    crate::webhooks::emit_comment(state, id).await;
+    crate::notifications::comment_posted(state, creator, id, post_id, body).await;
+}
+
 /// Checks `current` may change `comment`: their own, not deleted.
 pub(crate) fn check_author(current: &CurrentUser, comment: &Comment) -> Result<(), AppError> {
     current.require(Permission::Comment)?;
@@ -272,6 +317,7 @@ struct CommentForm {
 async fn create(
     page: Page,
     info: crate::auth::RequestInfo,
+    jar: CookieJar,
     Path(id): Path<i64>,
     Form(form): Form<CommentForm>,
 ) -> Result<Response, AppError> {
@@ -322,10 +368,14 @@ async fn create(
         }
     };
     let bump = form.do_not_bump.is_none();
-    let comment_id = comments::create(state.db.primary(), post.id, user, &body, bump).await?;
-    tracing::info!(post = post.id, comment = comment_id, "comment posted");
-    crate::webhooks::emit_comment(state, comment_id).await;
-    crate::notifications::comment_posted(state, &page.current, comment_id, post.id, &body).await;
+    let (comment_id, held) = publish(state, &page.current, post.id, user, &body, bump).await?;
+    if held {
+        return Ok((
+            flash::set(jar, Flash::Held),
+            Redirect::to(&format!("/posts/{}#comments", post.id)),
+        )
+            .into_response());
+    }
     Ok(Redirect::to(&format!("/posts/{}#comment-{comment_id}", post.id)).into_response())
 }
 

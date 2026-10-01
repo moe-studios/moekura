@@ -46,14 +46,29 @@ pub async fn create(
     body: &str,
     bump: bool,
 ) -> sqlx::Result<i64> {
+    create_held(db, post_id, creator_id, body, bump, None).await
+}
+
+/// [`create`], but when `held` (for review, with why) the comment is
+/// deleted until the staff approve it.
+pub async fn create_held(
+    db: impl PgExecutor<'_>,
+    post_id: i64,
+    creator_id: i64,
+    body: &str,
+    bump: bool,
+    held: Option<&str>,
+) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "INSERT INTO comments (post_id, creator_id, body, do_not_bump)
-         VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO comments (post_id, creator_id, body, do_not_bump, is_deleted, held_reason)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     )
     .bind(post_id)
     .bind(creator_id)
     .bind(body)
     .bind(!bump)
+    .bind(held.is_some())
+    .bind(held)
     .fetch_one(db)
     .await
 }
@@ -152,7 +167,7 @@ pub async fn update(db: impl PgExecutor<'_>, id: i64, body: &str) -> sqlx::Resul
 /// Deletes or restores a comment; false if it already was.
 pub async fn set_deleted(db: impl PgExecutor<'_>, id: i64, deleted: bool) -> sqlx::Result<bool> {
     let result =
-        sqlx::query("UPDATE comments SET is_deleted = $2 WHERE id = $1 AND is_deleted <> $2")
+        sqlx::query("UPDATE comments SET is_deleted = $2, held_reason = NULL WHERE id = $1 AND is_deleted <> $2")
             .bind(id)
             .bind(deleted)
             .execute(db)

@@ -12,6 +12,11 @@ a post's last comment takes it out of `order:comment`. Deleted posts
 can't be commented on, and comments are rate limited: a few at once,
 then one every 20 seconds.
 
+On public sites, a comment that looks like spam (links from a brand-new
+account, the same text over and over, or words the staff listed) is
+held until the staff check it; the same goes for forum posts and
+messages. See [the spam filter](../admin/moderation.md#spam-filter).
+
 Tick **Don't bump the post** to comment without moving the post up in
 `order:comment_bumped`; it still counts for `order:comment`. Moderators
 can **Pin to top** a comment, which then comes first among the post's

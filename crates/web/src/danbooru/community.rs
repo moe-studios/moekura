@@ -179,9 +179,7 @@ async fn create_comment(
     let bump = !fields
         .get("comment[do_not_bump_post]")
         .is_some_and(|v| matches!(v.trim(), "yes" | "true" | "1"));
-    let id = comments::create(db, post_id, user, &body, bump).await?;
-    crate::webhooks::emit_comment(&state, id).await;
-    crate::notifications::comment_posted(&state, &current, id, post_id, &body).await;
+    let (id, _) = crate::comments::publish(&state, &current, post_id, user, &body, bump).await?;
     let comment = comments::by_id(db, id).await?.ok_or(AppError::NotFound)?;
     Ok((
         StatusCode::CREATED,

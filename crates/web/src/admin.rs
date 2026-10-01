@@ -182,6 +182,12 @@ fn render_settings(
                     sign_up => current.captcha.sign_up,
                     comment_account_days => current.captcha.comment_account_days,
                 },
+                spam_filter => context! {
+                    mode => current.spam_filter.mode,
+                    link_account_days => current.spam_filter.link_account_days,
+                    max_repeats => current.spam_filter.max_repeats,
+                    words => current.spam_filter.words.join("\n"),
+                },
                 default_theme => current.default_theme,
                 tagger => context! {
                     thresholds => thresholds,
@@ -285,6 +291,12 @@ struct SettingsForm {
     /// Present when ticked.
     captcha_sign_up: Option<String>,
     captcha_comment_account_days: Option<String>,
+    /// `auto`, `on` or `off`.
+    spam_filter_mode: Option<String>,
+    spam_link_account_days: Option<String>,
+    spam_max_repeats: Option<String>,
+    /// One per line.
+    spam_words: Option<String>,
     /// One per line.
     deletion_reasons: Option<String>,
     /// One per line.
@@ -450,6 +462,27 @@ async fn save_settings(
                 "comment_account_days": form.captcha_comment_account_days.as_deref().map_or_else(
                     || json!(before.captcha.comment_account_days),
                     number,
+                ),
+            }),
+        ),
+        (
+            "spam_filter",
+            json!({
+                "mode": form.spam_filter_mode.as_deref().map_or_else(
+                    || json!(before.spam_filter.mode),
+                    |mode| json!(mode),
+                ),
+                "link_account_days": form.spam_link_account_days.as_deref().map_or_else(
+                    || json!(before.spam_filter.link_account_days),
+                    number,
+                ),
+                "max_repeats": form.spam_max_repeats.as_deref().map_or_else(
+                    || json!(before.spam_filter.max_repeats),
+                    number,
+                ),
+                "words": form.spam_words.as_deref().map_or_else(
+                    || before.spam_filter.words.clone(),
+                    moekura_core::spam::SpamFilter::parse_words,
                 ),
             }),
         ),

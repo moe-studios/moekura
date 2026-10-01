@@ -91,14 +91,15 @@ pub(crate) fn clean(title: &str, body: &str) -> Result<(String, String), AppErro
     Ok((title, body))
 }
 
-/// Sends a message from `current` to the user called `to`.
+/// Sends a message from `current` to the user called `to`; also says
+/// whether the spam filter held it for review.
 pub(crate) async fn send(
     state: &AppState,
     current: &CurrentUser,
     to: &str,
     title: &str,
     body: &str,
-) -> Result<dmails::Sent, AppError> {
+) -> Result<(dmails::Sent, bool), AppError> {
     current.require(Permission::SendMessages)?;
     let from = owner(current)?;
     let (title, body) = clean(title, body)?;
@@ -110,7 +111,8 @@ pub(crate) async fn send(
             AppError::Unprocessable(format!("There's no user called “{}”.", to.trim()))
         })?;
     state.rate_limits.check_dmail(from).await?;
-    let sent = dmails::send(db, from, recipient.id, &title, &body)
+    let held = crate::held::check(state, current, &body).await?;
+    let sent = dmails::send(db, from, recipient.id, &title, &body, held.as_deref())
         .await
         .map_err(|e| match e {
             SendError::Blocked => AppError::Unprocessable(format!(
@@ -119,16 +121,29 @@ pub(crate) async fn send(
             )),
             SendError::Db(e) => e.into(),
         })?;
+    if held.is_none() {
+        delivered(state, Some(from), recipient.id, sent.recipient_copy, &title).await;
+    }
+    Ok((sent, held.is_some()))
+}
+
+/// Tells a message's recipient of it.
+pub(crate) async fn delivered(
+    state: &AppState,
+    from: Option<i64>,
+    to: i64,
+    copy: i64,
+    title: &str,
+) {
     crate::notifications::notify(
         state,
-        &[recipient.id],
+        &[to],
         moekura_db::notifications::Kind::Message,
-        Some(from),
+        from,
         &format!("“{title}”"),
-        &format!("/dmails/{}", sent.recipient_copy),
+        &format!("/dmails/{copy}"),
     )
     .await;
-    Ok(sent)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -252,8 +267,8 @@ async fn create(
     )
     .await
     {
-        Ok(_) => Ok((
-            flash::set(jar, Flash::Saved),
+        Ok((_, held)) => Ok((
+            flash::set(jar, if held { Flash::Held } else { Flash::Saved }),
             Redirect::to("/dmails?folder=sent"),
         )
             .into_response()),

@@ -170,6 +170,30 @@ Settings → Spam** keep spam accounts out:
   [`[auth.captcha]`](../configuration.md#authcaptcha)), ask for it when
   signing up, and on comments by accounts younger than a number of days.
 
+## Spam filter
+
+Comments, forum posts and messages that look like spam are held for
+review instead of appearing: nobody but their writer knows they exist
+(and they're told only that the staff will check it). By default the
+filter runs unless the site is [private](private-sites.md); **Admin →
+Settings → Spam** can turn it on or off for good, and choose what it
+holds:
+
+- links (`http://`, `https://`, `www.`) from accounts younger than 3
+  days;
+- text its writer already posted 3 times in the past day, anywhere;
+- anything containing one of the **spam words**, one word or phrase per
+  line, whatever the case.
+
+Set a number to 0 to stop holding for it. People who can *Hide comments
+and handle reports about them* are never held, and review what is under
+**Moderation → Held for review**, oldest first, with why each was held.
+**Approve** lets it through as if just posted (mentions, replies and
+messages notify then, and webhooks fire); **Reject** keeps it hidden for
+good, and a rejected message never reaches its recipient. Both go in the
+moderation log. Hiding or restoring a held comment or forum post the
+usual way also settles it.
+
 ## Tag aliases and implications
 
 Members request them under **Tags → Aliases** or **Implications**; people

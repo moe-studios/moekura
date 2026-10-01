@@ -63,6 +63,30 @@ without *See deleted posts*, except its uploader, who still sees the post
 and why it went, but can't change it. It can be restored. Purging a deleted post
 removes it, its files and its history for good, in the background.
 
+### Purging in bulk
+
+Staff with *Purge posts* (admins, by default) purge many deleted posts at
+once under **Moderation → Purge**. Search the deleted posts with the
+usual [search syntax](../using/search.md), such as `user:name` for a
+spam account's leftovers (`status:deleted` is implied, and other
+statuses are refused), or leave the search empty for every deleted post.
+The preview says how many posts match and shows the first of them; tick
+some and **Purge ticked** (up to 500 at once), or **Purge all** to purge
+every match. Either way, tick the box confirming the posts, their files
+and their history go for good.
+
+A background job then purges the posts one by one, just as purging each
+would, logging each purge as yours; starting the purge is logged too,
+with its search or the posts ticked. Posts are checked again as the job
+gets to them, so one restored meanwhile is skipped. A post whose files
+can't be removed is counted as failed and left deleted (purge it again
+later); if several in a row fail, the job stops and is retried later,
+carrying on where it stopped rather than starting over. The page lists
+recent purges with how many posts were purged, skipped and failed. The
+API has the same operation (`POST /api/v1/moderation/purge` with a
+`query` or `post_ids`, followed with
+`GET /api/v1/moderation/post-batches/{id}`).
+
 ## Locks
 
 Staff with *Lock posts* (moderators, by default) lock a post's rating,

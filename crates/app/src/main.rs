@@ -232,6 +232,7 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
     .register(&mut registry);
     PostJobs {
         db: db.primary().clone(),
+        storage: Storage::from_config(&config.storage).context("could not open file storage")?,
     }
     .register(&mut registry);
     TagJobs {

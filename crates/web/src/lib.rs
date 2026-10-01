@@ -30,6 +30,7 @@ mod files;
 pub mod flash;
 mod health;
 mod history;
+mod image_search;
 pub mod import;
 mod mass_edit;
 mod metatags;
@@ -265,7 +266,7 @@ pub fn router(state: AppState) -> Router {
         .merge(api::routes(max_upload_bytes))
         .merge(api_keys::routes())
         .merge(artists::routes())
-        .merge(danbooru::routes())
+        .merge(danbooru::routes(max_upload_bytes))
         .merge(account::routes())
         .merge(admin::routes())
         .merge(bans::routes())
@@ -279,6 +280,7 @@ pub fn router(state: AppState) -> Router {
         .merge(feeds::routes())
         .merge(file_metadata::routes())
         .merge(history::routes())
+        .merge(image_search::routes(max_upload_bytes))
         .merge(mass_edit::routes())
         .merge(moderation::routes())
         .merge(notes::routes())

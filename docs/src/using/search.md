@@ -188,6 +188,18 @@ page 2.
 Counts are exact up to 10,000 posts. Above that, a single tag shows its
 known post count, and other searches show "10,000+".
 
+## Searching by image
+
+**Search by image** (`/iqdb_queries`, linked from **Popular** and as
+**Look-alikes** under every post) takes a picture, a link to one (a
+work's page on a site Moekura reads works too), or a post, and lists the
+posts that look most like it, with how alike they are, without uploading
+anything. Matches are found by the same perceptual hash as `similar:`,
+so a resized or recompressed copy is found, but a crop or an edit may
+not be. Each search compares the picture with every post, so they're
+limited to a few a minute. The API has it as `POST /api/v1/posts/similar`,
+and Danbooru clients as `/iqdb_queries.json`.
+
 ## Popular posts and searches
 
 **Popular** in the menu shows what's going on, for a day, a week (the

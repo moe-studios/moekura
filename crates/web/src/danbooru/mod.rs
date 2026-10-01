@@ -13,6 +13,7 @@ mod artists;
 mod commentaries;
 mod community;
 mod explore;
+mod iqdb;
 mod media_assets;
 mod missing;
 mod notes;
@@ -43,10 +44,13 @@ pub(crate) const PREFIX: &str = "/__danbooru";
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DanbooruRequest;
 
-pub fn routes() -> Router<AppState> {
+/// The Danbooru API's routes; files to search by image may be up to
+/// `max_upload_bytes`.
+pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new().nest(
         PREFIX,
         posts::routes()
+            .merge(iqdb::routes(max_upload_bytes))
             .merge(ai_tags::routes())
             .merge(community::routes())
             .merge(missing::routes())
@@ -324,7 +328,7 @@ pub(crate) mod test_support {
     }
 
     pub(crate) fn routes() -> Router<AppState> {
-        super::routes()
+        super::routes(100 * 1024 * 1024)
             .merge(crate::upload::routes(100 * 1024 * 1024))
             .merge(crate::posts::routes())
     }

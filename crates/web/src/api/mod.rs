@@ -114,6 +114,7 @@ impl Modify for Auth {
 fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
     let uploads = OpenApiRouter::new()
         .routes(routes!(posts::search, posts::upload))
+        .routes(routes!(posts::similar))
         .layer(crate::upload::body_limit(max_upload_bytes));
     OpenApiRouter::with_openapi(ApiDoc::openapi())
         .merge(uploads)

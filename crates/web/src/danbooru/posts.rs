@@ -33,7 +33,7 @@ pub(super) fn routes() -> Router<AppState> {
 /// A post as Danbooru describes it.
 #[derive(Debug, Serialize)]
 pub(crate) struct DanbooruPost {
-    id: i64,
+    pub(super) id: i64,
     created_at: String,
     updated_at: String,
     uploader_id: Option<i64>,

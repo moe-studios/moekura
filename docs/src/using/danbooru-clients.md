@@ -63,6 +63,7 @@ engine, then log in with your name and your API key.
 | `/artist_commentaries.json`, `/artist_commentaries/{post_id}.json`, `/posts/{id}/artist_commentary.json`, `/artist_commentary_versions.json` | a commentary's `id` is its post's; by `search[post_id]`, `search[text_matches]`, `search[original_present]` or `search[translated_present]`; `PUT /artist_commentaries/create_or_update.json` sets `artist_commentary[post_id]`'s texts (those left out stay) |
 | `/media_assets.json`, `/media_assets/{id}.json`, `/media_metadata.json` | a post's file has the post's id; files by `search[id]` or `search[md5]`; metadata by `search[media_asset_id]`, as `Group:Tag` pairs like `EXIF:Make` |
 | `/post_replacements.json` | read-only, by `search[post_id]` or `search[creator_id]` |
+| `/iqdb_queries.json` | searching by image: GET with `search[url]` or `search[post_id]`, or POST a `file` too; `[{post_id, score, post}]`, score in percent |
 | `/explore/posts/popular.json`, `/explore/posts/viewed.json` | the best-scored and most viewed posts of a `date`'s day, or with `scale`, week or month |
 | `/explore/posts/searches.json`, `/explore/posts/missed_searches.json` | `[query, count]` pairs: the searches made most, and those that most often found nothing, by `date` and `scale` like the posts |
 | `/comments.json`, `/comments/{id}.json` | listed newest first, by `search[post_id]`, `search[creator_id]` or `search[creator_name]`; `page` takes numbers and `b<id>`; post with `comment[post_id]` and `comment[body]`, and change or delete your own |

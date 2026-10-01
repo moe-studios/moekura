@@ -131,6 +131,13 @@ impl Allowance {
     }
 }
 
+// Searching by image: each compares the file with every post's.
+const IMAGE_SEARCH: Limit = Limit {
+    name: "image_search",
+    burst: 10,
+    period: Duration::from_secs(12),
+};
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -148,6 +155,7 @@ pub struct RateLimits {
     comment_by_user: DefaultKeyedRateLimiter<i64>,
     report_by_user: DefaultKeyedRateLimiter<i64>,
     appeal_by_user: DefaultKeyedRateLimiter<i64>,
+    image_search: DefaultKeyedRateLimiter<String>,
     /// Off when `server.api_requests_per_minute` is 0.
     api: Option<(Limit, InfoLimiter)>,
     valkey: Option<Valkey>,
@@ -173,6 +181,7 @@ impl RateLimits {
             comment_by_user: RateLimiter::keyed(quota(COMMENT_BY_USER)),
             report_by_user: RateLimiter::keyed(quota(REPORT_BY_USER)),
             appeal_by_user: RateLimiter::keyed(quota(APPEAL_BY_USER)),
+            image_search: RateLimiter::keyed(quota(IMAGE_SEARCH)),
             api: None,
             valkey,
         }
@@ -321,6 +330,13 @@ impl RateLimits {
         .await
     }
 
+    /// Counts a search by image by `client` (`user:<id>` or `ip:<address>`).
+    pub async fn check_image_search(&self, client: &str) -> Result<(), AppError> {
+        let key = client.to_owned();
+        self.check(IMAGE_SEARCH, &self.image_search, &key, &key)
+            .await
+    }
+
     /// Forgets keys that are back at full allowance, bounding memory use.
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
@@ -334,6 +350,7 @@ impl RateLimits {
         self.comment_by_user.retain_recent();
         self.report_by_user.retain_recent();
         self.appeal_by_user.retain_recent();
+        self.image_search.retain_recent();
         if let Some((_, api)) = &self.api {
             api.retain_recent();
         }
@@ -362,6 +379,21 @@ impl RateLimits {
     }
 }
 
+/// Who a limit counts: an account, or else an address (IPv6 by /64,
+/// which one person usually has).
+pub(crate) fn client_key(user: Option<i64>, ip: Option<IpAddr>) -> String {
+    match (user, ip) {
+        (Some(id), _) => format!("user:{id}"),
+        (None, Some(IpAddr::V6(ip))) => {
+            let net = ipnet::Ipv6Net::new(ip, 64).map_or(ip, |net| net.network());
+            format!("ip:{net}")
+        }
+        (None, Some(ip)) => format!("ip:{ip}"),
+        // In-process tests only.
+        (None, None) => "ip:unknown".to_owned(),
+    }
+}
+
 /// Middleware: counts requests to the APIs against their client's
 /// allowance and says what's left in `X-RateLimit-Limit`, `-Remaining`
 /// and `-Reset` (Unix time when the full burst is back), refusing with 429
@@ -386,18 +418,8 @@ pub async fn limit_api(
         .and_then(|c| c.user.as_ref())
         .map(|u| u.id);
     let (parts, body) = request.into_parts();
-    let client = match user {
-        Some(id) => format!("user:{id}"),
-        None => match crate::client_ip::client_ip(&parts, &state.config.server.trusted_proxies) {
-            Some(IpAddr::V6(ip)) => {
-                let net = ipnet::Ipv6Net::new(ip, 64).map_or(ip, |net| net.network());
-                format!("ip:{net}")
-            }
-            Some(ip) => format!("ip:{ip}"),
-            // In-process tests only.
-            None => "ip:unknown".to_owned(),
-        },
-    };
+    let ip = crate::client_ip::client_ip(&parts, &state.config.server.trusted_proxies);
+    let client = client_key(user, ip);
     let Some(allowance) = state.rate_limits.check_api(&client).await else {
         return next
             .run(axum::extract::Request::from_parts(parts, body))
@@ -566,7 +588,7 @@ mod tests {
         let app = TestApp::new(
             test_state_with(&pool, config).await,
             crate::api::routes(1024)
-                .merge(crate::danbooru::routes())
+                .merge(crate::danbooru::routes(1024 * 1024))
                 .merge(crate::posts::routes()),
         );
         let first = app.get_full("/api/v1/posts").await;

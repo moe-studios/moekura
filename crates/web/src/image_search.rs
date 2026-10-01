@@ -1,0 +1,420 @@
+//! Searching by image (`/iqdb_queries`): a file, a link or a post is
+//! hashed like every post's file, and the posts that look most like it
+//! are listed with how alike they are, without making a post.
+
+use axum::Router;
+use axum::extract::{Multipart, Query};
+use axum::response::Response;
+use axum::routing::get;
+use minijinja::context;
+use moekura_core::permissions::Permission;
+use moekura_db::{media, posts};
+use moekura_media::MediaType;
+use serde::Deserialize;
+
+use crate::AppState;
+use crate::auth::{CurrentUser, RequestInfo};
+use crate::error::AppError;
+use crate::pages::Page;
+use crate::upload::{TempUpload, UploadError, UploadFields};
+
+/// The most bits two hashes may differ by and still be listed (out of
+/// 64): about 75% alike.
+pub(crate) const MAX_DISTANCE: u32 = 16;
+/// Matches listed.
+pub(crate) const SHOWN: usize = 20;
+
+pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
+    Router::new().route(
+        "/iqdb_queries",
+        get(form)
+            .post(search_upload)
+            .layer(crate::upload::body_limit(max_upload_bytes)),
+    )
+}
+
+/// A match: the post and how many of the 64 hash bits differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Match {
+    pub post_id: i64,
+    pub distance: u32,
+}
+
+impl Match {
+    /// How alike, in percent.
+    pub fn similarity(self) -> f64 {
+        (f64::from(64 - self.distance.min(64)) / 64.0 * 1000.0).round() / 10.0
+    }
+}
+
+/// What to search with.
+pub(crate) enum Needle<'a> {
+    File(&'a TempUpload),
+    Post(i64),
+}
+
+fn upload_error(error: UploadError) -> AppError {
+    match error {
+        UploadError::Invalid(message) | UploadError::Limit(message) => {
+            AppError::Unprocessable(message)
+        }
+        UploadError::Duplicate(id) => AppError::Duplicate(id),
+        UploadError::Internal(detail) => AppError::Internal(detail),
+    }
+}
+
+/// The perceptual hash of a file, as processing would make it.
+async fn hash_file(state: &AppState, file: &TempUpload) -> Result<u64, AppError> {
+    let refused = |e: moekura_media::MediaError| {
+        if e.is_internal() {
+            AppError::Internal(e.to_string())
+        } else {
+            AppError::Unprocessable(format!("That file can't be searched with: {e}."))
+        }
+    };
+    let media = &state.media;
+    let kind = media.identify(file.path()).await.map_err(refused)?;
+    let dir = state.work_dir.join(format!(
+        "search-{}",
+        hex::encode(&moekura_core::tokens::NewToken::generate().hash[..8])
+    ));
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    let hashed = async {
+        let probe = media.probe(file.path(), kind).await?;
+        let (source, source_type) = if kind == MediaType::Ugoira {
+            let frames = media.ugoira_frames(file.path()).await?;
+            let first = media
+                .ugoira_extract(file.path(), &frames[..1], &dir)
+                .await?
+                .remove(0);
+            let first_type = if first.extension().is_some_and(|e| e == "png") {
+                MediaType::Png
+            } else {
+                MediaType::Jpeg
+            };
+            (first, first_type)
+        } else if kind.is_video() {
+            (
+                media
+                    .video_poster(file.path(), probe.duration_ms, &dir)
+                    .await?,
+                MediaType::Png,
+            )
+        } else {
+            (file.path().to_owned(), kind)
+        };
+        media.perceptual_hash(&source, source_type, &dir).await
+    }
+    .await;
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    hashed.map_err(refused)
+}
+
+/// The posts `current` may see that look most like `needle`, closest
+/// first. Counts against the searcher's allowance, as each compares
+/// with every post.
+pub(crate) async fn search(
+    state: &AppState,
+    current: &CurrentUser,
+    info: &RequestInfo,
+    needle: Needle<'_>,
+) -> Result<Vec<Match>, AppError> {
+    current.require(Permission::ViewPosts)?;
+    let client = crate::rate_limit::client_key(current.user.as_ref().map(|u| u.id), info.ip);
+    state.rate_limits.check_image_search(&client).await?;
+    let db = state.reader(current);
+    let (hash, exclude) = match needle {
+        Needle::File(file) => (hash_file(state, file).await?, None),
+        Needle::Post(id) => {
+            let post = posts::by_id(db, id)
+                .await?
+                .filter(|p| crate::posts::visibility(current).allows(p))
+                .ok_or(AppError::NotFound)?;
+            let hash = media::for_post(db, post.id)
+                .await?
+                .and_then(|a| a.phash)
+                .ok_or_else(|| {
+                    AppError::Unprocessable("That post's file hasn't been processed yet.".into())
+                })?;
+            (hash as u64, Some(post.id))
+        }
+    };
+    let found = media::nearest(db, hash, MAX_DISTANCE, SHOWN as i64 * 3).await?;
+    let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
+    let visible = crate::posts::visibility(current);
+    let shown = posts::by_ids(db, &ids).await?;
+    Ok(found
+        .iter()
+        .filter(|s| Some(s.post_id) != exclude)
+        .filter(|s| shown.iter().any(|p| p.id == s.post_id && visible.allows(p)))
+        .take(SHOWN)
+        .map(|s| Match {
+            post_id: s.post_id,
+            distance: u32::try_from(s.distance).unwrap_or(64),
+        })
+        .collect())
+}
+
+/// Downloads `url` to search with (a work's page gives its best file).
+pub(crate) async fn fetch(state: &AppState, url: &str) -> Result<TempUpload, AppError> {
+    let mut fields = UploadFields {
+        url: url.trim().to_owned(),
+        ..UploadFields::default()
+    };
+    crate::upload::fetch_url(state, &mut fields)
+        .await
+        .map_err(upload_error)
+}
+
+/// A search's parameters from a form or an API: a file, a link or a post.
+#[derive(Default)]
+pub(crate) struct Asked {
+    pub file: Option<TempUpload>,
+    pub url: String,
+    pub post_id: Option<i64>,
+}
+
+impl Asked {
+    /// Reads `file` (or `search[file]`), `url` and `post_id` (or their
+    /// `search[…]` forms) from a multipart body.
+    pub async fn from_multipart(state: &AppState, mut form: Multipart) -> Result<Self, AppError> {
+        let mut asked = Self::default();
+        while let Some(field) = form
+            .next_field()
+            .await
+            .map_err(|e| AppError::BadRequest(e.body_text()))?
+        {
+            match field.name().unwrap_or_default() {
+                "file" | "search[file]" => {
+                    if field.file_name().is_none_or(str::is_empty) {
+                        continue;
+                    }
+                    asked.file = Some(
+                        crate::upload::save_to_temp(state, field)
+                            .await
+                            .map_err(upload_error)?,
+                    );
+                }
+                "url" | "search[url]" => asked.url = field.text().await.unwrap_or_default(),
+                "post_id" | "search[post_id]" => {
+                    asked.post_id = field.text().await.unwrap_or_default().trim().parse().ok();
+                }
+                _ => {}
+            }
+        }
+        Ok(asked)
+    }
+
+    /// Runs the search, if anything was asked.
+    pub async fn run(
+        &self,
+        state: &AppState,
+        current: &CurrentUser,
+        info: &RequestInfo,
+    ) -> Result<Option<Vec<Match>>, AppError> {
+        if let Some(file) = &self.file {
+            return search(state, current, info, Needle::File(file))
+                .await
+                .map(Some);
+        }
+        if !self.url.trim().is_empty() {
+            let file = fetch(state, &self.url).await?;
+            return search(state, current, info, Needle::File(&file))
+                .await
+                .map(Some);
+        }
+        if let Some(id) = self.post_id {
+            return search(state, current, info, Needle::Post(id))
+                .await
+                .map(Some);
+        }
+        Ok(None)
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct FormQuery {
+    #[serde(default)]
+    url: String,
+    post_id: Option<i64>,
+}
+
+async fn render(page: &Page, asked: &Asked, info: &RequestInfo) -> Result<Response, AppError> {
+    let found = match asked.run(page.state(), &page.current, info).await {
+        Ok(found) => found,
+        Err(AppError::Unprocessable(message)) => {
+            return Ok(page.render_with_status(
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                "image_search.html",
+                context! { url => asked.url, error => message },
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    let results = match &found {
+        Some(matches) => {
+            let ids: Vec<i64> = matches.iter().map(|m| m.post_id).collect();
+            let db = page.state().reader(&page.current);
+            let cards = crate::posts::grid(page, db, &ids, None).await?;
+            Some(
+                cards
+                    .into_iter()
+                    .filter_map(|(id, card)| {
+                        let m = matches.iter().find(|m| m.post_id == id)?;
+                        Some(context! { card => card, similarity => m.similarity() })
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        }
+        None => None,
+    };
+    Ok(page.render(
+        "image_search.html",
+        context! {
+            url => asked.url,
+            post_id => asked.post_id,
+            results => results,
+        },
+    ))
+}
+
+async fn form(
+    page: Page,
+    info: RequestInfo,
+    Query(query): Query<FormQuery>,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ViewPosts)?;
+    let asked = Asked {
+        file: None,
+        url: query.url,
+        post_id: query.post_id,
+    };
+    render(&page, &asked, &info).await
+}
+
+async fn search_upload(
+    page: Page,
+    info: RequestInfo,
+    form: Multipart,
+) -> Result<Response, AppError> {
+    page.current.require(Permission::ViewPosts)?;
+    let asked = Asked::from_multipart(page.state(), form).await?;
+    if asked.file.is_none() && asked.url.trim().is_empty() && asked.post_id.is_none() {
+        return Ok(page.render_with_status(
+            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+            "image_search.html",
+            context! { error => "Choose a picture, or paste a link to one." },
+        ));
+    }
+    render(&page, &asked, &info).await
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::http::StatusCode;
+    use moekura_core::permissions::SystemRole;
+    use sqlx::PgPool;
+
+    use super::*;
+    use crate::test_support::{TestApp, fixture, session_for, test_state};
+
+    #[test]
+    fn similarity() {
+        assert_eq!(
+            Match {
+                post_id: 1,
+                distance: 0
+            }
+            .similarity(),
+            100.0
+        );
+        assert_eq!(
+            Match {
+                post_id: 1,
+                distance: 16
+            }
+            .similarity(),
+            75.0
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn finds_look_alikes(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let app = TestApp::new(
+            state.clone(),
+            routes(10 * 1024 * 1024).merge(crate::danbooru::test_support::routes()),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let post = crate::danbooru::test_support::upload(&app, &alice, 64, "cat").await;
+        // As processing would: the file's hash.
+        let png = fixture::png(64, 20);
+        let dir = std::env::temp_dir().join(format!("moekura-iqdb-{post}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.png");
+        std::fs::write(&path, &png).unwrap();
+        let hash = state
+            .media
+            .perceptual_hash(&path, MediaType::Png, &dir)
+            .await
+            .unwrap();
+        let asset = media::for_post(&pool, post).await.unwrap().unwrap();
+        media::mark_processed(&pool, asset.id, Some(hash))
+            .await
+            .unwrap();
+
+        // The same picture, recompressed.
+        let found = app
+            .post_multipart("/iqdb_queries", None, &[], Some(("b.png", &png)))
+            .await;
+        assert_eq!(found.status, StatusCode::OK, "{}", found.body);
+        assert!(
+            found.body.contains(&format!("href=\"/posts/{post}")),
+            "{}",
+            found.body
+        );
+        assert!(found.body.contains("100.0% alike"), "{}", found.body);
+
+        let none = app.post_multipart("/iqdb_queries", None, &[], None).await;
+        assert_eq!(none.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let page = app.get("/iqdb_queries", None).await;
+        assert_eq!(page.status, StatusCode::OK);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn api_by_post(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let app = TestApp::new(
+            state,
+            crate::api::routes(10 * 1024 * 1024).merge(crate::danbooru::test_support::routes()),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let first = crate::danbooru::test_support::upload(&app, &alice, 20, "cat").await;
+        let second = crate::danbooru::test_support::upload(&app, &alice, 24, "cat").await;
+        for (post, hash) in [(first, 0xff00_u64), (second, 0xff01_u64)] {
+            let asset = media::for_post(&pool, post).await.unwrap().unwrap();
+            media::mark_processed(&pool, asset.id, Some(hash))
+                .await
+                .unwrap();
+        }
+        let found = app
+            .post_multipart(
+                "/api/v1/posts/similar",
+                None,
+                &[("post_id", first.to_string())],
+                None,
+            )
+            .await;
+        assert_eq!(found.status, StatusCode::OK, "{}", found.body);
+        let found: serde_json::Value = serde_json::from_str(&found.body).unwrap();
+        assert_eq!(found[0]["post"]["id"].as_i64(), Some(second));
+        assert_eq!(found[0]["distance"], 1);
+        let nothing = app
+            .post_multipart("/api/v1/posts/similar", None, &[], None)
+            .await;
+        assert_eq!(nothing.status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+}

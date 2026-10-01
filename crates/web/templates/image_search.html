@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Search by image · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>Search by image</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<form method="post" action="/iqdb_queries" enctype="multipart/form-data" class="card medium">
+  <label for="iqdb-file">A picture</label>
+  <input id="iqdb-file" name="file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/avif,video/mp4,video/webm">
+  <label for="iqdb-url">…or a link to one</label>
+  <input id="iqdb-url" name="url" type="url" value="{{ url or '' }}" placeholder="https://">
+  <p class="hint">Finds posts that look like it, even resized or recompressed, without uploading anything. A work's page on Pixiv, X and the like works too.</p>
+  <button type="submit">Search</button>
+</form>
+{% if results is not none %}
+<h2>{% if post_id %}Posts like #{{ post_id }}{% else %}Posts like it{% endif %}</h2>
+{% if results %}
+<ul class="post-grid image-matches">
+  {% for r in results %}<li>{% with card = r.card %}{% include "card.html" %}{% endwith %}<span class="similarity">{{ r.similarity }}% alike</span></li>{% endfor %}
+</ul>
+{% else %}
+<p class="empty">No posts look like it.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

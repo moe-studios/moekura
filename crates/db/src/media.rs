@@ -324,6 +324,32 @@ pub async fn similar(
     .await
 }
 
+/// The posts whose perceptual hash is nearest `hash`, within
+/// `max_distance` bits, closest first. Unlike [`similar`], every file is
+/// compared, so distant matches are found too; it reads every asset, so
+/// callers limit how often it runs.
+pub async fn nearest(
+    db: impl PgExecutor<'_>,
+    hash: u64,
+    max_distance: u32,
+    limit: i64,
+) -> sqlx::Result<Vec<Similar>> {
+    sqlx::query_as(
+        "SELECT post_id, distance FROM (
+             SELECT post_id, bit_count((phash # $1)::bit(64))::int AS distance
+             FROM media_assets WHERE phash IS NOT NULL
+         ) compared
+         WHERE distance <= $2
+         ORDER BY distance, post_id DESC
+         LIMIT $3",
+    )
+    .bind(hash as i64)
+    .bind(i32::try_from(max_distance).unwrap_or(64))
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
 /// A 64-bit hash as four 16-bit values (stored as smallint).
 pub fn phash_chunks(hash: u64) -> [i16; 4] {
     [0, 1, 2, 3].map(|i| (hash >> (48 - 16 * i)) as u16 as i16)

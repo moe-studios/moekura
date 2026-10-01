@@ -107,6 +107,55 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
         url => crate::templates::url_value(&crate::user_feedbacks::list_url(&user.name)),
         can_give => crate::user_feedbacks::may_give(page.state(), &page.current, &user),
     };
+    let stats = users::profile_stats(db, user.id).await?;
+    let history = users::uploads_by_month(db, user.id, CHART_MONTHS).await?;
+    let top_tags = users::top_upload_tags(db, user.id, TOP_TAGS).await?;
+    let by_user = |path: &str| {
+        crate::templates::url_value(&format!(
+            "{path}?{}",
+            url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("user", &user.name)
+                .finish()
+        ))
+    };
+    let search = |query: String| Value::from_safe_string(search_url(&query));
+    // Votes are private, like the searches for them.
+    let sees_votes = own || page.current.can(Permission::ApprovePosts);
+    let more = context! {
+        deleted_uploads => stats.deleted_uploads,
+        deleted_uploads_url => search(format!("user:{} status:deleted", user.name)),
+        upload_score => stats.upload_score,
+        upload_score_url => search(format!("user:{} order:score", user.name)),
+        post_changes => stats.post_changes,
+        note_changes => stats.note_changes,
+        note_changes_url => by_user("/note_versions"),
+        wiki_edits => stats.wiki_edits,
+        wiki_edits_url => by_user("/wiki_page_versions"),
+        pool_edits => stats.pool_edits,
+        pool_edits_url => by_user("/pool_versions"),
+        forum_posts => stats.forum_posts,
+        forum_posts_url => by_user("/forum_posts"),
+        approvals => stats.approvals,
+        approvals_url => search(format!("approver:{}", user.name)),
+        votes => sees_votes.then(|| context! {
+            up => stats.upvotes,
+            up_url => search(format!("upvote:{}", user.name)),
+            down => stats.downvotes,
+            down_url => search(format!("downvote:{}", user.name)),
+        }),
+    };
+    let chart = upload_chart(&history);
+    let top_tags: Vec<Value> = top_tags
+        .into_iter()
+        .map(|(name, category, posts)| {
+            context! {
+                url => search(format!("user:{} {name}", user.name)),
+                name => name,
+                category => category,
+                posts => posts,
+            }
+        })
+        .collect();
     let comments_url = format!(
         "/comments?{}",
         url::form_urlencoded::Serializer::new(String::new())
@@ -120,6 +169,9 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             feedback => feedback,
             former_names => former_names,
             invited_by => invited_by,
+            more => more,
+            chart => chart,
+            top_tags => top_tags,
             can_rename => can_rename,
             user => context! {
                 name => user.name,
@@ -161,6 +213,57 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             durations => crate::bans::durations(),
         },
     ))
+}
+
+/// Months the profile's upload chart covers.
+const CHART_MONTHS: i32 = 12;
+/// Tags listed as most used in someone's uploads.
+const TOP_TAGS: i64 = 10;
+/// The chart's bars' size, and the room under them for labels, in SVG
+/// units.
+const BAR_WIDTH: i64 = 20;
+const BAR_GAP: i64 = 6;
+const BAR_MAX: i64 = 80;
+const LABEL_ROOM: i64 = 16;
+
+/// An SVG bar chart (drawn by the template) of uploads per month: `None`
+/// when there were none in the period.
+fn upload_chart(history: &[(i32, i32, i64)]) -> Option<Value> {
+    let most = history.iter().map(|&(.., n)| n).max().filter(|&n| n > 0)?;
+    let bars: Vec<Value> = history
+        .iter()
+        .zip(0..)
+        .map(|(&(year, month, uploads), i)| {
+            let name = u8::try_from(month)
+                .ok()
+                .and_then(|m| time::Month::try_from(m).ok())
+                .map_or_else(String::new, |m| m.to_string());
+            // Any upload at all shows as at least a sliver.
+            let height = if uploads == 0 {
+                0
+            } else {
+                (uploads * BAR_MAX / most).max(1)
+            };
+            let x = i * (BAR_WIDTH + BAR_GAP);
+            context! {
+                x => x,
+                y => BAR_MAX - height,
+                height => height,
+                label_x => x + BAR_WIDTH / 2,
+                label => name.chars().take(3).collect::<String>(),
+                title => format!("{name} {year}: {uploads}"),
+            }
+        })
+        .collect();
+    let width = i64::try_from(bars.len()).unwrap_or(0) * (BAR_WIDTH + BAR_GAP) - BAR_GAP;
+    Some(context! {
+        bars => bars,
+        width => width,
+        height => BAR_MAX + LABEL_ROOM,
+        bar_width => BAR_WIDTH,
+        label_y => BAR_MAX + LABEL_ROOM - 3,
+        most => most,
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -455,6 +558,105 @@ mod tests {
     use sqlx::PgPool;
 
     use crate::test_support::{TestApp, session_for, test_state};
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn profiles_count_what_users_did(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let janitor = session_for(&pool, "janitor", SystemRole::Janitor).await;
+        let tag = |name: &'static str, category: i16| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i32>(
+                    "INSERT INTO tags (name, category_id) VALUES ($1, $2) RETURNING id",
+                )
+                .bind(name)
+                .bind(category)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let (cat, ears, hires) = (
+            tag("cat", 0).await,
+            tag("ears", 0).await,
+            tag("highres", 5).await,
+        );
+        for (status, score, tags) in [
+            ("active", 3, vec![cat, ears, hires]),
+            ("active", 2, vec![cat, hires]),
+            ("deleted", 9, vec![ears]),
+        ] {
+            sqlx::query(
+                "INSERT INTO posts (rating, status, score, tag_ids, uploader_id, approver_id)
+                 SELECT 'g', $1, $2, $3, id,
+                        (SELECT id FROM users WHERE name = 'janitor')
+                 FROM users WHERE name = 'alice'",
+            )
+            .bind(status)
+            .bind(score)
+            .bind(tags)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO post_votes (user_id, post_id, score)
+             SELECT u.id, p.id, 1 FROM users u, posts p WHERE u.name = 'alice'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let profile = app.get("/users/alice", Some(&bob)).await.body;
+        assert!(
+            profile.contains("user%3Aalice+status%3Adeleted\">1 deleted</a>"),
+            "{profile}"
+        );
+        // Alice's own upvotes count too.
+        assert!(profile.contains(
+            "<dt>Upload score</dt><dd><a href=\"/posts?tags=user%3Aalice+order%3Ascore\">7</a>"
+        ));
+        assert!(
+            profile.contains(
+                "<dt>Wiki edits</dt><dd><a href=\"/wiki_page_versions?user=alice\">0</a>"
+            )
+        );
+        assert!(
+            profile.contains("<dt>Forum posts</dt><dd><a href=\"/forum_posts?user=alice\">0</a>")
+        );
+        // Votes are only for them and staff; approvals only for approvers.
+        assert!(!profile.contains("<dt>Votes</dt>") && !profile.contains("<dt>Approvals</dt>"));
+        assert!(
+            app.get("/users/alice", Some(&alice))
+                .await
+                .body
+                .contains("upvote%3Aalice\">3 up</a>")
+        );
+        assert!(
+            app.get("/users/janitor", Some(&janitor))
+                .await
+                .body
+                .contains("<dt>Approvals</dt><dd><a href=\"/posts?tags=approver%3Ajanitor\">3</a>")
+        );
+
+        // This month's uploads are charted, and their tags counted, leaving
+        // out deleted posts and meta tags.
+        assert!(profile.contains("class=\"upload-chart\""));
+        assert!(profile.contains(": 3</title>"), "{profile}");
+        let top = &profile[profile.find("top-tags").unwrap()..];
+        assert!(
+            top.find(">cat</a> <span class=\"hint\">2<").unwrap() < top.find(">ears</a>").unwrap()
+        );
+        assert!(!top.contains(">highres<"));
+        assert!(
+            !app.get("/users/bob", None)
+                .await
+                .body
+                .contains("upload-chart")
+        );
+    }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn profiles_and_settings(pool: PgPool) {

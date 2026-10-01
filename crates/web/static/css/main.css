@@ -694,6 +694,11 @@ html:not(.js) .select-all { display: none; }
 .status-positive { color: var(--tag-character); }
 .status-neutral { color: var(--muted); }
 .status-negative { color: var(--danger); }
+.upload-chart { display: block; width: 100%; max-width: 40rem; height: auto; margin-bottom: 16px; }
+.upload-chart rect { fill: var(--accent); }
+.upload-chart g:hover rect { fill: var(--text); }
+.upload-chart text { fill: var(--muted); font-size: 9px; }
+.top-tags li { display: inline-block; margin-right: 12px; }
 .history li.deleted { opacity: 0.6; }
 .flash.banned { border-left-color: var(--danger); }
 

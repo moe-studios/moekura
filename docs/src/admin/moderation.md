@@ -63,6 +63,30 @@ without *See deleted posts*, except its uploader, who still sees the post
 and why it went, but can't change it. It can be restored. Purging a deleted post
 removes it, its files and its history for good, in the background.
 
+### Purging in bulk
+
+Staff with *Purge posts* (admins, by default) purge many deleted posts at
+once under **Moderation → Purge**. Search the deleted posts with the
+usual [search syntax](../using/search.md), such as `user:name` for a
+spam account's leftovers (`status:deleted` is implied, and other
+statuses are refused), or leave the search empty for every deleted post.
+The preview says how many posts match and shows the first of them; tick
+some and **Purge ticked** (up to 500 at once), or **Purge all** to purge
+every match. Either way, tick the box confirming the posts, their files
+and their history go for good.
+
+A background job then purges the posts one by one, just as purging each
+would, logging each purge as yours; starting the purge is logged too,
+with its search or the posts ticked. Posts are checked again as the job
+gets to them, so one restored meanwhile is skipped. A post whose files
+can't be removed is counted as failed and left deleted (purge it again
+later); if several in a row fail, the job stops and is retried later,
+carrying on where it stopped rather than starting over. The page lists
+recent purges with how many posts were purged, skipped and failed. The
+API has the same operation (`POST /api/v1/moderation/purge` with a
+`query` or `post_ids`, followed with
+`GET /api/v1/moderation/post-batches/{id}`).
+
 ## Locks
 
 Staff with *Lock posts* (moderators, by default) lock a post's rating,
@@ -129,6 +153,25 @@ on their uploads, and the flags they filed with how many were upheld or
 dismissed; reports about their comments and their hidden comments; and,
 for those who read the log, what was logged about them and what they
 did themselves.
+
+### Deleting all of a user's uploads
+
+To clean up after a spam account, staff with *Delete posts* can delete
+every upload of a user ranked below them at once: **Delete all uploads**
+under *Uploads* on the record says how many posts that is, and asks for a
+reason (the same presets as deleting one post) and a tick to confirm.
+A background job then deletes the user's active, flagged and pending
+posts in batches, just as deleting each one would: the posts show the
+reason, open flags on them are upheld, tag counts drop, each deletion is
+logged as yours, and every post can still be restored (webhooks aren't
+sent a `post.deleted` event for each, though). Posts already
+deleted are left out; those whose status is locked are skipped unless
+you have *Lock posts*. The record shows the progress: how many posts
+were deleted, skipped (dealt with meanwhile, or locked) and failed. Only
+one such deletion runs per user at a time, and the account itself stays;
+ban it separately. The API has the same operation
+(`POST /api/v1/users/{name}/delete-uploads`, followed with
+`GET /api/v1/moderation/post-batches/{id}`).
 
 ### Staff notes
 

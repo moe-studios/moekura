@@ -17,6 +17,45 @@ pub const STAGED_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(2
 /// How often unused staged uploads are looked for.
 const STAGED_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
+/// Removes deleted post `post_id`'s files, then the post; returns
+/// whether it was purged. Safe to repeat: missing files and a missing
+/// post are fine. A post restored in the meantime is left alone.
+pub async fn purge_post(db: &PgPool, storage: &Storage, post_id: i64) -> Result<bool, JobError> {
+    let Some(post) = moekura_db::posts::by_id(db, post_id).await? else {
+        return Ok(false);
+    };
+    if post.status != PostStatus::Deleted {
+        tracing::warn!(post_id, "purge skipped: the post is no longer deleted");
+        return Ok(false);
+    }
+    // Files the post had before a replacement, too.
+    let replaced = moekura_db::replacements::old_keys(db, post_id).await?;
+    for key in replaced.iter().filter_map(|k| Key::parse(k)) {
+        storage
+            .delete(&key)
+            .await
+            .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
+    }
+    if let Some(asset) = media::for_post(db, post_id).await? {
+        let mut keys = vec![asset.storage_key.clone()];
+        keys.extend(
+            media::variants(db, asset.id)
+                .await?
+                .into_iter()
+                .map(|v| v.storage_key),
+        );
+        for key in keys.iter().filter_map(|k| Key::parse(k)) {
+            storage
+                .delete(&key)
+                .await
+                .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
+        }
+    }
+    moekura_db::posts::delete(db, post_id).await?;
+    tracing::info!(post_id, "post purged");
+    Ok(true)
+}
+
 /// What media jobs need.
 #[derive(Clone)]
 pub struct MediaJobs {
@@ -68,43 +107,11 @@ impl MediaJobs {
         Ok(keys.len())
     }
 
-    /// Removes a deleted post's files, then the post. Safe to repeat:
-    /// missing files and a missing post are fine. A post restored in the
-    /// meantime is left alone.
+    /// Removes a deleted post's files, then the post: see [`purge_post`].
     pub async fn purge(&self, post_id: i64) -> Result<(), JobError> {
-        let Some(post) = moekura_db::posts::by_id(&self.db, post_id).await? else {
-            return Ok(());
-        };
-        if post.status != PostStatus::Deleted {
-            tracing::warn!(post_id, "purge skipped: the post is no longer deleted");
-            return Ok(());
-        }
-        // Files the post had before a replacement, too.
-        let replaced = moekura_db::replacements::old_keys(&self.db, post_id).await?;
-        for key in replaced.iter().filter_map(|k| Key::parse(k)) {
-            self.storage
-                .delete(&key)
-                .await
-                .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
-        }
-        if let Some(asset) = media::for_post(&self.db, post_id).await? {
-            let mut keys = vec![asset.storage_key.clone()];
-            keys.extend(
-                media::variants(&self.db, asset.id)
-                    .await?
-                    .into_iter()
-                    .map(|v| v.storage_key),
-            );
-            for key in keys.iter().filter_map(|k| Key::parse(k)) {
-                self.storage
-                    .delete(&key)
-                    .await
-                    .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
-            }
-        }
-        moekura_db::posts::delete(&self.db, post_id).await?;
-        tracing::info!(post_id, "post purged");
-        Ok(())
+        purge_post(&self.db, &self.storage, post_id)
+            .await
+            .map(|_| ())
     }
 
     /// Generates thumbnails at every configured size, plus a `sample` for

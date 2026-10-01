@@ -177,6 +177,7 @@ pub(crate) fn render(
             until => ban.expires_at.map(crate::dates::day),
         }),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
+        can_purge => current.is_some_and(|c| c.can(Permission::PurgePosts)),
         can_admin => current.is_some_and(|c| {
             c.can(Permission::ManageSettings) || c.can(Permission::ManageUsers)
         }),

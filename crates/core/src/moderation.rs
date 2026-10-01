@@ -155,6 +155,8 @@ pub enum ActionKind {
     ArtistBan,
     ArtistUnban,
     PostReplace,
+    DeleteUploads,
+    PurgePosts,
     DmailReportSettle,
     ForumTopicModerate,
     ForumTopicMerge,
@@ -167,7 +169,7 @@ pub enum ActionKind {
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 49] = [
+    pub const ALL: [ActionKind; 51] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -208,6 +210,8 @@ impl ActionKind {
         ActionKind::ArtistBan,
         ActionKind::ArtistUnban,
         ActionKind::PostReplace,
+        ActionKind::DeleteUploads,
+        ActionKind::PurgePosts,
         ActionKind::DmailReportSettle,
         ActionKind::ForumTopicModerate,
         ActionKind::ForumTopicMerge,
@@ -261,6 +265,8 @@ impl ActionKind {
             ActionKind::ArtistBan => "artist.ban",
             ActionKind::ArtistUnban => "artist.unban",
             ActionKind::PostReplace => "post.replace",
+            ActionKind::DeleteUploads => "posts.delete_uploads",
+            ActionKind::PurgePosts => "posts.purge_batch",
             ActionKind::DmailReportSettle => "dmail_report.settle",
             ActionKind::ForumTopicModerate => "forum_topic.moderate",
             ActionKind::ForumTopicMerge => "forum_topic.merge",
@@ -316,6 +322,8 @@ impl ActionKind {
             ActionKind::ArtistBan => "banned an artist",
             ActionKind::ArtistUnban => "unbanned an artist",
             ActionKind::PostReplace => "replaced the file of post",
+            ActionKind::DeleteUploads => "started deleting the uploads of",
+            ActionKind::PurgePosts => "started purging deleted posts",
             ActionKind::DmailReportSettle => "settled a report about a message from",
             ActionKind::ForumTopicModerate => "changed a forum topic",
             ActionKind::ForumTopicMerge => "merged forum topics",

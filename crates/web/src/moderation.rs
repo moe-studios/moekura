@@ -53,17 +53,17 @@ pub fn routes() -> Router<AppState> {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct ReasonForm {
+pub(crate) struct ReasonForm {
     /// One of the site's preset reasons; `other` or empty for none.
     #[serde(default)]
-    preset: String,
+    pub preset: String,
     /// Free text, on its own or adding to the preset.
     #[serde(default)]
-    reason: String,
+    pub reason: String,
 }
 
 impl ReasonForm {
-    fn reason(&self) -> String {
+    pub(crate) fn reason(&self) -> String {
         let preset = match self.preset.as_str() {
             "other" => "",
             preset => preset,
@@ -72,7 +72,7 @@ impl ReasonForm {
     }
 }
 
-fn check_reason(reason: &str) -> Result<&str, AppError> {
+pub(crate) fn check_reason(reason: &str) -> Result<&str, AppError> {
     let reason = reason.trim();
     if reason.chars().count() > REASON_MAX_LEN {
         return Err(AppError::BadRequest(format!(

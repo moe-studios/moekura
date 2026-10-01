@@ -127,33 +127,7 @@ impl TagJobs {
             return Ok(());
         }
         mass_updates::start(&self.db, id).await?;
-        let mut query = Query::parse(&update.query).map_err(JobError::permanent)?;
-        // Newest first by id, so every post is reached with keyset pages.
-        query.order = None;
-        query.ordfav = None;
-        query.ordpool = None;
-        query.ordfavgroup = None;
-        query.limit = None;
-        let config = SearchConfig {
-            per_page: BATCH as u32,
-            max_per_page: BATCH as u32,
-            ..SearchConfig::default()
-        };
-        // Everything staff could see; deleted posts only with status:.
-        let visibility = Visibility {
-            statuses: vec![
-                PostStatus::Active,
-                PostStatus::Flagged,
-                PostStatus::Pending,
-                PostStatus::Deleted,
-            ],
-            viewer: None,
-            ratings: Vec::new(),
-            deleted_by_default: false,
-        };
-        let plan = Plan::resolve(&self.db, &query, &visibility, &config)
-            .await
-            .map_err(search_error)?;
+        let plan = search_plan(&self.db, &update.query).await?;
 
         let mut conn = self.db.acquire().await?;
         let wanted: Vec<WantedTag<'_>> = update
@@ -399,7 +373,38 @@ impl TagJobs {
     }
 }
 
-fn search_error(error: SearchError) -> JobError {
+/// The plan for walking every post search `text` finds, staff's view
+/// (deleted posts only with `status:`), [`BATCH`] at a time, newest
+/// first by id so keyset pages reach every one.
+pub(crate) async fn search_plan(db: &PgPool, text: &str) -> Result<Plan, JobError> {
+    let mut query = Query::parse(text).map_err(JobError::permanent)?;
+    query.order = None;
+    query.ordfav = None;
+    query.ordpool = None;
+    query.ordfavgroup = None;
+    query.limit = None;
+    let config = SearchConfig {
+        per_page: BATCH as u32,
+        max_per_page: BATCH as u32,
+        ..SearchConfig::default()
+    };
+    let visibility = Visibility {
+        statuses: vec![
+            PostStatus::Active,
+            PostStatus::Flagged,
+            PostStatus::Pending,
+            PostStatus::Deleted,
+        ],
+        viewer: None,
+        ratings: Vec::new(),
+        deleted_by_default: false,
+    };
+    Plan::resolve(db, &query, &visibility, &config)
+        .await
+        .map_err(search_error)
+}
+
+pub(crate) fn search_error(error: SearchError) -> JobError {
     match error {
         SearchError::Invalid(message) => JobError::permanent(message),
         SearchError::Db(error) => error.into(),

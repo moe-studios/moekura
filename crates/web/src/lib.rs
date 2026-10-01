@@ -17,6 +17,7 @@ mod comments;
 mod counts;
 mod danbooru;
 mod dates;
+mod dmails;
 mod edit;
 mod email;
 pub mod error;
@@ -272,6 +273,7 @@ pub fn router(state: AppState) -> Router {
         .merge(bans::routes())
         .merge(commentary::routes())
         .merge(comments::routes())
+        .merge(dmails::routes())
         .merge(edit::routes())
         .merge(email::routes())
         .merge(explore::routes())

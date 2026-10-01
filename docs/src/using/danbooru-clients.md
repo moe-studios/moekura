@@ -65,6 +65,7 @@ engine, then log in with your name and your API key.
 | `/post_replacements.json` | read-only, by `search[post_id]` or `search[creator_id]` |
 | `/iqdb_queries.json` | searching by image: GET with `search[url]` or `search[post_id]`, or POST a `file` too; `[{post_id, score, post}]`, score in percent |
 | `/wiki_page_versions.json`, `/pool_versions.json` | wiki versions by `search[wiki_page_id]`, `search[title]`, `search[updater_id]` or `search[updater_name]`; pool versions by `search[pool_id]` or the updater, with `added_post_ids` and `removed_post_ids` |
+| `/dmails.json`, `/dmails/{id}.json` | your messages, by `search[folder]` (`received`, `sent` or all) and `search[is_read]`; send with `dmail[to_name]` (or `dmail[to_id]`), `dmail[title]` and `dmail[body]` |
 | `/explore/posts/popular.json`, `/explore/posts/viewed.json` | the best-scored and most viewed posts of a `date`'s day, or with `scale`, week or month |
 | `/explore/posts/searches.json`, `/explore/posts/missed_searches.json` | `[query, count]` pairs: the searches made most, and those that most often found nothing, by `date` and `scale` like the posts |
 | `/comments.json`, `/comments/{id}.json` | listed newest first, by `search[post_id]`, `search[creator_id]` or `search[creator_name]`; `page` takes numbers and `b<id>`; post with `comment[post_id]` and `comment[body]`, and change or delete your own |
@@ -79,8 +80,8 @@ engine, then log in with your name and your API key.
 
 ## What doesn't
 
-- Forums and messages don't exist in Moekura: their lists are empty,
-  and single ones are "not found".
+- Forums don't exist in Moekura: their lists are empty, and single
+  topics and posts are "not found".
 - Favorites and your votes on posts and comments have no ids of their
   own: their `id` is the post's or comment's.
 - Pools, favorite groups and notes are read-only here; change them on

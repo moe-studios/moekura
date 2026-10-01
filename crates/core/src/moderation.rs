@@ -155,10 +155,11 @@ pub enum ActionKind {
     ArtistBan,
     ArtistUnban,
     PostReplace,
+    DmailReportSettle,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 40] = [
+    pub const ALL: [ActionKind; 41] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -199,6 +200,7 @@ impl ActionKind {
         ActionKind::ArtistBan,
         ActionKind::ArtistUnban,
         ActionKind::PostReplace,
+        ActionKind::DmailReportSettle,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -243,6 +245,7 @@ impl ActionKind {
             ActionKind::ArtistBan => "artist.ban",
             ActionKind::ArtistUnban => "artist.unban",
             ActionKind::PostReplace => "post.replace",
+            ActionKind::DmailReportSettle => "dmail_report.settle",
         }
     }
 
@@ -289,6 +292,7 @@ impl ActionKind {
             ActionKind::ArtistBan => "banned an artist",
             ActionKind::ArtistUnban => "unbanned an artist",
             ActionKind::PostReplace => "replaced the file of post",
+            ActionKind::DmailReportSettle => "settled a report about a message from",
         }
     }
 

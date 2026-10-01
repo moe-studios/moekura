@@ -49,6 +49,9 @@ pub struct CurrentUser {
     /// Tags whose posts they may not see: banned artists', unless they
     /// approve posts. Sorted.
     pub hidden_tags: Vec<i32>,
+    /// Their messages not read yet, for the header (logged in through
+    /// the site only).
+    pub unread_messages: i64,
 }
 
 /// The banned artists' tags hidden from someone in `role`.
@@ -70,6 +73,7 @@ impl CurrentUser {
             ban: None,
             recent_write: false,
             ratings: site.settings.visitor_ratings.clone(),
+            unread_messages: 0,
         }
     }
 
@@ -96,6 +100,7 @@ impl CurrentUser {
             } else {
                 Vec::new()
             },
+            unread_messages: 0,
         }
     }
 
@@ -274,6 +279,13 @@ pub async fn resolve_session(
 
     let mut current = current;
     current.recent_write = jar.get(RECENT_WRITE_COOKIE).is_some();
+    // Pages show it in the header; best effort.
+    if let Some(user) = &current.user {
+        match moekura_db::dmails::unread_count(state.db.primary(), user.id).await {
+            Ok(n) => current.unread_messages = n,
+            Err(error) => tracing::warn!(%error, "could not count unread messages"),
+        }
+    }
     request.extensions_mut().insert(current.clone());
     let mut response = crate::dates::scope(&current, next.run(request)).await;
     remember_address(&state, &current, ip, changes, &response);

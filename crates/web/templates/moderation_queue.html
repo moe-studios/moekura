@@ -6,12 +6,16 @@
 <h1>Approval queue</h1>
 <p class="hint">Pending posts you didn't upload and haven't disapproved (<a href="{{ search_url('status:unmoderated') }}">status:unmoderated</a>). Disapproving passes on a post without rejecting it: it leaves your queue, and other approvers see why.</p>
 <form class="filters" method="get" action="/moderation/queue">
-  <label for="queue-tags">Search</label>
-  <input id="queue-tags" name="tags" value="{{ query.tags }}" placeholder="tags, user:name, rating:e…" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
-  <label for="queue-order">Order</label>
-  <select id="queue-order" name="order">
-    {% for o in orders %}<option value="{{ o.name }}"{% if query.order == o.name %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
-  </select>
+  <div class="filter-field">
+    <label for="queue-tags">Search</label>
+    <input id="queue-tags" name="tags" value="{{ query.tags }}" placeholder="tags, user:name, rating:e…" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  </div>
+  <div class="filter-field">
+    <label for="queue-order">Order</label>
+    <select id="queue-order" name="order">
+      {% for o in orders %}<option value="{{ o.name }}"{% if query.order == o.name %} selected{% endif %}>{{ o.label }}</option>{% endfor %}
+    </select>
+  </div>
   <button type="submit">Filter</button>
 </form>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}

@@ -3,18 +3,30 @@
 {% block content %}
 <h1>Post changes</h1>
 <form class="filters" method="get" action="/post_versions">
-  <label for="pv-user">By</label>
-  <input id="pv-user" name="user" value="{{ query.user }}" size="12">
-  <label for="pv-post">Post</label>
-  <input id="pv-post" name="post" value="{{ query.post }}" size="8" inputmode="numeric">
-  <label for="pv-added">Added</label>
-  <input id="pv-added" name="added" value="{{ query.added }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
-  <label for="pv-removed">Removed</label>
-  <input id="pv-removed" name="removed" value="{{ query.removed }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
-  <label for="pv-since">From</label>
-  <input id="pv-since" name="since" value="{{ query.since }}" type="date">
-  <label for="pv-until">To</label>
-  <input id="pv-until" name="until" value="{{ query.until }}" type="date">
+  <div class="filter-field">
+    <label for="pv-user">By</label>
+    <input id="pv-user" name="user" value="{{ query.user }}" size="12">
+  </div>
+  <div class="filter-field">
+    <label for="pv-post">Post</label>
+    <input id="pv-post" name="post" value="{{ query.post }}" size="8" inputmode="numeric">
+  </div>
+  <div class="filter-field">
+    <label for="pv-added">Added</label>
+    <input id="pv-added" name="added" value="{{ query.added }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  </div>
+  <div class="filter-field">
+    <label for="pv-removed">Removed</label>
+    <input id="pv-removed" name="removed" value="{{ query.removed }}" size="14" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  </div>
+  <div class="filter-field">
+    <label for="pv-since">From</label>
+    <input id="pv-since" name="since" value="{{ query.since }}" type="date">
+  </div>
+  <div class="filter-field">
+    <label for="pv-until">To</label>
+    <input id="pv-until" name="until" value="{{ query.until }}" type="date">
+  </div>
   <button type="submit">Filter</button>
 </form>
 {% if undo %}

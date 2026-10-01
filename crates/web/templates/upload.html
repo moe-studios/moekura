@@ -48,11 +48,13 @@
 
     <details class="edit"{% if form.commentary_title or form.commentary_description %} open{% endif %}>
       <summary>Artist's commentary <span class="optional">(optional)</span></summary>
-      <label for="commentary_title">Title</label>
-      <input id="commentary_title" name="commentary_title" value="{{ form.commentary_title }}" maxlength="1000">
-      <label for="commentary_description">Description</label>
-      <textarea id="commentary_description" name="commentary_description" rows="3">{{ form.commentary_description }}</textarea>
-      <p class="hint">What the artist wrote with the work, as they wrote it. Left empty, it's taken from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt, Fanbox, Skeb, or a page with its image in its preview tags).</p>
+      <div class="edit-fields">
+        <label for="commentary_title">Title</label>
+        <input id="commentary_title" name="commentary_title" value="{{ form.commentary_title }}" maxlength="1000">
+        <label for="commentary_description">Description</label>
+        <textarea id="commentary_description" name="commentary_description" rows="3">{{ form.commentary_description }}</textarea>
+        <p class="hint">What the artist wrote with the work, as they wrote it. Left empty, it's taken from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt, Fanbox, Skeb, or a page with its image in its preview tags).</p>
+      </div>
     </details>
 
     <button type="submit">Upload</button>

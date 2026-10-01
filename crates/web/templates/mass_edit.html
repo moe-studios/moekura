@@ -27,6 +27,7 @@
 {% endif %}
 <h2>Recent mass edits</h2>
 {% if recent %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Mass edit table">
 <table class="tag-table">
   <thead><tr><th scope="col">Search</th><th scope="col">Changes</th><th scope="col">Progress</th><th scope="col">Started</th></tr></thead>
   <tbody>
@@ -40,6 +41,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No mass edits yet.</p>
 {% endif %}

@@ -5,6 +5,7 @@
 <h1>Webhooks</h1>
 <p class="hint">Webhooks tell other services (a Discord bot, a mirror, your own scripts) about events here, as signed JSON POSTs.</p>
 {% if hooks %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Admin webhooks table">
 <table class="tag-table">
   <thead><tr><th scope="col">URL</th><th scope="col">Events</th><th scope="col">State</th></tr></thead>
   <tbody>
@@ -17,6 +18,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No webhooks yet.</p>
 {% endif %}

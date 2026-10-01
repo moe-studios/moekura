@@ -21,12 +21,14 @@
 {% if kind == "searches" or kind == "missed_searches" %}
 {% if kind == "missed_searches" %}<p class="hint">Tag searches that found no posts: often a misspelling or another name for a tag, which an alias could fix.</p>{% endif %}
 {% if searches %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Explore table">
 <table class="tag-table">
   <thead><tr><th scope="col">Search</th><th scope="col" class="num">{% if kind == "missed_searches" %}Times missed{% else %}Searches{% endif %}</th></tr></thead>
   <tbody>
     {% for s in searches %}<tr><td><a href="{{ s.url }}">{{ s.query }}</a></td><td class="num">{{ s.count }}</td></tr>{% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No searches counted then.</p>
 {% endif %}

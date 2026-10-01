@@ -16,10 +16,12 @@
 
 <h2>Background jobs</h2>
 {% if jobs %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Admin overview table">
 <table class="tag-table">
   <thead><tr><th scope="col">Kind</th><th scope="col">Status</th><th scope="col" class="num">Jobs</th></tr></thead>
   <tbody>{% for j in jobs %}<tr><td><code>{{ j.kind }}</code></td><td>{{ j.status }}</td><td class="num">{{ j.count }}</td></tr>{% endfor %}</tbody>
 </table>
+</div>
 {% else %}
 <p class="hint">The queue is empty.</p>
 {% endif %}

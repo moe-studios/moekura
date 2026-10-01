@@ -5,8 +5,10 @@
 <h1>Purge deleted posts</h1>
 <p class="hint">Purging removes deleted posts, their files and their history for good, in the background; it can't be undone. Search the deleted posts (<code>user:name</code>, tags and so on; <code>status:deleted</code> is implied), or leave the search empty for all of them, then purge those you tick or every match.</p>
 <form class="filters" method="get" action="/moderation/purge">
-  <label for="purge-tags">Search</label>
-  <input id="purge-tags" name="tags" value="{{ tags or '' }}" placeholder="user:name, tags…" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+  <div class="filter-field">
+    <label for="purge-tags">Search</label>
+    <input id="purge-tags" name="tags" value="{{ tags or '' }}" placeholder="user:name, tags…" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+  </div>
   <button type="submit">Preview</button>
 </form>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
@@ -34,6 +36,7 @@
 {% endif %}
 <h2>Recent purges</h2>
 {% if recent %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Moderation purge table">
 <table class="tag-table">
   <thead><tr><th scope="col">Posts</th><th scope="col">Progress</th><th scope="col">Started</th></tr></thead>
   <tbody>
@@ -46,6 +49,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No purges yet.</p>
 {% endif %}

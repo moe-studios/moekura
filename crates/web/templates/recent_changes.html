@@ -4,8 +4,10 @@
 {% if kind == "wiki_page_versions" %}{% include "tag_nav.html" %}{% endif %}
 <h1>{{ heading }}</h1>
 <form class="filters" method="get" action="{{ path }}">
-  <label for="rc-user">By</label>
-  <input id="rc-user" name="user" value="{{ query.user }}" size="12">
+  <div class="filter-field">
+    <label for="rc-user">By</label>
+    <input id="rc-user" name="user" value="{{ query.user }}" size="12">
+  </div>
   <button type="submit">Filter</button>
 </form>
 {% if versions %}

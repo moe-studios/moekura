@@ -27,6 +27,7 @@ roles can't be deleted and keep their ranks.
 | Undo a user's post edits | taking back every post edit a user made in a range of days (Moderation → Post changes) |
 | Send private messages | writing to other users ([Messages](../using/messages.md)) |
 | Leave feedback on users of lower rank | positive, neutral or negative notes on someone's account ([Feedback](../using/account.md#feedback)) |
+| Invite people | making invite codes, up to the site's quota ([Invites](../install/first-steps.md#invites)) |
 | Replace posts' files | swapping a post's file for a better one, keeping everything else ([Posts and files](../using/posts.md#replacing-a-posts-file)) |
 | Edit notes | adding, moving, changing and deleting notes on posts |
 | Create and edit pools | making pools, and changing their posts, names and descriptions (deleting a pool takes *Delete and restore posts*) |
@@ -38,7 +39,7 @@ roles can't be deleted and keep their ranks.
 | See deleted posts | deleted posts and comments |
 | Hide comments and handle reports about them | hiding and restoring anyone's comments, and the reported comments queue |
 | Ban users and networks | |
-| Manage users | changing other users' roles and account status |
+| Manage users | changing other users' roles and account status; any number and kind of invites |
 | Manage site settings and roles | |
 | Read the moderation log | |
 
@@ -50,7 +51,7 @@ The built-in roles and what they start with:
 | Member | 10 | Anonymous, plus Upload, Edit posts and tags, Comment, Favorite, Vote, Flag posts, Edit the wiki and artists, Create and edit pools, Edit notes, Send private messages |
 | Contributor | 20 | Member, plus Upload without approval, Leave feedback |
 | Janitor | 30 | Contributor, plus Approve posts, Delete and restore posts, Manage tags, See deleted posts, Hide comments |
-| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits, Replace posts' files |
+| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits, Replace posts' files, Invite people |
 | Admin | 50 | everything |
 
 ## Upload limits

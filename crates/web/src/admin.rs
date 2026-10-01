@@ -146,6 +146,7 @@ fn render_settings(
                 rules => current.rules,
                 footer_links => moekura_core::settings::FooterLink::to_list(&current.footer_links),
                 registration_mode => mode_name(current.registration_mode),
+                invite_quota => current.invite_quota,
                 email_verification => current.email_verification,
                 upload_approval => current.upload_approval,
                 upload_limit_scaling => current.upload_limit_scaling,
@@ -286,6 +287,7 @@ struct SettingsForm {
     #[serde(default)]
     default_blacklist: String,
     ip_history_days: Option<String>,
+    invite_quota: Option<String>,
     /// `block` or `allow`.
     email_domain_mode: Option<String>,
     /// One domain per line.
@@ -429,6 +431,12 @@ async fn save_settings(
         ),
         ("visitor_ratings", json!(visitor_ratings(&form))),
         ("default_theme", json!(default_theme)),
+        (
+            "invite_quota",
+            form.invite_quota
+                .as_deref()
+                .map_or_else(|| json!(before.invite_quota), number),
+        ),
         (
             "ip_history_days",
             form.ip_history_days

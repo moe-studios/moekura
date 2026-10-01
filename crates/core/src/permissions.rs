@@ -59,10 +59,12 @@ pub enum Permission {
     SendMessages = 25,
     /// Leave feedback on users of lower rank.
     GiveFeedback = 26,
+    /// Make invite codes, up to the site's quota.
+    InviteUsers = 27,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 27] = [
+    pub const ALL: [Permission; 28] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -90,6 +92,7 @@ impl Permission {
         Permission::ReplacePosts,
         Permission::SendMessages,
         Permission::GiveFeedback,
+        Permission::InviteUsers,
     ];
 
     const fn bit(self) -> u64 {
@@ -126,6 +129,7 @@ impl Permission {
             Permission::ReplacePosts => "replace_posts",
             Permission::SendMessages => "send_messages",
             Permission::GiveFeedback => "give_feedback",
+            Permission::InviteUsers => "invite_users",
         }
     }
 
@@ -159,6 +163,7 @@ impl Permission {
             Permission::ReplacePosts => "Replace posts' files",
             Permission::SendMessages => "Send private messages",
             Permission::GiveFeedback => "Leave feedback on users of lower rank",
+            Permission::InviteUsers => "Invite people",
         }
     }
 }
@@ -326,6 +331,7 @@ impl SystemRole {
             LockPosts,
             UndoEdits,
             ReplacePosts,
+            InviteUsers,
         ]));
         match self {
             SystemRole::Anonymous => ANONYMOUS,

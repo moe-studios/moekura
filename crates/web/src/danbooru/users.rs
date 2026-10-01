@@ -90,7 +90,9 @@ pub(super) async fn danbooru_user(
         name: user.name.clone(),
         level: level(role, &site),
         level_string: role.map_or_else(|| "Member".to_owned(), |r| r.name.clone()),
-        inviter_id: None,
+        inviter_id: moekura_db::invites::inviter(db, user.id)
+            .await?
+            .map(|(id, _)| id),
         updated_at: created.clone(),
         created_at: created,
         last_logged_in_at: user.last_seen_at.map(timestamp),

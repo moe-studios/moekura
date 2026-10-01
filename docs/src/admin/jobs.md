@@ -9,6 +9,7 @@ PostgreSQL:
 | `tags.apply_relation` | re-tags existing posts when an alias or implication is approved |
 | `posts.purge` | removes a purged post and its files |
 | `ml.tag_post` | suggests tags for a post; only [`moekura tagger`](tagger.md) takes these |
+| `stats.refresh` | hourly, counts the figures for [stats and reports](moderation.md#stats-and-reports) |
 
 `serve` runs job workers itself, `jobs.workers` at a time. On a busier site,
 run workers as separate processes and turn them off in the web servers:

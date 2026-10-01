@@ -59,10 +59,11 @@
   </main>
   <footer class="site-footer">
     {% if site.description %}<p class="description">{{ site.description }}</p>{% endif %}
-    {% if site.has_rules or site.footer_links %}<nav class="footer-links" aria-label="Site">
+    <nav class="footer-links" aria-label="Site">
       {% if site.has_rules %}<a href="/rules">Rules</a>{% endif %}
+      <a href="/stats">Stats</a>
       {% for link in site.footer_links %}<a href="{{ link.url }}"{% if link.external %} rel="noopener"{% endif %}>{{ link.label }}</a>{% endfor %}
-    </nav>{% endif %}
+    </nav>
     <p>Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> {{ build_version }} · <a href="/api/docs">API</a>
       {% if not prefs or prefs.shortcuts %}<span data-shortcuts-link hidden>· <button type="button" class="link">Keyboard shortcuts</button> <kbd>?</kbd></span>{% endif %}</p>
     {% if mode_choice %}

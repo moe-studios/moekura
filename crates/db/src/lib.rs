@@ -35,6 +35,7 @@ pub mod posts;
 pub mod promotion;
 pub mod remote_imports;
 pub mod replacements;
+pub mod reports;
 pub mod requests;
 pub mod roles;
 pub mod saved_searches;

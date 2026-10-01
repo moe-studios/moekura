@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Stats · {{ site.name }}{% endblock %}
+{% block content %}
+<section class="card medium">
+  <h1>Stats</h1>
+  {% if totals %}
+  <dl class="facts">
+    {% for t in totals %}<dt>{{ t.label }}</dt><dd>{{ t.value }}</dd>{% endfor %}
+  </dl>
+  <p class="hint">Counted hourly; last on {{ counted }}.</p>
+  {% else %}
+  <p class="empty">The site's figures aren't counted yet; they will be within the hour.</p>
+  {% endif %}
+  {% if can_report %}<p><a href="/reports">Reports</a> chart what's happened over time.</p>{% endif %}
+</section>
+{% endblock %}

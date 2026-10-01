@@ -219,51 +219,23 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
 const CHART_MONTHS: i32 = 12;
 /// Tags listed as most used in someone's uploads.
 const TOP_TAGS: i64 = 10;
-/// The chart's bars' size, and the room under them for labels, in SVG
-/// units.
-const BAR_WIDTH: i64 = 20;
-const BAR_GAP: i64 = 6;
-const BAR_MAX: i64 = 80;
-const LABEL_ROOM: i64 = 16;
-
-/// An SVG bar chart (drawn by the template) of uploads per month: `None`
-/// when there were none in the period.
+/// A bar chart of uploads per month, unless there were none.
 fn upload_chart(history: &[(i32, i32, i64)]) -> Option<Value> {
-    let most = history.iter().map(|&(.., n)| n).max().filter(|&n| n > 0)?;
-    let bars: Vec<Value> = history
+    let bars: Vec<crate::charts::Bar> = history
         .iter()
-        .zip(0..)
-        .map(|(&(year, month, uploads), i)| {
+        .map(|&(year, month, uploads)| {
             let name = u8::try_from(month)
                 .ok()
                 .and_then(|m| time::Month::try_from(m).ok())
                 .map_or_else(String::new, |m| m.to_string());
-            // Any upload at all shows as at least a sliver.
-            let height = if uploads == 0 {
-                0
-            } else {
-                (uploads * BAR_MAX / most).max(1)
-            };
-            let x = i * (BAR_WIDTH + BAR_GAP);
-            context! {
-                x => x,
-                y => BAR_MAX - height,
-                height => height,
-                label_x => x + BAR_WIDTH / 2,
-                label => name.chars().take(3).collect::<String>(),
-                title => format!("{name} {year}: {uploads}"),
+            crate::charts::Bar {
+                label: name.chars().take(3).collect(),
+                title: format!("{name} {year}: {uploads}"),
+                value: uploads,
             }
         })
         .collect();
-    let width = i64::try_from(bars.len()).unwrap_or(0) * (BAR_WIDTH + BAR_GAP) - BAR_GAP;
-    Some(context! {
-        bars => bars,
-        width => width,
-        height => BAR_MAX + LABEL_ROOM,
-        bar_width => BAR_WIDTH,
-        label_y => BAR_MAX + LABEL_ROOM - 3,
-        most => most,
-    })
+    crate::charts::bars(&bars)
 }
 
 #[derive(Debug, Deserialize)]
@@ -643,19 +615,14 @@ mod tests {
 
         // This month's uploads are charted, and their tags counted, leaving
         // out deleted posts and meta tags.
-        assert!(profile.contains("class=\"upload-chart\""));
+        assert!(profile.contains("class=\"bar-chart\""));
         assert!(profile.contains(": 3</title>"), "{profile}");
         let top = &profile[profile.find("top-tags").unwrap()..];
         assert!(
             top.find(">cat</a> <span class=\"hint\">2<").unwrap() < top.find(">ears</a>").unwrap()
         );
         assert!(!top.contains(">highres<"));
-        assert!(
-            !app.get("/users/bob", None)
-                .await
-                .body
-                .contains("upload-chart")
-        );
+        assert!(!app.get("/users/bob", None).await.body.contains("bar-chart"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

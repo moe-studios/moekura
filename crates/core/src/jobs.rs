@@ -87,6 +87,16 @@ impl Job for PruneIpHistory {
     const MAX_ATTEMPTS: i32 = 3;
 }
 
+/// Count site statistics: the last two days' activity (or, the first
+/// time, the last year's) and the site-wide totals; scheduled hourly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RefreshStats {}
+
+impl Job for RefreshStats {
+    const KIND: &'static str = "stats.refresh";
+    const MAX_ATTEMPTS: i32 = 3;
+}
+
 /// Undo the post edits user `user_id` made between `since` and `until`
 /// (Unix times; either open-ended), credited to `actor_id`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

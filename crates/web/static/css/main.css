@@ -755,10 +755,10 @@ html:not(.js) .select-all { display: none; }
 .news .markup { flex: 1; min-width: 0; }
 .news .markup > :first-child { margin-top: 0; }
 .news .markup > :last-child { margin-bottom: 0; }
-.upload-chart { display: block; width: 100%; max-width: 40rem; height: auto; margin-bottom: 16px; }
-.upload-chart rect { fill: var(--accent); }
-.upload-chart g:hover rect { fill: var(--text); }
-.upload-chart text { fill: var(--muted); font-size: 9px; }
+.bar-chart { display: block; width: 100%; max-width: 40rem; height: auto; margin-bottom: 16px; }
+.bar-chart rect { fill: var(--accent); }
+.bar-chart g:hover rect { fill: var(--text); }
+.bar-chart text { fill: var(--muted); font-size: 10px; }
 .top-tags li { display: inline-block; margin-right: 12px; }
 .history li.deleted { opacity: 0.6; }
 .flash.banned { border-left-color: var(--danger); }

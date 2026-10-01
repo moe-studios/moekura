@@ -289,6 +289,21 @@ it since, and locked tags and ratings are left alone. Uploads aren't
 edits and stay. Each post's history credits whoever started the undo,
 and the log records it.
 
+## Stats and reports
+
+`/stats` (linked from every page's footer) shows anyone the site's
+totals: posts, tags in use, users, favorites, comments, forum posts, wiki
+pages, pools, artists and notes.
+
+Staff who can read the moderation log also get **Reports** there,
+charting uploads, post changes, approvals, comments, forum posts, wiki
+edits, note changes, favorites, post votes and new accounts over the last
+30, 90 or 365 days, with the most active users for each. Picking a user
+charts theirs alone.
+
+The `stats.refresh` [job](jobs.md) counts all of this hourly (the first
+time, the past year), so the pages cost nothing to view. Days are UTC.
+
 ## The moderation log
 
 **Moderation → Log** lists every staff action: approvals, deletions,

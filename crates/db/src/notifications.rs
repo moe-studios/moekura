@@ -12,6 +12,8 @@ pub enum Kind {
     Message,
     Forum,
     Request,
+    /// Feedback left on one's account.
+    Feedback,
 }
 
 impl Kind {
@@ -22,6 +24,7 @@ impl Kind {
             Kind::Message => "message",
             Kind::Forum => "forum",
             Kind::Request => "request",
+            Kind::Feedback => "feedback",
         }
     }
 }

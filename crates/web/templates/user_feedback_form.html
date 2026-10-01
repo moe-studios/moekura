@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Feedback on {{ user }} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="{{ user_url }}">« {{ user }}</a></p>
+<h1>Feedback on {{ user }}</h1>
+{% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+<form class="wiki-form" method="post" action="{{ action }}">
+  <input type="hidden" name="user" value="{{ user }}">
+  <fieldset class="group">
+    <legend>It's</legend>
+    {% for c in categories %}
+    <label class="choice"><input type="radio" name="category" value="{{ c }}"{% if category == c %} checked{% endif %} required> {{ c|capitalize }}</label>
+    {% endfor %}
+  </fieldset>
+  <label for="feedback-body">Feedback</label>
+  <textarea id="feedback-body" name="body" rows="8" maxlength="20000" required>{{ body }}</textarea>
+  {% include "comment_help.html" %}
+  <p class="hint">Everyone can read it on {{ user }}'s profile, and {{ user }} is told of it. Negative feedback can keep someone from automatic promotion.</p>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

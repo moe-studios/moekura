@@ -54,6 +54,8 @@
       <input id="promotion_account_days" name="promotion_account_days" type="number" min="0" value="{{ settings.promotion.account_days }}">
       <label for="promotion_max_recent_deletions">At most this many uploads deleted in the last 30 days</label>
       <input id="promotion_max_recent_deletions" name="promotion_max_recent_deletions" type="number" min="0" value="{{ settings.promotion.max_recent_deletions }}">
+      <label for="promotion_max_negative_feedback">At most this many negative feedback records</label>
+      <input id="promotion_max_negative_feedback" name="promotion_max_negative_feedback" type="number" min="0" value="{{ settings.promotion.max_negative_feedback }}">
       <p class="hint">Banned members, and those staff keep from promotion on their profile, aren't promoted.</p>
     </fieldset>
     <label class="choice"><input type="checkbox" name="preview_all_ratings"{% if settings.preview_all_ratings %} checked{% endif %}> Link previews (in chat apps and social networks) show questionable and explicit posts' images too</label>

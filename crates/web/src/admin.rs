@@ -167,6 +167,7 @@ fn render_settings(
                     edits => current.promotion_rules.edits,
                     account_days => current.promotion_rules.account_days,
                     max_recent_deletions => current.promotion_rules.max_recent_deletions,
+                    max_negative_feedback => current.promotion_rules.max_negative_feedback,
                 },
                 default_blacklist => current.default_blacklist,
                 ip_history_days => current.ip_history_days,
@@ -281,6 +282,7 @@ struct SettingsForm {
     promotion_account_days: String,
     #[serde(default)]
     promotion_max_recent_deletions: String,
+    promotion_max_negative_feedback: Option<String>,
     #[serde(default)]
     default_blacklist: String,
     ip_history_days: Option<String>,
@@ -415,6 +417,10 @@ async fn save_settings(
                 "edits": number(&form.promotion_edits),
                 "account_days": number(&form.promotion_account_days),
                 "max_recent_deletions": number(&form.promotion_max_recent_deletions),
+                "max_negative_feedback": form.promotion_max_negative_feedback.as_deref().map_or_else(
+                    || json!(before.promotion_rules.max_negative_feedback),
+                    number,
+                ),
             }),
         ),
         (
@@ -1086,7 +1092,8 @@ mod tests {
                 uploads: 20,
                 edits: 5,
                 account_days: 14,
-                max_recent_deletions: 1
+                max_recent_deletions: 1,
+                max_negative_feedback: 0,
             }
         );
         let bad = app

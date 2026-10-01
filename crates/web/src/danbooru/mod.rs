@@ -24,6 +24,7 @@ mod reactions;
 mod replacements;
 mod tags;
 mod uploads;
+mod user_feedbacks;
 mod users;
 mod versions;
 
@@ -68,6 +69,7 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             .merge(reactions::routes())
             .merge(tags::routes())
             .merge(uploads::routes())
+            .merge(user_feedbacks::routes())
             .merge(users::routes())
             .merge(versions::routes()),
     )

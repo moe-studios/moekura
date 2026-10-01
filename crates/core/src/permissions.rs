@@ -57,10 +57,12 @@ pub enum Permission {
     ReplacePosts = 24,
     /// Send private messages to other users.
     SendMessages = 25,
+    /// Leave feedback on users of lower rank.
+    GiveFeedback = 26,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 26] = [
+    pub const ALL: [Permission; 27] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -87,6 +89,7 @@ impl Permission {
         Permission::UndoEdits,
         Permission::ReplacePosts,
         Permission::SendMessages,
+        Permission::GiveFeedback,
     ];
 
     const fn bit(self) -> u64 {
@@ -122,6 +125,7 @@ impl Permission {
             Permission::UndoEdits => "undo_edits",
             Permission::ReplacePosts => "replace_posts",
             Permission::SendMessages => "send_messages",
+            Permission::GiveFeedback => "give_feedback",
         }
     }
 
@@ -154,6 +158,7 @@ impl Permission {
             Permission::UndoEdits => "Undo a user's post edits",
             Permission::ReplacePosts => "Replace posts' files",
             Permission::SendMessages => "Send private messages",
+            Permission::GiveFeedback => "Leave feedback on users of lower rank",
         }
     }
 }
@@ -305,7 +310,8 @@ impl SystemRole {
             EditNotes,
             SendMessages,
         ]));
-        const CONTRIBUTOR: Permissions = MEMBER.with(Permissions::of(&[UploadWithoutApproval]));
+        const CONTRIBUTOR: Permissions =
+            MEMBER.with(Permissions::of(&[UploadWithoutApproval, GiveFeedback]));
         const JANITOR: Permissions = CONTRIBUTOR.with(Permissions::of(&[
             ApprovePosts,
             DeletePosts,

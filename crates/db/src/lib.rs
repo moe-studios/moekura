@@ -49,6 +49,7 @@ pub mod tag_suggestions;
 pub mod tag_versions;
 pub mod tags;
 pub mod two_factor;
+pub mod user_feedbacks;
 pub mod user_ips;
 pub mod user_notes;
 pub mod user_record;

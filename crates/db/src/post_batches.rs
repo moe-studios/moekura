@@ -1,5 +1,5 @@
 //! Moderation of many posts at once (`post_batches`): deleting every
-//! upload of a user, by a job in batches.
+//! upload of a user, or purging deleted posts, by a job in batches.
 
 use moekura_core::moderation::ActionKind;
 use moekura_core::posts::{PostLock, PostStatus};
@@ -16,7 +16,7 @@ pub const DELETABLE: [PostStatus; 3] =
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct PostBatch {
     pub id: i64,
-    /// `delete`.
+    /// `delete` or `purge`.
     pub kind: String,
     pub creator_id: Option<i64>,
     pub creator_name: Option<String>,
@@ -24,6 +24,10 @@ pub struct PostBatch {
     pub user_id: Option<i64>,
     pub user_name: Option<String>,
     pub reason: String,
+    /// For purges: the search (with `status:deleted`)…
+    pub query: Option<String>,
+    /// …or the posts ticked, newest first.
+    pub post_ids: Option<Vec<i64>>,
     pub override_locks: bool,
     /// `queued`, `running`, `done` or `failed`.
     pub status: String,
@@ -48,7 +52,7 @@ macro_rules! select_batches {
     ($rest:literal) => {
         concat!(
             "SELECT b.id, b.kind, b.creator_id, c.name::text AS creator_name, b.user_id,
-                    u.name::text AS user_name, b.reason, b.override_locks, b.status, b.total,
+                    u.name::text AS user_name, b.reason, b.query, b.post_ids, b.override_locks, b.status, b.total,
                     b.done, b.skipped, b.failed, b.resume_before, b.error, b.created_at,
                     b.finished_at
              FROM post_batches b
@@ -77,6 +81,33 @@ pub async fn create_deletion(
     .bind(user_id)
     .bind(reason)
     .bind(override_locks)
+    .bind(i32::try_from(total).unwrap_or(i32::MAX))
+    .fetch_one(db)
+    .await
+}
+
+/// Records a purge of the deleted posts search `query` finds, or of
+/// posts `post_ids`, `total` of them; returns its id.
+pub async fn create_purge(
+    db: impl PgExecutor<'_>,
+    creator_id: Option<i64>,
+    query: Option<&str>,
+    post_ids: Option<&[i64]>,
+    total: i64,
+) -> sqlx::Result<i64> {
+    let post_ids = post_ids.map(|ids| {
+        let mut ids = ids.to_vec();
+        ids.sort_unstable_by(|a, b| b.cmp(a));
+        ids.dedup();
+        ids
+    });
+    sqlx::query_scalar(
+        "INSERT INTO post_batches (kind, creator_id, query, post_ids, total)
+         VALUES ('purge', $1, $2, $3, $4) RETURNING id",
+    )
+    .bind(creator_id)
+    .bind(query)
+    .bind(post_ids)
     .bind(i32::try_from(total).unwrap_or(i32::MAX))
     .fetch_one(db)
     .await
@@ -151,6 +182,14 @@ pub struct Progress {
     pub failed: i32,
 }
 
+impl std::ops::AddAssign for Progress {
+    fn add_assign(&mut self, other: Self) {
+        self.done += other.done;
+        self.skipped += other.skipped;
+        self.failed += other.failed;
+    }
+}
+
 /// Adds `progress` to batch `id`'s counts; posts from `resume_before` up
 /// are finished with.
 pub async fn advance(
@@ -202,6 +241,38 @@ pub async fn deletable_uploads(
     .bind(limit)
     .fetch_all(db)
     .await
+}
+
+/// Which of posts `ids` are deleted.
+pub async fn deleted_among(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT id FROM posts WHERE id = ANY($1) AND status = 'deleted' ORDER BY id DESC",
+    )
+    .bind(ids)
+    .fetch_all(db)
+    .await
+}
+
+/// Records how purging post `post_id` for purge `batch` went, and logs it
+/// as the batch creator's when it was purged.
+pub async fn record_purge(
+    db: &PgPool,
+    batch: &PostBatch,
+    post_id: i64,
+    progress: Progress,
+) -> sqlx::Result<()> {
+    let mut tx = db.begin().await?;
+    if progress.done > 0 {
+        mod_actions::record(
+            &mut *tx,
+            NewAction::new(batch.creator_id, ActionKind::PostPurge)
+                .post(post_id)
+                .details(serde_json::json!({ "batch": batch.id })),
+        )
+        .await?;
+    }
+    advance(&mut *tx, batch.id, progress, post_id).await?;
+    tx.commit().await
 }
 
 /// Deletes posts `ids` (newest first) for deletion `batch`, as a single

@@ -19,6 +19,7 @@ use crate::AppState;
 use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::{AppError, ErrorBody};
 use crate::moderation::PostAction;
+use crate::post_batches::PurgeScope;
 use crate::tag_relations::Decision;
 
 #[derive(Debug, Default, Deserialize, ToSchema)]
@@ -226,7 +227,8 @@ pub(crate) async fn purge(
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiPostBatch {
     pub id: i64,
-    /// `delete`: deleting every upload of `user`.
+    /// `delete`: deleting every upload of `user`; `purge`: purging the
+    /// deleted posts `query` finds, or `post_ids`.
     #[schema(example = "delete")]
     pub kind: String,
     /// Who started it.
@@ -234,6 +236,10 @@ pub struct ApiPostBatch {
     /// Whose uploads, for deletions.
     pub user: Option<String>,
     pub reason: String,
+    /// The search a purge covers, with `status:deleted`.
+    pub query: Option<String>,
+    /// The posts a purge covers, when picked one by one.
+    pub post_ids: Option<Vec<i64>>,
     /// `queued`, `running`, `done` or `failed`.
     #[schema(example = "running")]
     pub status: String,
@@ -241,7 +247,8 @@ pub struct ApiPostBatch {
     pub total: i32,
     /// Posts dealt with so far.
     pub done: i32,
-    /// Posts left alone: dealt with meanwhile, or with a locked status.
+    /// Posts left alone: dealt with meanwhile (restored, say), or with a
+    /// locked status.
     pub skipped: i32,
     pub failed: i32,
     /// Why it failed.
@@ -260,6 +267,8 @@ impl From<PostBatch> for ApiPostBatch {
             creator: b.creator_name,
             user: b.user_name,
             reason: b.reason,
+            query: b.query,
+            post_ids: b.post_ids,
             status: b.status,
             total: b.total,
             done: b.done,
@@ -307,9 +316,55 @@ pub(crate) async fn delete_uploads(
     Ok((StatusCode::ACCEPTED, Json(batch.into())))
 }
 
+#[derive(Debug, Default, Deserialize, ToSchema)]
+pub struct PurgeRequest {
+    /// Purge every deleted post this search finds (`status:deleted` is
+    /// implied; other statuses are refused). Empty for every deleted post.
+    query: Option<String>,
+    /// Or purge these posts, at most 500; those not deleted are left out.
+    post_ids: Option<Vec<i64>>,
+}
+
+/// Purge deleted posts in bulk.
+///
+/// Needs `purge_posts`. Give either `query` or `post_ids`. The posts,
+/// their files and their history are removed for good by a background
+/// job, each as `purge_post` would; posts restored before it gets to them
+/// are skipped. Follow the progress with `get_post_batch`.
+#[utoipa::path(
+    post,
+    path = "/moderation/purge",
+    operation_id = "purge_posts",
+    tag = "moderation",
+    request_body = PurgeRequest,
+    responses(
+        (status = 202, body = ApiPostBatch, description = "Started"),
+        (status = 400, body = ErrorBody, description = "No deleted posts to purge, or both or neither of `query` and `post_ids`"),
+        (status = 422, body = ErrorBody, description = "The search isn't valid"),
+    ),
+)]
+pub(crate) async fn purge_posts(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Json(body): Json<PurgeRequest>,
+) -> Result<(StatusCode, Json<ApiPostBatch>), AppError> {
+    current.require(Permission::PurgePosts)?;
+    let scope = match (body.query, body.post_ids) {
+        (Some(query), None) => {
+            PurgeScope::Search(Box::new(crate::post_batches::purge_search(&query)?))
+        }
+        (None, Some(ids)) => PurgeScope::Ticked(ids),
+        _ => {
+            return Err(AppError::BadRequest("Give either query or post_ids".into()));
+        }
+    };
+    let batch = crate::post_batches::purge(&state, &current, scope).await?;
+    Ok((StatusCode::ACCEPTED, Json(batch.into())))
+}
+
 /// Follow a moderation of many posts.
 ///
-/// Needs `delete_posts`.
+/// Needs `delete_posts` for deletions, `purge_posts` for purges.
 #[utoipa::path(
     get,
     path = "/moderation/post-batches/{id}",
@@ -323,10 +378,17 @@ pub(crate) async fn post_batch(
     current: CurrentUser,
     Path(id): Path<i64>,
 ) -> Result<Json<ApiPostBatch>, AppError> {
-    current.require(Permission::DeletePosts)?;
+    if !current.can(Permission::DeletePosts) {
+        current.require(Permission::PurgePosts)?;
+    }
     let batch = post_batches::by_id(state.db.primary(), id)
         .await?
         .ok_or(AppError::NotFound)?;
+    current.require(if batch.kind == "purge" {
+        Permission::PurgePosts
+    } else {
+        Permission::DeletePosts
+    })?;
     Ok(Json(batch.into()))
 }
 
@@ -929,6 +991,79 @@ mod tests {
             .await
             .status,
             StatusCode::FORBIDDEN
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn purges_deleted_posts_in_bulk(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let first = upload(&app, &alice, &fixture::png(20, 20), "cat").await;
+        let second = upload(&app, &alice, &fixture::png(24, 20), "dog").await;
+        let delete = |id: i64| format!("/api/v1/posts/{id}/delete");
+        app.json(
+            "POST",
+            &delete(first),
+            Some(&admin),
+            Some(json!({"reason": "x"})),
+        )
+        .await;
+        let url = "/api/v1/moderation/purge";
+        assert_eq!(
+            app.json("POST", url, Some(&moderator), Some(json!({"query": ""})))
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        for bad in [json!({}), json!({"query": "", "post_ids": [first]})] {
+            assert_eq!(
+                app.json("POST", url, Some(&admin), Some(bad)).await.status,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        assert_eq!(
+            app.json(
+                "POST",
+                url,
+                Some(&admin),
+                Some(json!({"post_ids": [second]}))
+            )
+            .await
+            .status,
+            StatusCode::BAD_REQUEST,
+            "not deleted"
+        );
+        assert_eq!(
+            app.json(
+                "POST",
+                url,
+                Some(&admin),
+                Some(json!({"query": "status:pending"}))
+            )
+            .await
+            .status,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        let started = app
+            .json("POST", url, Some(&admin), Some(json!({"query": "cat"})))
+            .await;
+        assert_eq!(started.status, StatusCode::ACCEPTED, "{}", started.body);
+        let batch = json(&started.body);
+        assert_eq!(
+            (&batch["kind"], &batch["query"], &batch["total"]),
+            (&json!("purge"), &json!("cat status:deleted"), &json!(1))
+        );
+        let follow = format!("/api/v1/moderation/post-batches/{}", batch["id"]);
+        assert_eq!(
+            app.get_json(&follow, Some(&moderator)).await.status,
+            StatusCode::FORBIDDEN,
+            "purges are for purgers"
+        );
+        assert_eq!(
+            app.get_json(&follow, Some(&admin)).await.status,
+            StatusCode::OK
         );
     }
 

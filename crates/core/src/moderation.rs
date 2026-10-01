@@ -153,10 +153,11 @@ pub enum ActionKind {
     PostLock,
     UndoEdits,
     DeleteUploads,
+    PurgePosts,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 38] = [
+    pub const ALL: [ActionKind; 39] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -195,6 +196,7 @@ impl ActionKind {
         ActionKind::PostLock,
         ActionKind::UndoEdits,
         ActionKind::DeleteUploads,
+        ActionKind::PurgePosts,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -237,6 +239,7 @@ impl ActionKind {
             ActionKind::PostLock => "post.lock",
             ActionKind::UndoEdits => "post_versions.undo",
             ActionKind::DeleteUploads => "posts.delete_uploads",
+            ActionKind::PurgePosts => "posts.purge_batch",
         }
     }
 
@@ -281,6 +284,7 @@ impl ActionKind {
             ActionKind::PostLock => "changed the locks on post",
             ActionKind::UndoEdits => "undid the post edits of",
             ActionKind::DeleteUploads => "started deleting the uploads of",
+            ActionKind::PurgePosts => "started purging deleted posts",
         }
     }
 

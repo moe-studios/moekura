@@ -19,6 +19,7 @@
 - [Private sites](admin/private-sites.md)
 - [File storage](admin/storage.md)
 - [Background jobs](admin/jobs.md)
+- [Site news](admin/news.md)
 - [Webhooks](admin/webhooks.md)
 - [Themes](admin/themes.md)
 - [Backups](admin/backups.md)

@@ -28,6 +28,8 @@ pub struct SiteSnapshot {
     network_bans: Vec<NetworkBan>,
     /// The tags of banned artists.
     banned_artist_tags: Vec<i32>,
+    /// Site news shown when loaded, newest first.
+    news: Vec<crate::news::NewsUpdate>,
 }
 
 impl SiteSnapshot {
@@ -37,7 +39,20 @@ impl SiteSnapshot {
             roles,
             network_bans: Vec::new(),
             banned_artist_tags: Vec::new(),
+            news: Vec::new(),
         }
+    }
+
+    #[must_use]
+    pub fn with_news(mut self, news: Vec<crate::news::NewsUpdate>) -> Self {
+        self.news = news;
+        self
+    }
+
+    /// The site news to show now, if any.
+    pub fn news(&self) -> Option<&crate::news::NewsUpdate> {
+        let now = time::OffsetDateTime::now_utc();
+        self.news.iter().find(|n| n.is_current(now))
     }
 
     #[must_use]
@@ -172,9 +187,11 @@ async fn fetch(db: &PgPool) -> sqlx::Result<SiteSnapshot> {
     }
     let network_bans = bans::networks_in_force(db).await?;
     let banned_artist_tags = crate::artists::banned_tag_ids(db).await?;
+    let news = crate::news::current(db).await?;
     Ok(SiteSnapshot::new(settings, roles)
         .with_network_bans(network_bans)
-        .with_banned_artist_tags(banned_artist_tags))
+        .with_banned_artist_tags(banned_artist_tags)
+        .with_news(news))
 }
 
 #[cfg(test)]

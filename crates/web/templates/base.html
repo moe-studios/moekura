@@ -50,6 +50,10 @@
   </header>
   {% if banned %}<div class="flash banned" role="status">You are banned{% if banned.until %} until {{ banned.until }}{% endif %}: {{ banned.reason }}. You can look around but not post, edit or vote.</div>{% endif %}
   {% if flash %}<div class="flash" role="status">{{ flash }}</div>{% endif %}
+  {% if news %}<aside class="news" aria-label="Site news">
+    <div class="markup">{{ news.html }}</div>
+    <form method="post" action="/news_updates/{{ news.id }}/dismiss"><input type="hidden" name="back" value="{{ target }}"><button type="submit" class="link">Dismiss</button></form>
+  </aside>{% endif %}
   <main>
     {% block content %}{% endblock %}
   </main>

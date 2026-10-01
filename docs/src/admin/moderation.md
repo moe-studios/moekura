@@ -198,6 +198,14 @@ keeps none and stops recording them. Deleting an account deletes its
 addresses. Sessions separately keep the address they were started from
 until they end.
 
+## Renaming users
+
+Staff who can ban users can rename anyone ranked below them with
+**Rename** on their profile, say for an offensive or impersonating name,
+with a reason for the log. Unlike users' own changes, it has no waiting
+time. Their profile lists their former names, and the old name still
+finds them (see [Your name](../using/account.md#your-name)).
+
 ## Spam accounts
 
 Besides rate limits, email confirmation and approval of new accounts

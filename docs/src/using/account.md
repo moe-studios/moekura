@@ -61,6 +61,16 @@ can delete and restore it, which goes in the moderation log. Negative
 feedback can keep a member from [automatic
 promotion](../admin/roles.md#automatic-promotion).
 
+## Your name
+
+**Settings → Your name** changes the name you're known and log in by,
+once every 7 days. Your profile lists your former names, and links to
+your old profile and searches such as `user:oldname` and
+`ordfav:oldname` keep finding you, unless someone else takes the name
+later. Staff who can ban users can rename anyone ranked below them,
+with **Rename** on their profile, at any time; that goes in the
+moderation log.
+
 ## Email address and password
 
 Changing either needs your current password. Changing the password logs

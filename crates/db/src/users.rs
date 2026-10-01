@@ -155,6 +155,21 @@ pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> sqlx::Result<Option
         .await
 }
 
+/// The user called `name` now or, failing that, the one who was called
+/// that most recently.
+pub async fn by_name_or_former(db: &sqlx::PgPool, name: &str) -> sqlx::Result<Option<User>> {
+    if let Some(user) = by_name(db, name).await? {
+        return Ok(Some(user));
+    }
+    sqlx::query_as(select_users!(
+        "WHERE id = (SELECT user_id FROM user_name_changes WHERE old_name = $1::citext
+                     ORDER BY id DESC LIMIT 1)"
+    ))
+    .bind(name)
+    .fetch_optional(db)
+    .await
+}
+
 /// The user and their password hash, for login.
 pub async fn credentials_by_name(
     db: impl PgExecutor<'_>,

@@ -38,6 +38,7 @@ pub mod import;
 mod mass_edit;
 mod metatags;
 mod moderation;
+mod name_changes;
 mod notes;
 pub mod notifications;
 pub mod oidc;
@@ -289,6 +290,7 @@ pub fn router(state: AppState) -> Router {
         .merge(forum::routes())
         .merge(held::routes())
         .merge(user_feedbacks::routes())
+        .merge(name_changes::routes())
         .merge(history::routes())
         .merge(image_search::routes(max_upload_bytes))
         .merge(mass_edit::routes())

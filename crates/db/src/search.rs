@@ -571,7 +571,7 @@ impl Plan {
         if let Some(name) = &query.ordfav
             && plan.order == Order::Favorited
         {
-            match crate::users::by_name(db, name).await? {
+            match crate::users::by_name_or_former(db, name).await? {
                 Some(user) => plan.ordfav = Some(user.id),
                 None => plan.nothing = true,
             }
@@ -1257,7 +1257,9 @@ async fn resolve_filter(
                 Filter::Upvote(_) => Link::Upvoted,
                 _ => Link::Downvoted,
             };
-            let user = crate::users::by_name(db, name).await?.map(|user| user.id);
+            let user = crate::users::by_name_or_former(db, name)
+                .await?
+                .map(|user| user.id);
             // Flags and votes are private: for staff, and for the flaggers
             // and voters themselves.
             let private = matches!(link, Link::Flagged | Link::Upvoted | Link::Downvoted);

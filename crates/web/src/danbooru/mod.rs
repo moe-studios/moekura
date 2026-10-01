@@ -18,6 +18,7 @@ mod forum;
 mod iqdb;
 mod media_assets;
 mod missing;
+mod name_changes;
 mod notes;
 mod posts;
 mod reactions;
@@ -58,6 +59,7 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             .merge(ai_tags::routes())
             .merge(community::routes())
             .merge(missing::routes())
+            .merge(name_changes::routes())
             .merge(explore::routes())
             .merge(artists::routes())
             .merge(commentaries::routes())

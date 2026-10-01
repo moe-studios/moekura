@@ -146,6 +146,7 @@ fn render_settings(
                 rules => current.rules,
                 footer_links => moekura_core::settings::FooterLink::to_list(&current.footer_links),
                 registration_mode => mode_name(current.registration_mode),
+                invite_quota => current.invite_quota,
                 email_verification => current.email_verification,
                 upload_approval => current.upload_approval,
                 upload_limit_scaling => current.upload_limit_scaling,
@@ -167,6 +168,7 @@ fn render_settings(
                     edits => current.promotion_rules.edits,
                     account_days => current.promotion_rules.account_days,
                     max_recent_deletions => current.promotion_rules.max_recent_deletions,
+                    max_negative_feedback => current.promotion_rules.max_negative_feedback,
                 },
                 default_blacklist => current.default_blacklist,
                 ip_history_days => current.ip_history_days,
@@ -181,6 +183,12 @@ fn render_settings(
                 captcha => context! {
                     sign_up => current.captcha.sign_up,
                     comment_account_days => current.captcha.comment_account_days,
+                },
+                spam_filter => context! {
+                    mode => current.spam_filter.mode,
+                    link_account_days => current.spam_filter.link_account_days,
+                    max_repeats => current.spam_filter.max_repeats,
+                    words => current.spam_filter.words.join("\n"),
                 },
                 default_theme => current.default_theme,
                 tagger => context! {
@@ -275,9 +283,11 @@ struct SettingsForm {
     promotion_account_days: String,
     #[serde(default)]
     promotion_max_recent_deletions: String,
+    promotion_max_negative_feedback: Option<String>,
     #[serde(default)]
     default_blacklist: String,
     ip_history_days: Option<String>,
+    invite_quota: Option<String>,
     /// `block` or `allow`.
     email_domain_mode: Option<String>,
     /// One domain per line.
@@ -285,6 +295,12 @@ struct SettingsForm {
     /// Present when ticked.
     captcha_sign_up: Option<String>,
     captcha_comment_account_days: Option<String>,
+    /// `auto`, `on` or `off`.
+    spam_filter_mode: Option<String>,
+    spam_link_account_days: Option<String>,
+    spam_max_repeats: Option<String>,
+    /// One per line.
+    spam_words: Option<String>,
     /// One per line.
     deletion_reasons: Option<String>,
     /// One per line.
@@ -403,6 +419,10 @@ async fn save_settings(
                 "edits": number(&form.promotion_edits),
                 "account_days": number(&form.promotion_account_days),
                 "max_recent_deletions": number(&form.promotion_max_recent_deletions),
+                "max_negative_feedback": form.promotion_max_negative_feedback.as_deref().map_or_else(
+                    || json!(before.promotion_rules.max_negative_feedback),
+                    number,
+                ),
             }),
         ),
         (
@@ -411,6 +431,12 @@ async fn save_settings(
         ),
         ("visitor_ratings", json!(visitor_ratings(&form))),
         ("default_theme", json!(default_theme)),
+        (
+            "invite_quota",
+            form.invite_quota
+                .as_deref()
+                .map_or_else(|| json!(before.invite_quota), number),
+        ),
         (
             "ip_history_days",
             form.ip_history_days
@@ -450,6 +476,27 @@ async fn save_settings(
                 "comment_account_days": form.captcha_comment_account_days.as_deref().map_or_else(
                     || json!(before.captcha.comment_account_days),
                     number,
+                ),
+            }),
+        ),
+        (
+            "spam_filter",
+            json!({
+                "mode": form.spam_filter_mode.as_deref().map_or_else(
+                    || json!(before.spam_filter.mode),
+                    |mode| json!(mode),
+                ),
+                "link_account_days": form.spam_link_account_days.as_deref().map_or_else(
+                    || json!(before.spam_filter.link_account_days),
+                    number,
+                ),
+                "max_repeats": form.spam_max_repeats.as_deref().map_or_else(
+                    || json!(before.spam_filter.max_repeats),
+                    number,
+                ),
+                "words": form.spam_words.as_deref().map_or_else(
+                    || before.spam_filter.words.clone(),
+                    moekura_core::spam::SpamFilter::parse_words,
                 ),
             }),
         ),
@@ -1053,7 +1100,8 @@ mod tests {
                 uploads: 20,
                 edits: 5,
                 account_days: 14,
-                max_recent_deletions: 1
+                max_recent_deletions: 1,
+                max_negative_feedback: 0,
             }
         );
         let bad = app

@@ -112,6 +112,10 @@ async fn discussion(
             }
         })
         .collect();
+    let forum_topic = match target {
+        Target::Relation(id) => moekura_db::forum::request_topic(db, Some(id), None).await?,
+        Target::Request(id) => moekura_db::forum::request_topic(db, None, Some(id)).await?,
+    };
     let (vote_url, comment_url) = match target {
         Target::Relation(id) => (
             format!("/tags/relations/{id}/vote"),
@@ -123,6 +127,7 @@ async fn discussion(
         ),
     };
     Ok(context! {
+        forum_topic => forum_topic,
         vote => vote,
         can_vote => open && current.is_logged_in() && current.can(Permission::Vote),
         vote_url => url_value(&vote_url),
@@ -187,9 +192,18 @@ pub(crate) async fn comment(
     current.require(Permission::Comment)?;
     let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
     let body = crate::comments::clean_body(body)?;
-    url_of(state, target).await?;
+    let url = url_of(state, target).await?;
     state.rate_limits.check_comment(user.id).await?;
     requests::add_comment(state.db.primary(), target, user.id, &body).await?;
+    crate::notifications::notify_text(
+        state,
+        Some(user.id),
+        &body,
+        "a tag request's discussion",
+        &url,
+        (&[], moekura_db::notifications::Kind::Reply),
+    )
+    .await;
     Ok(())
 }
 
@@ -436,6 +450,24 @@ pub(crate) async fn make_request(
     )
     .await?;
     tracing::info!(id, user = user.name, "bulk update requested");
+    let body = format!(
+        "[quote]\n{}\n[/quote]\n\n{}",
+        normalized.join("\n"),
+        if reason.trim().is_empty() {
+            "No reason given."
+        } else {
+            reason.trim()
+        }
+    );
+    crate::forum::open_request_topic(
+        state,
+        current,
+        &format!("Bulk update request: {title}"),
+        &body,
+        None,
+        Some(id),
+    )
+    .await;
     Ok(id)
 }
 
@@ -546,6 +578,22 @@ pub(crate) async fn decide_request(
         user = user.name,
         "bulk update request decided"
     );
+    if decision != "withdraw" {
+        let outcome = if decision == "approve" {
+            "approved"
+        } else {
+            "rejected"
+        };
+        crate::notifications::request_decided(
+            state,
+            current,
+            Target::Request(id),
+            request.creator_id,
+            &format!("the bulk update request “{}” ({outcome})", request.title),
+            &format!("/tags/requests/{id}"),
+        )
+        .await;
+    }
     Ok(())
 }
 

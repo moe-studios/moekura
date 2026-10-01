@@ -263,6 +263,7 @@ pub async fn run(
                 created_by: None,
                 max_uses: i32::from(uses.max(1)),
                 expires_in: expires_days.map(|d| Duration::from_secs(u64::from(d) * 86_400)),
+                note: String::new(),
             };
             println!("{}", invites::create(db, invite).await?);
         }

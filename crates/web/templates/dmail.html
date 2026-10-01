@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ dmail.title }} · Messages · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/dmails">« Messages</a></p>
+<article class="dmail">
+  <h1>{{ dmail.title }}</h1>
+  <p class="hint">
+    {% if dmail.sent %}To {% if dmail.to %}<a href="/users/{{ dmail.to }}">{{ dmail.to }}</a>{% else %}(gone){% endif %}{% else %}From {% if dmail.from %}<a href="/users/{{ dmail.from }}">{{ dmail.from }}</a>{% else %}(gone){% endif %}{% endif %}
+    · {{ dmail.date }} {{ dmail.time }}
+    {% if dmail.deleted %}· deleted{% endif %}
+    {% if dmail.reported %}· reported to the staff{% endif %}
+  </p>
+  <div class="markup">{{ dmail.html }}</div>
+</article>
+<div class="actions">
+  {% if can_send and other %}<a class="button" href="/dmails/new?reply={{ dmail.id }}">Reply</a>{% endif %}
+  {% if dmail.deleted %}
+  <form method="post" action="{{ dmail.url }}/restore"><button type="submit" class="secondary">Restore</button></form>
+  {% else %}
+  <form method="post" action="{{ dmail.url }}/delete"><button type="submit" class="secondary">Delete</button></form>
+  {% endif %}
+  <form method="post" action="{{ dmail.url }}/unread"><button type="submit" class="secondary">Mark unread</button></form>
+  {% if not dmail.sent and dmail.from %}
+  <form method="post" action="/users/{{ dmail.from }}/block"><input type="hidden" name="blocked" value="{{ '0' if blocked else '1' }}"><input type="hidden" name="back" value="{{ dmail.id }}"><button type="submit" class="secondary">{% if blocked %}Unblock{% else %}Block{% endif %} {{ dmail.from }}</button></form>
+  {% endif %}
+</div>
+{% if not dmail.sent and not dmail.reported %}
+<details class="edit">
+  <summary>Report to the staff</summary>
+  <form method="post" action="{{ dmail.url }}/report">
+    <label for="report-reason">What's wrong with it?</label>
+    <input id="report-reason" name="reason" maxlength="1000" placeholder="Spam, harassment, …">
+    <p class="hint">The staff can then read this message, and only this one.</p>
+    <button type="submit">Report</button>
+  </form>
+</details>
+{% endif %}
+{% endblock %}

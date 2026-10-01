@@ -24,10 +24,12 @@ pub enum Flash {
     SomeSkipped,
     /// Left to a background job.
     Queued,
+    /// Held by the spam filter for the staff to check.
+    Held,
 }
 
 impl Flash {
-    const ALL: [Flash; 11] = [
+    const ALL: [Flash; 12] = [
         Flash::LoggedIn,
         Flash::LoggedOut,
         Flash::Registered,
@@ -39,6 +41,7 @@ impl Flash {
         Flash::PasswordChanged,
         Flash::SomeSkipped,
         Flash::Queued,
+        Flash::Held,
     ];
 
     fn key(self) -> &'static str {
@@ -54,6 +57,7 @@ impl Flash {
             Flash::PasswordChanged => "password_changed",
             Flash::SomeSkipped => "some_skipped",
             Flash::Queued => "queued",
+            Flash::Held => "held",
         }
     }
 
@@ -74,6 +78,9 @@ impl Flash {
             Flash::PasswordChanged => "Your password was changed.",
             Flash::SomeSkipped => "Done. Some had been dealt with meanwhile, and were skipped.",
             Flash::Queued => "Started; it runs in the background.",
+            Flash::Held => {
+                "Thanks! It looked like it might be spam, so the staff will check it before anyone sees it."
+            }
         }
     }
 

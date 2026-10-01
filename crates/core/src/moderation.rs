@@ -157,10 +157,22 @@ pub enum ActionKind {
     PostReplace,
     DeleteUploads,
     PurgePosts,
+    DmailReportSettle,
+    ForumTopicModerate,
+    ForumTopicMerge,
+    ForumPostHide,
+    ForumPostUnhide,
+    HeldApprove,
+    HeldReject,
+    FeedbackDelete,
+    FeedbackRestore,
+    UserRename,
+    NewsPost,
+    NewsDelete,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 42] = [
+    pub const ALL: [ActionKind; 54] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -203,6 +215,18 @@ impl ActionKind {
         ActionKind::PostReplace,
         ActionKind::DeleteUploads,
         ActionKind::PurgePosts,
+        ActionKind::DmailReportSettle,
+        ActionKind::ForumTopicModerate,
+        ActionKind::ForumTopicMerge,
+        ActionKind::ForumPostHide,
+        ActionKind::ForumPostUnhide,
+        ActionKind::HeldApprove,
+        ActionKind::HeldReject,
+        ActionKind::FeedbackDelete,
+        ActionKind::FeedbackRestore,
+        ActionKind::UserRename,
+        ActionKind::NewsPost,
+        ActionKind::NewsDelete,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -249,6 +273,18 @@ impl ActionKind {
             ActionKind::PostReplace => "post.replace",
             ActionKind::DeleteUploads => "posts.delete_uploads",
             ActionKind::PurgePosts => "posts.purge_batch",
+            ActionKind::DmailReportSettle => "dmail_report.settle",
+            ActionKind::ForumTopicModerate => "forum_topic.moderate",
+            ActionKind::ForumTopicMerge => "forum_topic.merge",
+            ActionKind::ForumPostHide => "forum_post.hide",
+            ActionKind::ForumPostUnhide => "forum_post.unhide",
+            ActionKind::HeldApprove => "held.approve",
+            ActionKind::HeldReject => "held.reject",
+            ActionKind::FeedbackDelete => "user_feedback.delete",
+            ActionKind::FeedbackRestore => "user_feedback.restore",
+            ActionKind::UserRename => "user.rename",
+            ActionKind::NewsPost => "news.post",
+            ActionKind::NewsDelete => "news.delete",
         }
     }
 
@@ -297,6 +333,18 @@ impl ActionKind {
             ActionKind::PostReplace => "replaced the file of post",
             ActionKind::DeleteUploads => "started deleting the uploads of",
             ActionKind::PurgePosts => "started purging deleted posts",
+            ActionKind::DmailReportSettle => "settled a report about a message from",
+            ActionKind::ForumTopicModerate => "changed a forum topic",
+            ActionKind::ForumTopicMerge => "merged forum topics",
+            ActionKind::ForumPostHide => "hid a forum post by",
+            ActionKind::ForumPostUnhide => "restored a forum post by",
+            ActionKind::HeldApprove => "let through writing held as spam, by",
+            ActionKind::HeldReject => "turned away writing held as spam, by",
+            ActionKind::FeedbackDelete => "deleted feedback on",
+            ActionKind::FeedbackRestore => "restored feedback on",
+            ActionKind::UserRename => "renamed",
+            ActionKind::NewsPost => "posted site news",
+            ActionKind::NewsDelete => "deleted site news",
         }
     }
 

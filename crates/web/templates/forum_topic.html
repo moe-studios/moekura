@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}{{ topic.title }} · Forum · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/forum_topics?category={{ topic.category_id }}">« {{ topic.category }}</a></p>
+<header class="wiki-head">
+  <h1>{{ topic.title }}</h1>
+  <p class="hint">
+    {% if topic.sticky %}<span class="badge">sticky</span> {% endif %}{% if topic.locked %}<span class="badge">locked</span> {% endif %}
+    {{ topic.posts }} post{% if topic.posts != 1 %}s{% endif %}{% if request_url %} · about <a href="{{ request_url }}">a tag request</a>{% endif %}
+  </p>
+</header>
+{% if topic.deleted %}<p class="notice">This topic is deleted{% if merged_into %}: its posts were merged into <a href="/forum_topics/{{ merged_into }}">topic #{{ merged_into }}</a>{% endif %}.</p>{% endif %}
+{% if topic.locked %}<p class="notice">This topic is locked: only the staff can post in it.</p>{% endif %}
+<ol class="forum-posts">
+  {% for p in posts %}
+  <li id="forum-post-{{ p.id }}" class="forum-post{% if p.hidden %} is-hidden{% endif %}">
+    <div class="history-head">
+      {% if p.creator %}<a href="/users/{{ p.creator }}">{{ p.creator }}</a>{% else %}(gone){% endif %}
+      <span class="hint"><a href="/forum_posts/{{ p.id }}">{{ p.date }} {{ p.time }}</a>{% if p.updater %} · edited by {{ p.updater }}{% endif %}{% if p.hidden %} · hidden{% endif %}</span>
+      <span class="score" title="Votes">{{ "%+d"|format(p.score) if p.score else "0" }}</span>
+    </div>
+    <div class="markup">{{ p.html }}</div>
+    <div class="actions">
+      {% if p.can_vote %}
+      <form method="post" action="/forum_posts/{{ p.id }}/vote"><input type="hidden" name="score" value="{{ '0' if p.vote == 1 else '1' }}"><button type="submit" class="secondary" aria-pressed="{{ 'true' if p.vote == 1 else 'false' }}">▲</button></form>
+      <form method="post" action="/forum_posts/{{ p.id }}/vote"><input type="hidden" name="score" value="{{ '0' if p.vote == -1 else '-1' }}"><button type="submit" class="secondary" aria-pressed="{{ 'true' if p.vote == -1 else 'false' }}">▼</button></form>
+      {% endif %}
+      {% if p.can_edit %}<a class="button secondary" href="/forum_posts/{{ p.id }}/edit">Edit</a>{% endif %}
+      {% if can_moderate %}
+      <form method="post" action="/forum_posts/{{ p.id }}/{{ 'unhide' if p.hidden else 'hide' }}"><button type="submit" class="secondary">{{ "Unhide" if p.hidden else "Hide" }}</button></form>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% if can_reply %}
+<form class="wiki-form" method="post" action="/forum_topics/{{ topic.id }}/posts">
+  <label for="reply-body">Reply</label>
+  <textarea id="reply-body" name="body" rows="6" required></textarea>
+  {% include "comment_help.html" %}
+  <button type="submit">Post</button>
+</form>
+{% endif %}
+{% if can_edit_topic %}
+<details class="edit">
+  <summary>Edit the topic</summary>
+  <form method="post" action="/forum_topics/{{ topic.id }}">
+    <label for="topic-title">Title</label>
+    <input id="topic-title" name="title" value="{{ topic.title }}" maxlength="200" required>
+    <label for="topic-category">Category</label>
+    <select id="topic-category" name="category">
+      {% for c in categories %}<option value="{{ c.id }}"{% if topic.category_id == c.id %} selected{% endif %}>{{ c.name }}</option>{% endfor %}
+    </select>
+    <button type="submit">Save</button>
+  </form>
+</details>
+{% endif %}
+{% if can_moderate %}
+<details class="edit moderate">
+  <summary>Moderate</summary>
+  <div class="actions">
+    {% for action, label in [("unsticky" if topic.sticky else "sticky", "Unstick" if topic.sticky else "Stick to the top"), ("unlock" if topic.locked else "lock", "Unlock" if topic.locked else "Lock"), ("undelete" if topic.deleted else "delete", "Restore" if topic.deleted else "Delete")] %}
+    <form method="post" action="/forum_topics/{{ topic.id }}/moderate"><input type="hidden" name="action" value="{{ action }}"><button type="submit" class="secondary">{{ label }}</button></form>
+    {% endfor %}
+  </div>
+  <form method="post" action="/forum_topics/{{ topic.id }}/merge">
+    <label for="merge-into">Merge into topic number</label>
+    <input id="merge-into" name="into" inputmode="numeric" required>
+    <p class="hint">Moves every post here into that topic, and deletes this one; readers are sent there.</p>
+    <button type="submit" class="secondary" data-confirm="Merge this topic?">Merge</button>
+  </form>
+</details>
+{% endif %}
+{% endblock %}

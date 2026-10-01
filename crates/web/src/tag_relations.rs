@@ -248,6 +248,25 @@ pub(crate) async fn request_relation(
     match result {
         Ok(id) => {
             tracing::info!(%kind, %antecedent, %consequent, user = user.name, "tag relation requested");
+            // Requests that need deciding are discussed on the forum.
+            if !current.can(Permission::ManageTags) {
+                let what = match kind {
+                    Kind::Alias => "Alias",
+                    Kind::Implication => "Implication",
+                };
+                let title = format!("{what} request: {antecedent} → {consequent}");
+                let reason = reason.trim();
+                let body = format!(
+                    "{what} [[{antecedent}]] → [[{consequent}]].\n\n{}",
+                    if reason.is_empty() {
+                        "No reason given."
+                    } else {
+                        reason
+                    }
+                );
+                crate::forum::open_request_topic(state, current, &title, &body, Some(id), None)
+                    .await;
+            }
             Ok(id)
         }
         Err(RelationError::Rule(rule)) => Err(invalid(rule.to_string())),
@@ -325,6 +344,28 @@ pub(crate) async fn decide(
                 audit(db, user.id, kind, id).await?;
             }
             tracing::info!(id, ?decision, user = user.name, "tag relation updated");
+            let outcome = match decision {
+                Decision::Approve => Some("approved"),
+                Decision::Reject => Some("rejected"),
+                Decision::Remove if manage && relation.status != Status::Pending => Some("removed"),
+                Decision::Remove => None,
+            };
+            if let Some(outcome) = outcome {
+                crate::notifications::request_decided(
+                    state,
+                    current,
+                    moekura_db::requests::Target::Relation(id),
+                    relation.creator_id,
+                    &format!(
+                        "the {} request {} → {} ({outcome})",
+                        relation.kind.as_str(),
+                        relation.antecedent,
+                        relation.consequent
+                    ),
+                    &crate::requests::relation_url(relation.kind, id),
+                )
+                .await;
+            }
             Ok(relation)
         }
         Err(RelationError::Rule(rule)) => Err(AppError::Unprocessable(rule.to_string())),

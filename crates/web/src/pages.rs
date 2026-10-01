@@ -21,9 +21,19 @@ use crate::flash::{self, Flash};
 pub struct Page {
     state: AppState,
     pub current: CurrentUser,
-    flash: Option<Flash>,
+    notices: Notices,
     /// The request's path and query, for the layout.
     target: String,
+}
+
+/// What the layout shows above the page, from the request's cookies.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Notices {
+    pub flash: Option<Flash>,
+    /// Site news is shown (it isn't on error pages).
+    pub news: bool,
+    /// The newest site news this browser dismissed.
+    pub dismissed_news: Option<i64>,
 }
 
 impl FromRequestParts<AppState> for Page {
@@ -34,7 +44,12 @@ impl FromRequestParts<AppState> for Page {
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
         let current = CurrentUser::from_request_parts(parts, state).await?;
-        let flash = Flash::from_jar(&CookieJar::from_headers(&parts.headers));
+        let jar = CookieJar::from_headers(&parts.headers);
+        let notices = Notices {
+            flash: Flash::from_jar(&jar),
+            news: true,
+            dismissed_news: crate::news::dismissed(&jar),
+        };
         let target = parts
             .uri
             .path_and_query()
@@ -42,7 +57,7 @@ impl FromRequestParts<AppState> for Page {
         Ok(Self {
             state: state.clone(),
             current,
-            flash,
+            notices,
             target,
         })
     }
@@ -66,14 +81,14 @@ impl Page {
         let mut response = render(
             &self.state,
             Some(&self.current),
-            self.flash,
+            self.notices,
             &self.target,
             status,
             template,
             context,
         );
         // The message has been shown; don't show it again.
-        if self.flash.is_some()
+        if self.notices.flash.is_some()
             && let Ok(value) = flash::removal().to_string().parse()
         {
             response.headers_mut().append(SET_COOKIE, value);
@@ -91,6 +106,7 @@ fn section(path: &str) -> Option<&'static str> {
         "pools" => "pools",
         "comments" => "comments",
         "explore" => "explore",
+        "forum_topics" | "forum_posts" => "forum",
         "upload" => "upload",
         "moderation" => "moderation",
         "admin" => "admin",
@@ -103,7 +119,7 @@ fn section(path: &str) -> Option<&'static str> {
 pub(crate) fn render(
     state: &AppState,
     current: Option<&CurrentUser>,
-    flash: Option<Flash>,
+    notices: Notices,
     target: &str,
     status: StatusCode,
     template: &str,
@@ -144,6 +160,8 @@ pub(crate) fn render(
         me => current.and_then(|c| c.user.as_ref()).map(|user| context! {
             name => user.name,
             role => current.map(|c| c.role.name.clone()),
+            unread_messages => current.map_or(0, |c| c.unread_messages),
+            unread_notifications => current.map_or(0, |c| c.unread_notifications),
         }),
         theme => theme,
         // The default theme is in the main stylesheet, without a file.
@@ -168,7 +186,10 @@ pub(crate) fn render(
                 custom_css => crate::users::custom_css_url(&prefs).map(|url| crate::templates::url_value(&url)),
             }
         },
-        flash => flash.map(Flash::text),
+        flash => notices.flash.map(Flash::text),
+        news => notices.news.then(|| {
+            crate::news::banner(&site, current.and_then(|c| c.user.as_ref()), notices.dismissed_news)
+        }).flatten(),
         banned => current.and_then(|c| c.ban.as_ref()).map(|ban| context! {
             reason => ban.reason,
             until => ban.expires_at.map(crate::dates::day),

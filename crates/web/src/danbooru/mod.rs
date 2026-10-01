@@ -12,16 +12,21 @@ mod ai_tags;
 mod artists;
 mod commentaries;
 mod community;
+mod dmails;
 mod explore;
+mod forum;
 mod iqdb;
 mod media_assets;
 mod missing;
+mod name_changes;
+mod news_updates;
 mod notes;
 mod posts;
 mod reactions;
 mod replacements;
 mod tags;
 mod uploads;
+mod user_feedbacks;
 mod users;
 mod versions;
 
@@ -55,15 +60,20 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             .merge(ai_tags::routes())
             .merge(community::routes())
             .merge(missing::routes())
+            .merge(name_changes::routes())
+            .merge(news_updates::routes())
             .merge(explore::routes())
             .merge(artists::routes())
             .merge(commentaries::routes())
+            .merge(dmails::routes())
+            .merge(forum::routes())
             .merge(media_assets::routes())
             .merge(replacements::routes())
             .merge(notes::routes())
             .merge(reactions::routes())
             .merge(tags::routes())
             .merge(uploads::routes())
+            .merge(user_feedbacks::routes())
             .merge(users::routes())
             .merge(versions::routes()),
     )

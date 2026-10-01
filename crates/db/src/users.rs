@@ -147,12 +147,119 @@ pub async fn activity(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Activity
     .await
 }
 
+/// More of what a user has done, for their profile.
+#[derive(Debug, Clone, Default, PartialEq, Eq, sqlx::FromRow)]
+pub struct ProfileStats {
+    /// Their uploads since deleted.
+    pub deleted_uploads: i64,
+    /// The scores of their uploads that remain, added up.
+    pub upload_score: i64,
+    pub post_changes: i64,
+    pub note_changes: i64,
+    pub wiki_edits: i64,
+    pub pool_edits: i64,
+    /// Not counting hidden ones.
+    pub forum_posts: i64,
+    /// Posts they approved.
+    pub approvals: i64,
+    pub upvotes: i64,
+    pub downvotes: i64,
+}
+
+pub async fn profile_stats(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<ProfileStats> {
+    sqlx::query_as(
+        "SELECT (SELECT count(*) FROM posts WHERE uploader_id = $1 AND status = 'deleted')
+                    AS deleted_uploads,
+                (SELECT coalesce(sum(score), 0)::bigint FROM posts
+                 WHERE uploader_id = $1 AND status <> 'deleted') AS upload_score,
+                (SELECT count(*) FROM post_versions WHERE updater_id = $1) AS post_changes,
+                (SELECT count(*) FROM note_versions WHERE updater_id = $1) AS note_changes,
+                (SELECT count(*) FROM wiki_page_versions WHERE updater_id = $1) AS wiki_edits,
+                (SELECT count(*) FROM pool_versions WHERE updater_id = $1) AS pool_edits,
+                (SELECT count(*) FROM forum_posts WHERE creator_id = $1 AND NOT is_hidden)
+                    AS forum_posts,
+                (SELECT count(*) FROM posts WHERE approver_id = $1) AS approvals,
+                (SELECT count(*) FROM post_votes WHERE user_id = $1 AND score > 0) AS upvotes,
+                (SELECT count(*) FROM post_votes WHERE user_id = $1 AND score < 0) AS downvotes",
+    )
+    .bind(id)
+    .fetch_one(db)
+    .await
+}
+
+/// A user's uploads in each of the last `months` months (UTC), oldest
+/// first, as `(year, month, uploads)`.
+pub async fn uploads_by_month(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    months: i32,
+) -> sqlx::Result<Vec<(i32, i32, i64)>> {
+    sqlx::query_as(
+        "SELECT extract(year FROM m)::int, extract(month FROM m)::int, count(p.id)
+         FROM generate_series(
+                  date_trunc('month', now() AT TIME ZONE 'UTC') - make_interval(months => $2 - 1),
+                  date_trunc('month', now() AT TIME ZONE 'UTC'),
+                  interval '1 month') AS m
+         LEFT JOIN posts p ON p.uploader_id = $1
+              AND p.created_at >= m AT TIME ZONE 'UTC'
+              AND p.created_at < (m + interval '1 month') AT TIME ZONE 'UTC'
+         GROUP BY m ORDER BY m",
+    )
+    .bind(id)
+    .bind(months)
+    .fetch_all(db)
+    .await
+}
+
+/// How many recent uploads [`top_upload_tags`] looks at.
+pub const TOP_TAGS_UPLOADS: i64 = 1000;
+
+/// The tags most used on a user's latest [`TOP_TAGS_UPLOADS`] remaining
+/// uploads, leaving out meta tags, as `(name, category name, posts)`.
+pub async fn top_upload_tags(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<(String, String, i64)>> {
+    sqlx::query_as(
+        "SELECT t.name::text, c.name, count(*)
+         FROM (SELECT tag_ids FROM posts WHERE uploader_id = $1 AND status <> 'deleted'
+               ORDER BY id DESC LIMIT $3) AS p
+         CROSS JOIN LATERAL unnest(p.tag_ids) AS tag_id
+         JOIN tags t ON t.id = tag_id
+         JOIN tag_categories c ON c.id = t.category_id
+         WHERE c.name <> 'meta'
+         GROUP BY t.id, t.name, c.name
+         ORDER BY count(*) DESC, t.name LIMIT $2",
+    )
+    .bind(id)
+    .bind(limit)
+    .bind(TOP_TAGS_UPLOADS)
+    .fetch_all(db)
+    .await
+}
+
 /// Case-insensitive.
 pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> sqlx::Result<Option<User>> {
     sqlx::query_as(select_users!("WHERE name = $1::citext"))
         .bind(name)
         .fetch_optional(db)
         .await
+}
+
+/// The user called `name` now or, failing that, the one who was called
+/// that most recently.
+pub async fn by_name_or_former(db: &sqlx::PgPool, name: &str) -> sqlx::Result<Option<User>> {
+    if let Some(user) = by_name(db, name).await? {
+        return Ok(Some(user));
+    }
+    sqlx::query_as(select_users!(
+        "WHERE id = (SELECT user_id FROM user_name_changes WHERE old_name = $1::citext
+                     ORDER BY id DESC LIMIT 1)"
+    ))
+    .bind(name)
+    .fetch_optional(db)
+    .await
 }
 
 /// The user and their password hash, for login.

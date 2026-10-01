@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Messages · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>Messages</h1>
+<nav class="subnav" aria-label="Folders">
+  <a href="/dmails"{% if folder == "inbox" and not unread %} aria-current="page"{% endif %}>Inbox</a>
+  <a href="/dmails?folder=inbox&amp;unread=1"{% if unread %} aria-current="page"{% endif %}>Unread</a>
+  <a href="/dmails?folder=sent"{% if folder == "sent" %} aria-current="page"{% endif %}>Sent</a>
+  <a href="/dmails?folder=all"{% if folder == "all" %} aria-current="page"{% endif %}>All</a>
+</nav>
+<div class="actions">
+  {% if can_send %}<a class="button" href="/dmails/new">New message</a>{% endif %}
+  <form method="post" action="/dmails/mark_all_read"><button type="submit" class="secondary">Mark all read</button></form>
+</div>
+{% if dmails %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Messages table">
+<table class="tag-table dmail-list">
+  <thead><tr><th scope="col">{% if folder == "sent" %}To{% else %}From{% endif %}</th><th scope="col">Title</th><th scope="col">Date</th></tr></thead>
+  <tbody>
+    {% for d in dmails %}
+    <tr{% if not d.read %} class="unread"{% endif %}>
+      <td>{% if d.sent %}{{ "to " if folder != "sent" else "" }}{% if d.to %}<a href="/users/{{ d.to }}">{{ d.to }}</a>{% else %}(gone){% endif %}{% else %}{% if d.from %}<a href="/users/{{ d.from }}">{{ d.from }}</a>{% else %}(gone){% endif %}{% endif %}</td>
+      <td><a href="{{ d.url }}">{{ d.title }}</a>{% if not d.read %} <span class="badge">new</span>{% endif %}</td>
+      <td>{{ d.date }} {{ d.time }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">No messages here.</p>
+{% endif %}
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% if blocked %}
+<section class="blocked-users">
+  <h2>Blocked</h2>
+  <p class="hint">Their messages are refused.</p>
+  <ul>
+    {% for name in blocked %}<li><a href="/users/{{ name }}">{{ name }}</a> <form method="post" action="/users/{{ name }}/block" class="inline"><input type="hidden" name="blocked" value="0"><button type="submit" class="link">Unblock</button></form></li>{% endfor %}
+  </ul>
+</section>
+{% endif %}
+{% endblock %}

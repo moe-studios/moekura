@@ -79,6 +79,15 @@ main {
 .account { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .account form { margin: 0; }
 .who { color: var(--muted); }
+.forum-posts { list-style: none; padding: 0; }
+.forum-post { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.forum-post.is-hidden { opacity: 0.6; }
+.forum-post .score { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.forum-topics tr.unread a, .dmail-list tr.unread td { font-weight: 600; }
+.notification-list { list-style: none; padding: 0; }
+.notification-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.notification-list li.unread a { font-weight: 600; }
+.count-badge { display: inline-block; min-width: 1.4em; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-text); font-size: 0.75rem; font-weight: 700; text-align: center; line-height: 1.4; }
 /* Phones: brand and account on the first row, search on its own row,
    then the links, wrapping as needed. */
 @media (max-width: 699px) {
@@ -727,6 +736,31 @@ html:not(.js) .select-all { display: none; }
 .plain { list-style: none; margin: 0 0 8px; padding: 0; }
 .status-open { color: var(--danger); }
 .status-dismissed, .status-upheld { color: var(--muted); }
+.status-positive { color: var(--tag-character); }
+.status-neutral { color: var(--muted); }
+.status-negative { color: var(--danger); }
+.news {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  max-width: var(--max-width);
+  margin: var(--gutter) auto 0;
+  width: calc(100% - 2 * var(--gutter));
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--tag-character);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.news .markup { flex: 1; min-width: 0; }
+.news .markup > :first-child { margin-top: 0; }
+.news .markup > :last-child { margin-bottom: 0; }
+.upload-chart { display: block; width: 100%; max-width: 40rem; height: auto; margin-bottom: 16px; }
+.upload-chart rect { fill: var(--accent); }
+.upload-chart g:hover rect { fill: var(--text); }
+.upload-chart text { fill: var(--muted); font-size: 9px; }
+.top-tags li { display: inline-block; margin-right: 12px; }
+.history li.deleted { opacity: 0.6; }
 .flash.banned { border-left-color: var(--danger); }
 
 /* Admin */

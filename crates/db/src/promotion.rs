@@ -18,7 +18,7 @@ pub struct Candidate {
 /// Active, unbanned members (of the built-in Member role) not kept from
 /// promotion, whose record meets `rules`.
 pub async fn candidates(db: &PgPool, rules: &Rules) -> sqlx::Result<Vec<Candidate>> {
-    let rows: Vec<(i64, String, i64, i64, i64, i64)> = sqlx::query_as(
+    let rows: Vec<(i64, String, i64, i64, i64, i64, i64)> = sqlx::query_as(
         "SELECT u.id, u.name::text,
                 (SELECT count(*) FROM posts p
                  WHERE p.uploader_id = u.id AND p.status IN ('active', 'flagged')),
@@ -28,7 +28,9 @@ pub async fn candidates(db: &PgPool, rules: &Rules) -> sqlx::Result<Vec<Candidat
                 (SELECT count(*) FROM posts p JOIN mod_actions m
                      ON m.post_id = p.id AND m.action = 'post.delete'
                  WHERE p.uploader_id = u.id AND p.status = 'deleted'
-                   AND m.created_at > now() - interval '30 days')
+                   AND m.created_at > now() - interval '30 days'),
+                (SELECT count(*) FROM user_feedbacks f
+                 WHERE f.user_id = u.id AND f.category = 'negative' AND NOT f.is_deleted)
          FROM users u JOIN roles r ON r.id = u.role_id
          WHERE r.system_key = 'member' AND u.status = 'active' AND NOT u.auto_promotion_blocked
            AND u.created_at <= now() - make_interval(days => $1)
@@ -41,15 +43,18 @@ pub async fn candidates(db: &PgPool, rules: &Rules) -> sqlx::Result<Vec<Candidat
     Ok(rows
         .into_iter()
         .map(
-            |(user_id, name, uploads, edits, account_days, recent_deletions)| Candidate {
-                user_id,
-                name,
-                record: Record {
-                    uploads,
-                    edits,
-                    account_days,
-                    recent_deletions,
-                },
+            |(user_id, name, uploads, edits, account_days, recent_deletions, negative_feedback)| {
+                Candidate {
+                    user_id,
+                    name,
+                    record: Record {
+                        uploads,
+                        edits,
+                        account_days,
+                        recent_deletions,
+                        negative_feedback,
+                    },
+                }
             },
         )
         .filter(|c| rules.met_by(&c.record))
@@ -155,13 +160,24 @@ mod tests {
             edits: 0,
             account_days: 7,
             max_recent_deletions: 0,
+            max_negative_feedback: 0,
         };
         let good = user(&pool, "good", "member", 10).await;
         let young = user(&pool, "young", "member", 1).await;
         let few = user(&pool, "few", "member", 10).await;
         let blocked = user(&pool, "blocked", "member", 10).await;
         let janitor = user(&pool, "jan", "janitor", 10).await;
-        for u in [good, young, blocked, janitor] {
+        let scolded = user(&pool, "scolded", "member", 10).await;
+        sqlx::query(
+            "INSERT INTO user_feedbacks (user_id, creator_id, category, body)
+             VALUES ($1, $2, 'negative', 'Spams'), ($1, $2, 'positive', 'Nice')",
+        )
+        .bind(scolded)
+        .bind(janitor)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for u in [good, young, blocked, janitor, scolded] {
             uploads(&pool, u, 3, "active").await;
         }
         uploads(&pool, few, 2, "active").await;

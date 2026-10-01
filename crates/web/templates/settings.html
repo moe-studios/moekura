@@ -37,6 +37,7 @@
       {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> Large thumbnails ({{ large_thumbnail_size }} pixels)</label>{% endif %}
       <label class="choice"><input type="checkbox" name="square_thumbnails" value="1"{% if prefs_form.square_thumbnails %} checked{% endif %}> Square thumbnails, cropped to the picture's most interesting part</label>
       <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> Hide comments on post pages</label>
+      <label class="choice"><input type="checkbox" name="email_notifications" value="1"{% if prefs_form.email_notifications %} checked{% endif %}> Email me my notifications (to a confirmed address)</label>
       <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> Suggest tags while typing</label>
       <label class="choice"><input type="checkbox" name="shortcuts" value="1"{% if prefs_form.shortcuts %} checked{% endif %}> Keyboard shortcuts</label>
     </fieldset>
@@ -51,8 +52,9 @@
     <p class="hint">Applied after the site's styles, on every page, for you alone.</p>
     <button type="submit">Save</button>
   </form>
-  <p><a href="/settings/account">Your email address and password</a></p>
+  <p><a href="/settings/account">Your email address and password</a> · <a href="/settings/name">Your name</a></p>
   <p><a href="/settings/api-keys">API keys</a> let scripts and apps use the site as you.</p>
+  {% if can_invite %}<p><a href="/invites">Invites</a> let people sign up when it takes an invite code.</p>{% endif %}
   <h2>Feeds</h2>
   <p class="hint">Search results and comments have Atom feeds (the <em>Feed</em> link beside results). On a private site, feed readers need your feed token: it lets them read feeds as you, and nothing else.</p>
   <form class="inline" method="post" action="/settings/feed-token">

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Held for review · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>Held for review</h1>
+<p class="hint">Comments, forum posts and messages the spam filter held. Nobody else sees them until approved; rejected ones stay hidden, and rejected messages never arrive.{% if not filter_on %} The filter is off (<a href="/admin/settings">Admin → Settings → Spam</a>).{% endif %}</p>
+{% if held %}
+<ol class="history">
+  {% for h in held %}
+  <li>
+    <div class="history-head">
+      <strong>{% if h.url %}<a href="{{ h.url }}">{{ h.what }}</a>{% else %}{{ h.what }}{% endif %}</strong>
+      <span class="hint">by {% if h.creator %}<a href="/moderation/users/{{ h.creator }}">{{ h.creator }}</a>{% else %}(gone){% endif %} · {{ h.date }} {{ h.time }}</span>
+      <form method="post" action="/moderation/held/{{ h.kind }}/{{ h.id }}/approve"><button type="submit">Approve</button></form>
+      <form method="post" action="/moderation/held/{{ h.kind }}/{{ h.id }}/reject"><button type="submit" class="secondary">Reject</button></form>
+    </div>
+    <p>Held: {{ h.reason }}</p>
+    <div class="markup">{{ h.html }}</div>
+  </li>
+  {% endfor %}
+</ol>
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="Pages">
+  {% if previous_url %}<a href="{{ previous_url }}" rel="prev">Previous</a>{% endif %}
+  {% if next_url %}<a href="{{ next_url }}" rel="next">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<p class="empty">Nothing is held.</p>
+{% endif %}
+{% endblock %}

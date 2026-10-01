@@ -17,6 +17,7 @@ mod comments;
 mod counts;
 mod danbooru;
 mod dates;
+mod dmails;
 mod edit;
 mod email;
 pub mod error;
@@ -28,14 +29,20 @@ mod fetch;
 mod file_metadata;
 mod files;
 pub mod flash;
+mod forum;
 mod health;
+mod held;
 mod history;
 mod image_search;
 pub mod import;
+mod invites;
 mod mass_edit;
 mod metatags;
 mod moderation;
+mod name_changes;
+mod news;
 mod notes;
+pub mod notifications;
 pub mod oidc;
 pub mod pages;
 mod pools;
@@ -65,6 +72,7 @@ mod themes;
 mod thumbnail_crop;
 mod two_factor;
 mod upload;
+mod user_feedbacks;
 mod user_moderation;
 mod users;
 mod webhooks;
@@ -273,6 +281,7 @@ pub fn router(state: AppState) -> Router {
         .merge(bans::routes())
         .merge(commentary::routes())
         .merge(comments::routes())
+        .merge(dmails::routes())
         .merge(edit::routes())
         .merge(email::routes())
         .merge(explore::routes())
@@ -280,11 +289,18 @@ pub fn router(state: AppState) -> Router {
         .merge(favorites::routes())
         .merge(feeds::routes())
         .merge(file_metadata::routes())
+        .merge(forum::routes())
+        .merge(held::routes())
+        .merge(user_feedbacks::routes())
+        .merge(invites::routes())
+        .merge(name_changes::routes())
+        .merge(news::routes())
         .merge(history::routes())
         .merge(image_search::routes(max_upload_bytes))
         .merge(mass_edit::routes())
         .merge(moderation::routes())
         .merge(notes::routes())
+        .merge(notifications::routes())
         .merge(oidc::routes())
         .merge(pools::routes())
         .merge(post_batches::routes())

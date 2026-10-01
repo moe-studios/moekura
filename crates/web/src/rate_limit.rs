@@ -131,6 +131,13 @@ impl Allowance {
     }
 }
 
+// Private messages, against spam: a few at once, then one a minute.
+const DMAIL_BY_USER: Limit = Limit {
+    name: "dmail_user",
+    burst: 10,
+    period: Duration::from_secs(60),
+};
+
 // Searching by image: each compares the file with every post's.
 const IMAGE_SEARCH: Limit = Limit {
     name: "image_search",
@@ -156,6 +163,7 @@ pub struct RateLimits {
     report_by_user: DefaultKeyedRateLimiter<i64>,
     appeal_by_user: DefaultKeyedRateLimiter<i64>,
     image_search: DefaultKeyedRateLimiter<String>,
+    dmail_by_user: DefaultKeyedRateLimiter<i64>,
     /// Off when `server.api_requests_per_minute` is 0.
     api: Option<(Limit, InfoLimiter)>,
     valkey: Option<Valkey>,
@@ -182,6 +190,7 @@ impl RateLimits {
             report_by_user: RateLimiter::keyed(quota(REPORT_BY_USER)),
             appeal_by_user: RateLimiter::keyed(quota(APPEAL_BY_USER)),
             image_search: RateLimiter::keyed(quota(IMAGE_SEARCH)),
+            dmail_by_user: RateLimiter::keyed(quota(DMAIL_BY_USER)),
             api: None,
             valkey,
         }
@@ -330,6 +339,17 @@ impl RateLimits {
         .await
     }
 
+    /// Counts a private message sent by user `user_id`.
+    pub async fn check_dmail(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            DMAIL_BY_USER,
+            &self.dmail_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
     /// Counts a search by image by `client` (`user:<id>` or `ip:<address>`).
     pub async fn check_image_search(&self, client: &str) -> Result<(), AppError> {
         let key = client.to_owned();
@@ -351,6 +371,7 @@ impl RateLimits {
         self.report_by_user.retain_recent();
         self.appeal_by_user.retain_recent();
         self.image_search.retain_recent();
+        self.dmail_by_user.retain_recent();
         if let Some((_, api)) = &self.api {
             api.retain_recent();
         }

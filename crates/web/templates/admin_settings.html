@@ -31,6 +31,9 @@
     <select id="registration_mode" name="registration_mode">
       {% for m in registration_modes %}<option value="{{ m }}"{% if settings.registration_mode == m %} selected{% endif %}>{{ {"open": "Open to anyone", "invite": "Invite code needed", "approval": "Staff approve new accounts", "closed": "Closed"}[m] }}</option>{% endfor %}
     </select>
+    <label for="invite_quota">Invites each person may make every 30 days</label>
+    <input id="invite_quota" name="invite_quota" type="number" min="0" max="1000" value="{{ settings.invite_quota }}">
+    <p class="hint">For roles with <em>Invite people</em>, at <a href="/invites">/invites</a>; those who can manage users have no limit.</p>
     <label class="choice"><input type="checkbox" name="email_verification"{% if settings.email_verification %} checked{% endif %}> New accounts must confirm their email address</label>
     {% if not mail_enabled %}<p class="hint">Mail isn't set up (<code>[mail]</code> in the server configuration), so addresses aren't checked.</p>{% endif %}
     <label class="choice"><input type="checkbox" name="upload_approval"{% if settings.upload_approval %} checked{% endif %}> New uploads wait for approval (unless the uploader's role skips it)</label>
@@ -54,6 +57,8 @@
       <input id="promotion_account_days" name="promotion_account_days" type="number" min="0" value="{{ settings.promotion.account_days }}">
       <label for="promotion_max_recent_deletions">At most this many uploads deleted in the last 30 days</label>
       <input id="promotion_max_recent_deletions" name="promotion_max_recent_deletions" type="number" min="0" value="{{ settings.promotion.max_recent_deletions }}">
+      <label for="promotion_max_negative_feedback">At most this many negative feedback records</label>
+      <input id="promotion_max_negative_feedback" name="promotion_max_negative_feedback" type="number" min="0" value="{{ settings.promotion.max_negative_feedback }}">
       <p class="hint">Banned members, and those staff keep from promotion on their profile, aren't promoted.</p>
     </fieldset>
     <label class="choice"><input type="checkbox" name="preview_all_ratings"{% if settings.preview_all_ratings %} checked{% endif %}> Link previews (in chat apps and social networks) show questionable and explicit posts' images too</label>
@@ -89,6 +94,20 @@
       <label class="choice"><input type="checkbox" name="captcha_sign_up"{% if settings.captcha.sign_up %} checked{% endif %}> Ask for a captcha when signing up</label>
       <label for="captcha_comment_account_days">Ask for one on comments by accounts younger than this many days (0 for never)</label>
       <input id="captcha_comment_account_days" name="captcha_comment_account_days" type="number" min="0" value="{{ settings.captcha.comment_account_days }}">
+      <label for="spam_filter_mode">Hold likely spam in comments, forum posts and messages for review</label>
+      <select id="spam_filter_mode" name="spam_filter_mode">
+        <option value="auto"{% if settings.spam_filter.mode == "auto" %} selected{% endif %}>Unless the site is private</option>
+        <option value="on"{% if settings.spam_filter.mode == "on" %} selected{% endif %}>Always</option>
+        <option value="off"{% if settings.spam_filter.mode == "off" %} selected{% endif %}>Never</option>
+      </select>
+      <p class="hint">Held writing waits under <a href="/moderation/held">Moderation → Held for review</a>. Staff who can hide comments are never held.</p>
+      <label for="spam_link_account_days">Hold links from accounts younger than this many days (0 for never)</label>
+      <input id="spam_link_account_days" name="spam_link_account_days" type="number" min="0" value="{{ settings.spam_filter.link_account_days }}">
+      <label for="spam_max_repeats">Hold text its writer already posted this many times today (0 for never)</label>
+      <input id="spam_max_repeats" name="spam_max_repeats" type="number" min="0" value="{{ settings.spam_filter.max_repeats }}">
+      <label for="spam_words">Spam words</label>
+      <textarea id="spam_words" name="spam_words" rows="4" spellcheck="false" placeholder="cheap pills">{{ settings.spam_filter.words }}</textarea>
+      <p class="hint">One word or phrase per line; writing that contains any is held, whatever the case.</p>
     </fieldset>
     <label for="ip_history_days">Keep the addresses accounts use for this many days</label>
     <input id="ip_history_days" name="ip_history_days" type="number" min="0" max="3650" value="{{ settings.ip_history_days }}">

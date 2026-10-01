@@ -4,16 +4,52 @@
 <section class="card medium">
   <h1>{{ user.name }}</h1>
   {% if record_url %}<p><a href="{{ record_url }}">Moderation record</a></p>{% endif %}
+  {% if messages or feedback.can_give %}
+  <div class="actions">
+    {% if messages and messages.can_send and not messages.blocked %}<a class="button" href="/dmails/new?to={{ user.name|urlencode }}">Send a message</a>{% endif %}
+    {% if feedback.can_give %}<a class="button secondary" href="/user_feedbacks/new?user={{ user.name|urlencode }}">Leave feedback</a>{% endif %}
+    {% if messages %}
+    <form method="post" action="/users/{{ user.name }}/block"><input type="hidden" name="blocked" value="{{ '0' if messages.blocked else '1' }}"><button type="submit" class="secondary">{% if messages.blocked %}Unblock{% else %}Block messages{% endif %}</button></form>
+    {% endif %}
+  </div>
+  {% endif %}
   <dl class="facts">
     <dt>Role</dt><dd>{{ user.role or "—" }}</dd>
+    {% if former_names %}<dt>Formerly</dt><dd>{{ former_names|join(", ") }}</dd>{% endif %}
     <dt>Joined</dt><dd>{{ user.joined }}</dd>
+    {% if invited_by %}<dt>Invited by</dt><dd><a href="/users/{{ invited_by|urlencode }}">{{ invited_by }}</a></dd>{% endif %}
     {% if user.status != "active" %}<dt>Status</dt><dd>{{ user.status }}</dd>{% endif %}
-    <dt>Uploads</dt><dd><a href="{{ uploads_url }}">{{ uploads }}</a></dd>
+    <dt>Uploads</dt><dd><a href="{{ uploads_url }}">{{ uploads }}</a>{% if more.deleted_uploads %} · <a href="{{ more.deleted_uploads_url }}">{{ more.deleted_uploads }} deleted</a>{% endif %}</dd>
+    {% if uploads %}<dt>Upload score</dt><dd><a href="{{ more.upload_score_url }}">{{ more.upload_score }}</a></dd>{% endif %}
+    {% if more.approvals %}<dt>Approvals</dt><dd><a href="{{ more.approvals_url }}">{{ more.approvals }}</a></dd>{% endif %}
     <dt>Favorites</dt><dd><a href="{{ favorites_url }}">{{ favorites }}</a></dd>
     <dt>Favorite groups</dt><dd><a href="{{ favorite_groups_url }}">{{ favorite_groups }}</a></dd>
+    {% if more.votes %}<dt>Votes</dt><dd><a href="{{ more.votes.up_url }}">{{ more.votes.up }} up</a>, <a href="{{ more.votes.down_url }}">{{ more.votes.down }} down</a></dd>{% endif %}
+    <dt>Post changes</dt><dd><a href="{{ changes_url }}">{{ more.post_changes }}</a></dd>
+    <dt>Note changes</dt><dd><a href="{{ more.note_changes_url }}">{{ more.note_changes }}</a></dd>
+    <dt>Wiki edits</dt><dd><a href="{{ more.wiki_edits_url }}">{{ more.wiki_edits }}</a></dd>
+    <dt>Pool edits</dt><dd><a href="{{ more.pool_edits_url }}">{{ more.pool_edits }}</a></dd>
     <dt>Comments</dt><dd><a href="{{ comments_url }}">{{ comments }}</a></dd>
-    <dt>Post changes</dt><dd><a href="{{ changes_url }}">View</a></dd>
+    <dt>Forum posts</dt><dd><a href="{{ more.forum_posts_url }}">{{ more.forum_posts }}</a></dd>
+    <dt>Feedback</dt><dd><a href="{{ feedback.url }}">{% if feedback.positive or feedback.neutral or feedback.negative %}<span class="status-positive">{{ feedback.positive }} positive</span>, {{ feedback.neutral }} neutral, <span class="status-negative">{{ feedback.negative }} negative</span>{% else %}None{% endif %}</a></dd>
   </dl>
+  {% if chart %}
+  <h2>Uploads by month</h2>
+  <svg class="upload-chart" viewBox="0 0 {{ chart.width }} {{ chart.height }}" role="img" aria-label="Uploads in each of the last 12 months, at most {{ chart.most }}">
+    {% for b in chart.bars %}
+    <g><title>{{ b.title }}</title>
+      <rect x="{{ b.x }}" y="{{ b.y }}" width="{{ chart.bar_width }}" height="{{ b.height }}"></rect>
+      <text x="{{ b.label_x }}" y="{{ chart.label_y }}" text-anchor="middle">{{ b.label }}</text>
+    </g>
+    {% endfor %}
+  </svg>
+  {% endif %}
+  {% if top_tags %}
+  <h2>Most used in uploads</h2>
+  <ul class="tag-list top-tags">
+    {% for t in top_tags %}<li><a class="tag-{{ t.category }}" href="{{ t.url }}">{{ t.name }}</a> <span class="hint">{{ t.posts }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
   {% if promotion.promoted %}<p class="hint">Promoted automatically on {{ promotion.promoted }}.</p>{% endif %}
   {% if promotion.can_change %}
   <form class="inline" method="post" action="/users/{{ user.name }}/auto-promotion">
@@ -48,6 +84,19 @@
   {% endif %}
   {% if can_unban %}
   <form method="post" action="/users/{{ user.name }}/unban"><button type="submit">Lift the ban</button></form>
+  {% endif %}
+  {% if can_rename %}
+  <details class="edit">
+    <summary>Rename</summary>
+    <form method="post" action="/users/{{ user.name }}/rename">
+      <label for="rename-name">New name</label>
+      <input id="rename-name" name="name" required minlength="2" maxlength="32" autocapitalize="none" spellcheck="false">
+      <label for="rename-reason">Reason</label>
+      <input id="rename-reason" name="reason" maxlength="2000">
+      <p class="hint">Unlike their own changes, this has no waiting time. It goes in the moderation log.</p>
+      <button type="submit">Rename {{ user.name }}</button>
+    </form>
+  </details>
   {% endif %}
   {% include "user_notes.html" %}
 </section>

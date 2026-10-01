@@ -198,6 +198,14 @@ keeps none and stops recording them. Deleting an account deletes its
 addresses. Sessions separately keep the address they were started from
 until they end.
 
+## Renaming users
+
+Staff who can ban users can rename anyone ranked below them with
+**Rename** on their profile, say for an offensive or impersonating name,
+with a reason for the log. Unlike users' own changes, it has no waiting
+time. Their profile lists their former names, and the old name still
+finds them (see [Your name](../using/account.md#your-name)).
+
 ## Spam accounts
 
 Besides rate limits, email confirmation and approval of new accounts
@@ -212,6 +220,30 @@ Settings → Spam** keep spam accounts out:
 - **Captcha**: with a service set up (see
   [`[auth.captcha]`](../configuration.md#authcaptcha)), ask for it when
   signing up, and on comments by accounts younger than a number of days.
+
+## Spam filter
+
+Comments, forum posts and messages that look like spam are held for
+review instead of appearing: nobody but their writer knows they exist
+(and they're told only that the staff will check it). By default the
+filter runs unless the site is [private](private-sites.md); **Admin →
+Settings → Spam** can turn it on or off for good, and choose what it
+holds:
+
+- links (`http://`, `https://`, `www.`) from accounts younger than 3
+  days;
+- text its writer already posted 3 times in the past day, anywhere;
+- anything containing one of the **spam words**, one word or phrase per
+  line, whatever the case.
+
+Set a number to 0 to stop holding for it. People who can *Hide comments
+and handle reports about them* are never held, and review what is under
+**Moderation → Held for review**, oldest first, with why each was held.
+**Approve** lets it through as if just posted (mentions, replies and
+messages notify then, and webhooks fire); **Reject** keeps it hidden for
+good, and a rejected message never reaches its recipient. Both go in the
+moderation log. Hiding or restoring a held comment or forum post the
+usual way also settles it.
 
 ## Tag aliases and implications
 

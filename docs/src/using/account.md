@@ -24,9 +24,66 @@
 - **Time zone** is used for the dates pages show. Otherwise they're in
   UTC.
 - **Custom CSS** is applied after the site's styles, for you alone.
+- **Email me my notifications** (on sites that send mail, and once your
+  address is confirmed) sends each [notification](#notifications) to
+  your email as well.
 
 The rest of this page is under **Settings → Your email address and
 password**.
+
+## Profiles
+
+Everyone's profile, at `/users/name`, counts what they've done, each
+count linking to the list or search behind it: uploads (and those since
+deleted), the score their uploads add up to, favorites and favorite
+groups, post, note, wiki and pool changes, comments, forum posts and
+[feedback](#feedback). Approvers' profiles count the posts they
+approved; you and staff who approve posts also see your up- and
+downvotes, which are private otherwise.
+
+Below them, a chart shows uploads in each of the last 12 months, and a
+list the tags used most on their latest 1000 uploads (leaving out meta
+tags), each linking to their uploads with that tag.
+
+## Notifications
+
+**Notifications**, at the top of every page, lists what happened that
+concerns you, with a count of those you haven't read. You're notified
+when someone:
+
+- mentions you as `@name` in a comment, a forum post or a request's
+  discussion, or quotes you (a `[quote]` starting `name said:`, as
+  **Reply** writes);
+- sends you a [message](messages.md);
+- posts in a [forum](forum.md) topic you've posted in;
+- approves or rejects a request you made or voted on;
+- leaves [feedback](#feedback) on your account.
+
+Opening one marks it read and goes to what it's about; **Mark all read**
+clears the count. Nobody you've blocked from messaging you can notify
+you either. Read notifications are forgotten after 90 days.
+
+## Feedback
+
+Staff and senior users (with *Leave feedback on users of lower rank*;
+contributors and up, by default) can leave **positive**, **neutral** or
+**negative** feedback on someone ranked below them, with **Leave
+feedback** on their profile. Profiles count it, linking to the whole
+list at `/user_feedbacks?user=name`; anyone can read it, and the person
+it's about is notified. Its writer can edit it. Staff who can ban users
+can delete and restore it, which goes in the moderation log. Negative
+feedback can keep a member from [automatic
+promotion](../admin/roles.md#automatic-promotion).
+
+## Your name
+
+**Settings → Your name** changes the name you're known and log in by,
+once every 7 days. Your profile lists your former names, and links to
+your old profile and searches such as `user:oldname` and
+`ordfav:oldname` keep finding you, unless someone else takes the name
+later. Staff who can ban users can rename anyone ranked below them,
+with **Rename** on their profile, at any time; that goes in the
+moderation log.
 
 ## Email address and password
 

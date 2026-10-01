@@ -30,6 +30,9 @@ pub struct SiteSettings {
     /// Extra links in the footer (a Discord server, a donation page, …).
     pub footer_links: Vec<FooterLink>,
     pub registration_mode: RegistrationMode,
+    /// Invites each person who may invite can make per
+    /// [`INVITE_QUOTA_DAYS`] days (those who manage users have no limit).
+    pub invite_quota: u32,
     /// New accounts must follow a link sent to their email address before
     /// they can log in. Only applies when mail is configured.
     pub email_verification: bool,
@@ -65,6 +68,8 @@ pub struct SiteSettings {
     pub email_domains: crate::spam::EmailDomains,
     /// Where the captcha is asked for, if one is configured.
     pub captcha: crate::spam::CaptchaSettings,
+    /// What writing is held for review as likely spam.
+    pub spam_filter: crate::spam::SpamFilter,
     /// Reasons offered for deleting, rejecting and flagging posts.
     pub post_reasons: crate::moderation::PostReasons,
     /// Uploads and edits get `artist_request` while a post has no artist
@@ -96,6 +101,9 @@ impl Default for BannedArtists {
 
 /// The longest [`SiteSettings::ip_history_days`].
 pub const MAX_IP_HISTORY_DAYS: u32 = 3650;
+/// The period [`SiteSettings::invite_quota`] counts over.
+pub const INVITE_QUOTA_DAYS: i64 = 30;
+pub const MAX_INVITE_QUOTA: u32 = 1000;
 
 impl Default for SiteSettings {
     fn default() -> Self {
@@ -106,6 +114,7 @@ impl Default for SiteSettings {
             rules: String::new(),
             footer_links: Vec::new(),
             registration_mode: RegistrationMode::Open,
+            invite_quota: 5,
             email_verification: false,
             upload_approval: false,
             upload_limit_scaling: false,
@@ -115,6 +124,7 @@ impl Default for SiteSettings {
                 edits: 0,
                 account_days: 30,
                 max_recent_deletions: 0,
+                max_negative_feedback: 0,
             },
             preview_all_ratings: false,
             default_blacklist: String::new(),
@@ -124,6 +134,7 @@ impl Default for SiteSettings {
             ip_history_days: 365,
             email_domains: crate::spam::EmailDomains::default(),
             captcha: crate::spam::CaptchaSettings::default(),
+            spam_filter: crate::spam::SpamFilter::default(),
             post_reasons: crate::moderation::PostReasons::default(),
             request_tags: false,
             banned_artists: BannedArtists::default(),
@@ -301,7 +312,11 @@ impl SiteSettings {
         }
         self.tagger.validate()?;
         self.email_domains.validate()?;
+        self.spam_filter.validate()?;
         self.post_reasons.validate()?;
+        if self.invite_quota > MAX_INVITE_QUOTA {
+            return Err(format!("at most {MAX_INVITE_QUOTA} invites"));
+        }
         if self.ip_history_days > MAX_IP_HISTORY_DAYS {
             return Err(format!(
                 "keep addresses for at most {MAX_IP_HISTORY_DAYS} days"
@@ -330,6 +345,7 @@ mod tests {
                 "email_domains",
                 "email_verification",
                 "footer_links",
+                "invite_quota",
                 "ip_history_days",
                 "logo",
                 "post_reasons",
@@ -340,6 +356,7 @@ mod tests {
                 "rules",
                 "site_description",
                 "site_name",
+                "spam_filter",
                 "tagger",
                 "upload_approval",
                 "upload_limit_scaling",

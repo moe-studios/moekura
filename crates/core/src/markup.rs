@@ -11,7 +11,8 @@
 //! - `[[tag]]` or `[[tag|text]]` links to a tag's wiki page, `{{search}}`
 //!   to search results, `post #123` to a post and `comment #45` to a
 //!   comment.
-//! - `http://` and `https://` URLs become links.
+//! - `http://` and `https://` URLs become links, and `@name` links to the
+//!   user called name.
 //!
 //! The output is built from escaped text and a fixed set of elements, so
 //! it needs no sanitising: nothing in the input becomes HTML unless the
@@ -245,6 +246,8 @@ fn inline(out: &mut String, text: &str) {
             .flatten()
         {
             rest = &rest[used..];
+        } else if let Some(used) = at_word_start.then(|| mention_link(out, rest)).flatten() {
+            rest = &rest[used..];
         } else if let Some(used) = at_word_start.then(|| url_link(out, rest)).flatten() {
             rest = &rest[used..];
         } else {
@@ -313,6 +316,96 @@ fn link(
     escape(out, label);
     out.push_str("</a>");
     Some(inner_start + end + close.len())
+}
+
+/// The user name an `@name` at the start of `text` mentions, and the
+/// bytes it takes up: letters, digits, `_`, `.` and `-` after the `@`,
+/// without trailing dots and dashes (the end of a sentence).
+fn mention_at(text: &str) -> Option<(&str, usize)> {
+    let rest = text.strip_prefix('@')?;
+    let len = rest
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+        .count();
+    let name = rest[..len].trim_end_matches(['.', '-']);
+    (2..=32)
+        .contains(&name.len())
+        .then_some((name, 1 + name.len()))
+}
+
+/// An `@name` mention at the start of `text`, written to `out` as a link.
+fn mention_link(out: &mut String, text: &str) -> Option<usize> {
+    let (name, used) = mention_at(text)?;
+    out.push_str("<a class=\"mention\" href=\"/users/");
+    out.push_str(&encode(name));
+    out.push_str("\">@");
+    escape(out, name);
+    out.push_str("</a>");
+    Some(used)
+}
+
+/// Lines of `text` outside `[quote]` blocks.
+fn unquoted(text: &str) -> Vec<&str> {
+    let mut depth = 0usize;
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("[quote]") {
+            depth += 1;
+        } else if depth > 0 && trimmed.eq_ignore_ascii_case("[/quote]") {
+            depth -= 1;
+        } else if depth == 0 {
+            kept.push(line);
+        }
+    }
+    kept
+}
+
+/// The users `text` mentions with `@name`, outside quotes, each once, in
+/// order.
+pub fn mentions(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in unquoted(text) {
+        let mut previous: Option<char> = None;
+        for (at, c) in line.char_indices() {
+            if c == '@'
+                && previous.is_none_or(|p| !p.is_alphanumeric())
+                && let Some((name, _)) = mention_at(&line[at..])
+                && !found.iter().any(|f| f.eq_ignore_ascii_case(name))
+            {
+                found.push(name.to_owned());
+            }
+            previous = Some(c);
+        }
+    }
+    found
+}
+
+/// Whose words `text` quotes: the authors of its outermost `[quote]`
+/// blocks that start with "name said:", as [`quote`] writes them.
+pub fn quoted_authors(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    let mut depth = 0usize;
+    let mut opened = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("[quote]") {
+            depth += 1;
+            opened = depth == 1;
+            continue;
+        }
+        if depth > 0 && trimmed.eq_ignore_ascii_case("[/quote]") {
+            depth -= 1;
+        } else if opened
+            && let Some(author) = trimmed.strip_suffix(" said:")
+            && !author.contains(' ')
+            && !found.iter().any(|f| f == author)
+        {
+            found.push(author.to_owned());
+        }
+        opened = false;
+    }
+    found
 }
 
 /// `post #123` (for `word` post, linking to `/posts/123` for `path`
@@ -390,6 +483,24 @@ fn escape_char(out: &mut String, c: char) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mentions_link_and_are_found() {
+        assert_eq!(
+            render("Hi @alice. Mail me at bob@example.com, @x or @carol_b!"),
+            "<p>Hi <a class=\"mention\" href=\"/users/alice\">@alice</a>. Mail me at \
+             bob@example.com, @x or <a class=\"mention\" href=\"/users/carol_b\">@carol_b</a>!</p>"
+        );
+        assert_eq!(
+            mentions("@alice and @Alice, @bob.\n[quote]\n@carol said\n[/quote]"),
+            ["alice", "bob"]
+        );
+        let reply = format!(
+            "{}Thanks!",
+            quote("alice", "[quote]\nbob said:\n\nhi\n[/quote]\nhello")
+        );
+        assert_eq!(quoted_authors(&reply), ["alice"]);
+    }
 
     #[test]
     fn paragraphs_and_line_breaks() {

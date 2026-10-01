@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Edit post · Forum · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/forum_posts/{{ id }}">« {{ topic }}</a></p>
+<h1>Edit post</h1>
+<form class="wiki-form" method="post" action="/forum_posts/{{ id }}">
+  <label for="post-body">Post</label>
+  <textarea id="post-body" name="body" rows="10" required>{{ body }}</textarea>
+  {% include "comment_help.html" %}
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

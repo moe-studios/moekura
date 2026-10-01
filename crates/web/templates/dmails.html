@@ -13,6 +13,7 @@
   <form method="post" action="/dmails/mark_all_read"><button type="submit" class="secondary">Mark all read</button></form>
 </div>
 {% if dmails %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Messages table">
 <table class="tag-table dmail-list">
   <thead><tr><th scope="col">{% if folder == "sent" %}To{% else %}From{% endif %}</th><th scope="col">Title</th><th scope="col">Date</th></tr></thead>
   <tbody>
@@ -25,6 +26,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No messages here.</p>
 {% endif %}

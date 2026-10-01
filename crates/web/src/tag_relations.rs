@@ -344,6 +344,28 @@ pub(crate) async fn decide(
                 audit(db, user.id, kind, id).await?;
             }
             tracing::info!(id, ?decision, user = user.name, "tag relation updated");
+            let outcome = match decision {
+                Decision::Approve => Some("approved"),
+                Decision::Reject => Some("rejected"),
+                Decision::Remove if manage && relation.status != Status::Pending => Some("removed"),
+                Decision::Remove => None,
+            };
+            if let Some(outcome) = outcome {
+                crate::notifications::request_decided(
+                    state,
+                    current,
+                    moekura_db::requests::Target::Relation(id),
+                    relation.creator_id,
+                    &format!(
+                        "the {} request {} → {} ({outcome})",
+                        relation.kind.as_str(),
+                        relation.antecedent,
+                        relation.consequent
+                    ),
+                    &crate::requests::relation_url(relation.kind, id),
+                )
+                .await;
+            }
             Ok(relation)
         }
         Err(RelationError::Rule(rule)) => Err(AppError::Unprocessable(rule.to_string())),

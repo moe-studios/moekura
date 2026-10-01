@@ -52,6 +52,8 @@ pub struct CurrentUser {
     /// Their messages not read yet, for the header (logged in through
     /// the site only).
     pub unread_messages: i64,
+    /// Their notifications not read yet, likewise.
+    pub unread_notifications: i64,
 }
 
 /// The banned artists' tags hidden from someone in `role`.
@@ -74,6 +76,7 @@ impl CurrentUser {
             recent_write: false,
             ratings: site.settings.visitor_ratings.clone(),
             unread_messages: 0,
+            unread_notifications: 0,
         }
     }
 
@@ -101,6 +104,7 @@ impl CurrentUser {
                 Vec::new()
             },
             unread_messages: 0,
+            unread_notifications: 0,
         }
     }
 
@@ -284,6 +288,10 @@ pub async fn resolve_session(
         match moekura_db::dmails::unread_count(state.db.primary(), user.id).await {
             Ok(n) => current.unread_messages = n,
             Err(error) => tracing::warn!(%error, "could not count unread messages"),
+        }
+        match moekura_db::notifications::unread_count(state.db.primary(), user.id).await {
+            Ok(n) => current.unread_notifications = n,
+            Err(error) => tracing::warn!(%error, "could not count unread notifications"),
         }
     }
     request.extensions_mut().insert(current.clone());

@@ -110,7 +110,7 @@ pub(crate) async fn send(
             AppError::Unprocessable(format!("There's no user called “{}”.", to.trim()))
         })?;
     state.rate_limits.check_dmail(from).await?;
-    dmails::send(db, from, recipient.id, &title, &body)
+    let sent = dmails::send(db, from, recipient.id, &title, &body)
         .await
         .map_err(|e| match e {
             SendError::Blocked => AppError::Unprocessable(format!(
@@ -118,7 +118,17 @@ pub(crate) async fn send(
                 recipient.name
             )),
             SendError::Db(e) => e.into(),
-        })
+        })?;
+    crate::notifications::notify(
+        state,
+        &[recipient.id],
+        moekura_db::notifications::Kind::Message,
+        Some(from),
+        &format!("“{title}”"),
+        &format!("/dmails/{}", sent.recipient_copy),
+    )
+    .await;
+    Ok(sent)
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -262,6 +272,7 @@ async fn show(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
     let d = dmails::by_id(db, me, id).await?.ok_or(AppError::NotFound)?;
     if !d.is_read {
         dmails::set_read(db, me, id, true).await?;
+        moekura_db::notifications::read_url(db, me, &format!("/dmails/{id}")).await?;
     }
     let other = if d.from_id == Some(me) {
         d.to_name.clone()

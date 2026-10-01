@@ -495,6 +495,17 @@ pub async fn topic_request(db: &PgPool, topic_id: i64) -> sqlx::Result<(Option<i
     Ok((relation, request))
 }
 
+/// Everyone who has a visible post in topic `topic_id`.
+pub async fn participants(db: impl PgExecutor<'_>, topic_id: i64) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT creator_id FROM forum_posts
+         WHERE topic_id = $1 AND creator_id IS NOT NULL AND NOT is_hidden",
+    )
+    .bind(topic_id)
+    .fetch_all(db)
+    .await
+}
+
 pub async fn count_by_creator(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<i64> {
     sqlx::query_scalar("SELECT count(*) FROM forum_posts WHERE creator_id = $1 AND NOT is_hidden")
         .bind(user_id)

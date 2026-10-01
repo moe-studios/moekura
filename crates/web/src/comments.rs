@@ -325,6 +325,7 @@ async fn create(
     let comment_id = comments::create(state.db.primary(), post.id, user, &body, bump).await?;
     tracing::info!(post = post.id, comment = comment_id, "comment posted");
     crate::webhooks::emit_comment(state, comment_id).await;
+    crate::notifications::comment_posted(state, &page.current, comment_id, post.id, &body).await;
     Ok(Redirect::to(&format!("/posts/{}#comment-{comment_id}", post.id)).into_response())
 }
 

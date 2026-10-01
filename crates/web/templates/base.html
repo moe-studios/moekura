@@ -37,6 +37,7 @@
       {% if me %}
         <a class="who" href="/users/{{ me.name }}">{{ me.name }}</a>
         <a href="/dmails"{% if me.unread_messages %} class="unread"{% endif %}>Messages{% if me.unread_messages %} <span class="count-badge">{{ me.unread_messages }}<span class="visually-hidden"> unread</span></span>{% endif %}</a>
+        <a href="/notifications" aria-label="Notifications{% if me.unread_notifications %}, {{ me.unread_notifications }} unread{% endif %}">Notifications{% if me.unread_notifications %} <span class="count-badge" aria-hidden="true">{{ me.unread_notifications }}</span>{% endif %}</a>
         <a href="/settings">Settings</a>
         <form method="post" action="/logout">
           <button type="submit" class="link">Log out</button>

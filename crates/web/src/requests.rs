@@ -192,9 +192,18 @@ pub(crate) async fn comment(
     current.require(Permission::Comment)?;
     let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
     let body = crate::comments::clean_body(body)?;
-    url_of(state, target).await?;
+    let url = url_of(state, target).await?;
     state.rate_limits.check_comment(user.id).await?;
     requests::add_comment(state.db.primary(), target, user.id, &body).await?;
+    crate::notifications::notify_text(
+        state,
+        current,
+        &body,
+        "a tag request's discussion",
+        &url,
+        (&[], moekura_db::notifications::Kind::Reply),
+    )
+    .await;
     Ok(())
 }
 
@@ -569,6 +578,22 @@ pub(crate) async fn decide_request(
         user = user.name,
         "bulk update request decided"
     );
+    if decision != "withdraw" {
+        let outcome = if decision == "approve" {
+            "approved"
+        } else {
+            "rejected"
+        };
+        crate::notifications::request_decided(
+            state,
+            current,
+            Target::Request(id),
+            request.creator_id,
+            &format!("the bulk update request “{}” ({outcome})", request.title),
+            &format!("/tags/requests/{id}"),
+        )
+        .await;
+    }
     Ok(())
 }
 

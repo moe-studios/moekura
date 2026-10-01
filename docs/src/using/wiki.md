@@ -37,6 +37,7 @@ title, so a tag can be found by what other sites call it.
 | `[[long_hair]]`, `[[long_hair\|long hair]]` | A link to a wiki page, with its own text after the `\|` |
 | `{{cat -dog}}` | A link to search results |
 | `post #123`, `comment #45` | A link to a post or a comment |
+| `@name` | A link to a user, who is [notified](account.md#notifications) when it's in a comment, a forum post or a request's discussion |
 | `[quote]` and `[/quote]` on lines of their own | A quote |
 | `https://example.com` | A link to another site |
 

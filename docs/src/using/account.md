@@ -24,9 +24,29 @@
 - **Time zone** is used for the dates pages show. Otherwise they're in
   UTC.
 - **Custom CSS** is applied after the site's styles, for you alone.
+- **Email me my notifications** (on sites that send mail, and once your
+  address is confirmed) sends each [notification](#notifications) to
+  your email as well.
 
 The rest of this page is under **Settings → Your email address and
 password**.
+
+## Notifications
+
+**Notifications**, at the top of every page, lists what happened that
+concerns you, with a count of those you haven't read. You're notified
+when someone:
+
+- mentions you as `@name` in a comment, a forum post or a request's
+  discussion, or quotes you (a `[quote]` starting `name said:`, as
+  **Reply** writes);
+- sends you a [message](messages.md);
+- posts in a [forum](forum.md) topic you've posted in;
+- approves or rejects a request you made or voted on.
+
+Opening one marks it read and goes to what it's about; **Mark all read**
+clears the count. Nobody you've blocked from messaging you can notify
+you either. Read notifications are forgotten after 90 days.
 
 ## Email address and password
 

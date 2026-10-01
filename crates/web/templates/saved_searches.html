@@ -9,6 +9,7 @@
 {% if searches %}
 <p><a class="button" href="{{ all_url }}">All together</a>
   {% for l in labels %}<a class="tag" href="{{ l.url }}">{{ l.label }}</a> {% endfor %}</p>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Saved searches table">
 <table class="tag-table saved-searches">
   <thead><tr><th scope="col">Search</th><th scope="col">Labels</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
   <tbody>
@@ -33,6 +34,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">You haven't saved any searches yet.</p>
 {% endif %}

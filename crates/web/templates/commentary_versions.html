@@ -4,8 +4,10 @@
 {% if post_id %}<p class="back"><a href="/posts/{{ post_id }}">« Post #{{ post_id }}</a></p>{% endif %}
 <h1>{% if post_id %}Commentary history of post #{{ post_id }}{% else %}Commentary changes{% endif %}</h1>
 <form class="filters" method="get" action="{{ path }}">
-  <label for="cv-user">By</label>
-  <input id="cv-user" name="user" value="{{ query.user }}" size="12">
+  <div class="filter-field">
+    <label for="cv-user">By</label>
+    <input id="cv-user" name="user" value="{{ query.user }}" size="12">
+  </div>
   <button type="submit">Filter</button>
 </form>
 {% if post_id %}<p class="hint"><a href="/artist_commentary_versions">All commentary changes</a></p>{% endif %}

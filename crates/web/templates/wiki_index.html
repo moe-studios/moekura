@@ -4,14 +4,17 @@
 {% include "tag_nav.html" %}
 <h1>Wiki</h1>
 <form class="filters" method="get" action="/wiki">
-  <label for="wiki-title">Title</label>
-  <input id="wiki-title" name="title" value="{{ query.title }}" placeholder="long_ha, *_hair or an other name"
-         autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  <div class="filter-field">
+    <label for="wiki-title">Title</label>
+    <input id="wiki-title" name="title" value="{{ query.title }}" placeholder="long_ha, *_hair or an other name"
+           autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="tags">
+  </div>
   <button type="submit">Search</button>
 </form>
 <p class="hint"><a href="/wiki_page_versions">Recent changes</a> to every page.</p>
 {% if create_url %}<p><a class="button" href="{{ create_url }}">Start a page for {{ create_title }}</a></p>{% endif %}
 {% if pages %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Wiki index table">
 <table class="tag-table">
   <thead><tr><th scope="col">Title</th><th scope="col">Last changed</th><th scope="col" class="num">Version</th></tr></thead>
   <tbody>
@@ -24,6 +27,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No wiki pages found.</p>
 {% endif %}

@@ -7,6 +7,7 @@
 {% for group in groups %}
 <section class="metadata-group">
   <h2>{{ group.label }}</h2>
+  <div class="table-scroll" tabindex="0" role="region" aria-label="Post metadata table">
   <table class="tag-table">
     <tbody>
       {% for f in group.fields %}
@@ -14,6 +15,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </section>
 {% endfor %}
 <p class="hint">Locations, serial numbers and owners' names aren't shown. The original file is kept as uploaded, with whatever it contains.</p>

@@ -4,20 +4,27 @@
 {% include "tag_nav.html" %}
 <h1>Artists</h1>
 <form class="filters" method="get" action="/artists">
-  <label for="artist-name">Name</label>
-  <input id="artist-name" name="name" value="{{ query.name }}" size="16" placeholder="name, other name or group">
-  <label for="artist-url">URL</label>
-  <input id="artist-url" name="url" value="{{ query.url }}" size="24" placeholder="https://">
-  <label for="artist-banned">Banned</label>
-  <select id="artist-banned" name="banned">
-    <option value=""{% if not query.banned %} selected{% endif %}>Any</option>
-    <option value="yes"{% if query.banned == "yes" %} selected{% endif %}>Yes</option>
-    <option value="no"{% if query.banned == "no" %} selected{% endif %}>No</option>
-  </select>
+  <div class="filter-field">
+    <label for="artist-name">Name</label>
+    <input id="artist-name" name="name" value="{{ query.name }}" size="16" placeholder="name, other name or group">
+  </div>
+  <div class="filter-field">
+    <label for="artist-url">URL</label>
+    <input id="artist-url" name="url" value="{{ query.url }}" size="24" placeholder="https://">
+  </div>
+  <div class="filter-field">
+    <label for="artist-banned">Banned</label>
+    <select id="artist-banned" name="banned">
+      <option value=""{% if not query.banned %} selected{% endif %}>Any</option>
+      <option value="yes"{% if query.banned == "yes" %} selected{% endif %}>Yes</option>
+      <option value="no"{% if query.banned == "no" %} selected{% endif %}>No</option>
+    </select>
+  </div>
   <button type="submit">Search</button>
 </form>
 <p class="hint">{% if can_create %}<a href="/artists/new">New artist</a> · {% endif %}<a href="/artists/finder">Find an artist by URL</a> · <a href="/artist_versions">Recent changes</a></p>
 {% if artists %}
+<div class="table-scroll" tabindex="0" role="region" aria-label="Artists table">
 <table class="tag-table">
   <thead><tr><th scope="col">Name</th><th scope="col">Other names</th><th scope="col">Group</th><th scope="col">URLs</th><th scope="col">Updated</th></tr></thead>
   <tbody>
@@ -32,6 +39,7 @@
     {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="empty">No artists found.</p>
 {% endif %}

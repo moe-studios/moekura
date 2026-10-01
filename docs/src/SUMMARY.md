@@ -37,6 +37,7 @@
 - [Artists](using/artists.md)
 - [Comments](using/comments.md)
 - [Messages](using/messages.md)
+- [The forum](using/forum.md)
 - [Pools](using/pools.md)
 - [Notes](using/notes.md)
 - [The API](api.md)

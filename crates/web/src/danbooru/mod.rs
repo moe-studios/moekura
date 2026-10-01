@@ -14,6 +14,7 @@ mod commentaries;
 mod community;
 mod dmails;
 mod explore;
+mod forum;
 mod iqdb;
 mod media_assets;
 mod missing;
@@ -60,6 +61,7 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             .merge(artists::routes())
             .merge(commentaries::routes())
             .merge(dmails::routes())
+            .merge(forum::routes())
             .merge(media_assets::routes())
             .merge(replacements::routes())
             .merge(notes::routes())

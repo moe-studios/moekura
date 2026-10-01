@@ -248,6 +248,25 @@ pub(crate) async fn request_relation(
     match result {
         Ok(id) => {
             tracing::info!(%kind, %antecedent, %consequent, user = user.name, "tag relation requested");
+            // Requests that need deciding are discussed on the forum.
+            if !current.can(Permission::ManageTags) {
+                let what = match kind {
+                    Kind::Alias => "Alias",
+                    Kind::Implication => "Implication",
+                };
+                let title = format!("{what} request: {antecedent} → {consequent}");
+                let reason = reason.trim();
+                let body = format!(
+                    "{what} [[{antecedent}]] → [[{consequent}]].\n\n{}",
+                    if reason.is_empty() {
+                        "No reason given."
+                    } else {
+                        reason
+                    }
+                );
+                crate::forum::open_request_topic(state, current, &title, &body, Some(id), None)
+                    .await;
+            }
             Ok(id)
         }
         Err(RelationError::Rule(rule)) => Err(invalid(rule.to_string())),

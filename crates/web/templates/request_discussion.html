@@ -1,4 +1,5 @@
 {# Votes and discussion of a request; `discussion` and `score` are set by the including page. #}
+{% if discussion.forum_topic %}<p class="hint">Discussed on the forum: <a href="/forum_topics/{{ discussion.forum_topic }}">topic #{{ discussion.forum_topic }}</a>.</p>{% endif %}
 <section class="request-votes" aria-label="Votes">
   {% if discussion.can_vote %}
   <form class="vote" method="post" action="{{ discussion.vote_url }}">

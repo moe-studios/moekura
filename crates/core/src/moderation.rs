@@ -156,10 +156,14 @@ pub enum ActionKind {
     ArtistUnban,
     PostReplace,
     DmailReportSettle,
+    ForumTopicModerate,
+    ForumTopicMerge,
+    ForumPostHide,
+    ForumPostUnhide,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 41] = [
+    pub const ALL: [ActionKind; 45] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -201,6 +205,10 @@ impl ActionKind {
         ActionKind::ArtistUnban,
         ActionKind::PostReplace,
         ActionKind::DmailReportSettle,
+        ActionKind::ForumTopicModerate,
+        ActionKind::ForumTopicMerge,
+        ActionKind::ForumPostHide,
+        ActionKind::ForumPostUnhide,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -246,6 +254,10 @@ impl ActionKind {
             ActionKind::ArtistUnban => "artist.unban",
             ActionKind::PostReplace => "post.replace",
             ActionKind::DmailReportSettle => "dmail_report.settle",
+            ActionKind::ForumTopicModerate => "forum_topic.moderate",
+            ActionKind::ForumTopicMerge => "forum_topic.merge",
+            ActionKind::ForumPostHide => "forum_post.hide",
+            ActionKind::ForumPostUnhide => "forum_post.unhide",
         }
     }
 
@@ -293,6 +305,10 @@ impl ActionKind {
             ActionKind::ArtistUnban => "unbanned an artist",
             ActionKind::PostReplace => "replaced the file of post",
             ActionKind::DmailReportSettle => "settled a report about a message from",
+            ActionKind::ForumTopicModerate => "changed a forum topic",
+            ActionKind::ForumTopicMerge => "merged forum topics",
+            ActionKind::ForumPostHide => "hid a forum post by",
+            ActionKind::ForumPostUnhide => "restored a forum post by",
         }
     }
 

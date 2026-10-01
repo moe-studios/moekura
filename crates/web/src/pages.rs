@@ -91,6 +91,7 @@ fn section(path: &str) -> Option<&'static str> {
         "pools" => "pools",
         "comments" => "comments",
         "explore" => "explore",
+        "forum_topics" | "forum_posts" => "forum",
         "upload" => "upload",
         "moderation" => "moderation",
         "admin" => "admin",

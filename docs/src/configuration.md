@@ -220,6 +220,57 @@ The optional [tagger](admin/tagger.md), which suggests tags for new uploads.
 |---|---|---|
 | `log_format` | `"text"` | `"text"` or `"json"` |
 | `log_filter` | `"info,sqlx::postgres::notice=warn,ort=warn"` | a `tracing` filter; `RUST_LOG` overrides it (`"info,tower_http=debug"` logs every request) |
+| `metrics_bind` | unset | where `serve` and `worker` serve Prometheus metrics at `/metrics`, e.g. `"127.0.0.1:9100"`; unset, nothing is collected |
+| `otlp_endpoint` | unset | an OpenTelemetry collector's OTLP/HTTP address, e.g. `"http://otel-collector:4318"`; traces go to its `/v1/traces` |
+| `otlp_sample_ratio` | `1.0` | the share of requests and jobs traced, from `0.0` to `1.0` |
+| `service_name` | `"moekura"` | `service.name` on exported traces |
+
+### Metrics
+
+With `metrics_bind` set, `moekura serve` and `moekura worker` each open a
+second listener serving `/metrics` in the Prometheus text format. It is
+separate from the site so it is never reachable through the reverse proxy:
+bind it to loopback or a private address, and keep it off the internet
+with a firewall. It has no authentication of its own. The address must
+differ from `server.bind`, and processes on the same machine need
+different ports.
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `moekura_http_requests_total` | `method`, `route`, `status` | requests answered |
+| `moekura_http_request_duration_seconds` | `method`, `route` | histogram of how long they took |
+| `moekura_http_requests_in_flight` | | requests being answered now |
+| `moekura_jobs_finished_total` | `kind`, `result` | jobs run: `done`, `retry` (failed; retried while attempts remain), `failed` (could never succeed) or `panicked` |
+| `moekura_job_duration_seconds` | `kind` | histogram of how long they ran |
+| `moekura_jobs` | `kind`, `state` | jobs `ready` (due now), `scheduled` (for later), `running` and `dead` |
+| `moekura_jobs_oldest_ready_seconds` | `kind` | how long the longest-waiting due job has waited |
+| `moekura_db_connections` | `pool`, `state` | connections `idle` and `in_use`, for `primary` and each `replica_N` |
+| `moekura_db_connections_max` | `pool` | each pool's limit |
+
+`route` is the route's template, such as `/posts/{id}`, or `unmatched`
+for requests that matched none, so the number of series stays small
+whatever is requested. No label carries a user, address, tag or query.
+The queue and pool gauges are read when Prometheus scrapes; the queue
+counts all processes' jobs, so scrape it from one of them.
+
+A growing `moekura_jobs_oldest_ready_seconds` means the workers are
+behind; a climbing `dead` count, that jobs are failing for good (see
+[Background jobs](admin/jobs.md)).
+
+### Traces
+
+With `otlp_endpoint` set, each request and job is a trace, with the
+spans logged inside it, sent in batches over OTLP/HTTP (protobuf) to an
+OpenTelemetry collector, which can pass them to Jaeger, Tempo or another
+tracing backend. Spans carry the `moekura.role` of the process (`serve`,
+`worker`, `tagger`, `migrate`) and its version. `log_filter` decides
+which spans exist, as for logs. Traces still buffered are sent when the
+process shuts down cleanly.
+
+The endpoint must be `http` or `https`; no credentials are sent, so put a
+collector next to moekura rather than sending to a hosted service
+directly. A busy site can lower `otlp_sample_ratio`: a sampled request
+traces everything beneath it.
 
 ## `[webhooks]`
 

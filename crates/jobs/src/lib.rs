@@ -263,6 +263,17 @@ impl Worker {
         };
 
         let elapsed = started.elapsed();
+        let result = match &outcome {
+            Ok(Ok(())) => "done",
+            Ok(Err(JobError::Retry(_))) => "retry",
+            Ok(Err(JobError::Permanent(_))) => "failed",
+            Err(_) => "panicked",
+        };
+        // Kinds are the registry's, so the labels are a fixed set.
+        metrics::counter!("moekura_jobs_finished_total", "kind" => job.kind.clone(), "result" => result)
+            .increment(1);
+        metrics::histogram!("moekura_job_duration_seconds", "kind" => job.kind.clone())
+            .record(elapsed.as_secs_f64());
         match outcome {
             Ok(Ok(())) => {
                 tracing::debug!(?elapsed, "job done");

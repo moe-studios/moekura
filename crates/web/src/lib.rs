@@ -34,6 +34,7 @@ mod forum;
 mod health;
 mod held;
 mod history;
+mod http_metrics;
 mod i18n;
 mod image_search;
 pub mod import;
@@ -350,6 +351,8 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .add_trusted_origin(&public_origin)
         .expect("an http(s) origin is a valid trusted origin");
 
+    // Requests are only measured when metrics are collected.
+    let metrics = state.config.telemetry.metrics_bind.is_some();
     let middleware = ServiceBuilder::new()
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(TraceLayer::new_for_http().make_span_with(request_span))
@@ -408,8 +411,14 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .merge(health::routes())
         .route("/static/{*path}", get(assets::serve))
         .route("/data/{*key}", get(files::serve))
-        .layer(middleware)
-        .with_state(state);
+        .layer(middleware);
+    // Outermost, so timeouts and panics are counted with their status.
+    let routes = if metrics {
+        routes.layer(middleware::from_fn(http_metrics::measure))
+    } else {
+        routes
+    };
+    let routes = routes.with_state(state);
     // Before routing, which layers on the router run after.
     let danbooru_urls = tower::util::MapRequestLayer::new(danbooru::rewrite);
     Router::new().fallback_service(tower::Layer::layer(&danbooru_urls, routes))

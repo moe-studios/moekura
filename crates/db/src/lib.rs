@@ -137,6 +137,11 @@ impl Db {
         &self.primary
     }
 
+    /// The read replicas' pools, in configuration order.
+    pub fn replicas(&self) -> &[PgPool] {
+        &self.replicas
+    }
+
     /// A pool for replica-safe reads: round-robin across the usable
     /// replicas, or the primary when there are none.
     pub fn read(&self) -> &PgPool {

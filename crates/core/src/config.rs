@@ -642,6 +642,18 @@ pub struct TelemetryConfig {
     pub log_format: LogFormat,
     /// `tracing` filter directive; `RUST_LOG` takes precedence when set.
     pub log_filter: String,
+    /// Where `serve` and `worker` each serve Prometheus metrics, at
+    /// `/metrics` (e.g. `127.0.0.1:9100`). A separate listener, never the
+    /// site's. Unset: no metrics, at no cost.
+    pub metrics_bind: Option<SocketAddr>,
+    /// An OpenTelemetry collector's OTLP/HTTP address (e.g.
+    /// `http://otel-collector:4318`); traces of requests and jobs are sent
+    /// to its `/v1/traces`. Unset: no traces.
+    pub otlp_endpoint: Option<Url>,
+    /// The share of requests and jobs traced, from 0.0 to 1.0.
+    pub otlp_sample_ratio: f64,
+    /// `service.name` in exported traces.
+    pub service_name: String,
 }
 
 impl Default for TelemetryConfig {
@@ -651,6 +663,10 @@ impl Default for TelemetryConfig {
             // Postgres notices like "relation already exists, skipping" are
             // noise, as is ONNX Runtime narrating the tagger's model setup.
             log_filter: "info,sqlx::postgres::notice=warn,ort=warn".to_owned(),
+            metrics_bind: None,
+            otlp_endpoint: None,
+            otlp_sample_ratio: 1.0,
+            service_name: "moekura".to_owned(),
         }
     }
 }
@@ -722,6 +738,27 @@ impl Config {
             problems.push(ConfigProblem {
                 key: "server.api_burst",
                 message: "must be at least 1 while api_requests_per_minute is set".into(),
+            });
+        }
+        let telemetry = &self.telemetry;
+        if let Some(url) = &telemetry.otlp_endpoint
+            && !matches!(url.scheme(), "http" | "https")
+        {
+            problems.push(ConfigProblem {
+                key: "telemetry.otlp_endpoint",
+                message: "must be an http:// or https:// URL".into(),
+            });
+        }
+        if !(0.0..=1.0).contains(&telemetry.otlp_sample_ratio) {
+            problems.push(ConfigProblem {
+                key: "telemetry.otlp_sample_ratio",
+                message: "must be from 0.0 to 1.0".into(),
+            });
+        }
+        if telemetry.metrics_bind.is_some() && telemetry.metrics_bind == Some(self.server.bind) {
+            problems.push(ConfigProblem {
+                key: "telemetry.metrics_bind",
+                message: "must differ from server.bind; metrics have their own listener".into(),
             });
         }
         if db.max_connections == 0 {
@@ -1114,6 +1151,32 @@ mod tests {
             .map(|p| p.key)
             .collect();
         assert_eq!(keys, ["server.public_url", "auth.session_max_days"]);
+    }
+
+    #[test]
+    fn checks_telemetry() {
+        let mut config = valid();
+        config.telemetry.metrics_bind = Some("127.0.0.1:9100".parse().unwrap());
+        config.telemetry.otlp_endpoint = Some(Url::parse("http://collector:4318").unwrap());
+        config.telemetry.otlp_sample_ratio = 0.25;
+        config.validate().unwrap();
+        config.telemetry.metrics_bind = Some(config.server.bind);
+        config.telemetry.otlp_endpoint = Some(Url::parse("grpc://collector:4317").unwrap());
+        config.telemetry.otlp_sample_ratio = 2.0;
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "telemetry.otlp_endpoint",
+                "telemetry.otlp_sample_ratio",
+                "telemetry.metrics_bind"
+            ]
+        );
     }
 
     #[test]

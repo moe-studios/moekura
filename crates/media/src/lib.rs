@@ -7,6 +7,7 @@ pub mod phash;
 mod pixels;
 mod probe;
 mod render;
+pub mod strip;
 pub mod tool;
 pub mod ugoira;
 
@@ -94,6 +95,26 @@ impl Media {
             .read_to_end(&mut head)
             .await?;
         MediaType::sniff(&head).ok_or_else(|| MediaError::Corrupt("unknown frame type".into()))
+    }
+
+    /// Writes `path` (a `media_type` file) without its metadata to `dst`;
+    /// see [`strip`].
+    pub async fn strip_metadata(
+        &self,
+        path: &Path,
+        media_type: MediaType,
+        dst: &Path,
+    ) -> Result<strip::Stripped, MediaError> {
+        let (path, dst) = (path.to_owned(), dst.to_owned());
+        tokio::task::spawn_blocking(move || strip::strip(media_type, &path, &dst))
+            .await
+            .map_err(|e| MediaError::Io(std::io::Error::other(e)))?
+            .map_err(|e| match e.kind() {
+                std::io::ErrorKind::InvalidData | std::io::ErrorKind::UnexpectedEof => {
+                    MediaError::Corrupt(e.to_string())
+                }
+                _ => MediaError::Io(e),
+            })
     }
 
     /// Checks the external tools are installed, returning their versions

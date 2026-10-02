@@ -183,6 +183,7 @@ See [File storage](admin/storage.md).
 | `sample_size` | `1600` | larger images also get a resized copy for the post page |
 | `variant_format` | `"webp"` | `"webp"` or `"avif"` (smaller, slower) for thumbnails and samples |
 | `tool_timeout_secs` | `120` | longest a media tool may run |
+| `strip_metadata` | `"off"` | remove identifying metadata from uploaded originals too: `"off"`, `"strip"` (JPEG, PNG and WebP; other types kept as uploaded) or `"require"` (and refuse other types); see [File metadata](using/posts.md#file-metadata) |
 | `work_dir` | system temp dir | scratch space for uploads and processing |
 
 ### `[media.tools]`

@@ -19,7 +19,7 @@ use moekura_core::permissions::Permission;
 use moekura_core::search::{Query as SearchQuery, TagTerm};
 use moekura_db::explore::{self, Searched};
 use moekura_db::posts;
-use moekura_db::search::{PageRef, Plan, SearchError};
+use moekura_db::search::{Exclusion, PageRef, Plan, SearchError};
 use serde::Deserialize;
 use time::{Date, Month, OffsetDateTime};
 
@@ -376,24 +376,27 @@ fn range(params: &RangeQuery) -> Result<Range, AppError> {
     )
 }
 
-/// The best scored posts of the range, as ids, at most `limit`.
+/// The best scored posts of the range, as ids, at most `limit`, leaving
+/// out what `exclusions` match.
 pub(crate) async fn popular_ids(
     state: &AppState,
     current: &CurrentUser,
     range: &Range,
     limit: u32,
     page: PageRef,
+    exclusions: &[Exclusion],
 ) -> Result<Vec<i64>, AppError> {
     let db = state.reader(current);
     let mut query = SearchQuery::parse(&range.popular_search())
         .map_err(|e| AppError::Internal(e.to_string()))?;
     query.limit = Some(limit);
     let visible = crate::posts::visibility(current);
-    let plan = match Plan::resolve(db, &query, &visible, &state.search_config()).await {
+    let mut plan = match Plan::resolve(db, &query, &visible, &state.search_config()).await {
         Ok(plan) => plan,
         Err(SearchError::Invalid(message)) => return Err(AppError::BadRequest(message)),
         Err(SearchError::Db(error)) => return Err(error.into()),
     };
+    plan.exclude(exclusions);
     match plan.ids(db, page).await {
         Ok(ids) => Ok(ids),
         Err(SearchError::Invalid(message)) => Err(AppError::BadRequest(message)),
@@ -453,7 +456,17 @@ async fn popular(page: Page, Query(params): Query<RangeQuery>) -> Result<Respons
     let range = range(&params)?;
     let state = page.state();
     let limit = state.search_config().per_page;
-    let ids = popular_ids(state, &page.current, &range, limit, PageRef::default()).await?;
+    let db = state.reader(&page.current);
+    let exclusions = crate::blacklist::exclusions(state, db, &page.current).await?;
+    let ids = popular_ids(
+        state,
+        &page.current,
+        &range,
+        limit,
+        PageRef::default(),
+        &exclusions,
+    )
+    .await?;
     let cards = crate::posts::grid(&page, state.reader(&page.current), &ids, None).await?;
     Ok(render_posts(
         &page,

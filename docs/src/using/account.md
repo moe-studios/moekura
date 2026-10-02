@@ -6,8 +6,12 @@
 
 - **Posts per page**, the **theme** and light or dark **mode**.
 - **Blacklist**: posts matching a line are left out of grids, with a
-  count and a link to show them. Tick **Blur blacklisted posts** to keep
-  them in grids, blurred, instead.
+  count and a link to show them. Searches, popular posts, an artist's
+  posts and your feeds leave them out as part of the search, so every
+  page is full and the counts don't include them. Other grids (pools,
+  favorite groups, comments, uploads) leave them out of what they show.
+  Tick **Blur blacklisted posts** to keep them in grids, blurred,
+  instead. The API leaves blacklists to clients.
 - **Safe mode** shows only general-rated posts, everywhere: searches,
   post pages, pools and the API.
 - Post pages show large images resized, saying so above them with a link

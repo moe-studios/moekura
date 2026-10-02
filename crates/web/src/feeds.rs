@@ -216,20 +216,20 @@ async fn posts_feed(
         per_page: ENTRIES,
         ..state.search_config()
     };
-    let plan = Plan::resolve(db, &parsed, &visibility(&current), &config)
+    let mut plan = Plan::resolve(db, &parsed, &visibility(&current), &config)
         .await
         .map_err(search_error)?;
+    // The reader's own blacklist, when read as someone who has one.
+    if current.is_logged_in()
+        && let Some(list) = crate::blacklist::for_viewer(&state, db, &current).await?
+    {
+        plan.exclude(&list.exclusions());
+    }
     let ids = plan
         .ids(db, PageRef::Number(1))
         .await
         .map_err(search_error)?;
     let found = posts::by_ids(db, &ids).await?;
-    // The reader's own blacklist, when read as someone who has one.
-    let blacklist = if current.is_logged_in() {
-        crate::blacklist::for_viewer(&state, db, &current).await?
-    } else {
-        None
-    };
     let sizes = &state.media.config().thumbnail_sizes;
     let box_size = sizes.first().copied().unwrap_or(250);
     let kind = format!("thumb-{box_size}");
@@ -255,12 +255,6 @@ async fn posts_feed(
         let Some(post) = found.iter().find(|p| p.id == *id) else {
             continue;
         };
-        if blacklist
-            .as_ref()
-            .is_some_and(|list| list.matching(post.rating, &post.tag_ids).is_some())
-        {
-            continue;
-        }
         let mut names: Vec<&str> = post
             .tag_ids
             .iter()

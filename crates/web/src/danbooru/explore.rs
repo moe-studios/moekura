@@ -56,7 +56,7 @@ async fn popular(
             .map_err(|()| AppError::BadRequest("`page` must be a number".into()))?,
     };
     let limit = params.list.limit(state.search_config().max_per_page);
-    let ids = explore::popular_ids(&state, &current, &params.range()?, limit, page).await?;
+    let ids = explore::popular_ids(&state, &current, &params.range()?, limit, page, &[]).await?;
     posts_json(&state, &current, &ids, &params.list.only).await
 }
 

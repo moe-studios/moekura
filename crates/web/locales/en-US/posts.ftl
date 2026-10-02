@@ -149,6 +149,7 @@ posts-exclude-tag = Exclude { $tag } from search
 posts-wiki-for = Wiki page for { $tag }
 posts-read-wiki = Read the wiki page for { $title }
 posts-blacklist-hidden = { $count } hidden by your blacklist (<a href="{ $url }">show</a>)
+posts-blacklist-left-out = blacklisted posts left out (<a href="{ $url }">show</a>)
 posts-blacklist-blurred = { $count } blurred by your blacklist (<a href="{ $url }">show</a>)
 posts-deleted-hidden = { $count } hidden (<a href="{ $url }">show</a>)
 posts-blacklist-showing = showing blacklisted posts (<a href="{ $url }">hide</a>)

@@ -72,7 +72,7 @@
     </aside>
     {% endif %}
     {% if count %}<p class="result-count">{{ count }}{% if feed_url %} · <a href="{{ feed_url }}">{{ t("feed") }}</a>{% endif %}
-      {% if blacklisted.show_url %}· {% if blacklisted.hidden %}{{ t("posts-blacklist-hidden", count=blacklisted.hidden, url=blacklisted.show_url) }}{% else %}{{ t("posts-blacklist-blurred", count=blacklisted.blurred, url=blacklisted.show_url) }}{% endif %}{% endif %}
+      {% if blacklisted.show_url %}· {% if blacklisted.hidden %}{{ t("posts-blacklist-hidden", count=blacklisted.hidden, url=blacklisted.show_url) }}{% elif blacklisted.left_out %}{{ t("posts-blacklist-left-out", url=blacklisted.show_url) }}{% else %}{{ t("posts-blacklist-blurred", count=blacklisted.blurred, url=blacklisted.show_url) }}{% endif %}{% endif %}
       {% if deleted %}· {{ t("posts-deleted-hidden", count=deleted.count, url=deleted.show_url) }}{% endif %}
       {% if blacklisted.hide_url %}· {{ t("posts-blacklist-showing", url=blacklisted.hide_url) }}{% endif %}
     </p>{% endif %}

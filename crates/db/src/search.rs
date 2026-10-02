@@ -18,7 +18,7 @@ use std::str::FromStr;
 use futures_util::future::BoxFuture;
 use futures_util::{StreamExt, TryStreamExt, stream};
 use moekura_core::config::SearchConfig;
-use moekura_core::posts::PostStatus;
+use moekura_core::posts::{PostStatus, Rating};
 use moekura_core::search::{
     Age, Bound, CommentaryFilter, Expr, Filter, Order, ParentFilter, PixivFilter, PoolFilter,
     Query, RANK_DAYS, SourceFilter, StatusFilter, TagTerm, UserMatch, When,
@@ -103,6 +103,17 @@ pub enum SearchError {
 struct TagSet {
     ids: Vec<i32>,
     posts: i64,
+}
+
+/// Posts to leave out of a search, such as those a line of the viewer's
+/// blacklist matches: those with all of `tags`, none of `not_tags`, a
+/// rating in each of `ratings` and none in `not_ratings`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Exclusion {
+    pub tags: Vec<i32>,
+    pub not_tags: Vec<i32>,
+    pub ratings: Vec<Vec<Rating>>,
+    pub not_ratings: Vec<Rating>,
 }
 
 /// What a user did to a post, in a [`Node::ByUser`].
@@ -599,6 +610,51 @@ impl Plan {
             Node::And(nodes) => nodes.into_iter().for_each(|node| self.add(node)),
             node => self.filters.push(node),
         }
+    }
+
+    /// Leaves out posts any of `exclusions` matches, as a search
+    /// `-(rule1) -(rule2) …` would. Rules of a single tag join the
+    /// excluded tags, which cost one array check together.
+    pub fn exclude(&mut self, exclusions: &[Exclusion]) {
+        for exclusion in exclusions {
+            if let ([tag], [], [], []) = (
+                &exclusion.tags[..],
+                &exclusion.not_tags[..],
+                &exclusion.ratings[..],
+                &exclusion.not_ratings[..],
+            ) {
+                self.excluded.push(*tag);
+                continue;
+            }
+            let single = |id: &i32| {
+                Node::Tags(TagSet {
+                    ids: vec![*id],
+                    posts: 0,
+                })
+            };
+            let mut nodes: Vec<Node> = exclusion.tags.iter().map(single).collect();
+            if !exclusion.not_tags.is_empty() {
+                nodes.push(
+                    Node::Tags(TagSet {
+                        ids: exclusion.not_tags.clone(),
+                        posts: 0,
+                    })
+                    .not(),
+                );
+            }
+            nodes.extend(
+                exclusion
+                    .ratings
+                    .iter()
+                    .map(|ratings| Node::Plain(Filter::Rating(ratings.clone()))),
+            );
+            if !exclusion.not_ratings.is_empty() {
+                nodes.push(Node::Plain(Filter::Rating(exclusion.not_ratings.clone())).not());
+            }
+            self.add(Node::and(nodes).not());
+        }
+        self.excluded.sort_unstable();
+        self.excluded.dedup();
     }
 
     /// Posts per page.
@@ -1999,6 +2055,80 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(search(&pool, "kitty").await, [both, cat]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn exclusions(pool: PgPool) {
+        let post = |tags, rating| Seed {
+            tags,
+            rating,
+            ..Seed::default()
+        };
+        let spider = seed(&pool, post(&["spider", "cute"], "g")).await;
+        let gore = seed(&pool, post(&["gore"], "g")).await;
+        let mild = seed(&pool, post(&["gore", "safe_version"], "g")).await;
+        let cat = seed(&pool, post(&["cat"], "e")).await;
+        let tame = seed(&pool, post(&["cat"], "s")).await;
+        let plain = seed(&pool, post(&[], "q")).await;
+        let id = |name: &str| {
+            let pool = pool.clone();
+            let name = name.to_owned();
+            async move {
+                crate::tags::by_names(&pool, &[name.as_str()])
+                    .await
+                    .unwrap()[0]
+                    .id
+            }
+        };
+        let rules = [
+            // `spider`
+            Exclusion {
+                tags: vec![id("spider").await],
+                ..Exclusion::default()
+            },
+            // `gore -safe_version`
+            Exclusion {
+                tags: vec![id("gore").await],
+                not_tags: vec![id("safe_version").await],
+                ..Exclusion::default()
+            },
+            // `cat rating:e,q`
+            Exclusion {
+                tags: vec![id("cat").await],
+                ratings: vec![vec![Rating::Explicit, Rating::Questionable]],
+                ..Exclusion::default()
+            },
+            // `-rating:g,s,e`: everything questionable
+            Exclusion {
+                not_ratings: vec![Rating::General, Rating::Sensitive, Rating::Explicit],
+                ..Exclusion::default()
+            },
+        ];
+        let excluding = async |input: &str, rules: &[Exclusion]| {
+            let query = Query::parse(input).unwrap();
+            let mut plan = Plan::resolve(&pool, &query, &public(), &SearchConfig::default())
+                .await
+                .unwrap();
+            plan.exclude(rules);
+            let ids = plan.ids(&pool, PageRef::default()).await.unwrap();
+            (ids, plan.count(&pool).await.unwrap())
+        };
+        assert_eq!(
+            search(&pool, "").await,
+            [plain, tame, cat, mild, gore, spider]
+        );
+        assert_eq!(
+            excluding("", &rules).await,
+            (vec![tame, mild], Count::Exact(2))
+        );
+        assert_eq!(excluding("cat", &rules).await.0, [tame]);
+        assert_eq!(excluding("cute", &rules).await.0, Vec::<i64>::new());
+        // A rule without terms matches every post.
+        assert_eq!(
+            excluding("", &[Exclusion::default()]).await,
+            (Vec::new(), Count::Exact(0))
+        );
+        assert_eq!(excluding("", &[]).await.1, Count::Exact(6));
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

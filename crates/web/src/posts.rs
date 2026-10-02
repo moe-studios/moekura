@@ -138,10 +138,23 @@ async fn index(
         Ok(query) => query,
         Err(error) => return Ok(failed(error.to_string())),
     };
-    let plan = match Plan::resolve(db, &query, &visibility(&page.current), config).await {
+    let mut plan = match Plan::resolve(db, &query, &visibility(&page.current), config).await {
         Ok(plan) => plan,
         Err(SearchError::Invalid(message)) => return Ok(failed(message)),
         Err(SearchError::Db(error)) => return Err(error.into()),
+    };
+    // Blacklisted posts are left out by the search itself, or blurred
+    // among the results, with a link to show them.
+    let show_all = params.blacklist == "off";
+    let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
+    let blur = crate::blacklist::blurs(&page.current);
+    let unfiltered = match &blacklist {
+        Some(list) if !show_all && !blur => {
+            let all = plan.clone();
+            plan.exclude(&list.exclusions());
+            Some(all)
+        }
+        _ => None,
     };
     let count = state.counts.count(&plan, db, &page.current).await;
     let (ids, count) = match (plan.ids(db, page_ref).await, count) {
@@ -151,6 +164,17 @@ async fn index(
             return Err(error.into());
         }
         (_, Err(SearchError::Invalid(message))) => return Ok(failed(message)),
+    };
+    // How many the blacklist left out, when both counts are exact.
+    let hidden = match (&unfiltered, count) {
+        (Some(all), Count::Exact(shown)) => {
+            match state.counts.count(all, db, &page.current).await {
+                Ok(Count::Exact(all)) => Some(all - shown),
+                Ok(_) | Err(SearchError::Invalid(_)) => None,
+                Err(SearchError::Db(error)) => return Err(error.into()),
+            }
+        }
+        _ => None,
     };
 
     if page_ref == PageRef::default()
@@ -169,25 +193,14 @@ async fn index(
             .append_pair("q", &normalized)
             .finish(),
     );
-    // Blacklisted posts are left out of the page entirely, or blurred,
-    // with a count and a link to show them.
-    let show_all = params.blacklist == "off";
-    let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
-    let blur = blur_blacklisted(&page.current);
     let is_blacklisted = |card: &Card| {
-        !show_all
+        blur && !show_all
             && blacklist.as_ref().is_some_and(|list| {
                 let rating = card.rating.parse().unwrap_or(Rating::Explicit);
                 list.matching(rating, &card.tag_ids).is_some()
             })
     };
-    let (shown, hidden): (Vec<&Card>, Vec<&Card>) =
-        cards.iter().partition(|card| blur || !is_blacklisted(card));
-    let blurred = if blur {
-        cards.iter().filter(|card| is_blacklisted(card)).count()
-    } else {
-        0
-    };
+    let blurred = cards.iter().filter(|card| is_blacklisted(card)).count();
     let blacklist_url = |off: bool| {
         let mut query = url::form_urlencoded::Serializer::new(String::new());
         if !normalized.is_empty() {
@@ -201,13 +214,16 @@ async fn index(
         }
         url_value(&format!("/posts?{}", query.finish()))
     };
+    // Unless the counts tell that it left out nothing.
+    let left_out = unfiltered.is_some() && hidden != Some(0);
     let blacklisted = context! {
-        hidden => hidden.len(),
+        hidden => hidden.filter(|_| left_out),
+        left_out => left_out,
         blurred => blurred,
-        show_url => (!hidden.is_empty() || blurred > 0).then(|| blacklist_url(true)),
+        show_url => (left_out || blurred > 0).then(|| blacklist_url(true)),
         hide_url => (show_all && blacklist.is_some()).then(|| blacklist_url(false)),
     };
-    let card_values: Vec<Value> = shown
+    let card_values: Vec<Value> = cards
         .iter()
         .map(|card| {
             let value = card_context(state, card, thumbs.size, post_query.as_deref());
@@ -220,8 +236,8 @@ async fn index(
         .collect();
 
     // Blurred posts' tags stay out of the sidebar, as left out ones do.
-    let shown: Vec<Card> = shown
-        .into_iter()
+    let shown: Vec<Card> = cards
+        .iter()
         .filter(|card| !is_blacklisted(card))
         .cloned()
         .collect();
@@ -245,6 +261,7 @@ async fn index(
         first: cards.first().map(|c| c.id),
         last: cards.last().map(|c| c.id),
         full: ids.len() == plan.per_page() as usize,
+        show_blacklisted: show_all,
     };
     Ok(page.render(
         "posts.html",
@@ -434,6 +451,8 @@ struct Pager<'a> {
     last: Option<i64>,
     /// The page was full, so there may be more.
     full: bool,
+    /// `blacklist=off`, kept from page to page.
+    show_blacklisted: bool,
 }
 
 impl Pager<'_> {
@@ -443,6 +462,9 @@ impl Pager<'_> {
             query.append_pair("tags", self.query);
         }
         query.append_pair("page", page);
+        if self.show_blacklisted {
+            query.append_pair("blacklist", "off");
+        }
         url_value(&format!("/posts?{}", query.finish()))
     }
 
@@ -557,14 +579,6 @@ impl Thumbs {
     }
 }
 
-/// Whether `current` sees blacklisted posts blurred rather than left out.
-fn blur_blacklisted(current: &CurrentUser) -> bool {
-    current
-        .user
-        .as_ref()
-        .is_some_and(|u| UserSettings::from_json(&u.settings).blur_blacklisted)
-}
-
 /// A card marked as blacklisted, to be shown blurred.
 fn with_blur(card: Value) -> Value {
     context! { ..card, ..context! { blacklisted => true } }
@@ -583,7 +597,7 @@ pub(crate) async fn grid(
     let thumbs = Thumbs::for_viewer(state, &page.current);
     let cards = posts::cards(db, ids, thumbs.kinds()).await?;
     let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
-    let blur = blur_blacklisted(&page.current);
+    let blur = crate::blacklist::blurs(&page.current);
     Ok(cards
         .iter()
         .filter_map(|card| {
@@ -728,7 +742,7 @@ async fn step(page: Page, id: i64, q: &str, forward: bool) -> Result<Response, A
     let db = state.reader(&page.current);
     let mut query = SearchQuery::parse(q).map_err(|e| AppError::BadRequest(e.to_string()))?;
     query.limit = Some(1);
-    let plan = match Plan::resolve(
+    let mut plan = match Plan::resolve(
         db,
         &query,
         &visibility(&page.current),
@@ -740,6 +754,8 @@ async fn step(page: Page, id: i64, q: &str, forward: bool) -> Result<Response, A
         Err(SearchError::Invalid(message)) => return Err(AppError::BadRequest(message)),
         Err(SearchError::Db(error)) => return Err(error.into()),
     };
+    // Skipping blacklisted posts, as the results did.
+    plan.exclude(&crate::blacklist::exclusions(state, db, &page.current).await?);
     // "Next" is further along the display order: lower ids when newest
     // come first.
     let towards_lower = forward == (plan.order() != Order::IdAsc);
@@ -1354,6 +1370,7 @@ mod tests {
             first: Some(90),
             last: Some(81),
             full,
+            show_blacklisted: false,
         }
     }
 
@@ -1673,9 +1690,9 @@ mod tests {
         .unwrap();
         let (app, _) = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let fine = upload(&app, &alice, &fixture::png(28, 20), &[]).await;
         let explicit = upload(&app, &alice, &fixture::png(20, 20), &[("rating", "e")]).await;
         let cat = upload(&app, &alice, &fixture::png(24, 20), &[("tags", "cat")]).await;
-        let fine = upload(&app, &alice, &fixture::png(28, 20), &[]).await;
 
         let grid = app.get("/", None).await.body;
         assert!(grid.contains(&format!("href=\"/posts/{fine}?q=")));
@@ -1688,6 +1705,28 @@ mod tests {
         assert!(grid.contains("href=\"/posts?blacklist=off\""));
         let all = app.get("/posts?blacklist=off", None).await.body;
         assert!(all.contains(&format!("/posts/{explicit}")));
+
+        // The search leaves them out, so pages stay full and the count
+        // and pages are right.
+        let first = app.get("/posts?tags=limit%3A1", None).await.body;
+        assert!(first.contains(&format!("/posts/{fine}?")), "{first}");
+        assert!(first.contains("result-count\">1 post"), "{first}");
+        assert!(!first.contains("page=2"), "{first}");
+        let unfiltered = app
+            .get("/posts?tags=limit%3A1&blacklist=off", None)
+            .await
+            .body;
+        assert!(unfiltered.contains(&format!("/posts/{cat}?")));
+        assert!(
+            unfiltered.contains("page=2&amp;blacklist=off"),
+            "{unfiltered}"
+        );
+        // Stepping through results skips them too.
+        let next = app.get(&format!("/posts/{cat}/next?q="), None).await;
+        assert_eq!(
+            next.location.as_deref(),
+            Some(format!("/posts/{fine}?q=").as_str())
+        );
 
         let post = app.get(&format!("/posts/{explicit}"), None).await.body;
         assert!(post.contains("matches your blacklist"), "{post}");

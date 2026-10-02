@@ -1,10 +1,17 @@
 //! Applying the viewer's blacklist: their own, or the site's default.
+//!
+//! Searches leave blacklisted posts out in SQL ([`exclusions`]), so their
+//! pages stay full and their counts right. Grids of given posts (pools,
+//! favorite groups, comments, …) and post pages check each post with
+//! [`Active::matching`] instead, as do searches of viewers who chose to
+//! see blacklisted posts blurred.
 
 use std::collections::HashMap;
 
 use moekura_core::blacklist::Blacklist;
 use moekura_core::posts::Rating;
 use moekura_core::user_settings::UserSettings;
+use moekura_db::search::Exclusion;
 use moekura_db::{tag_relations, tags};
 use sqlx::PgPool;
 
@@ -25,6 +32,30 @@ pub fn text_for(state: &AppState, current: &CurrentUser) -> String {
         .as_ref()
         .and_then(|u| UserSettings::from_json(&u.settings).blacklist)
         .unwrap_or_else(|| state.site.get().settings.default_blacklist.clone())
+}
+
+/// Whether `current` sees blacklisted posts blurred rather than left out.
+pub fn blurs(current: &CurrentUser) -> bool {
+    current
+        .user
+        .as_ref()
+        .is_some_and(|u| UserSettings::from_json(&u.settings).blur_blacklisted)
+}
+
+/// What searches leave out for `current`: their blacklist, unless they
+/// see blacklisted posts blurred instead.
+pub async fn exclusions(
+    state: &AppState,
+    db: &PgPool,
+    current: &CurrentUser,
+) -> sqlx::Result<Vec<Exclusion>> {
+    if blurs(current) {
+        return Ok(Vec::new());
+    }
+    Ok(for_viewer(state, db, current)
+        .await?
+        .map(|list| list.exclusions())
+        .unwrap_or_default())
 }
 
 /// The viewer's blacklist, or `None` when it's empty. A stored blacklist
@@ -75,5 +106,23 @@ impl Active {
                     .is_some_and(|id| tag_ids.contains(id))
             })
             .map(|rule| rule.text.as_str())
+    }
+
+    /// The rules as exclusions for a search. Rules needing a tag that
+    /// doesn't exist match nothing, so they're left out.
+    pub fn exclusions(&self) -> Vec<Exclusion> {
+        let id = |name: &moekura_core::tags::TagName| self.ids.get(name.as_str()).copied();
+        self.list
+            .rules
+            .iter()
+            .filter_map(|rule| {
+                Some(Exclusion {
+                    tags: rule.include.iter().map(id).collect::<Option<_>>()?,
+                    not_tags: rule.exclude.iter().filter_map(id).collect(),
+                    ratings: rule.ratings.clone(),
+                    not_ratings: rule.not_ratings.clone(),
+                })
+            })
+            .collect()
     }
 }

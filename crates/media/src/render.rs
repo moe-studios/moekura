@@ -48,7 +48,7 @@ impl Media {
             "-an".into(),
             out.clone().into(),
         ];
-        tool::run(&self.config.tools.ffmpeg, args, self.timeout())
+        self.run_trusted(&self.config.tools.ffmpeg, args, self.timeout())
             .await
             .map_err(corrupt_unless_missing)?;
         Ok(out)
@@ -85,7 +85,7 @@ impl Media {
         } else {
             loaders_for(source_type)
         };
-        tool::run_with(
+        self.run(
             &self.config.tools.vipsthumbnail,
             args,
             self.timeout(),
@@ -127,7 +127,7 @@ impl Media {
                     side.to_string().into(),
                     side.to_string().into(),
                 ];
-                tool::run_with(&self.config.tools.vips, args, self.timeout(), loaders)
+                self.run(&self.config.tools.vips, args, self.timeout(), loaders)
                     .await
                     .map_err(corrupt_unless_missing)?;
                 (region, "centre")
@@ -150,7 +150,7 @@ impl Media {
             "-o".into(),
             target,
         ];
-        tool::run_with(
+        self.run(
             &self.config.tools.vipsthumbnail,
             args,
             self.timeout(),
@@ -166,7 +166,8 @@ impl Media {
         let header = |field: &'static str| {
             let args: Vec<OsString> = vec!["-f".into(), field.into(), path.into()];
             async move {
-                let out = tool::run(&self.config.tools.vipsheader, args, self.timeout())
+                let out = self
+                    .run_trusted(&self.config.tools.vipsheader, args, self.timeout())
                     .await
                     .map_err(MediaError::Tool)?;
                 String::from_utf8_lossy(&out)

@@ -59,12 +59,16 @@ fn upload_error(error: UploadError) -> AppError {
             AppError::Unprocessable(message)
         }
         UploadError::Duplicate(id) => AppError::Duplicate(id),
+        UploadError::Similar(found) => AppError::Similar {
+            posts: found.posts,
+            staged: found.staged,
+        },
         UploadError::Internal(detail) => AppError::Internal(detail),
     }
 }
 
 /// The perceptual hash of a file, as processing would make it.
-async fn hash_file(state: &AppState, file: &TempUpload) -> Result<u64, AppError> {
+pub(crate) async fn hash_file(state: &AppState, file: &TempUpload) -> Result<u64, AppError> {
     let refused = |e: moekura_media::MediaError| {
         if e.is_internal() {
             AppError::Internal(e.to_string())

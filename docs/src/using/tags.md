@@ -11,6 +11,9 @@ instead of spaces (`long_hair`), and belong to a category:
 | character | who's in it |
 | meta | things about the file, such as `animated` or `translated` |
 
+Sites can relabel and reorder these and add their own (see
+[Tag categories](../admin/tag-categories.md)).
+
 When you tag a post, write a new tag with a prefix to put it in a category:
 `artist:someone`. A tag already on posts keeps its category, unless you
 can manage tags; then the prefix moves it, as does editing it in the tag

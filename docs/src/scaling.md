@@ -80,7 +80,8 @@ What keeps it fast:
   (10,000). Counts that would still read too much, per PostgreSQL's
   estimate (`search.count_cost_limit`), are shown as estimates instead.
 - **"Next" links use cursors**, which cost the same however deep they go;
-  numbered pages stop at `search.max_page`.
+  numbered pages stop at the deepest page allowed
+  ([Search pages](configuration.md#search-pages)).
 - **Saved searches run four at a time** for `search:`, each contributing
   its newest 500 posts.
 

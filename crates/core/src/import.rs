@@ -8,8 +8,9 @@
 //!   is `copyright:`); `rating:` sets the rating.
 //! - `pic.png.json` or `pic.json`: an object with `tags` (a list, a
 //!   string, or lists by category), or Danbooru's `tag_string` and
-//!   `tag_string_<category>`; and optionally `rating`, `source` and
-//!   `description`.
+//!   `tag_string_<category>`; and optionally `rating`, `source`,
+//!   `description` and `parent_sha256` (what `moekura admin export`
+//!   writes, see [`Export`]).
 //!
 //! Tags come out as the upload form takes them: `category:name` or
 //! `name`, not yet validated.
@@ -23,6 +24,8 @@ use crate::posts::Rating;
 /// File extensions imported; everything else in a folder is ignored.
 pub const MEDIA_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm",
+    // Pixiv ugoira (and exported ones).
+    "zip",
 ];
 
 /// Whether `path` looks like a file to import, by its extension.
@@ -55,6 +58,9 @@ pub struct Sidecar {
     pub rating: Option<Rating>,
     pub source: Option<String>,
     pub description: Option<String>,
+    /// The parent post's file, by SHA-256: posts keep their parents across
+    /// sites by file, since post numbers differ.
+    pub parent_sha256: Option<[u8; 32]>,
 }
 
 impl Sidecar {
@@ -64,7 +70,31 @@ impl Sidecar {
         self.rating = self.rating.or(other.rating);
         self.source = self.source.take().or(other.source);
         self.description = self.description.take().or(other.description);
+        self.parent_sha256 = self.parent_sha256.or(other.parent_sha256);
     }
+}
+
+/// The JSON sidecar `moekura admin export` writes next to each file. The
+/// importer reads `tags`, `rating`, `source`, `description` and
+/// `parent_sha256`; the rest records where the post came from.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Export {
+    /// The post's number on the site it was exported from.
+    pub id: i64,
+    /// `active`, `pending`, `flagged` or `deleted` there.
+    pub status: String,
+    pub rating: String,
+    /// Tag names by category name, in the categories' order there.
+    pub tags: serde_json::Map<String, Value>,
+    pub source: String,
+    pub description: String,
+    /// The parent's number there, if it has one.
+    pub parent_id: Option<i64>,
+    /// The parent's file, which finds it again on another site.
+    pub parent_sha256: Option<String>,
+    pub sha256: String,
+    pub md5: String,
+    pub media_type: String,
 }
 
 /// A rating as other sites write it: our letters and names, plus `safe`
@@ -133,6 +163,12 @@ pub fn parse_txt(text: &str) -> Sidecar {
 
 /// A `.json` sidecar.
 pub fn parse_json(text: &str) -> Result<Sidecar, String> {
+    parse_json_for(text, &[])
+}
+
+/// A `.json` sidecar, for a site with tag `categories` (by name): lists
+/// by category keep categories the site has, besides Danbooru's.
+pub fn parse_json_for(text: &str, categories: &[&str]) -> Result<Sidecar, String> {
     let value: Value = serde_json::from_str(text).map_err(|e| format!("invalid JSON: {e}"))?;
     let object = value
         .as_object()
@@ -163,7 +199,11 @@ pub fn parse_json(text: &str) -> Result<Sidecar, String> {
         // e621 and others: lists by category.
         Some(Value::Object(groups)) => {
             for (group, list) in groups {
-                let category = NAMESPACES.iter().find(|(n, _)| n == group).map(|(_, c)| *c);
+                let category = NAMESPACES
+                    .iter()
+                    .find(|(n, _)| n == group)
+                    .map(|(_, c)| *c)
+                    .or_else(|| categories.iter().copied().find(|c| c == group));
                 for raw in each(list) {
                     add(category, &raw, &mut rating);
                 }
@@ -208,6 +248,10 @@ pub fn parse_json(text: &str) -> Result<Sidecar, String> {
     sidecar.rating = text("rating").and_then(|r| parse_rating(&r)).or(rating);
     sidecar.source = text("source");
     sidecar.description = text("description");
+    sidecar.parent_sha256 = text("parent_sha256").and_then(|h| {
+        let mut bytes = [0; 32];
+        hex::decode_to_slice(h, &mut bytes).ok().map(|()| bytes)
+    });
     Ok(sidecar)
 }
 
@@ -229,6 +273,26 @@ mod tests {
                 PathBuf::from("d/pic.txt"),
             ]
         );
+    }
+
+    #[test]
+    fn reads_exports() {
+        let exported = r#"{"id": 9, "status": "active", "rating": "q",
+            "tags": {"artist": ["someone"], "species": ["cat"], "general": ["sky"]},
+            "source": "https://example.com", "description": "hi",
+            "parent_id": 3, "parent_sha256": "0101010101010101010101010101010101010101010101010101010101010101",
+            "sha256": "", "md5": "", "media_type": "png"}"#;
+        let sidecar = parse_json_for(exported, &["artist", "species", "general"]).unwrap();
+        assert_eq!(sidecar.tags, ["artist:someone", "species:cat", "sky"]);
+        assert_eq!(sidecar.rating, Some(Rating::Questionable));
+        assert_eq!(sidecar.parent_sha256, Some([1; 32]));
+        // A category the site lacks makes general tags.
+        assert_eq!(
+            parse_json(exported).unwrap().tags,
+            ["artist:someone", "cat", "sky"]
+        );
+        let parsed: Export = serde_json::from_str(exported).unwrap();
+        assert_eq!(parsed.parent_id, Some(3));
     }
 
     #[test]
@@ -266,6 +330,7 @@ mod tests {
                 rating: Some(Rating::General),
                 source: Some("https://x".into()),
                 description: None,
+                parent_sha256: None,
             }
         );
         let danbooru = r#"{"tag_string": "a b c", "tag_string_general": "a", "tag_string_artist": "b",

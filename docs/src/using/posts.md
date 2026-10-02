@@ -1,5 +1,19 @@
 # Posts and files
 
+## Duplicates and look-alikes
+
+A file that's already a post is refused, with a link to that post.
+
+A file that only *looks like* posts already on the site (the same
+picture resized, recompressed or slightly edited, by
+[perceptual hash](search.md#searching-by-image)) isn't posted straight
+away: the form comes back showing those posts. If yours is something
+else (another version, an edit, the next page), press **Upload anyway**;
+the file you sent is kept, so you needn't choose it again, and you can
+still change the fields first. Only posts you can see and haven't
+blacklisted are shown, and posts whose files are still being processed
+aren't found yet. A kept file you don't post is dropped after a day.
+
 ## Uploading from a link
 
 **…or a link to it** on the upload form downloads a file from the web.

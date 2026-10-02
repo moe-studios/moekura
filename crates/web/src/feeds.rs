@@ -214,7 +214,7 @@ async fn posts_feed(
     let normalized = parsed.to_string();
     let config = moekura_core::config::SearchConfig {
         per_page: ENTRIES,
-        ..state.config.search.clone()
+        ..state.search_config()
     };
     let plan = Plan::resolve(db, &parsed, &visibility(&current), &config)
         .await

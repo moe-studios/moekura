@@ -52,3 +52,27 @@ export function png(width = 32, height = 32): Buffer {
     chunk("IEND", Buffer.alloc(0)),
   ]);
 }
+
+/**
+ * Sends `file` from the upload form (choosing it uploads it), then posts it
+ * from its page with `tags` and a general rating. Returns the post's path.
+ */
+export async function uploadPost(page: Page, file: { name: string; buffer: Buffer }, tags: string): Promise<string> {
+  await page.goto("/uploads/new");
+  await page.locator("#file").setInputFiles({ ...file, mimeType: "image/png" });
+  await expect(page).toHaveURL(/\/uploads\/\d+$/);
+  await page.locator("input[name=rating][value=g]").check();
+  await page.locator("#tags").fill(tags);
+  await page.getByRole("button", { name: "Post", exact: true }).click();
+  await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
+  return new URL(page.url()).pathname;
+}
+
+/** Stages `buffer` as an upload without scripts; returns the upload's path. */
+export async function stageUpload(page: Page, buffer: Buffer): Promise<string> {
+  const response = await page.request.post("/uploads", {
+    multipart: { file: { name: "staged.png", mimeType: "image/png", buffer } },
+  });
+  expect(response.ok()).toBeTruthy();
+  return new URL(response.url()).pathname;
+}

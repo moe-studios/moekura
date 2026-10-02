@@ -1,5 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
-import { admin, logIn, png } from "./helpers.ts";
+import { admin, logIn, png, stageUpload } from "./helpers.ts";
 
 let adminCookies: Awaited<ReturnType<BrowserContext["cookies"]>> | undefined;
 
@@ -73,7 +73,7 @@ test("wrapped history filters keep labels above their own fields", async ({ page
 test("expanded upload fields fill the form and hidden helpers stay hidden", async ({ page }) => {
   await authenticateAdmin(page);
   await page.setViewportSize({ width: 320, height: 800 });
-  await page.goto("/upload");
+  await page.goto(await stageUpload(page, png(64, 48)));
   await expect(page.locator("[data-artist-finder]")).toBeHidden();
   await page.getByText("Artist's commentary", { exact: false }).click();
   const title = page.locator("#commentary_title");
@@ -125,7 +125,9 @@ test("mobile forms remain usable without JavaScript", async ({ browser }) => {
   const page = await context.newPage();
   try {
     await authenticateAdmin(page);
-    await page.goto("/upload");
+    await page.goto("/uploads/new");
+    await expectPageFits(page);
+    await page.goto(await stageUpload(page, png(64, 48)));
     await page.getByText("Artist's commentary", { exact: false }).click();
     await expect(page.locator("#commentary_description")).toBeVisible();
     await expectPageFits(page);

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { admin, logIn, png } from "./helpers.ts";
+import { admin, logIn, png, uploadPost } from "./helpers.ts";
 
 test.describe.configure({ mode: "serial" });
 
@@ -22,13 +22,7 @@ test("register an account", async ({ page }) => {
 
 test("upload a picture with tags", async ({ page }) => {
   await logIn(page, member.name, member.password);
-  await page.goto("/upload");
-  await page.locator("#file").setInputFiles({ name: "e2e.png", mimeType: "image/png", buffer: png() });
-  await page.locator("input[name=rating][value=g]").check();
-  await page.locator("#tags").fill(`${tag} solid_colour`);
-  await page.getByRole("button", { name: "Upload" }).click();
-  await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
-  postPath = new URL(page.url()).pathname;
+  postPath = await uploadPost(page, { name: "e2e.png", buffer: png() }, `${tag} solid_colour`);
   await expect(tagLink(page, tag)).toBeVisible();
 });
 

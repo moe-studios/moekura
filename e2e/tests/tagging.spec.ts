@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { png } from "./helpers.ts";
+import { png, uploadPost } from "./helpers.ts";
 
 test.describe.configure({ mode: "serial" });
 
@@ -15,12 +15,7 @@ test("tag posts with a tag script", async ({ page }) => {
   await page.getByRole("button", { name: "Register" }).click();
   await expect(page.getByText("Your account is ready")).toBeVisible();
   for (let i = 0; i < 2; i++) {
-    await page.goto("/upload");
-    await page.locator("#file").setInputFiles({ name: "p.png", mimeType: "image/png", buffer: png(24, 24) });
-    await page.locator("input[name=rating][value=g]").check();
-    await page.locator("#tags").fill(tag);
-    await page.getByRole("button", { name: "Upload" }).click();
-    await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
+    await uploadPost(page, { name: "p.png", buffer: png(24, 24) }, tag);
   }
 
   await page.goto(`/posts?tags=${tag}`);

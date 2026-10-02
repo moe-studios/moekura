@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}{{ t("uploads-mine") }} · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>{{ t("uploads-mine") }}</h1>
+{% include "upload_nav.html" %}
+{% if files %}
+<p class="hint">{{ t("uploads-hint") }}</p>
+<ul class="post-grid upload-files">
+  {% for file in files %}<li>{% include "upload_file_card.html" %}</li>{% endfor %}
+</ul>
+{% else %}
+<p class="empty">{{ t("uploads-none") }}</p>
+{% endif %}
+{% if previous_url or next_url %}
+<nav class="pager" aria-label="{{ t('pages') }}">
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

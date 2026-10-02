@@ -1,22 +1,46 @@
 # Posts and files
 
+## Uploading
+
+Uploading takes two steps, as on Danbooru:
+
+1. **Upload** (`/uploads/new`) takes up to 20 files at once, chosen,
+   dropped onto the form or pasted from the clipboard; choosing them
+   sends them. Or give it [a link](#uploading-from-a-link).
+2. Each file then has its own page, showing it with its size and type,
+   the posts it [looks like](#duplicates-and-look-alikes), and the form
+   that makes it a post: source, rating, tags (with the related tags and
+   the artist from the source), parent post, description and the
+   artist's commentary. An upload of one file shows its form straight
+   away; one of several lists them, each linking to its page, with
+   **‹ prev** and **next ›** between them.
+
+**My uploads** (`/uploads`) lists the files you uploaded, newest first,
+linking to their posts once posted. Files not posted within a day are
+removed. Without scripts, choose the files and press **Upload**.
+
+Scripts can still send a whole post in one form to `POST /upload`
+(`file` or `url`, `rating`, `tags`, `source`, `parent`, `description`,
+`commentary_title` and `commentary_description`), which is also what the
+[API](../api.md) does.
+
 ## Duplicates and look-alikes
 
-A file that's already a post is refused, with a link to that post.
+A file that's already a post isn't kept: its page says so, with a link
+to that post.
 
 A file that only *looks like* posts already on the site (the same
 picture resized, recompressed or slightly edited, by
-[perceptual hash](search.md#searching-by-image)) isn't posted straight
-away: the form comes back showing those posts. If yours is something
-else (another version, an edit, the next page), press **Upload anyway**;
-the file you sent is kept, so you needn't choose it again, and you can
-still change the fields first. Only posts you can see and haven't
-blacklisted are shown, and posts whose files are still being processed
-aren't found yet. A kept file you don't post is dropped after a day.
+[perceptual hash](search.md#searching-by-image)) shows those posts above
+its form. If yours is something else (another version, an edit, the
+next page), press **Post anyway**, perhaps making it a child or parent
+of the one it resembles. Only posts you can see and haven't blacklisted
+are shown, and posts whose files are still being processed aren't found
+yet.
 
 ## Uploading from a link
 
-**…or a link to it** on the upload form downloads a file from the web.
+**…or a link** on the upload form downloads files from the web.
 Give it the file itself, or a work's page on a site Moekura can read:
 
 | Site | Pages |
@@ -28,8 +52,11 @@ Give it the file itself, or a work's page on a site Moekura can read:
 | pixivFANBOX | `<creator>.fanbox.cc/posts/<id>` (public posts) |
 | Skeb | `skeb.jp/@<creator>/works/<n>` |
 
-Moekura asks the site for the work's best (original) file and downloads
-that, and the page, not the file, becomes the post's source. Any other
+Moekura asks the site for the work's best (original) files and downloads
+them, every page of a work of several (up to 100), and the page, not the
+file, becomes each post's source. They download in the background: the
+upload's page follows them, and a file that can't be downloaded says
+why. Any other
 page whose preview tags (OpenGraph) name an image works the same way.
 What the site says is used as well:
 
@@ -40,12 +67,13 @@ What the site says is used as well:
   name) group lists the site's tags as this site's: tags whose wiki
   pages list one as an [other name](wiki.md#other-names), and tags named
   like one or its English translation.
-- **Commentary**: the work's title and description become the post's
-  [artist's commentary](artists.md#commentary), unless you wrote one in
-  the form.
+- **Commentary**: the work's title and description fill in the
+  [artist's commentary](artists.md#commentary) fields, and become the
+  post's commentary if the fields are left empty.
 
-The same happens with a file and a **Source** that is such a page, and
-for uploads through the APIs. When a site can't be reached or has
+The same happens with files sent with such a link, which becomes their
+source, and for uploads through the APIs (which download only the
+work's first file). When a site can't be reached or has
 changed, the link is downloaded as it is, without extras.
 
 ## Ugoira

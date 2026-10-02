@@ -4,8 +4,12 @@ import { expect, test, type Page } from "@playwright/test";
 // Exercise the real form and committed browser bundle without a database.
 const template = readFileSync(new URL("../../crates/web/templates/upload.html", import.meta.url), "utf8");
 const form = template.slice(template.indexOf("  <form"), template.indexOf("</form>") + 7)
+  .replace("{{ max_files }}", "3")
   .replace(/{%[\s\S]*?%}/g, "").replace(/{{\s*t\("([\w-]+)"[\s\S]*?}}/g, "$1").replace(/{{[\s\S]*?}}/g, "");
 const script = readFileSync(new URL("../../crates/web/static/js/main.js", import.meta.url), "utf8");
+
+/** The file names in each upload the form sent. */
+let sent: string[][] = [];
 
 async function transfer(page: Page, kind: "paste" | "drop", names = ["picture.png"]): Promise<boolean> {
   return page.evaluate(({ kind, names }) => {
@@ -14,54 +18,62 @@ async function transfer(page: Page, kind: "paste" | "drop", names = ["picture.pn
     const event = kind === "paste"
       ? new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true })
       : new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true });
-    document.querySelector("#description")!.dispatchEvent(event);
+    document.querySelector("#url")!.dispatchEvent(event);
     return event.defaultPrevented;
   }, { kind, names });
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.route("**/upload", (route) => route.fulfill({ contentType: "text/html", body: form }));
-  await page.goto("/upload");
+  sent = [];
+  await page.route("**/uploads/new", (route) => route.fulfill({ contentType: "text/html", body: form }));
+  await page.route("**/uploads", (route) => {
+    const body = route.request().postDataBuffer()?.toString("latin1") ?? "";
+    // Without a file chosen, browsers send an empty one, which the server skips.
+    sent.push([...body.matchAll(/name="file"; filename="([^"]*)"/g)].map((match) => match[1]!).filter(Boolean));
+    return route.fulfill({ contentType: "text/html", body: "<p>sent</p>" });
+  });
+  await page.goto("/uploads/new");
   await page.addScriptTag({ content: script, type: "module" });
   await expect(page.locator("[data-upload-hint]")).toBeVisible();
 });
 
 for (const kind of ["paste", "drop"] as const) {
-  test(`${kind} selects a file for multipart submission without submitting`, async ({ page }) => {
-    await page.locator("#tags").fill("existing_tag");
-    expect(await transfer(page, kind)).toBe(true);
-    await expect(page.locator("[data-upload-status]")).toHaveText("Selected: picture.png");
-    const selected = await page.locator("form").evaluate(async (element) => {
-      const data = new FormData(element as HTMLFormElement);
-      const file = data.get("file") as File;
-      return { name: file.name, content: await file.text(), tags: data.get("tags") };
-    });
-    expect(selected).toEqual({ name: "picture.png", content: "image bytes", tags: "existing_tag" });
-    await expect(page).toHaveURL(/\/upload$/);
+  test(`${kind} sends the files right away`, async ({ page }) => {
+    expect(await transfer(page, kind, ["one.png", "two.png"])).toBe(true);
+    await expect(page.getByText("sent")).toBeVisible();
+    expect(sent).toEqual([["one.png", "two.png"]]);
   });
 
-  test(`${kind} refuses multiple files and preserves the selection`, async ({ page }) => {
-    await page.locator("#file").setInputFiles({ name: "original.png", mimeType: "image/png", buffer: Buffer.from("original") });
-    expect(await transfer(page, kind, ["one.png", "two.png"])).toBe(true);
-    await expect(page.locator("[data-upload-status]")).toContainText("Choose one file at a time");
-    expect(await page.locator("#file").evaluate((el) => (el as HTMLInputElement).files?.[0]?.name)).toBe("original.png");
+  test(`${kind} refuses more files than the form takes`, async ({ page }) => {
+    expect(await transfer(page, kind, ["1.png", "2.png", "3.png", "4.png"])).toBe(true);
+    await expect(page.locator("[data-upload-status]")).toContainText("Choose at most 3 files");
+    await expect(page).toHaveURL(/\/uploads\/new$/);
+    expect(sent).toEqual([]);
   });
 }
 
-test("text and URL paste/drop retain their native behavior", async ({ page }) => {
-  for (const target of ["#url", "#tags", "#source", "#description"]) {
-    const prevented = await page.locator(target).evaluate((element) => {
-      const data = new DataTransfer();
-      data.setData("text/plain", "https://example.com/image.png");
-      const paste = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
-      const drop = new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true });
-      element.dispatchEvent(paste);
-      element.dispatchEvent(drop);
-      return [paste.defaultPrevented, drop.defaultPrevented];
-    });
-    expect(prevented).toEqual([false, false]);
-  }
+test("choosing files in the picker sends them", async ({ page }) => {
+  await page.locator("#file").setInputFiles({ name: "picked.webm", mimeType: "video/webm", buffer: Buffer.from("video") });
+  await expect(page.getByText("sent")).toBeVisible();
+  expect(sent).toEqual([["picked.webm"]]);
+});
+
+test("a link is sent with the button, and text pastes stay in their field", async ({ page }) => {
+  const prevented = await page.locator("#url").evaluate((element) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "https://example.com/image.png");
+    const paste = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    const drop = new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(paste);
+    element.dispatchEvent(drop);
+    return [paste.defaultPrevented, drop.defaultPrevented];
+  });
+  expect(prevented).toEqual([false, false]);
   await expect(page.locator("[data-upload-status]")).toBeEmpty();
+  await page.locator("#url").fill("https://example.com/image.png");
+  await page.getByRole("button", { name: "upload-continue" }).click();
+  await expect(page.getByText("sent")).toBeVisible();
+  expect(sent).toEqual([[]]);
 });
 
 test("file drag highlights the form through child transitions and clears on leave/drop", async ({ page }) => {
@@ -76,14 +88,4 @@ test("file drag highlights the form through child transitions and clears on leav
   await expect(zone).toHaveClass(/dragging/);
   await page.locator("#file").dispatchEvent("dragleave");
   await expect(zone).not.toHaveClass(/dragging/);
-  await transfer(page, "drop");
-  await expect(zone).not.toHaveClass(/dragging/);
-});
-
-test("the native picker can replace a pasted file", async ({ page }) => {
-  await transfer(page, "paste");
-  await page.locator("#file").setInputFiles({ name: "picked.webm", mimeType: "video/webm", buffer: Buffer.from("video") });
-  await expect(page.locator("[data-upload-status]")).toHaveText("Selected: picked.webm");
-  await page.locator("#file").setInputFiles([]);
-  await expect(page.locator("[data-upload-status]")).toBeEmpty();
 });

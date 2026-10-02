@@ -1,0 +1,20 @@
+{# A file of an upload in a grid; `file` is set by the including page. #}
+<a href="{% if file.post_id %}/posts/{{ file.post_id }}{% else %}{{ file.url }}{% endif %}" class="card upload-file">
+  {% if file.thumb and file.thumb.thumb %}
+  <img class="thumb" src="{{ file.thumb.thumb }}" width="{{ file.thumb.width }}" height="{{ file.thumb.height }}" alt="{{ t('card-alt', id=file.post_id) }}" loading="lazy" decoding="async">
+  {% elif file.status == "ready" and file.preview == "image" %}
+  <img class="thumb" src="{{ file.original }}" width="{{ file.width }}" height="{{ file.height }}" alt="{{ file.name }}" loading="lazy" decoding="async">
+  {% elif file.status == "pending" %}
+  <img class="thumb pending-media" src="{{ asset('processing.svg') }}" width="150" height="150" alt="{{ file.name }}">
+  {% else %}
+  <span class="upload-file-type">{% if file.media_type %}{{ file.media_type|upper }}{% else %}{{ t("upload-file-failed") }}{% endif %}</span>
+  {% endif %}
+  {% if file.post_id %}<span class="badge">{{ t("upload-file-posted") }}</span>{% elif file.status == "ready" and file.animated %}<span class="badge">{{ t("card-animated") }}</span>{% endif %}
+</a>
+<p class="upload-file-caption">
+  {% if file.post_id %}<a href="/posts/{{ file.post_id }}">{{ t("post-number", id=file.post_id) }}</a>
+  {% elif file.status == "pending" %}{{ t("upload-file-downloading") }}
+  {% elif file.duplicate_of %}{{ t("upload-duplicate", id=file.duplicate_of) }}
+  {% elif file.status == "failed" %}<span class="field-error">{{ file.error }}</span>
+  {% else %}<a href="{{ file.url }}">{{ t("upload-file-post") }}</a>{% if file.size %} <span class="hint">{{ file.width }}×{{ file.height }} · {{ file.size }}</span>{% endif %}{% endif %}
+</p>

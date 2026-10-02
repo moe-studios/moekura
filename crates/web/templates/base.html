@@ -29,7 +29,7 @@
       {{ item("pools", "/pools", t("nav-pools")) }}
       {{ item("comments", "/comments", t("nav-comments")) }}
       {{ item("forum", "/forum_topics", t("nav-forum")) }}
-      {% if can_upload %}{{ item("upload", "/upload", t("nav-upload")) }}{% endif %}
+      {% if can_upload %}{{ item("upload", "/uploads/new", t("nav-upload")) }}{% endif %}
       {% if moderation_url %}{{ item("moderation", moderation_url, t("nav-moderation")) }}{% endif %}
       {% if can_admin %}{{ item("admin", "/admin", t("nav-admin")) }}{% endif %}
     </nav>

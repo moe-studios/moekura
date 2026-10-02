@@ -840,6 +840,24 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 .upload-drop-zone input { min-width: 0; }
 .upload-drop-zone.enhanced label { margin-top: 0; }
 .upload-drop-zone.dragging { border-color: var(--accent); background: var(--surface); }
+.upload-drop-zone.sending { opacity: 0.6; }
+
+/* An upload's files, and the page posting one: the file beside its form. */
+.upload-files > li { display: flex; flex-direction: column; gap: 4px; }
+.upload-file-type { color: var(--muted); font-weight: 600; }
+.upload-file-caption { margin: 0; font-size: 0.875rem; overflow-wrap: anywhere; }
+.upload-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; }
+.upload-layout > * { min-width: 0; }
+.upload-details h1 { font-size: 1.25rem; margin: 0 0 8px; }
+.upload-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0 0 16px; }
+.upload-facts dt { color: var(--muted); }
+.upload-facts dd { margin: 0; }
+@media (min-width: 900px) {
+  .upload-layout { grid-template-columns: minmax(0, 1fr) minmax(340px, 30rem); }
+  /* The file stays in view while the form scrolls. */
+  .upload-media { position: sticky; top: 16px; align-self: start; }
+  .upload-media img, .upload-media video { max-height: calc(100vh - 32px); }
+}
 @media (max-width: 599px) {
   .card:not(.post-grid .card) { padding: 16px; }
   .narrow, .medium { margin: 16px auto; }

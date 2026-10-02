@@ -1,7 +1,8 @@
 //! Danbooru's two-step uploads: `POST /uploads.json` stores a file (or
-//! fetches `upload[source]`) as a staged upload, and `POST /posts.json`
-//! with `upload_media_asset_id` makes it a post. Staged uploads, their
-//! upload media assets and media assets share one id here.
+//! fetches `upload[source]`) as an upload of one staged file, and
+//! `POST /posts.json` with `upload_media_asset_id` makes it a post. A
+//! staged file is both the upload media asset and its media asset, so
+//! those share its id; the upload has its own.
 
 use axum::Router;
 use axum::extract::{FromRequest, Multipart, Path, Query, Request, State};
@@ -10,7 +11,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use moekura_core::permissions::Permission;
-use moekura_db::staged_uploads::{self, Staged};
+use moekura_db::staged_uploads::{self, Staged, Status, Upload};
 use serde_json::{Value, json};
 
 use super::{Fields, ListParams, json as respond, timestamp};
@@ -41,52 +42,75 @@ fn upload_error(error: UploadError) -> AppError {
     }
 }
 
-/// The upload, with its one upload media asset and media asset, as
-/// Danbooru describes them.
-fn upload_json(staged: &Staged) -> Value {
+/// A staged file as Danbooru's upload media asset, with its media asset
+/// once it's stored.
+fn asset_json(staged: &Staged) -> Value {
     let created = timestamp(staged.created_at);
-    let ext = if staged.media_type == "jpeg" {
-        "jpg"
-    } else {
-        &staged.media_type
-    };
-    let media_asset = json!({
-        "id": staged.id,
-        "created_at": created,
-        "updated_at": created,
-        "md5": hex::encode(&staged.md5),
-        "file_ext": ext,
-        "file_size": staged.file_size,
-        "image_width": staged.width,
-        "image_height": staged.height,
-        "duration": staged.duration_ms.map(|ms| f64::from(ms) / 1000.0),
-        "status": "active",
-        "is_public": true,
-        "variants": [],
+    let updated = timestamp(staged.updated_at);
+    let media_asset = staged.status.eq(&Status::Ready).then(|| {
+        let ext = match staged.media_type.as_deref().unwrap_or_default() {
+            "jpeg" => "jpg",
+            other => other,
+        };
+        json!({
+            "id": staged.id,
+            "created_at": created,
+            "updated_at": updated,
+            "md5": staged.md5.as_deref().map(hex::encode),
+            "file_ext": ext,
+            "file_size": staged.file_size,
+            "image_width": staged.width,
+            "image_height": staged.height,
+            "duration": staged.duration_ms.map(|ms| f64::from(ms) / 1000.0),
+            "status": "active",
+            "is_public": true,
+            "variants": [],
+        })
     });
+    let status = match staged.status {
+        Status::Pending => "processing",
+        Status::Ready => "active",
+        Status::Failed => "failed",
+    };
     json!({
         "id": staged.id,
-        "source": staged.source,
-        "uploader_id": staged.uploader_id,
-        "status": "completed",
-        "media_asset_count": 1,
+        "created_at": created,
+        "updated_at": updated,
+        "upload_id": staged.upload_id,
+        "media_asset_id": media_asset.as_ref().map(|_| staged.id),
+        "status": status,
+        "source_url": staged.file_url.as_deref().unwrap_or(&staged.source),
+        "page_url": (!staged.source.is_empty()).then_some(&staged.source),
+        "error": staged.error,
+        "post_id": staged.post_id.or(staged.duplicate_of),
+        "media_asset": media_asset,
+    })
+}
+
+/// An upload and its files, as Danbooru describes them.
+fn upload_json(upload: &Upload, files: &[Staged]) -> Value {
+    let created = timestamp(upload.created_at);
+    let status = if files.iter().any(|f| f.status == Status::Pending) {
+        "processing"
+    } else if !files.is_empty() && files.iter().all(|f| f.status == Status::Failed) {
+        "error"
+    } else {
+        "completed"
+    };
+    let error = (status == "error")
+        .then(|| files.iter().find_map(|f| f.error.clone()))
+        .flatten();
+    json!({
+        "id": upload.id,
+        "source": upload.source,
+        "uploader_id": upload.uploader_id,
+        "status": status,
+        "media_asset_count": files.iter().filter(|f| f.status == Status::Ready).count(),
         "created_at": created,
         "updated_at": created,
         "referer_url": null,
-        "error": null,
-        "upload_media_assets": [{
-            "id": staged.id,
-            "created_at": created,
-            "updated_at": created,
-            "upload_id": staged.id,
-            "media_asset_id": staged.id,
-            "status": "active",
-            "source_url": staged.source,
-            "page_url": null,
-            "error": null,
-            "post_id": staged.post_id,
-            "media_asset": media_asset,
-        }],
+        "error": error,
+        "upload_media_assets": files.iter().map(asset_json).collect::<Vec<_>>(),
     })
 }
 
@@ -162,17 +186,36 @@ async fn create(
         }
     };
     let prepared = prepare(&state, &file).await.map_err(upload_error)?;
-    let id = crate::upload::stage(&state, user.id, &prepared, &source)
+    let hash = crate::upload::phash(&state, &file).await;
+    let (id, _) = crate::upload::stage(&state, user.id, &file, &prepared, hash, &source)
         .await
         .map_err(upload_error)?;
-    let staged = staged_uploads::by_id(state.db.primary(), id)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let (upload, files) = own_upload(&state, &current, id).await?;
     tracing::info!(id, user = user.name, "upload staged");
-    Ok((StatusCode::CREATED, axum::Json(upload_json(&staged))).into_response())
+    Ok((
+        StatusCode::CREATED,
+        axum::Json(upload_json(&upload, &files)),
+    )
+        .into_response())
 }
 
-/// Staged upload `id`, if it's `current`'s.
+/// Upload `id` and its files, if it's `current`'s.
+async fn own_upload(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+) -> Result<(Upload, Vec<Staged>), AppError> {
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let db = state.db.primary();
+    let upload = staged_uploads::upload_by_id(db, id)
+        .await?
+        .filter(|u| u.uploader_id == user.id)
+        .ok_or(AppError::NotFound)?;
+    let files = staged_uploads::of_upload(db, id).await?;
+    Ok((upload, files))
+}
+
+/// Staged file `id`, if it's `current`'s.
 async fn own(state: &AppState, current: &CurrentUser, id: i64) -> Result<Staged, AppError> {
     let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
     staged_uploads::by_id(state.db.primary(), id)
@@ -188,13 +231,31 @@ async fn show(
     Query(list): Query<ListParams>,
 ) -> Result<Response, AppError> {
     let id: i64 = id.parse().map_err(|_| AppError::NotFound)?;
-    let staged = own(&state, &current, id).await?;
-    respond(upload_json(&staged), &list.only)
+    let (upload, files) = own_upload(&state, &current, id).await?;
+    respond(upload_json(&upload, &files), &list.only)
 }
 
-/// Uploads are only kept until they're posted, so there's no list.
-async fn list() -> Result<Response, AppError> {
-    respond(Vec::<Value>::new(), "")
+/// The user's uploads, newest first. Files not posted are only kept for
+/// a day.
+async fn list(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Query(list): Query<ListParams>,
+) -> Result<Response, AppError> {
+    let Some(user) = &current.user else {
+        return respond(Vec::<Value>::new(), &list.only);
+    };
+    let db = state.db.primary();
+    let limit = i64::from(list.limit(100));
+    let page = list.page.trim().parse::<i64>().unwrap_or(1).clamp(1, 1000);
+    let uploads =
+        staged_uploads::uploads_by_uploader(db, user.id, (page - 1) * limit, limit).await?;
+    let mut found = Vec::with_capacity(uploads.len());
+    for upload in &uploads {
+        let files = staged_uploads::of_upload(db, upload.id).await?;
+        found.push(upload_json(upload, &files));
+    }
+    respond(found, &list.only)
 }
 
 /// `POST /posts.json`: makes the post of a staged upload
@@ -207,11 +268,26 @@ pub(super) async fn create_post(
     fields: Fields,
 ) -> Result<Response, AppError> {
     current.require(Permission::Upload)?;
-    let id: i64 = ["upload_media_asset_id", "media_asset_id", "upload_id"]
-        .iter()
-        .find_map(|name| fields.get(name).and_then(|v| v.trim().parse().ok()))
-        .ok_or_else(|| AppError::Unprocessable("`upload_media_asset_id` is required".into()))?;
-    let staged = own(&state, &current, id).await?;
+    let id = |name: &str| fields.get(name).and_then(|v| v.trim().parse::<i64>().ok());
+    let staged = match (
+        id("upload_media_asset_id").or_else(|| id("media_asset_id")),
+        id("upload_id"),
+    ) {
+        (Some(file), _) => own(&state, &current, file).await?,
+        // An upload's first file not posted yet.
+        (None, Some(upload)) => own_upload(&state, &current, upload)
+            .await?
+            .1
+            .into_iter()
+            .find(|f| f.status == Status::Ready && f.post_id.is_none())
+            .ok_or(AppError::NotFound)?,
+        (None, None) => {
+            return Err(AppError::Unprocessable(
+                "`upload_media_asset_id` is required".into(),
+            ));
+        }
+    };
+    let id = staged.id;
     if let Some(post) = staged.post_id {
         return Err(AppError::Duplicate(post));
     }
@@ -297,7 +373,9 @@ mod tests {
         let upload = parse(&staged.body);
         let asset = &upload["upload_media_assets"][0];
         let id = asset["id"].as_i64().unwrap();
+        let upload_id = upload["id"].as_i64().unwrap();
         assert_eq!(upload["status"], json!("completed"));
+        assert_eq!(asset["upload_id"], json!(upload_id));
         assert_eq!(
             (
                 &asset["media_asset"]["file_ext"],
@@ -307,18 +385,26 @@ mod tests {
         );
         assert_eq!(
             parse(
-                &app.get(&format!("/uploads/{id}.json"), Some(&alice))
+                &app.get(&format!("/uploads/{upload_id}.json"), Some(&alice))
                     .await
                     .body
-            )["id"],
+            )["upload_media_assets"][0]["id"],
             json!(id)
+        );
+        assert_eq!(
+            parse(&app.get("/uploads.json", Some(&alice)).await.body)[0]["id"],
+            json!(upload_id)
         );
         // Only the uploader sees or posts it.
         assert_eq!(
-            app.get(&format!("/uploads/{id}.json"), Some(&bob))
+            app.get(&format!("/uploads/{upload_id}.json"), Some(&bob))
                 .await
                 .status,
             StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            parse(&app.get("/uploads.json", Some(&bob)).await.body),
+            json!([])
         );
         assert_eq!(
             app.post_form(
@@ -369,6 +455,33 @@ mod tests {
             )
             .await;
         assert_eq!(again.status, StatusCode::CONFLICT);
+        let posted_asset = &parse(
+            &app.get(&format!("/uploads/{upload_id}.json"), Some(&alice))
+                .await
+                .body,
+        )["upload_media_assets"][0];
+        assert_eq!(posted_asset["post_id"], post["id"]);
+
+        // An upload's number posts its first file not yet posted.
+        let other = app
+            .post_multipart_as(
+                "/uploads.json",
+                Some(&alice),
+                &[],
+                "upload[files][0]",
+                Some(("b.png", &fixture::png(44, 30))),
+            )
+            .await;
+        let other = parse(&other.body)["id"].as_i64().unwrap();
+        let by_upload = app
+            .post_form(
+                "/posts.json",
+                Some(&alice),
+                &[],
+                &format!("upload_id={other}&post[rating]=g"),
+            )
+            .await;
+        assert_eq!(by_upload.status, StatusCode::CREATED, "{}", by_upload.body);
         let duplicate = app
             .post_multipart_as(
                 "/uploads.json",

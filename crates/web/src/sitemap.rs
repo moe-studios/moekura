@@ -41,6 +41,7 @@ const DISALLOWED: &[&str] = &[
     "/notifications",
     "/invites",
     "/upload",
+    "/uploads",
     "/saved_searches",
     "/api/",
     "/redirect",

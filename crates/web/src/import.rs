@@ -99,7 +99,7 @@ pub async fn import_file(
         description: file.description.to_owned(),
         ..UploadFields::default()
     };
-    match ingest(state, &current, &received, &fields).await {
+    match ingest(state, &current, &received, &fields, false).await {
         Ok(id) => Ok(Imported::Created(id)),
         Err(UploadError::Duplicate(id)) => Ok(Imported::Duplicate(id)),
         Err(error) => Err(error.to_string()),

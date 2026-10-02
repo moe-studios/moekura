@@ -230,7 +230,7 @@ async fn import_one(
         source: post.source.clone(),
         ..UploadFields::default()
     };
-    let local = match ingest(state, current, &file, &fields).await {
+    let local = match ingest(state, current, &file, &fields, false).await {
         Ok(local) => local,
         Err(UploadError::Duplicate(local)) => {
             record(state, current, site, post, local).await;

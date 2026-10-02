@@ -29,7 +29,7 @@ test("tag posts with a tag script", async ({ page }) => {
   await expect(script).toBeHidden();
   await page.getByLabel("On click").selectOption("Tag script");
   await script.fill(`scripted_${run} rating:s`);
-  const cards = page.locator(".post-grid a.card");
+  const cards = page.locator(".post-grid a.post-card");
   await cards.nth(0).click();
   await expect(cards.nth(0)).toHaveClass(/script-ok/);
   await cards.nth(1).click();
@@ -42,7 +42,7 @@ test("tag posts with a tag script", async ({ page }) => {
   await expect(script).toBeHidden();
 
   await page.goto(`/posts?tags=scripted_${run}+rating:s`);
-  await expect(page.locator(".post-grid a.card")).toHaveCount(2);
+  await expect(page.locator(".post-grid a.post-card")).toHaveCount(2);
 });
 
 test("request a bulk update and discuss it", async ({ page }) => {

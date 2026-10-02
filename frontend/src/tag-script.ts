@@ -107,7 +107,7 @@ export function enableTagScript(root: Document = document): void {
     "click",
     (event) => {
       if (!scripting()) return;
-      const card = (event.target as Element).closest<HTMLAnchorElement>(".post-grid a.card");
+      const card = (event.target as Element).closest<HTMLAnchorElement>(".post-grid a.post-card");
       if (!card) return;
       event.preventDefault();
       const id = postId(card.getAttribute("href") ?? "");

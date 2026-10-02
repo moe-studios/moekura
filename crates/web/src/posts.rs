@@ -1834,11 +1834,11 @@ mod tests {
 
         let grid = app.get("/", Some(&alice)).await.body;
         assert!(
-            grid.contains("class=\"card rating-s is-active has-children\""),
+            grid.contains("class=\"post-card rating-s is-active has-children\""),
             "{grid}"
         );
         assert!(
-            grid.contains("class=\"card rating-s is-flagged has-parent\""),
+            grid.contains("class=\"post-card rating-s is-flagged has-parent\""),
             "{grid}"
         );
         assert!(grid.contains("(flagged, has a parent)"), "{grid}");

@@ -54,7 +54,7 @@ test("draw a note, move it and change it", async ({ page }) => {
   await expect(page.locator(".note-list")).toContainText("Good evening");
 
   await page.goto(`/posts?tags=note:evening+notes_test`);
-  await expect(page.locator(`a.card[href^="${postPath}"]`)).toHaveCount(1);
+  await expect(page.locator(`a.post-card[href^="${postPath}"]`)).toHaveCount(1);
 });
 
 test("hide notes, and revert from the history", async ({ page }) => {

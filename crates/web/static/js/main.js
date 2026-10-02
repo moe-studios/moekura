@@ -1451,7 +1451,7 @@ function enableTagScript(root = document) {
     "click",
     (event) => {
       if (!scripting()) return;
-      const card = event.target.closest(".post-grid a.card");
+      const card = event.target.closest(".post-grid a.post-card");
       if (!card) return;
       event.preventDefault();
       const id = postId(card.getAttribute("href") ?? "");

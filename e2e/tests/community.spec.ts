@@ -49,7 +49,7 @@ test("comment, reply and vote", async ({ page, browser }) => {
   await other.close();
 
   await page.goto(`/posts?tags=${tag}+commentcount:>0`);
-  await expect(page.locator("a.card")).toHaveCount(1);
+  await expect(page.locator("a.post-card")).toHaveCount(1);
   await page.goto("/comments");
   await expect(page.getByText("Agreed!").first()).toBeVisible();
 });
@@ -62,10 +62,10 @@ test("make a pool and read it", async ({ page }) => {
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByRole("heading", { name: pool })).toBeVisible();
   poolPath = new URL(page.url()).pathname;
-  await expect(page.locator(".post-grid a.card")).toHaveCount(3);
+  await expect(page.locator(".post-grid a.post-card")).toHaveCount(3);
 
   // Step through it from the first post with the keyboard.
-  await page.locator(".post-grid a.card").first().click();
+  await page.locator(".post-grid a.post-card").first().click();
   await expect(page.locator(".pool-nav.current")).toContainText("1/3");
   await page.keyboard.press("d");
   await expect(page).toHaveURL(new RegExp(`${posts[1]}\\?pool=`));
@@ -80,7 +80,7 @@ test("make a pool and read it", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Continue reading from page 2" })).toBeVisible();
 
   await page.goto(`/posts?tags=ordpool:${pool.replace(" ", "_")}`);
-  await expect(page.locator("a.card")).toHaveCount(3);
+  await expect(page.locator("a.post-card")).toHaveCount(3);
 });
 
 test("save a search and use it", async ({ page }) => {
@@ -90,8 +90,8 @@ test("save a search and use it", async ({ page }) => {
   await page.getByLabel("Labels").fill("comics");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.goto("/posts?tags=search:comics");
-  await expect(page.locator("a.card")).toHaveCount(1);
-  await expect(page.locator(`a.card[href^="${posts[1]}"]`)).toHaveCount(1);
+  await expect(page.locator("a.post-card")).toHaveCount(1);
+  await expect(page.locator(`a.post-card[href^="${posts[1]}"]`)).toHaveCount(1);
 });
 
 test("collect posts in a favorite group", async ({ page }) => {
@@ -105,5 +105,5 @@ test("collect posts in a favorite group", async ({ page }) => {
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByRole("button", { name: "Remove from Best pages" })).toBeVisible();
   await page.goto("/posts?tags=favgroup:best_pages");
-  await expect(page.locator("a.card")).toHaveCount(1);
+  await expect(page.locator("a.post-card")).toHaveCount(1);
 });

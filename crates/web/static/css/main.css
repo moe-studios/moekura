@@ -253,24 +253,25 @@ label.choice input { margin-right: 6px; vertical-align: middle; }
   gap: 12px;
 }
 .post-grid > li { display: flex; flex-direction: column; align-items: center; justify-content: center; }
-/* No box around thumbnails: the picture stands on its own, never cropped. */
-.post-grid .card { position: relative; display: block; max-width: 100%; padding: 0; background: none; border: 0; border-radius: 0; }
-.post-grid .card:hover { text-decoration: none; }
-.post-grid .thumb { display: block; max-width: 100%; height: auto; border: 2px solid transparent; }
-.post-grid .pending-media { background: var(--border); object-fit: none; }
-.post-grid .is-blacklisted .thumb { filter: blur(16px); }
+/* Post thumbnails (card.html), wherever they're shown. No box around them:
+   the picture stands on its own, never cropped, and badges sit on it. */
+.post-card { position: relative; display: block; width: fit-content; max-width: 100%; }
+.post-card:hover { text-decoration: none; }
+.post-card .thumb { display: block; max-width: 100%; height: auto; border: 2px solid transparent; }
+.post-card .pending-media { background: var(--border); object-fit: none; }
+.post-card.is-blacklisted .thumb { filter: blur(16px); }
 /* Status and family borders, as on Danbooru: one colour all round, or the
    family's on the top and left and the status's on the right and bottom. */
-.post-grid .is-pending { --status: var(--post-pending); }
-.post-grid .is-flagged { --status: var(--post-flagged); }
-.post-grid .is-deleted { --status: var(--post-deleted); }
-.post-grid .has-parent .thumb { border-color: var(--post-parent); }
-.post-grid .has-children .thumb { border-color: var(--post-children); }
-.post-grid .has-children.has-parent .thumb { border-color: var(--post-children) var(--post-parent) var(--post-parent) var(--post-children); }
-.post-grid :is(.is-pending, .is-flagged, .is-deleted) .thumb { border-color: var(--status); }
-.post-grid :is(.is-pending, .is-flagged, .is-deleted).has-parent .thumb { border-color: var(--post-parent) var(--status) var(--status) var(--post-parent); }
-.post-grid :is(.is-pending, .is-flagged, .is-deleted).has-children .thumb { border-color: var(--post-children) var(--status) var(--status) var(--post-children); }
-.post-grid :is(.is-pending, .is-flagged, .is-deleted).has-children.has-parent .thumb { border-color: var(--post-children) var(--status) var(--status) var(--post-parent); }
+.post-card.is-pending { --status: var(--post-pending); }
+.post-card.is-flagged { --status: var(--post-flagged); }
+.post-card.is-deleted { --status: var(--post-deleted); }
+.post-card.has-parent .thumb { border-color: var(--post-parent); }
+.post-card.has-children .thumb { border-color: var(--post-children); }
+.post-card.has-children.has-parent .thumb { border-color: var(--post-children) var(--post-parent) var(--post-parent) var(--post-children); }
+.post-card:is(.is-pending, .is-flagged, .is-deleted) .thumb { border-color: var(--status); }
+.post-card:is(.is-pending, .is-flagged, .is-deleted).has-parent .thumb { border-color: var(--post-parent) var(--status) var(--status) var(--post-parent); }
+.post-card:is(.is-pending, .is-flagged, .is-deleted).has-children .thumb { border-color: var(--post-children) var(--status) var(--status) var(--post-children); }
+.post-card:is(.is-pending, .is-flagged, .is-deleted).has-children.has-parent .thumb { border-color: var(--post-children) var(--status) var(--status) var(--post-parent); }
 .post-grid.tickable > li { position: relative; }
 .post-grid.tickable > li > input[type="checkbox"] { position: absolute; top: 6px; left: 6px; z-index: 1; }
 [data-thumbs="large"] .post-grid { grid-template-columns: repeat(auto-fill, minmax(min(400px, 100%), 1fr)); }
@@ -633,10 +634,10 @@ details.inline[open] { display: block; flex-basis: 100%; }
 .comment-row { display: flex; gap: 16px; align-items: flex-start; border-top: 1px solid var(--border); padding: 8px 0; }
 .comment-row .comment { border-top: none; padding: 0; flex: 1; min-width: 0; }
 .comment-post { flex: 0 0 150px; }
-.comment-post img { display: block; max-width: 150px; max-height: 150px; width: auto; height: auto; border-radius: calc(var(--radius) / 2); }
+.comment-post .thumb { max-width: 150px; max-height: 150px; width: auto; }
 @media (max-width: 599px) {
   .comment-post { flex-basis: 80px; }
-  .comment-post img { max-width: 80px; max-height: 100px; }
+  .comment-post .thumb { max-width: 80px; max-height: 100px; }
 }
 
 /* Pools */
@@ -646,7 +647,7 @@ details.inline[open] { display: block; flex-basis: 100%; }
 .pool-order li { position: relative; counter-increment: pool; cursor: grab; }
 .pool-order li::before { content: counter(pool); position: absolute; top: 2px; left: 4px; z-index: 1; font-size: 0.75rem; color: var(--accent-text); background: var(--accent); padding: 0 4px; border-radius: 4px; }
 .pool-order li.dragging { opacity: 0.4; }
-.pool-order img { display: block; max-width: 110px; max-height: 110px; width: auto; height: auto; }
+.pool-order .thumb { max-width: 110px; max-height: 110px; width: auto; }
 tr.is-deleted td { opacity: 0.6; }
 .pool-nav { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin: 0 0 8px; padding: 6px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .pool-nav.current { border-color: var(--accent); }
@@ -707,10 +708,10 @@ tr.is-deleted td { opacity: 0.6; }
 .tag-script-field input { width: 100%; padding: 4px 8px; }
 .post-mode .hint { flex-basis: 100%; margin: 0; }
 .post-mode .hint:empty { display: none; }
-.post-grid.scripting a.card { cursor: cell; }
-.post-grid a.card.script-busy { opacity: 0.5; }
-.post-grid a.card.script-ok { outline: 3px solid var(--tag-character, #2b8a3e); outline-offset: 2px; }
-.post-grid a.card.script-failed { outline: 3px solid var(--danger); outline-offset: 2px; }
+.post-grid.scripting a.post-card { cursor: cell; }
+.post-grid a.post-card.script-busy { opacity: 0.5; }
+.post-grid a.post-card.script-ok { outline: 3px solid var(--tag-character, #2b8a3e); outline-offset: 2px; }
+.post-grid a.post-card.script-failed { outline: 3px solid var(--danger); outline-offset: 2px; }
 .mass-preview { margin: 16px 0; }
 .bulk-script { padding: 10px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; }
 .request-votes { margin: 16px 0; }
@@ -902,6 +903,6 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
   .upload-media img, .upload-media video { max-height: calc(100vh - 32px); }
 }
 @media (max-width: 599px) {
-  .card:not(.post-grid .card) { padding: 16px; }
+  .card { padding: 16px; }
   .narrow, .medium { margin: 16px auto; }
 }

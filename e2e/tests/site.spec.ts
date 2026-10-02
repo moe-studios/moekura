@@ -39,7 +39,7 @@ test("edit the tags", async ({ page }) => {
 
 test("search finds it", async ({ page }) => {
   await page.goto(`/posts?tags=${tag}+square`);
-  await expect(page.locator(`a.card[href^="${postPath}"]`)).toHaveCount(1);
+  await expect(page.locator(`a.post-card[href^="${postPath}"]`)).toHaveCount(1);
   await page.goto(`/posts?tags=${tag}+-square`);
   await expect(page.getByText("Nothing found")).toBeVisible();
 });

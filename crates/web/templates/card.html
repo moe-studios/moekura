@@ -4,7 +4,7 @@
 {% if card.status in ("pending", "flagged", "deleted") %}{% set marks = marks + [t("card-" ~ card.status)] %}{% endif %}
 {% if card.has_parent %}{% set marks = marks + [t("card-has-parent")] %}{% endif %}
 {% if card.has_children %}{% set marks = marks + [t("card-has-children")] %}{% endif %}
-<a href="{{ card.href }}" class="card rating-{{ card.rating }} is-{{ card.status }}{% if card.has_parent %} has-parent{% endif %}{% if card.has_children %} has-children{% endif %}{% if card.blacklisted %} is-blacklisted{% endif %}">
+<a href="{{ card.href }}" class="post-card rating-{{ card.rating }} is-{{ card.status }}{% if card.has_parent %} has-parent{% endif %}{% if card.has_children %} has-children{% endif %}{% if card.blacklisted %} is-blacklisted{% endif %}">
   {% if card.thumb %}
   <img class="thumb" src="{{ card.thumb }}"{% if card.thumb_2x %} srcset="{{ card.thumb }} 1x, {{ card.thumb_2x }} 2x"{% endif %}
        width="{{ card.width }}" height="{{ card.height }}" alt="{{ t('card-alt', id=card.id) }}" loading="lazy" decoding="async">

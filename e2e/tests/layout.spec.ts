@@ -1,5 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
-import { admin, logIn, png, stageUpload } from "./helpers.ts";
+import { admin, gif, logIn, png, stageUpload } from "./helpers.ts";
 
 let adminCookies: Awaited<ReturnType<BrowserContext["cookies"]>> | undefined;
 
@@ -110,13 +110,46 @@ test("populated tables scroll locally and large thumbnails fit the results colum
   for (const width of [320, 375, 900, 1280]) {
     await page.setViewportSize({ width, height: 800 });
     await page.goto(`/posts?tags=${tag}`);
-    await expect(page.locator(".post-grid .card")).toHaveCount(1);
+    await expect(page.locator(".post-grid .post-card")).toHaveCount(1);
     // Exercise the same layout selected by the large-thumbnail preference.
     await page.evaluate(() => { document.documentElement.dataset.thumbs = "large"; });
     await expectPageFits(page);
-    const cardBox = await page.locator(".post-grid .card").boundingBox();
+    const cardBox = await page.locator(".post-grid .post-card").boundingBox();
     const resultsBox = await page.locator(".results").boundingBox();
     expect(cardBox!.width).toBeLessThanOrEqual(resultsBox!.width + 1);
+  }
+});
+
+test("thumbnails on the comments page carry their own badges", async ({ page }) => {
+  await authenticateAdmin(page);
+  const upload = await page.request.post("/upload", {
+    multipart: { file: { name: "moving.gif", mimeType: "image/gif", buffer: gif(150, 90) }, rating: "g", tags: "layout_comment_badge" },
+  });
+  expect(upload.ok()).toBeTruthy();
+  const path = new URL(upload.url()).pathname;
+  await page.goto(path);
+  await page.getByLabel("Add a comment").fill("It moves.");
+  await page.getByRole("button", { name: "Post comment" }).click();
+  await expect(page.locator("article.comment")).toContainText("It moves.");
+
+  for (const width of [375, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(`/comments?post_id=${path.split("/").pop()}`);
+    const card = page.locator(".comment-post a.post-card");
+    const thumb = card.locator(".thumb");
+    const badge = card.locator(".badge");
+    await expect(badge).toBeVisible();
+    await expect.poll(() => thumb.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+    const cardBox = (await card.boundingBox())!;
+    const thumbBox = (await thumb.boundingBox())!;
+    const badgeBox = (await badge.boundingBox())!;
+    // No panel around the picture, and the badge lies on it.
+    expect(cardBox.width).toBeLessThanOrEqual(thumbBox.width + 1);
+    expect(cardBox.height).toBeLessThanOrEqual(thumbBox.height + 1);
+    expect(badgeBox.x).toBeGreaterThanOrEqual(thumbBox.x);
+    expect(badgeBox.y).toBeGreaterThanOrEqual(thumbBox.y);
+    expect(badgeBox.x + badgeBox.width).toBeLessThanOrEqual(thumbBox.x + thumbBox.width);
+    expect(badgeBox.y + badgeBox.height).toBeLessThanOrEqual(thumbBox.y + thumbBox.height);
   }
 });
 

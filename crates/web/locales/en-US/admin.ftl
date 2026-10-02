@@ -6,6 +6,23 @@ admin-nav-users = Users
 admin-nav-roles = Roles
 admin-nav-news = News
 admin-nav-webhooks = Webhooks
+admin-nav-tag-categories = Tag categories
+
+tc-hint = Tags are grouped by category on post pages and in tag lists, in this order. A category's name is also the prefix that puts a tag in it (<code>artist:name</code>) and its <code>…tags:</code> search. Danbooru's five categories keep their names and ids, which apps and imports rely on, but can be relabelled and reordered.
+tc-id = id { $id }
+tc-tags = { $count ->
+    [one] { $count } tag
+   *[other] { $count } tags
+}
+tc-built-in = Danbooru's
+tc-name = Name
+tc-name-fixed = Danbooru's categories keep their names.
+tc-name-hint = Lowercase letters, digits and underscores, and not already how tag names start (<code>name:…</code>). A category can be deleted once no tag is in it.
+tc-label = Label
+tc-up = Move up
+tc-down = Move down
+tc-new = New category
+tc-add = Add category
 
 news-field-body = News
 news-field-body-hint = A sentence or two, in the same markup as the wiki.
@@ -212,6 +229,12 @@ as-robots-placeholder = Empty for the default
 as-robots-default = The default
 as-ip-days = Keep the addresses accounts use for this many days
 as-ip-days-hint = Staff who can ban users see them on a user's moderation record, with other accounts seen on the same addresses. 0 keeps none.
+as-pagination = Search pages
+as-pagination-hint = Left blank, each uses the server configuration's <code>[search]</code> value, shown greyed out. Users can pick their own page size up to the largest page.
+as-per-page = Posts per page
+as-max-per-page = Largest page anyone may ask for
+as-max-page = Deepest numbered page
+as-max-page-hint = Beyond it, results continue through “next” links, which stay fast however deep they go.
 as-default-theme = Default theme
 as-default-theme-hint = For visitors, and users who haven't picked one. To add a theme, put <code>themes/&lt;name&gt;.css</code> in the <code>static_override</code> directory and restart.
 as-tagger = Tagger

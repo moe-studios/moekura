@@ -389,7 +389,7 @@ pub(crate) async fn popular_ids(
         .map_err(|e| AppError::Internal(e.to_string()))?;
     query.limit = Some(limit);
     let visible = crate::posts::visibility(current);
-    let plan = match Plan::resolve(db, &query, &visible, &state.config.search).await {
+    let plan = match Plan::resolve(db, &query, &visible, &state.search_config()).await {
         Ok(plan) => plan,
         Err(SearchError::Invalid(message)) => return Err(AppError::BadRequest(message)),
         Err(SearchError::Db(error)) => return Err(error.into()),
@@ -452,7 +452,7 @@ async fn popular(page: Page, Query(params): Query<RangeQuery>) -> Result<Respons
     page.current.require(Permission::ViewPosts)?;
     let range = range(&params)?;
     let state = page.state();
-    let limit = state.config.search.per_page;
+    let limit = state.search_config().per_page;
     let ids = popular_ids(state, &page.current, &range, limit, PageRef::default()).await?;
     let cards = crate::posts::grid(&page, state.reader(&page.current), &ids, None).await?;
     Ok(render_posts(
@@ -467,7 +467,7 @@ async fn viewed(page: Page, Query(params): Query<RangeQuery>) -> Result<Response
     page.current.require(Permission::ViewPosts)?;
     let range = range(&params)?;
     let state = page.state();
-    let limit = state.config.search.per_page;
+    let limit = state.search_config().per_page;
     let ids = viewed_ids(state, &page.current, &range, limit).await?;
     let cards = crate::posts::grid(&page, state.reader(&page.current), &ids, None).await?;
     Ok(render_posts(

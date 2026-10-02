@@ -51,6 +51,8 @@ pub struct ServerConfig {
     /// How many of those may come at once, before the per-minute rate
     /// applies.
     pub api_burst: u32,
+    /// Which other websites' scripts may call the APIs.
+    pub cors: CorsConfig,
 }
 
 impl Default for ServerConfig {
@@ -62,8 +64,57 @@ impl Default for ServerConfig {
             request_timeout_secs: 30,
             api_requests_per_minute: 300,
             api_burst: 60,
+            cors: CorsConfig::default(),
         }
     }
+}
+
+/// Cross-origin access to `/api/v1` and the Danbooru-compatible API from
+/// scripts on other websites. Nothing is allowed by default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CorsConfig {
+    /// Origins (`https://app.example.com`) whose scripts may call the
+    /// APIs, or `"*"` for any website.
+    pub allowed_origins: Vec<String>,
+    /// Whether scripts on the listed origins may send the visitor's
+    /// session cookie. Without it, cross-origin requests authenticate with
+    /// an API key only. Needs explicit origins, not `"*"`.
+    pub allow_credentials: bool,
+    /// How long browsers may cache a preflight answer, in seconds.
+    pub max_age_secs: u64,
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: Vec::new(),
+            allow_credentials: false,
+            max_age_secs: 600,
+        }
+    }
+}
+
+impl CorsConfig {
+    /// Whether any website is allowed.
+    pub fn allows_any(&self) -> bool {
+        self.allowed_origins.iter().any(|o| o == "*")
+    }
+}
+
+/// Why `origin` isn't a bare `scheme://host[:port]` origin.
+fn check_origin(origin: &str) -> Result<(), String> {
+    let url = Url::parse(origin).map_err(|e| format!("`{origin}` is not a URL ({e})"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("`{origin}` must be an http:// or https:// origin"));
+    }
+    let serialized = url.origin().ascii_serialization();
+    if serialized != origin {
+        return Err(format!(
+            "`{origin}` must be just an origin, written `{serialized}`"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -724,6 +775,21 @@ impl Config {
                 message: "must be at least 1 while api_requests_per_minute is set".into(),
             });
         }
+        let cors = &self.server.cors;
+        for origin in cors.allowed_origins.iter().filter(|o| *o != "*") {
+            if let Err(message) = check_origin(origin) {
+                problems.push(ConfigProblem {
+                    key: "server.cors.allowed_origins",
+                    message,
+                });
+            }
+        }
+        if cors.allow_credentials && cors.allows_any() {
+            problems.push(ConfigProblem {
+                key: "server.cors.allow_credentials",
+                message: "needs explicit allowed_origins, not \"*\"".into(),
+            });
+        }
         if db.max_connections == 0 {
             problems.push(ConfigProblem {
                 key: "database.max_connections",
@@ -1114,6 +1180,29 @@ mod tests {
             .map(|p| p.key)
             .collect();
         assert_eq!(keys, ["server.public_url", "auth.session_max_days"]);
+    }
+
+    #[test]
+    fn checks_cors_origins() {
+        let mut config = valid();
+        config.server.cors.allowed_origins = vec![
+            "https://app.example.com".into(),
+            "http://localhost:5173".into(),
+        ];
+        config.server.cors.allow_credentials = true;
+        config.validate().unwrap();
+
+        for bad in ["https://app.example.com/", "app.example.com", "ftp://x.org"] {
+            config.server.cors.allowed_origins = vec![bad.into()];
+            let problems = config.validate().unwrap_err();
+            assert_eq!(problems[0].key, "server.cors.allowed_origins", "{bad}");
+        }
+
+        config.server.cors.allowed_origins = vec!["*".into()];
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "server.cors.allow_credentials");
+        config.server.cors.allow_credentials = false;
+        config.validate().unwrap();
     }
 
     #[test]

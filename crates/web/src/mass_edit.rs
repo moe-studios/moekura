@@ -270,7 +270,7 @@ async fn submit(
         SearchQuery::parse(&checked.query).map_err(|e| AppError::Unprocessable(e.to_string()))?;
     let config = moekura_core::config::SearchConfig {
         per_page: PREVIEW,
-        ..state.config.search.clone()
+        ..state.search_config()
     };
     let plan = match Plan::resolve(db, &query, &visibility(&page.current), &config).await {
         Ok(plan) => plan,

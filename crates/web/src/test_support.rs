@@ -93,6 +93,11 @@ impl TestApp {
         }
     }
 
+    /// Sends `request` as is and returns the raw response.
+    pub async fn raw(&self, request: Request<Body>) -> axum::response::Response {
+        self.router.clone().oneshot(request).await.unwrap()
+    }
+
     /// The raw response, for checking headers.
     pub async fn get_full(&self, path: &str) -> axum::response::Response {
         let request = Request::get(path).body(Body::empty()).unwrap();

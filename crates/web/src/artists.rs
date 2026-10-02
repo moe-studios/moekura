@@ -481,7 +481,7 @@ async fn recent_posts(page: &Page, name: &str) -> Result<Vec<Value>, AppError> {
     };
     query.limit = Some(POSTS_SHOWN);
     let visible = crate::posts::visibility(&page.current);
-    let Ok(plan) = Plan::resolve(db, &query, &visible, &state.config.search).await else {
+    let Ok(plan) = Plan::resolve(db, &query, &visible, &state.search_config()).await else {
         return Ok(Vec::new());
     };
     let Ok(ids) = plan.ids(db, PageRef::default()).await else {

@@ -4,6 +4,10 @@ A site is its PostgreSQL database plus its stored files. Back up both, the
 database first: a file with no database row is harmless, a row whose file
 is missing is not.
 
+To copy *posts* to another site, or keep their files with their tags
+outside the database, use [`moekura admin export`](import.md#exporting)
+instead; it isn't a backup.
+
 ## The database
 
 ```sh

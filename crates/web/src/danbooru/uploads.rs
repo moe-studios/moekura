@@ -10,7 +10,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use moekura_core::permissions::Permission;
-use moekura_db::staged_uploads::{self, NewStaged, Staged};
+use moekura_db::staged_uploads::{self, Staged};
 use serde_json::{Value, json};
 
 use super::{Fields, ListParams, json as respond, timestamp};
@@ -32,6 +32,10 @@ fn upload_error(error: UploadError) -> AppError {
     match error {
         UploadError::Invalid(message) => AppError::Unprocessable(message),
         UploadError::Duplicate(id) => AppError::Duplicate(id),
+        UploadError::Similar(found) => AppError::Similar {
+            posts: found.posts,
+            staged: found.staged,
+        },
         UploadError::Limit(message) => AppError::Blocked(message),
         UploadError::Internal(detail) => AppError::Internal(detail),
     }
@@ -158,24 +162,9 @@ async fn create(
         }
     };
     let prepared = prepare(&state, &file).await.map_err(upload_error)?;
-    let id = staged_uploads::create(
-        state.db.primary(),
-        NewStaged {
-            uploader_id: user.id,
-            source: &source,
-            sha256: &prepared.sha256,
-            md5: &prepared.md5,
-            media_type: &prepared.media_type,
-            width: prepared.width,
-            height: prepared.height,
-            duration_ms: prepared.duration_ms,
-            frames: prepared.frames,
-            has_audio: prepared.has_audio,
-            file_size: prepared.file_size,
-            storage_key: &prepared.storage_key,
-        },
-    )
-    .await?;
+    let id = crate::upload::stage(&state, user.id, &prepared, &source)
+        .await
+        .map_err(upload_error)?;
     let staged = staged_uploads::by_id(state.db.primary(), id)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -244,26 +233,7 @@ pub(super) async fn create_post(
         description: field("description"),
         ..UploadFields::default()
     };
-    let prepared = Prepared {
-        sha256: staged
-            .sha256
-            .as_slice()
-            .try_into()
-            .map_err(|_| AppError::NotFound)?,
-        md5: staged
-            .md5
-            .as_slice()
-            .try_into()
-            .map_err(|_| AppError::NotFound)?,
-        media_type: staged.media_type.clone(),
-        width: staged.width,
-        height: staged.height,
-        duration_ms: staged.duration_ms,
-        frames: staged.frames,
-        has_audio: staged.has_audio,
-        file_size: staged.file_size,
-        storage_key: staged.storage_key.clone(),
-    };
+    let prepared = Prepared::from_staged(&staged).ok_or(AppError::NotFound)?;
     let post_id = make_post(&state, &current, &prepared, &upload)
         .await
         .map_err(upload_error)?;

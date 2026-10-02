@@ -11,7 +11,20 @@
   {% elif error %}
   <p class="form-error" role="alert">{{ error }}</p>
   {% endif %}
+  {% if similar is not none %}
+  <section class="notice upload-similar" role="alert" aria-labelledby="upload-similar-title">
+    <h2 id="upload-similar-title">{{ t("upload-similar-title", count=similar|length) }}</h2>
+    <p>{{ t("upload-similar-hint") }}</p>
+    <ul class="post-grid image-matches">
+      {% for card in similar %}<li>{% include "card.html" %}</li>{% endfor %}
+    </ul>
+  </section>
+  {% endif %}
   <form method="post" action="/upload" enctype="multipart/form-data" data-upload>
+    {% if form.staged %}
+    <input type="hidden" name="staged" value="{{ form.staged }}">
+    <p class="hint">{{ t("upload-staged") }}</p>
+    {% endif %}
     <div class="upload-drop-zone" data-upload-drop-zone>
       <label for="file">{{ t("upload-file") }}</label>
       <input id="file" name="file" type="file"
@@ -56,7 +69,7 @@
       </div>
     </details>
 
-    <button type="submit">{{ t("nav-upload") }}</button>
+    <button type="submit">{% if similar is not none %}{{ t("upload-anyway") }}{% else %}{{ t("nav-upload") }}{% endif %}</button>
   </form>
 </section>
 {% endblock %}

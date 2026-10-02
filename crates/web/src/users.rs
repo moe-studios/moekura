@@ -303,7 +303,7 @@ fn render_settings(
     has_feed_token: bool,
     error: Option<String>,
 ) -> Response {
-    let max = page.state().config.search.max_per_page;
+    let max = page.state().search_config().max_per_page;
     let status = if error.is_some() {
         StatusCode::UNPROCESSABLE_ENTITY
     } else {
@@ -318,7 +318,7 @@ fn render_settings(
             has_feed_token => has_feed_token,
             can_invite => crate::invites::may_invite(&page.current),
             per_page => settings.per_page,
-            default_per_page => page.state().config.search.per_page,
+            default_per_page => page.state().search_config().per_page,
             per_page_choices => PER_PAGE_CHOICES.iter().filter(|&&n| n <= max).collect::<Vec<_>>(),
             current_mode => settings.mode.as_str(),
             current_theme => settings.theme,
@@ -405,7 +405,7 @@ async fn save_settings(
     Form(form): Form<SettingsForm>,
 ) -> Result<Response, AppError> {
     let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
-    let max = page.state().config.search.max_per_page;
+    let max = page.state().search_config().max_per_page;
     let per_page = match form.per_page.as_str() {
         "" => None,
         n => Some(

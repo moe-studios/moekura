@@ -6,31 +6,35 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, anyhow, bail};
 use clap::Args;
 use moekura_core::config::Config;
-use moekura_core::import::{Sidecar, is_media, parse_json, parse_rating, parse_txt, sidecar_paths};
+use moekura_core::import::{
+    Sidecar, is_media, parse_json_for, parse_rating, parse_txt, sidecar_paths,
+};
 use moekura_db::Db;
 use moekura_db::site_cache::SiteCache;
 use moekura_web::AppState;
-use moekura_web::import::{ImportFile, Imported, existing_post, import_file, usable_tags};
+use moekura_web::import::{
+    ImportFile, Imported, existing_post, import_file, link_parent, usable_tags,
+};
 
 #[derive(Args)]
 pub struct ImportArgs {
     /// The folder of files to import
-    dir: PathBuf,
+    pub(crate) dir: PathBuf,
     /// Who the posts are uploaded by
     #[arg(long)]
-    uploader: String,
+    pub(crate) uploader: String,
     /// Rating for files whose sidecar doesn't give one: g, s, q or e
     #[arg(long)]
-    rating: Option<String>,
+    pub(crate) rating: Option<String>,
     /// Tags to add to every file, separated by spaces
     #[arg(long, default_value = "")]
-    tags: String,
+    pub(crate) tags: String,
     /// Also import the files in subfolders
     #[arg(short, long)]
-    recursive: bool,
+    pub(crate) recursive: bool,
     /// Show what would happen, without importing anything
     #[arg(long)]
-    dry_run: bool,
+    pub(crate) dry_run: bool,
 }
 
 /// The files to import in `dir`, by path. Hidden files and folders are
@@ -56,8 +60,9 @@ fn collect(dir: &Path, recursive: bool) -> std::io::Result<Vec<PathBuf>> {
     Ok(found)
 }
 
-/// Everything the sidecars next to `path` say, JSON first.
-fn read_sidecars(path: &Path) -> Result<Sidecar, String> {
+/// Everything the sidecars next to `path` say, JSON first. Lists by
+/// category keep the site's `categories`.
+fn read_sidecars(path: &Path, categories: &[&str]) -> Result<Sidecar, String> {
     let mut sidecar = Sidecar::default();
     let (mut json_seen, mut txt_seen) = (false, false);
     for candidate in sidecar_paths(path) {
@@ -69,7 +74,8 @@ fn read_sidecars(path: &Path) -> Result<Sidecar, String> {
             .map_err(|e| format!("Could not read {}: {e}", candidate.display()))?;
         if is_json {
             json_seen = true;
-            let parsed = parse_json(&text).map_err(|e| format!("{}: {e}", candidate.display()))?;
+            let parsed = parse_json_for(&text, categories)
+                .map_err(|e| format!("{}: {e}", candidate.display()))?;
             sidecar.merge(parsed);
         } else {
             txt_seen = true;
@@ -116,15 +122,19 @@ pub async fn run(config: Config, db: &Db, args: ImportArgs) -> anyhow::Result<()
     .context("could not load the file URL key")?;
     let state = AppState::new(config, db.clone(), site, file_key)?;
     let extra: Vec<String> = args.tags.split_whitespace().map(str::to_owned).collect();
+    let categories = moekura_db::tags::categories(db.primary()).await?;
+    let category_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
 
     let mut counts = Counts::default();
+    // Posts and their parents' files, linked once every file is in.
+    let mut parents: Vec<(i64, String, [u8; 32])> = Vec::new();
     for path in &files {
         let name = path.strip_prefix(&args.dir).unwrap_or(path).display();
         let mut fail = |message: &str| {
             counts.failed += 1;
             println!("failed     {name}: {message}");
         };
-        let sidecar = match read_sidecars(path) {
+        let sidecar = match read_sidecars(path, &category_names) {
             Ok(sidecar) => sidecar,
             Err(error) => {
                 fail(&error);
@@ -166,12 +176,22 @@ pub async fn run(config: Config, db: &Db, args: ImportArgs) -> anyhow::Result<()
             Ok(Imported::Created(id)) => {
                 counts.imported += 1;
                 println!("imported   {name} as post #{id}");
+                if let Some(parent) = sidecar.parent_sha256 {
+                    parents.push((id, name.to_string(), parent));
+                }
             }
             Ok(Imported::Duplicate(id)) => {
                 counts.duplicates += 1;
                 println!("duplicate  {name}: already post #{id}");
             }
             Err(error) => fail(&error),
+        }
+    }
+    for (child, name, parent) in &parents {
+        match link_parent(&state, &uploader, *child, parent).await {
+            Ok(Some(parent)) => println!("parent     {name}: post #{parent}"),
+            Ok(None) => println!("           {name}: its parent's file isn't here"),
+            Err(error) => println!("           {name}: parent not set: {error}"),
         }
     }
 
@@ -226,18 +246,18 @@ mod tests {
         );
         assert_eq!(collect(&dir, true).unwrap().len(), 3);
 
-        let sidecar = read_sidecars(&dir.join("b.png")).unwrap();
+        let sidecar = read_sidecars(&dir.join("b.png"), &[]).unwrap();
         assert_eq!(sidecar.tags, ["cat", "dog"]);
         // The JSON sidecar's rating wins.
         assert_eq!(sidecar.rating, Some(moekura_core::posts::Rating::Explicit));
         assert_eq!(
-            read_sidecars(&dir.join("sub/c.webm")).unwrap(),
+            read_sidecars(&dir.join("sub/c.webm"), &[]).unwrap(),
             Sidecar::default()
         );
 
         std::fs::write(dir.join("b.json"), "{").unwrap();
         assert!(
-            read_sidecars(&dir.join("b.png"))
+            read_sidecars(&dir.join("b.png"), &[])
                 .unwrap_err()
                 .contains("b.json")
         );

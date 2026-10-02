@@ -1,6 +1,7 @@
 mod admin;
 mod bench_http;
 mod config;
+mod export;
 mod import;
 mod import_remote;
 mod tagger;
@@ -84,6 +85,11 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Openapi => unreachable!("handled before loading the configuration"),
         Command::CheckConfig => {
+            // Site settings live in the database; say which ones win.
+            println!(
+                "# search.per_page, max_per_page and max_page are defaults: the `pagination`\n\
+                 # site setting overrides them (see `moekura admin settings`).\n"
+            );
             print!("{}", toml::to_string_pretty(&config.redacted())?);
             Ok(())
         }
@@ -103,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
                 migrate(&db).await?;
             }
             let result = match command {
+                admin::AdminCommand::Export(args) => export::run(config, &db, args).await,
                 admin::AdminCommand::Import(args) => match check_media_tools(&config).await {
                     Ok(()) => import::run(config, &db, args).await,
                     Err(error) => Err(error),

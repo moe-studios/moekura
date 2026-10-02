@@ -55,7 +55,7 @@ async fn popular(
             .parse()
             .map_err(|()| AppError::BadRequest("`page` must be a number".into()))?,
     };
-    let limit = params.list.limit(state.config.search.max_per_page);
+    let limit = params.list.limit(state.search_config().max_per_page);
     let ids = explore::popular_ids(&state, &current, &params.range()?, limit, page).await?;
     posts_json(&state, &current, &ids, &params.list.only).await
 }
@@ -66,7 +66,7 @@ async fn viewed(
     Query(params): Query<RangeParams>,
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
-    let limit = params.list.limit(state.config.search.max_per_page);
+    let limit = params.list.limit(state.search_config().max_per_page);
     let ids = explore::viewed_ids(&state, &current, &params.range()?, limit).await?;
     posts_json(&state, &current, &ids, &params.list.only).await
 }

@@ -162,7 +162,7 @@ async fn purge_plan(
     }
     let config = moekura_core::config::SearchConfig {
         per_page,
-        ..state.config.search.clone()
+        ..state.search_config()
     };
     Plan::resolve(state.db.primary(), query, &visibility, &config)
         .await

@@ -62,6 +62,11 @@ pub enum AdminCommand {
         #[arg(long)]
         limit: Option<i64>,
     },
+    /// Write posts' original files to a folder, each with a JSON sidecar of
+    /// its tags, rating, source, description and parent, for `import` here
+    /// or on another site. Files already there are kept, so an interrupted
+    /// export can be run again.
+    Export(crate::export::ExportArgs),
     /// Import a folder of images and videos as posts, with tags from the
     /// sidecar files next to them (pic.png.txt, pic.json, …). Files already
     /// here are skipped, so an interrupted import can be run again.
@@ -271,7 +276,7 @@ pub async fn run(
             let queued = regenerate_media(db, (!all).then_some(posts.as_slice())).await?;
             println!("queued {queued} file(s) for processing");
         }
-        AdminCommand::Import(_) | AdminCommand::ImportRemote(_) => {
+        AdminCommand::Export(_) | AdminCommand::Import(_) | AdminCommand::ImportRemote(_) => {
             unreachable!("imports need the whole app; main runs them")
         }
         AdminCommand::Bench {

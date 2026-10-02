@@ -287,10 +287,12 @@ label.choice input { margin-right: 6px; vertical-align: middle; }
 
 .post-layout { display: grid; grid-template-columns: 1fr; gap: 24px; }
 .post-layout > *, .results-layout > *, .post-grid > li { min-width: 0; }
+/* The info comes first, on the left, as on Danbooru; phones show the
+   image first and the info below it. */
 @media (min-width: 900px) {
-  .post-layout { grid-template-columns: minmax(0, 1fr) 280px; }
-  .post-info { order: 2; }
+  .post-layout { grid-template-columns: 280px minmax(0, 1fr); }
 }
+@media (max-width: 899px) { .post-info { order: 2; } }
 .post-links { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .post-media img, .post-media video {
   display: block;

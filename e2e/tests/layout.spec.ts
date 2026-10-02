@@ -120,6 +120,24 @@ test("populated tables scroll locally and large thumbnails fit the results colum
   }
 });
 
+test("post info sits left of the picture, and below it on phones", async ({ page }) => {
+  await authenticateAdmin(page);
+  const upload = await page.request.post("/upload", {
+    multipart: { file: { name: "side.png", mimeType: "image/png", buffer: png(640, 480) }, rating: "g", tags: "layout_side" },
+  });
+  expect(upload.ok()).toBeTruthy();
+  const path = new URL(upload.url()).pathname;
+  for (const width of [375, 900, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto(path);
+    await expectPageFits(page);
+    const info = (await page.locator(".post-info").boundingBox())!;
+    const media = (await page.locator(".post-media").boundingBox())!;
+    if (width >= 900) expect(info.x + info.width).toBeLessThanOrEqual(media.x);
+    else expect(info.y).toBeGreaterThanOrEqual(media.y + media.height);
+  }
+});
+
 test("mobile forms remain usable without JavaScript", async ({ browser }) => {
   const context = await browser.newContext({ javaScriptEnabled: false, viewport: { width: 320, height: 800 } });
   const page = await context.newPage();

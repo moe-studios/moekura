@@ -5,6 +5,92 @@
 {% block head %}{% include "preview_meta.html" %}{% endblock %}
 {% block content %}
 <div class="post-layout">
+  <aside class="post-info">
+    {% if search.back_url %}
+    <nav class="search-nav" aria-label="{{ t('post-search-results') }}">
+      {% if search.steps %}<a href="{{ search.steps.previous }}" rel="prev" title="{{ t('post-previous-key') }}">‹</a>{% endif %}
+      <a class="back" href="{{ search.back_url }}">{{ search.tags or t("post-all-posts") }}</a>
+      {% if search.steps %}<a href="{{ search.steps.next }}" rel="next" title="{{ t('post-next-key') }}">›</a>{% endif %}
+    </nav>
+    {% endif %}
+    <h1>{{ t("post-number", id=post.id) }}</h1>
+    <dl>
+      <dt>{{ t("rating") }}</dt><dd class="rating-{{ post.rating_code }}">{{ t("rating-" ~ post.rating_code) }}</dd>
+      <dt>{{ t("post-size") }}</dt><dd>{{ file.width }}×{{ file.height }} · {{ file.size }}</dd>
+      <dt>{{ t("api-type") }}</dt><dd>{{ file.media_type }}{% if file.duration %} · {{ file.duration }}{% if not file.has_audio %} · {{ t("post-no-sound") }}{% endif %}{% endif %}{% if file.animated %} · {{ t("post-animated") }}{% endif %}</dd>
+      <dt>{{ t("score") }}</dt>
+      <dd>
+        {% if reactions.can_vote %}
+        <form class="vote" method="post" action="/posts/{{ post.id }}/vote{{ reactions.query or '' }}" data-reaction>
+          <button type="submit" name="score" value="{{ 0 if reactions.vote == 1 else 1 }}" class="icon" data-vote="up" aria-pressed="{{ 'true' if reactions.vote == 1 else 'false' }}" aria-label="{{ t('vote-up') }}" title="{{ t('vote-up') }}">▲</button>
+          <span class="score">{{ reactions.score }}</span>
+          <button type="submit" name="score" value="{{ 0 if reactions.vote == -1 else -1 }}" class="icon" data-vote="down" aria-pressed="{{ 'true' if reactions.vote == -1 else 'false' }}" aria-label="{{ t('vote-down') }}" title="{{ t('vote-down') }}">▼</button>
+        </form>
+        {% else %}<span class="score">{{ reactions.score }}</span>{% endif %}
+      </dd>
+      <dt>{{ t("stats-favorites") }}</dt>
+      <dd>
+        {% if reactions.can_favorite %}
+        <form class="favorite" method="post" action="/posts/{{ post.id }}/favorite{{ reactions.query or '' }}" data-reaction>
+          <button type="submit" name="favorite" value="{{ 'remove' if reactions.favorited else 'add' }}" class="icon" aria-pressed="{{ 'true' if reactions.favorited else 'false' }}" aria-label="{{ t('favorite') }}" title="{{ t('favorite') }}">♥</button>
+          <span class="fav-count">{{ reactions.fav_count }}</span>
+        </form>
+        {% else %}<span class="fav-count">{{ reactions.fav_count }}</span>{% endif %}
+      </dd>
+      <dt>{{ t("post-uploaded") }}</dt><dd><time datetime="{{ post.created_iso }}">{{ post.created }}</time>{% if uploader %} {{ t("by-user", user=uploader) }}{% endif %}</dd>
+      {% if post.source %}
+      <dt>{{ t("source") }}</dt>
+      <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
+      {% endif %}
+    </dl>
+    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>{{ t("edit") }}</a>{% endif %}<a href="{{ file.original }}" download>{{ t("post-download") }}</a><a href="/posts/{{ post.id }}/history">{{ t("tag-nav-history") }}</a><a href="/posts/{{ post.id }}/metadata">{{ t("post-metadata") }}</a><a href="/posts/{{ post.id }}/replacements">{{ t("post-replacements") }}</a><a href="/iqdb_queries?post_id={{ post.id }}">{{ t("post-look-alikes") }}</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">{{ t("post-note-history") }}</a>{% endif %}</p>
+    {% if favorite_groups %}
+    <section class="tag-group post-favorite-groups">
+      <h2>{{ t("fav-groups-yours") }}</h2>
+      {% if favorite_groups.holding %}
+      <ul class="tag-list">
+        {% for g in favorite_groups.holding %}
+        <li><a href="{{ g.url }}">{{ g.name }}</a>
+          <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups/remove"><input type="hidden" name="group" value="{{ g.id }}"><button type="submit" class="link" aria-label="{{ t('post-remove-from', name=g.name) }}">{{ t("remove-lower") }}</button></form></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if favorite_groups.others %}
+      <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups">
+        <label class="visually-hidden" for="add-group">{{ t("artist-group") }}</label>
+        <select id="add-group" name="group">
+          {% for g in favorite_groups.others %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+        </select>
+        <button type="submit">{{ t("add") }}</button>
+      </form>
+      {% endif %}
+      <p class="hint"><a href="/favorite_groups/new">{{ t("fav-group-new-button") }}</a></p>
+    </section>
+    {% endif %}
+    {% if pools.can_add %}
+    <section class="tag-group post-pools">
+      <h2>{{ t("nav-pools") }}</h2>
+      <details class="edit">
+        <summary>{{ t("post-add-to-pool") }}</summary>
+        <form method="post" action="/posts/{{ post.id }}/pools">
+          <label for="add-pool">{{ t("post-pool-field") }}</label>
+          <input id="add-pool" name="pool" required autocomplete="off" spellcheck="false">
+          <button type="submit">{{ t("add") }}</button>
+        </form>
+      </details>
+    </section>
+    {% endif %}
+    {% for group in tag_groups %}
+    <section class="tag-group">
+      <h2>{{ group.label }}</h2>
+      <ul class="tag-list">
+        {% for tag in group.tags %}
+        <li><a class="refine" href="{{ tag.wiki_url }}" title="{{ t('tag-nav-wiki') }}" aria-label="{{ t('posts-wiki-for', tag=tag.name) }}">?</a> <a class="tag tag-{{ group.name }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+  </aside>
   <section class="post-media">
     {% if deleted %}<p class="notice">{% if deleted.by %}{{ t("deleted-when-by", when=deleted.when, user=deleted.by) }}{% else %}{{ t("deleted-when", when=deleted.when) }}{% endif %}{% if deleted.reason %}: “{{ deleted.reason }}”{% endif %}</p>
     {% elif post.status != "active" %}<p class="notice">{{ t("post-is", status=t("status-" ~ post.status)) }}</p>{% endif %}
@@ -346,91 +432,5 @@
       {% endif %}
     </section>
   </section>
-  <aside class="post-info">
-    {% if search.back_url %}
-    <nav class="search-nav" aria-label="{{ t('post-search-results') }}">
-      {% if search.steps %}<a href="{{ search.steps.previous }}" rel="prev" title="{{ t('post-previous-key') }}">‹</a>{% endif %}
-      <a class="back" href="{{ search.back_url }}">{{ search.tags or t("post-all-posts") }}</a>
-      {% if search.steps %}<a href="{{ search.steps.next }}" rel="next" title="{{ t('post-next-key') }}">›</a>{% endif %}
-    </nav>
-    {% endif %}
-    <h1>{{ t("post-number", id=post.id) }}</h1>
-    <dl>
-      <dt>{{ t("rating") }}</dt><dd class="rating-{{ post.rating_code }}">{{ t("rating-" ~ post.rating_code) }}</dd>
-      <dt>{{ t("post-size") }}</dt><dd>{{ file.width }}×{{ file.height }} · {{ file.size }}</dd>
-      <dt>{{ t("api-type") }}</dt><dd>{{ file.media_type }}{% if file.duration %} · {{ file.duration }}{% if not file.has_audio %} · {{ t("post-no-sound") }}{% endif %}{% endif %}{% if file.animated %} · {{ t("post-animated") }}{% endif %}</dd>
-      <dt>{{ t("score") }}</dt>
-      <dd>
-        {% if reactions.can_vote %}
-        <form class="vote" method="post" action="/posts/{{ post.id }}/vote{{ reactions.query or '' }}" data-reaction>
-          <button type="submit" name="score" value="{{ 0 if reactions.vote == 1 else 1 }}" class="icon" data-vote="up" aria-pressed="{{ 'true' if reactions.vote == 1 else 'false' }}" aria-label="{{ t('vote-up') }}" title="{{ t('vote-up') }}">▲</button>
-          <span class="score">{{ reactions.score }}</span>
-          <button type="submit" name="score" value="{{ 0 if reactions.vote == -1 else -1 }}" class="icon" data-vote="down" aria-pressed="{{ 'true' if reactions.vote == -1 else 'false' }}" aria-label="{{ t('vote-down') }}" title="{{ t('vote-down') }}">▼</button>
-        </form>
-        {% else %}<span class="score">{{ reactions.score }}</span>{% endif %}
-      </dd>
-      <dt>{{ t("stats-favorites") }}</dt>
-      <dd>
-        {% if reactions.can_favorite %}
-        <form class="favorite" method="post" action="/posts/{{ post.id }}/favorite{{ reactions.query or '' }}" data-reaction>
-          <button type="submit" name="favorite" value="{{ 'remove' if reactions.favorited else 'add' }}" class="icon" aria-pressed="{{ 'true' if reactions.favorited else 'false' }}" aria-label="{{ t('favorite') }}" title="{{ t('favorite') }}">♥</button>
-          <span class="fav-count">{{ reactions.fav_count }}</span>
-        </form>
-        {% else %}<span class="fav-count">{{ reactions.fav_count }}</span>{% endif %}
-      </dd>
-      <dt>{{ t("post-uploaded") }}</dt><dd><time datetime="{{ post.created_iso }}">{{ post.created }}</time>{% if uploader %} {{ t("by-user", user=uploader) }}{% endif %}</dd>
-      {% if post.source %}
-      <dt>{{ t("source") }}</dt>
-      <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
-      {% endif %}
-    </dl>
-    <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>{{ t("edit") }}</a>{% endif %}<a href="{{ file.original }}" download>{{ t("post-download") }}</a><a href="/posts/{{ post.id }}/history">{{ t("tag-nav-history") }}</a><a href="/posts/{{ post.id }}/metadata">{{ t("post-metadata") }}</a><a href="/posts/{{ post.id }}/replacements">{{ t("post-replacements") }}</a><a href="/iqdb_queries?post_id={{ post.id }}">{{ t("post-look-alikes") }}</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">{{ t("post-note-history") }}</a>{% endif %}</p>
-    {% if favorite_groups %}
-    <section class="tag-group post-favorite-groups">
-      <h2>{{ t("fav-groups-yours") }}</h2>
-      {% if favorite_groups.holding %}
-      <ul class="tag-list">
-        {% for g in favorite_groups.holding %}
-        <li><a href="{{ g.url }}">{{ g.name }}</a>
-          <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups/remove"><input type="hidden" name="group" value="{{ g.id }}"><button type="submit" class="link" aria-label="{{ t('post-remove-from', name=g.name) }}">{{ t("remove-lower") }}</button></form></li>
-        {% endfor %}
-      </ul>
-      {% endif %}
-      {% if favorite_groups.others %}
-      <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups">
-        <label class="visually-hidden" for="add-group">{{ t("artist-group") }}</label>
-        <select id="add-group" name="group">
-          {% for g in favorite_groups.others %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
-        </select>
-        <button type="submit">{{ t("add") }}</button>
-      </form>
-      {% endif %}
-      <p class="hint"><a href="/favorite_groups/new">{{ t("fav-group-new-button") }}</a></p>
-    </section>
-    {% endif %}
-    {% if pools.can_add %}
-    <section class="tag-group post-pools">
-      <h2>{{ t("nav-pools") }}</h2>
-      <details class="edit">
-        <summary>{{ t("post-add-to-pool") }}</summary>
-        <form method="post" action="/posts/{{ post.id }}/pools">
-          <label for="add-pool">{{ t("post-pool-field") }}</label>
-          <input id="add-pool" name="pool" required autocomplete="off" spellcheck="false">
-          <button type="submit">{{ t("add") }}</button>
-        </form>
-      </details>
-    </section>
-    {% endif %}
-    {% for group in tag_groups %}
-    <section class="tag-group">
-      <h2>{{ group.label }}</h2>
-      <ul class="tag-list">
-        {% for tag in group.tags %}
-        <li><a class="refine" href="{{ tag.wiki_url }}" title="{{ t('tag-nav-wiki') }}" aria-label="{{ t('posts-wiki-for', tag=tag.name) }}">?</a> <a class="tag tag-{{ group.name }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span></li>
-        {% endfor %}
-      </ul>
-    </section>
-    {% endfor %}
-  </aside>
 </div>
 {% endblock %}

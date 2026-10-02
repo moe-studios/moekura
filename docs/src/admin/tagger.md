@@ -72,6 +72,12 @@ moekura admin tag-backlog --limit 1000
   The account is created on first use without a password, so nobody can
   log in as it; if the name belongs to an account that has one, the
   tagger refuses to use it.
+- **Refusing uploads by new uploaders** when the tagger finds a tag (or
+  `rating:e` and the like) with at least a given confidence: one per
+  line, `ai-generated 50`, as Danbooru's `new_uploader_blocked_ai_tags`.
+  It applies to users without an active post yet, who are told only that
+  the post failed and to try again later; a file the tagger hasn't looked
+  at yet can't be posted by them until it has.
 
 The model's tag names are Danbooru's. They're matched to the site's tags
 through aliases; tags the site doesn't have yet are created, in the

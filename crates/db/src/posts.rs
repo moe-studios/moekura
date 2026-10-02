@@ -381,6 +381,16 @@ pub async fn count_by_uploader(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::R
 }
 
 /// A user's uploads as upload limits count them.
+/// Whether user `user_id` has uploaded a post that's active now.
+pub async fn has_active_upload(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM posts WHERE uploader_id = $1 AND status = 'active')",
+    )
+    .bind(user_id)
+    .fetch_one(db)
+    .await
+}
+
 /// How many posts user `user_id` uploaded, and when they last did.
 pub async fn uploaded_by(
     db: impl PgExecutor<'_>,

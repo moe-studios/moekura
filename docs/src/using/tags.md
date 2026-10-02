@@ -61,6 +61,34 @@ Settings**, off by default): `artist_request` while a post has no artist
 tag and `tagme` while it has fewer than 10 general tags. They come off
 again when an edit fixes that.
 
+## Automatic tags
+
+Sites can also tag posts from their files and sources, as Danbooru does
+(**Admin → Settings → Automatic tags**, off by default). Every upload and
+edit gets, or loses, these:
+
+| Tag | When |
+|---|---|
+| `lowres` | at most 500×500 |
+| `highres`, `absurdres`, `incredibly_absurdres` | at least 1600×1200, 3200×2400, or 10000 either way |
+| `wide_image`, `tall_image` | at least 1024 long and four times as long as the other side |
+| `animated`, `animated_gif`, `animated_png`, `video`, `ugoira` | what kind of media it is |
+| `sound` | it has an audio track |
+| `exif_rotation` | its EXIF orientation turns it |
+| `non-repeating_animation` | an animation that plays a few times, then stops |
+| `non-web_source` | the source isn't a web address |
+| `bad_link` | the source is an image whose site can't lead back to its page |
+| `bad_source` | the source is a link on a known site that's neither a work nor an image |
+| `tagme` | the post has no tags; removed at 30 (with request tags on, those decide) |
+| `greyscale`, `ai-generated` | the file is stored in greyscale, or its metadata says an image generator made it |
+
+Tags that follow from the file can't be added or removed by hand: typing
+`highres` on a small image doesn't stick. `greyscale` and `ai-generated`
+can still be added by hand, since a picture can be either without its file
+saying so. `bad_link` and `bad_source` are left alone for sites Moekura
+doesn't know. Each rule's tag can be renamed to fit the site's, or left
+empty to leave the rule out.
+
 ## Related tags
 
 Beside the tags box of the upload and edit forms, a panel lists tags to

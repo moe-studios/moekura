@@ -8,6 +8,7 @@ mod api_keys;
 mod artists;
 mod assets;
 pub mod auth;
+mod auto_tags;
 mod bans;
 mod blacklist;
 mod captcha;

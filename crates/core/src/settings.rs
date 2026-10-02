@@ -76,6 +76,9 @@ pub struct SiteSettings {
     /// tag and `tagme` while it has few general tags, and lose them again
     /// once they don't apply.
     pub request_tags: bool,
+    /// Tags posts get from their files and sources (see
+    /// [`crate::auto_tags`]).
+    pub automatic_tags: crate::auto_tags::AutomaticTags,
     /// What happens to posts by artists staff have banned.
     pub banned_artists: BannedArtists,
     /// Served as `/robots.txt`; empty for the default.
@@ -203,6 +206,7 @@ impl Default for SiteSettings {
             spam_filter: crate::spam::SpamFilter::default(),
             post_reasons: crate::moderation::PostReasons::default(),
             request_tags: false,
+            automatic_tags: crate::auto_tags::AutomaticTags::default(),
             banned_artists: BannedArtists::default(),
             robots_txt: String::new(),
             pagination: Pagination::default(),
@@ -379,6 +383,7 @@ impl SiteSettings {
             return Err("must be a theme's name".into());
         }
         self.tagger.validate()?;
+        self.automatic_tags.validate()?;
         self.email_domains.validate()?;
         self.spam_filter.validate()?;
         self.post_reasons.validate()?;
@@ -410,6 +415,7 @@ mod tests {
             SiteSettings::keys(),
             [
                 "auto_promotion",
+                "automatic_tags",
                 "banned_artists",
                 "captcha",
                 "default_blacklist",

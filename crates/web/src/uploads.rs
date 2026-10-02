@@ -1933,6 +1933,83 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn new_uploaders_cant_post_what_the_tagger_blocks(pool: PgPool) {
+        moekura_db::settings::set(
+            &pool,
+            "tagger",
+            serde_json::json!({ "new_uploader_blocked": [{ "tag": "ai-generated", "confidence": 50 }] }),
+        )
+        .await
+        .unwrap();
+        let mut config = crate::test_support::test_config();
+        config.tagger.enabled = true;
+        let state = crate::test_support::test_state_with(&pool, config).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(state, routes(max).merge(upload::routes(max)));
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let ai: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('ai-generated') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        async fn stage(app: &TestApp, pool: &PgPool, session: &str, size: u32) -> (String, i64) {
+            let png = fixture::png(size, 30);
+            let sent = app
+                .post_multipart("/uploads", Some(session), &[], Some(("a.png", &png)))
+                .await;
+            let upload = upload_in(sent.location.as_deref());
+            let file = files_of(pool, upload).await[0].id;
+            (format!("/uploads/{upload}/assets/{file}"), file)
+        }
+        let tagged = async |file: i64, confidence: f32| {
+            moekura_db::tag_suggestions::save_staged(
+                &pool,
+                file,
+                "test",
+                Rating::General,
+                0.9,
+                &[(ai, confidence)],
+            )
+            .await
+            .unwrap();
+        };
+
+        // Not looked at yet, then found AI-generated: refused, saying no
+        // more than that.
+        let (form, file) = stage(&app, &pool, &alice, 40).await;
+        let refused = app
+            .post_form(&form, Some(&alice), &[], "rating=g&tags=cat")
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            refused.body.contains("Post failed, try again later."),
+            "{}",
+            refused.body
+        );
+        tagged(file, 0.8).await;
+        let refused = app
+            .post_form(&form, Some(&alice), &[], "rating=g&tags=cat")
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        // Not sure enough: posted.
+        let (form, file) = stage(&app, &pool, &alice, 44).await;
+        tagged(file, 0.3).await;
+        let posted = app
+            .post_form(&form, Some(&alice), &[], "rating=g&tags=cat")
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+
+        // With an active post, nothing's blocked.
+        let (form, file) = stage(&app, &pool, &alice, 48).await;
+        tagged(file, 0.8).await;
+        let posted = app
+            .post_form(&form, Some(&alice), &[], "rating=g&tags=cat")
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn a_works_files_are_downloaded(pool: PgPool) {
         let (a, b) = (fixture::png(40, 30), fixture::png(48, 30));
         let origin = Router::new()

@@ -5,6 +5,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::post;
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
+use moekura_core::file_traits::FileTrait;
 use moekura_core::permissions::Permission;
 use moekura_core::post_edit::Metatag;
 use moekura_core::posts::{DESCRIPTION_MAX_LEN, PostLock, Rating, SOURCE_MAX_LEN};
@@ -232,12 +233,21 @@ pub(crate) async fn apply(
     moekura_db::post_versions::attribute(&mut tx, current.user.as_ref().map(|u| u.id), None)
         .await?;
     let found = tags::for_post(&mut tx, &wanted, current.can(Permission::ManageTags)).await?;
-    let request_tags = state.site.get().settings.request_tags;
-    let tag_ids: Vec<i32> = crate::tag_warnings::with_request_tags(&mut tx, request_tags, found)
-        .await?
-        .iter()
-        .map(|t| t.id)
-        .collect();
+    let settings = &state.site.get().settings;
+    let found =
+        crate::tag_warnings::with_request_tags(&mut tx, settings.request_tags, found).await?;
+    let asset = moekura_db::media::for_post(&mut *tx, id).await?;
+    let traits = asset
+        .as_ref()
+        .map(|a| FileTrait::from_stored(&a.traits))
+        .unwrap_or_default();
+    let file = asset.as_ref().map(|a| crate::auto_tags::facts(a, &traits));
+    let tag_ids: Vec<i32> =
+        crate::auto_tags::with_automatic_tags(&mut tx, settings, file.as_ref(), source, found)
+            .await?
+            .iter()
+            .map(|t| t.id)
+            .collect();
     crate::artists::refuse_banned(state, &mut *tx, current, &tag_ids, &post.tag_ids)
         .await
         .map_err(Refused::Invalid)?;

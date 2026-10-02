@@ -876,9 +876,58 @@ pub async fn post_staged(
         return Err(UploadError::Duplicate(post));
     }
     let prepared = Prepared::from_staged(&staged).ok_or_else(gone)?;
+    check_new_uploader(state, uploader, id).await?;
     let post_id = create_post(state, uploader, &prepared, fields).await?;
     staged_uploads::used(db, id, post_id).await?;
     Ok(post_id)
+}
+
+/// Refuses posting staged file `staged_id` for an uploader without an
+/// active post yet when the tagger found something the site blocks for
+/// them (`tagger.new_uploader_blocked`, as Danbooru's
+/// `new_uploader_blocked_ai_tags`). A file the tagger hasn't looked at
+/// yet waits for it. The message doesn't say why.
+pub(crate) async fn check_new_uploader(
+    state: &AppState,
+    uploader: &CurrentUser,
+    staged_id: i64,
+) -> Result<(), UploadError> {
+    let site = state.site.get();
+    let blocked = &site.settings.tagger.new_uploader_blocked;
+    let Some(user) = &uploader.user else {
+        return Ok(());
+    };
+    if blocked.is_empty() || !state.config.tagger.enabled {
+        return Ok(());
+    }
+    let db = state.db.primary();
+    if posts::has_active_upload(db, user.id).await? {
+        return Ok(());
+    }
+    let refused = || UploadError::Invalid("Post failed, try again later.".into());
+    let Some(found) = moekura_db::tag_suggestions::staged_result(db, staged_id).await? else {
+        return Err(refused());
+    };
+    let rating = format!("rating:{}", found.rating.code());
+    let hit = blocked.iter().find(|b| {
+        b.matches(&rating, found.rating_confidence)
+            || found
+                .suggestions
+                .iter()
+                .any(|s| b.matches(&s.name, s.confidence))
+    });
+    match hit {
+        Some(tag) => {
+            tracing::info!(
+                user = user.name,
+                staged_id,
+                tag = tag.tag,
+                "upload blocked for a new uploader"
+            );
+            Err(refused())
+        }
+        None => Ok(()),
+    }
 }
 
 /// Checks a received file isn't a duplicate, identifies and probes it,
@@ -1098,8 +1147,19 @@ pub async fn create_post(
         uploader.can(Permission::ManageTags),
     )
     .await?;
+    let found =
+        crate::tag_warnings::with_request_tags(&mut tx, site.settings.request_tags, found).await?;
+    let traits = FileTrait::from_stored(&prepared.traits);
+    let file = moekura_core::auto_tags::FileFacts {
+        width: prepared.width,
+        height: prepared.height,
+        media_type: &prepared.media_type,
+        frames: prepared.frames,
+        has_audio: prepared.has_audio,
+        traits: &traits,
+    };
     let tag_ids: Vec<i32> =
-        crate::tag_warnings::with_request_tags(&mut tx, site.settings.request_tags, found)
+        crate::auto_tags::with_automatic_tags(&mut tx, &site.settings, Some(&file), &source, found)
             .await?
             .iter()
             .map(|t| t.id)

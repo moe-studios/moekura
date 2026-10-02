@@ -39,6 +39,24 @@
     <label class="choice"><input type="checkbox" name="upload_approval"{% if settings.upload_approval %} checked{% endif %}> {{ t("as-upload-approval") }}</label>
     <label class="choice"><input type="checkbox" name="request_tags"{% if settings.request_tags %} checked{% endif %}> {{ t("as-request-tags") }}</label>
     <fieldset class="group">
+      <legend>{{ t("as-automatic-tags") }}</legend>
+      <label class="choice"><input type="checkbox" name="automatic_tags"{% if settings.automatic_tags.enabled %} checked{% endif %}> {{ t("as-automatic-tags-on") }}</label>
+      <p class="hint">{{ t("as-automatic-tags-hint") }}</p>
+      <div class="table-scroll" role="region" aria-label="{{ t('as-automatic-tags') }}" tabindex="0">
+      <table class="automatic-tags">
+        <thead><tr><th scope="col">{{ t("as-automatic-rule") }}</th><th scope="col">{{ t("as-automatic-tag") }}</th></tr></thead>
+        <tbody>
+          {% for rule in settings.automatic_tags.rules %}
+          <tr>
+            <th scope="row"><label for="auto_tag_{{ rule.key }}">{{ t("as-auto-" ~ rule.key) }}</label></th>
+            <td><input id="auto_tag_{{ rule.key }}" name="auto_tag_{{ rule.key }}" value="{{ rule.tag }}" placeholder="{{ t('as-automatic-unused') }}" autocapitalize="none" spellcheck="false"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </fieldset>
+    <fieldset class="group">
       <legend>{{ t("as-banned-artists") }}</legend>
       <label class="choice"><input type="checkbox" name="banned_artists_hide"{% if settings.banned_artists.hide_posts %} checked{% endif %}> {{ t("as-banned-hide") }}</label>
       <label class="choice"><input type="checkbox" name="banned_artists_refuse"{% if settings.banned_artists.refuse_uploads %} checked{% endif %}> {{ t("as-banned-refuse") }}</label>
@@ -143,6 +161,9 @@
       <label for="tagger_auto_threshold">{{ t("as-tagger-percent") }}</label>
       <input id="tagger_auto_threshold" name="tagger_auto_threshold" type="number" min="1" max="100" value="{{ settings.tagger.auto_threshold }}">
       <label class="choice"><input type="checkbox" name="tagger_auto_rating"{% if settings.tagger.auto_rating %} checked{% endif %}> {{ t("as-tagger-rating") }}</label>
+      <label for="tagger_new_uploader_blocked">{{ t("as-tagger-blocked") }}</label>
+      <textarea id="tagger_new_uploader_blocked" name="tagger_new_uploader_blocked" rows="3" autocapitalize="none" spellcheck="false">{{ settings.tagger.new_uploader_blocked }}</textarea>
+      <p class="hint">{{ t("as-tagger-blocked-hint") }}</p>
     </fieldset>
     <p class="hint">{{ t("as-private-hint") }}</p>
     <button type="submit">{{ t("common-save") }}</button>

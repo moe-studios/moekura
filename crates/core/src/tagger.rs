@@ -181,6 +181,62 @@ pub struct TaggerSettings {
     /// With `auto_apply`, also change the rating when the tagger is at
     /// least `auto_threshold` sure of another.
     pub auto_rating: bool,
+    /// Uploads by users without an active post yet are refused when the
+    /// tagger finds one of these (as Danbooru's
+    /// `new_uploader_blocked_ai_tags`).
+    pub new_uploader_blocked: Vec<BlockedTag>,
+}
+
+/// A tag (or `rating:<r>`) the tagger is at least `confidence` percent
+/// sure of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockedTag {
+    pub tag: String,
+    pub confidence: u8,
+}
+
+/// The confidence a blocked tag needs when none is given.
+const BLOCKED_DEFAULT_CONFIDENCE: u8 = 50;
+
+impl BlockedTag {
+    /// Blocked tags from text, one per line: the tag, then the confidence
+    /// (`ai-generated 50`, `rating:e 90%`); without one, 50%.
+    pub fn parse_list(text: &str) -> Result<Vec<Self>, String> {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let mut words = line.split_whitespace();
+                let tag = crate::tags::normalize(words.next().unwrap_or_default());
+                let confidence = match words.next() {
+                    None => BLOCKED_DEFAULT_CONFIDENCE,
+                    Some(word) => word
+                        .trim_end_matches('%')
+                        .parse()
+                        .map_err(|_| format!("`{line}`: expected a tag, then a percent"))?,
+                };
+                if words.next().is_some() {
+                    return Err(format!("`{line}`: expected a tag, then a percent"));
+                }
+                Ok(Self { tag, confidence })
+            })
+            .collect()
+    }
+
+    /// `list` as [`parse_list`](Self::parse_list) reads it.
+    pub fn to_list(list: &[Self]) -> String {
+        list.iter()
+            .map(|b| format!("{} {}", b.tag, b.confidence))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Whether the tagger's finding `tag` with `confidence` (0 to 1)
+    /// matches this.
+    pub fn matches(&self, tag: &str, confidence: f32) -> bool {
+        self.tag == tag && confidence * 100.0 >= f32::from(self.confidence)
+    }
 }
 
 impl Default for TaggerSettings {
@@ -190,6 +246,7 @@ impl Default for TaggerSettings {
             auto_apply: false,
             auto_threshold: 95,
             auto_rating: false,
+            new_uploader_blocked: Vec::new(),
         }
     }
 }
@@ -237,6 +294,17 @@ impl TaggerSettings {
         }
         if !(1..=100).contains(&self.auto_threshold) {
             return Err("the threshold for applying tags must be from 1 to 100 (percent)".into());
+        }
+        for blocked in &self.new_uploader_blocked {
+            if !(1..=100).contains(&blocked.confidence) {
+                return Err(format!(
+                    "the confidence for blocking {} must be from 1 to 100 (percent)",
+                    blocked.tag
+                ));
+            }
+            if blocked.tag.is_empty() {
+                return Err("a blocked tag needs a name".into());
+            }
         }
         Ok(())
     }
@@ -287,6 +355,41 @@ mod tests {
 612924,\"don't_say_\"\"lazy\"\"\",0,1062
 1234,hatsune_miku,4,100
 ";
+
+    #[test]
+    fn blocked_tags() {
+        let list = BlockedTag::parse_list("AI-generated\n\n  rating:e 90%  \nloli 75").unwrap();
+        assert_eq!(
+            list,
+            [
+                BlockedTag {
+                    tag: "ai-generated".into(),
+                    confidence: 50
+                },
+                BlockedTag {
+                    tag: "rating:e".into(),
+                    confidence: 90
+                },
+                BlockedTag {
+                    tag: "loli".into(),
+                    confidence: 75
+                },
+            ]
+        );
+        assert_eq!(
+            BlockedTag::parse_list(&BlockedTag::to_list(&list)).unwrap(),
+            list
+        );
+        assert!(BlockedTag::parse_list("cat lots").is_err());
+        assert!(BlockedTag::parse_list("cat 5 6").is_err());
+        assert!(list[1].matches("rating:e", 0.95));
+        assert!(!list[1].matches("rating:e", 0.85));
+        let settings = TaggerSettings {
+            new_uploader_blocked: BlockedTag::parse_list("cat 0").unwrap(),
+            ..TaggerSettings::default()
+        };
+        assert!(settings.validate().is_err());
+    }
 
     #[test]
     fn reads_tag_lists() {

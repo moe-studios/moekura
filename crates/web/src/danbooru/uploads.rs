@@ -342,6 +342,9 @@ pub(super) async fn create_post(
         ..UploadFields::default()
     };
     let prepared = Prepared::from_staged(&staged).ok_or(AppError::NotFound)?;
+    crate::upload::check_new_uploader(&state, &current, id)
+        .await
+        .map_err(upload_error)?;
     let post_id = make_post(&state, &current, &prepared, &upload)
         .await
         .map_err(upload_error)?;

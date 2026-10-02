@@ -154,6 +154,16 @@ fn render_settings(
                 auto_promotion => current.auto_promotion,
                 preview_all_ratings => current.preview_all_ratings,
                 request_tags => current.request_tags,
+                automatic_tags => context! {
+                    enabled => current.automatic_tags.enabled,
+                    rules => moekura_core::auto_tags::Rule::ALL
+                        .iter()
+                        .map(|rule| context! {
+                            key => rule.key(),
+                            tag => current.automatic_tags.tag(*rule).unwrap_or_default(),
+                        })
+                        .collect::<Vec<_>>(),
+                },
                 banned_artists => context! {
                     hide_posts => current.banned_artists.hide_posts,
                     refuse_uploads => current.banned_artists.refuse_uploads,
@@ -202,6 +212,9 @@ fn render_settings(
                     auto_apply => current.tagger.auto_apply,
                     auto_threshold => current.tagger.auto_threshold,
                     auto_rating => current.tagger.auto_rating,
+                    new_uploader_blocked => moekura_core::tagger::BlockedTag::to_list(
+                        &current.tagger.new_uploader_blocked,
+                    ),
                 },
             },
             mail_enabled => page.state().config.mail.is_enabled(),
@@ -282,6 +295,8 @@ struct SettingsForm {
     preview_all_ratings: Option<String>,
     /// Present when ticked.
     request_tags: Option<String>,
+    /// Present when ticked; each rule's tag is `auto_tag_<rule>`.
+    automatic_tags: Option<String>,
     /// Present when ticked.
     banned_artists_hide: Option<String>,
     /// Present when ticked.
@@ -332,6 +347,8 @@ struct SettingsForm {
     tagger_auto_threshold: Option<String>,
     /// Present when ticked.
     tagger_auto_rating: Option<String>,
+    /// One per line: a tag, then a percent.
+    tagger_new_uploader_blocked: Option<String>,
     /// `tagger_threshold_<category>` fields.
     #[serde(flatten)]
     rest: std::collections::HashMap<String, String>,
@@ -395,6 +412,39 @@ async fn save_settings(
         .clone()
         .unwrap_or_else(|| before.default_theme.clone());
     let multiline = |text: &str| text.replace("\r\n", "\n").trim().to_owned();
+    // The rules' tags as typed, when the form had them.
+    let rule_tags: Vec<(&str, &str)> = moekura_core::auto_tags::Rule::ALL
+        .iter()
+        .filter_map(|rule| {
+            let tag = form.rest.get(&format!("auto_tag_{}", rule.key()))?;
+            Some((rule.key(), tag.as_str()))
+        })
+        .collect();
+    let automatic_tags = json!({
+        "enabled": form.automatic_tags.is_some(),
+        "tags": if rule_tags.is_empty() {
+            before.automatic_tags.tags.clone()
+        } else {
+            moekura_core::auto_tags::AutomaticTags::tags_from(rule_tags)
+        },
+    });
+    let blocked = match form
+        .tagger_new_uploader_blocked
+        .as_deref()
+        .map(moekura_core::tagger::BlockedTag::parse_list)
+    {
+        None => json!(before.tagger.new_uploader_blocked),
+        Some(Ok(list)) => json!(list),
+        Some(Err(message)) => {
+            return Ok(render_settings(
+                &page,
+                &before,
+                &categories,
+                Some(format!("Blocked tags: {message}")),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ));
+        }
+    };
     let wanted = [
         ("site_name", json!(form.site_name.trim())),
         (
@@ -436,6 +486,7 @@ async fn save_settings(
             json!(form.preview_all_ratings.is_some()),
         ),
         ("request_tags", json!(form.request_tags.is_some())),
+        ("automatic_tags", automatic_tags),
         (
             "banned_artists",
             json!({
@@ -553,6 +604,7 @@ async fn save_settings(
                 "auto_apply": form.tagger_auto_apply.is_some(),
                 "auto_threshold": auto_threshold,
                 "auto_rating": form.tagger_auto_rating.is_some(),
+                "new_uploader_blocked": blocked,
             }),
         ),
     ];
@@ -1274,6 +1326,65 @@ mod tests {
             .await;
         assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(bad.body.contains("from 1 to 100"), "{}", bad.body);
+
+        // Automatic tags, renamed or left out, and tags blocked for new
+        // uploaders.
+        let base = "site_name=Tiny+Booru&registration_mode=invite&promotion_uploads=20\
+                    &promotion_edits=5&promotion_account_days=14&promotion_max_recent_deletions=1";
+        let response = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                &format!(
+                    "{base}&automatic_tags=on&auto_tag_lowres=Low_Res&auto_tag_highres=highres\
+                     &auto_tag_video=&tagger_new_uploader_blocked=ai-generated+60%0D%0Arating:e"
+                ),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let stored = moekura_db::settings::load(&pool).await.unwrap();
+        assert!(stored.automatic_tags.enabled);
+        assert_eq!(
+            stored.automatic_tags.tags,
+            [
+                ("lowres".to_owned(), "low_res".to_owned()),
+                ("video".to_owned(), String::new())
+            ]
+            .into()
+        );
+        assert_eq!(
+            moekura_core::tagger::BlockedTag::to_list(&stored.tagger.new_uploader_blocked),
+            "ai-generated 60\nrating:e 50"
+        );
+        let page = app.get("/admin/settings", Some(&admin)).await.body;
+        assert!(
+            page.contains("name=\"auto_tag_lowres\" value=\"low_res\""),
+            "{page}"
+        );
+        assert!(
+            page.contains("name=\"auto_tag_video\" value=\"\""),
+            "{page}"
+        );
+        let bad = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                &format!("{base}&auto_tag_lowres=-x"),
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let bad = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                &format!("{base}&tagger_new_uploader_blocked=cat+lots"),
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(bad.body.contains("Blocked tags:"), "{}", bad.body);
 
         // The default theme, for visitors: only one the site has.
         let form = "site_name=Tiny+Booru&registration_mode=invite&promotion_uploads=20\

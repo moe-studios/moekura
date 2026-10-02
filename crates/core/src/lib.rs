@@ -5,6 +5,7 @@
 
 pub mod accounts;
 pub mod artists;
+pub mod auto_tags;
 pub mod blacklist;
 pub mod bulk;
 pub mod config;

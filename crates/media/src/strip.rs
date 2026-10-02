@@ -195,6 +195,7 @@ fn jpeg(input: &mut impl BufRead, output: &mut impl Write) -> io::Result<bool> {
     }
     output.write_all(&[0xFF, SOI])?;
     let mut changed = false;
+    let mut seen_exif = false;
     // Segments up to the first scan.
     loop {
         let marker = jpeg_marker(input)?;
@@ -211,7 +212,11 @@ fn jpeg(input: &mut impl BufRead, output: &mut impl Write) -> io::Result<bool> {
             write_segment(output, marker, &data)?;
             continue;
         }
-        let kept = (marker == APP1 && data.starts_with(b"Exif\0\0"))
+        // Only the first EXIF block counts, as libvips reads it; later
+        // ones go, so no reader can pick another orientation.
+        let first_exif = marker == APP1 && data.starts_with(b"Exif\0\0") && !seen_exif;
+        seen_exif |= first_exif;
+        let kept = first_exif
             .then(|| kept_exif(&data))
             .flatten()
             .map(|tiff| [&b"Exif\0\0"[..], &tiff].concat());
@@ -549,7 +554,7 @@ mod tests {
         let status = Command::new("vips")
             .arg("copy")
             .arg(&baseline)
-            .arg(format!("{}[interlace]", progressive.display()))
+            .arg(format!("{}[interlace,keep=none]", progressive.display()))
             .status()
             .unwrap();
         assert!(status.success());
@@ -580,6 +585,44 @@ mod tests {
         // A second picture after the end, as phones append.
         file.extend_from_slice(b"\xFF\xD8secret note\xFF\xD9");
         check(dir, MediaType::Jpeg, name, &file, 6);
+    }
+
+    /// The orientation libvips, which makes the thumbnails, reads.
+    fn vips_orientation(path: &Path) -> String {
+        let out = Command::new("vipsheader")
+            .args(["-f", "orientation"])
+            .arg(path)
+            .output()
+            .unwrap();
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    #[test]
+    fn keeps_the_first_exif_orientation() {
+        let dir = fixtures::dir("strip-two-exif");
+        let plain = std::fs::read(fixtures::image(&dir, "plain.jpg", 64, 48)).unwrap();
+        let mut file = plain[..2].to_vec();
+        for orientation in [6, 3] {
+            let exif = [&b"Exif\0\0"[..], &exif(orientation)].concat();
+            file.extend_from_slice(&[0xFF, APP1]);
+            file.extend_from_slice(&((exif.len() + 2) as u16).to_be_bytes());
+            file.extend_from_slice(&exif);
+        }
+        file.extend_from_slice(&plain[2..]);
+        let src = dir.join("two-exif.jpg");
+        std::fs::write(&src, &file).unwrap();
+        let dst = dir.join("stripped.jpg");
+        assert_eq!(
+            strip(MediaType::Jpeg, &src, &dst).unwrap(),
+            Stripped::Changed
+        );
+        // libvips goes by the first block, some ffmpeg versions by the
+        // last, so pixels aren't compared here.
+        assert_eq!(vips_orientation(&src), "6");
+        assert_eq!(vips_orientation(&dst), "6");
+        let stripped = std::fs::read(&dst).unwrap();
+        assert!(contains(&stripped, &orientation_only(6)));
+        assert!(!contains(&stripped, &orientation_only(3)));
     }
 
     #[test]

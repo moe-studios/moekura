@@ -707,7 +707,7 @@ function run(action) {
       return true;
     }
     case "search": {
-      const input = document.querySelector(".site-header input[name=tags]");
+      const input = document.querySelector("form[role=search] input[name=tags]");
       if (!input) return false;
       input.focus();
       input.select();
@@ -1412,21 +1412,50 @@ function isNegatedMetatag(word) {
 function postId(href) {
   return /\/posts\/(\d+)/.exec(href)?.[1] ?? null;
 }
+var MODE_KEY = "moekura.tag-script.mode";
+var SCRIPT_KEY = "moekura.tag-script.text";
 function enableTagScript(root = document) {
   const panel = root.querySelector("[data-tag-script]");
-  const input = panel?.querySelector("input");
-  const toggle = panel?.querySelector("input[type=checkbox]");
+  const mode = panel?.querySelector("select[data-tag-script-mode]");
+  const field = panel?.querySelector("[data-tag-script-field]");
   const status = panel?.querySelector("[data-tag-script-status]");
   const text = panel?.querySelector("input[type=text]");
-  if (!panel || !input || !toggle || !status || !text) return;
+  if (!panel || !mode || !field || !status || !text) return;
   panel.hidden = false;
+  const scripting = () => mode.value === "script";
+  const show = () => {
+    field.hidden = !scripting();
+    root.querySelector(".post-grid")?.classList.toggle("scripting", scripting());
+  };
+  const stored = (key) => {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const store = (key, value) => {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch {
+    }
+  };
+  if (stored(MODE_KEY) === "script") mode.value = "script";
+  text.value = stored(SCRIPT_KEY) ?? text.value;
+  show();
+  mode.addEventListener("change", () => {
+    store(MODE_KEY, mode.value);
+    show();
+    if (scripting()) text.focus();
+  });
+  text.addEventListener("input", () => store(SCRIPT_KEY, text.value));
   const say = (message) => {
     status.textContent = message;
   };
   root.addEventListener(
     "click",
     (event) => {
-      if (!toggle.checked) return;
+      if (!scripting()) return;
       const card = event.target.closest(".post-grid a.card");
       if (!card) return;
       event.preventDefault();

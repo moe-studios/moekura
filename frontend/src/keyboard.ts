@@ -107,7 +107,7 @@ function run(action: string): boolean {
       return true;
     }
     case "search": {
-      const input = document.querySelector<HTMLInputElement>(".site-header input[name=tags]");
+      const input = document.querySelector<HTMLInputElement>("form[role=search] input[name=tags]");
       if (!input) return false;
       input.focus();
       input.select();

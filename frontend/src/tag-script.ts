@@ -1,8 +1,9 @@
-// Tag scripts: on search results, those who can edit posts type a script
-// like `tag_a -tag_b rating:s pool:12`, then clicking a post applies it
-// (through the API) instead of opening it. Metatags work as in the tag
-// box; the server reads them. Each change is in the post's history as
-// usual. Without scripts the panel stays hidden.
+// Tag scripts: on search results, those who can edit posts choose the
+// Tag script mode and type a script like `tag_a -tag_b rating:s pool:12`;
+// clicking a post then applies it (through the API) instead of opening
+// it. Metatags work as in the tag box; the server reads them. Each change
+// is in the post's history as usual. Without scripts the menu stays
+// hidden.
 
 import { t } from "./i18n.ts";
 
@@ -56,14 +57,47 @@ export function postId(href: string): string | null {
   return /\/posts\/(\d+)/.exec(href)?.[1] ?? null;
 }
 
+/** Where the mode and script are kept while moving between pages. */
+const MODE_KEY = "moekura.tag-script.mode";
+const SCRIPT_KEY = "moekura.tag-script.text";
+
 export function enableTagScript(root: Document = document): void {
   const panel = root.querySelector<HTMLElement>("[data-tag-script]");
-  const input = panel?.querySelector<HTMLInputElement>("input");
-  const toggle = panel?.querySelector<HTMLInputElement>("input[type=checkbox]");
+  const mode = panel?.querySelector<HTMLSelectElement>("select[data-tag-script-mode]");
+  const field = panel?.querySelector<HTMLElement>("[data-tag-script-field]");
   const status = panel?.querySelector<HTMLElement>("[data-tag-script-status]");
   const text = panel?.querySelector<HTMLInputElement>("input[type=text]");
-  if (!panel || !input || !toggle || !status || !text) return;
+  if (!panel || !mode || !field || !status || !text) return;
   panel.hidden = false;
+
+  const scripting = () => mode.value === "script";
+  const show = () => {
+    field.hidden = !scripting();
+    root.querySelector(".post-grid")?.classList.toggle("scripting", scripting());
+  };
+  const stored = (key: string) => {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const store = (key: string, value: string) => {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch {
+      // Private browsing may forbid storage; the mode just isn't kept.
+    }
+  };
+  if (stored(MODE_KEY) === "script") mode.value = "script";
+  text.value = stored(SCRIPT_KEY) ?? text.value;
+  show();
+  mode.addEventListener("change", () => {
+    store(MODE_KEY, mode.value);
+    show();
+    if (scripting()) text.focus();
+  });
+  text.addEventListener("input", () => store(SCRIPT_KEY, text.value));
 
   const say = (message: string) => {
     status.textContent = message;
@@ -72,7 +106,7 @@ export function enableTagScript(root: Document = document): void {
   root.addEventListener(
     "click",
     (event) => {
-      if (!toggle.checked) return;
+      if (!scripting()) return;
       const card = (event.target as Element).closest<HTMLAnchorElement>(".post-grid a.card");
       if (!card) return;
       event.preventDefault();

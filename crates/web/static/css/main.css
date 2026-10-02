@@ -467,8 +467,20 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .tag-list li:has(> .refine) { display: flex; align-items: baseline; gap: 0 4px; }
 .tag-list li:has(> .refine) .tag { min-width: 0; }
 .tag-list li:has(> .refine) .count { margin-left: 2px; white-space: nowrap; }
-.tag-script input[type="text"] { width: 100%; }
 @media (max-width: 899px) { .results-sidebar { order: 2; } }
+/* The search above results: the field fills the row, with the button and
+   the Hot toggle beside it. */
+.search-bar { flex-direction: row; align-items: center; gap: 8px; margin: 0 0 12px; }
+.search-bar > input[type="search"], .search-bar > .autocomplete-wrap { flex: 1 1 0; min-width: 0; }
+.search-bar input[type="search"] { width: 100%; }
+.search-bar button[type="submit"] { margin: 0; padding: 8px 16px; }
+.search-option { padding: 7px 12px; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); }
+.search-option:hover { border-color: var(--accent); text-decoration: none; }
+.search-option[aria-current] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+@media (max-width: 599px) {
+  .search-bar { gap: 6px; }
+  .search-bar button[type="submit"], .search-option { padding-left: 10px; padding-right: 10px; }
+}
 .pager .button { background: var(--border); color: var(--text); }
 .pager { flex-wrap: wrap; align-items: center; gap: 8px; }
 .pager .current { font-weight: 700; padding: 0 4px; }
@@ -667,8 +679,16 @@ tr.is-deleted td { opacity: 0.6; }
 
 /* Tag scripts and mass edits */
 
-.tag-script { margin-bottom: 16px; }
-.tag-script h2 { font-size: 1rem; margin: 0 0 6px; }
+/* The mode menu above results, apart from the search: in Tag script
+   mode the script's field shows beside it. */
+.post-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0 0 12px; font-size: 0.875rem; }
+.post-mode label { margin: 0; }
+.post-mode select { padding: 3px 6px; }
+.tag-script-field { display: flex; flex: 1 1 240px; }
+.tag-script-field input { width: 100%; padding: 4px 8px; }
+.post-mode .hint { flex-basis: 100%; margin: 0; }
+.post-mode .hint:empty { display: none; }
+.post-grid.scripting a.card { cursor: cell; }
 .post-grid a.card.script-busy { opacity: 0.5; }
 .post-grid a.card.script-ok { outline: 3px solid var(--tag-character, #2b8a3e); outline-offset: 2px; }
 .post-grid a.card.script-failed { outline: 3px solid var(--danger); outline-offset: 2px; }

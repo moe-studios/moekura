@@ -15,10 +15,13 @@
 <body data-messages='{{ js_messages|tojson }}'>
   <header class="site-header">
     <a class="brand" href="/">{% if site.logo %}<img src="{{ site.logo }}" alt="" height="32">{% endif %}{{ site.name }}</a>
+    {# Search results put a full-width search above the posts instead. #}
+    {% block header_search %}
     <form class="search" method="get" action="/posts" role="search">
       <input type="search" name="tags" value="{{ search.tags if search else '' }}" placeholder="{{ t('nav-search') }}" aria-label="{{ t('nav-search') }}"
              autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
     </form>
+    {% endblock %}
     <nav class="primary" aria-label="{{ t('nav-main') }}">
       {% macro item(name, url, label) %}<a href="{{ url }}"{% if section == name %} aria-current="{{ 'page' if path == url else 'true' }}"{% endif %}>{{ label }}</a>{% endmacro %}
       {% set hot = search and search.tags == "order:rank" %}

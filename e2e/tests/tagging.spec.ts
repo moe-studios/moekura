@@ -19,14 +19,27 @@ test("tag posts with a tag script", async ({ page }) => {
   }
 
   await page.goto(`/posts?tags=${tag}`);
-  await page.getByLabel("Script", { exact: true }).fill(`scripted_${run} rating:s`);
-  await page.getByLabel("Apply by clicking posts").check();
+  // One search, above the posts, and the script only shows in its mode.
+  await expect(page.getByRole("search")).toHaveCount(1);
+  const searchBox = (await page.getByRole("search").boundingBox())!;
+  expect(searchBox.y + searchBox.height).toBeLessThan((await page.locator(".post-grid").boundingBox())!.y);
+  await page.keyboard.press("/");
+  await expect(page.getByRole("search").locator("input[name=tags]")).toBeFocused();
+  const script = page.getByLabel("Tag script", { exact: true }).and(page.locator("input"));
+  await expect(script).toBeHidden();
+  await page.getByLabel("On click").selectOption("Tag script");
+  await script.fill(`scripted_${run} rating:s`);
   const cards = page.locator(".post-grid a.card");
   await cards.nth(0).click();
   await expect(cards.nth(0)).toHaveClass(/script-ok/);
   await cards.nth(1).click();
   await expect(cards.nth(1)).toHaveClass(/script-ok/);
   await expect(page).toHaveURL(new RegExp(`/posts\\?tags=${tag}`));
+  // The mode lasts to the next page, until it's set back.
+  await page.reload();
+  await expect(script).toHaveValue(`scripted_${run} rating:s`);
+  await page.getByLabel("On click").selectOption("View the post");
+  await expect(script).toBeHidden();
 
   await page.goto(`/posts?tags=scripted_${run}+rating:s`);
   await expect(page.locator(".post-grid a.card")).toHaveCount(2);

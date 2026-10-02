@@ -157,10 +157,12 @@ that already have it until someone takes it off.
 
 ## Tag scripts
 
-To tag many posts quickly, open **Tag script** beside search results
-(for those who can edit posts), type a script and tick **Apply by
-clicking posts**. Clicking a post then applies the script to it instead
-of opening it: `tag` adds a tag, `-tag` removes one, and `rating:s` sets
+To tag many posts quickly, those who can edit posts choose **Tag
+script** in the **On click** menu above search results, then type a
+script in the box that appears beside it. Clicking a post then applies
+the script to it instead of opening it, until the menu goes back to
+**View the post** (the choice and the script are kept while you move
+between pages): `tag` adds a tag, `-tag` removes one, and `rating:s` sets
 the rating, so `cat_ears -cat rating:g` does all three; the other
 [metatags](#metatags-in-the-tag-box) (`pool:12`, `fav`, …) work too. Changed posts
 are outlined green, refused ones red with the reason below the script.

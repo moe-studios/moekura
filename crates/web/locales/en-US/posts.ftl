@@ -136,7 +136,9 @@ upload-commentary-hint = What the artist wrote with the work, as they wrote it. 
 posts-newest = Newest posts
 posts-syntax = See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.
 tag-script = Tag script
-tag-script-apply = Apply by clicking posts
+post-mode = On click
+post-mode-view = View the post
+posts-hot-hint = Hot posts: recent ones with the highest scores
 posts-save-search = Save this search
 posts-labels-placeholder = e.g. artists
 posts-your-saved = Your saved searches

@@ -94,11 +94,16 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Migrate => {
-            telemetry::init(&config.telemetry)?;
-            let db = connect(&config.database).await?;
-            migrate(&db).await?;
-            db.close().await;
-            Ok(())
+            let telemetry = telemetry::init(&config.telemetry, "migrate")?;
+            let result = async {
+                let db = connect(&config.database).await?;
+                migrate(&db).await?;
+                db.close().await;
+                Ok(())
+            }
+            .await;
+            telemetry.shutdown().await;
+            result
         }
         Command::Admin { command } => {
             // Fails fast rather than retrying: someone is waiting at a shell.
@@ -124,16 +129,22 @@ async fn main() -> anyhow::Result<()> {
             result
         }
         Command::Serve => {
-            telemetry::init(&config.telemetry)?;
-            serve(config).await
+            let telemetry = telemetry::init(&config.telemetry, "serve")?;
+            let result = serve(config).await;
+            telemetry.shutdown().await;
+            result
         }
         Command::Worker => {
-            telemetry::init(&config.telemetry)?;
-            worker(config).await
+            let telemetry = telemetry::init(&config.telemetry, "worker")?;
+            let result = worker(config).await;
+            telemetry.shutdown().await;
+            result
         }
         Command::Tagger(args) => {
-            telemetry::init(&config.telemetry)?;
-            tagger::run(config, args).await
+            let telemetry = telemetry::init(&config.telemetry, "tagger")?;
+            let result = tagger::run(config, args).await;
+            telemetry.shutdown().await;
+            result
         }
     }
 }
@@ -149,6 +160,11 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("could not bind {}", config.server.bind))?;
     tracing::info!(addr = %listener.local_addr()?, "listening");
+    let shutdown = CancellationToken::new();
+    let metrics = match config.telemetry.metrics_bind {
+        Some(bind) => Some(telemetry::start_metrics(bind, db.clone(), shutdown.clone()).await?),
+        None => None,
+    };
 
     let site = SiteCache::load(db.primary())
         .await
@@ -181,7 +197,6 @@ async fn serve(config: Config) -> anyhow::Result<()> {
         tokio::spawn(moekura_web::explore::flush_every_minute(state.clone())),
     ];
 
-    let shutdown = CancellationToken::new();
     tokio::spawn(cancel_on_signal(shutdown.clone()));
     let workers = workers.map(|run| tokio::spawn(run(shutdown.clone())));
 
@@ -196,6 +211,9 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     for task in background {
         task.abort();
     }
+    if let Some(metrics) = metrics {
+        let _ = metrics.await;
+    }
     db.close().await;
     tracing::info!("shut down");
     Ok(())
@@ -208,9 +226,16 @@ async fn worker(config: Config) -> anyhow::Result<()> {
         migrate(&db).await?;
     }
     let shutdown = CancellationToken::new();
+    let metrics = match config.telemetry.metrics_bind {
+        Some(bind) => Some(telemetry::start_metrics(bind, db.clone(), shutdown.clone()).await?),
+        None => None,
+    };
     tokio::spawn(cancel_on_signal(shutdown.clone()));
     let run = run_workers(&db, &config)?;
     wait_for_workers(tokio::spawn(run(shutdown.clone())), &shutdown).await;
+    if let Some(metrics) = metrics {
+        let _ = metrics.await;
+    }
     db.close().await;
     tracing::info!("shut down");
     Ok(())

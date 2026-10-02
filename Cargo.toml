@@ -38,6 +38,16 @@ http-body-util = "0.1.5"
 jiff = { version = "0.2.37", default-features = false, features = ["std", "tzdb-bundle-always"] }
 lettre = { version = "0.11.23", default-features = false, features = ["builder", "smtp-transport", "pool", "hostname", "tokio1-rustls-tls"] }
 md-5 = "0.11.0"
+# Prometheus /metrics: the `metrics` facade (no-ops until a recorder is
+# installed) and its Prometheus text exporter, without its HTTP server.
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
+# OTLP trace export over HTTP/protobuf, sent with our own reqwest client.
+opentelemetry = { version = "0.33.0", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33.0", default-features = false, features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.33.0", default-features = false, features = ["trace", "http-proto"] }
+opentelemetry-http = { version = "0.33.0", default-features = false }
+tracing-opentelemetry = { version = "0.34.0", default-features = false }
 # Pixiv ugoira: zips of frames.
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Reading XMP metadata from uploaded files.

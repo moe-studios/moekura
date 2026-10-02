@@ -18,10 +18,11 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
                 super::parts::is_uuid(rest.split('.').next().unwrap_or(""))
             });
             let full = (!sample).then(|| p.without_query());
+            let found = found.file(full).sample(sample);
             match *kind {
-                "post" => found.file(full).page(post(id)),
-                "product" => found.file(full).page(product(id)),
-                _ => found.file(full),
+                "post" => found.page(post(id)),
+                "product" => found.page(product(id)),
+                _ => found,
             }
         }
         ["uploads", ..] => found.file(None),

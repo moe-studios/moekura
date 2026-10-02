@@ -30,6 +30,15 @@ impl Job for RemoveSquareThumbnails {
     const KIND: &'static str = "media.remove_square_thumbnails";
 }
 
+/// Hash the pixels of every still image posted before pixel hashes were
+/// kept; queued once by the migration that added them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HashPixels {}
+
+impl Job for HashPixels {
+    const KIND: &'static str = "media.hash_pixels";
+}
+
 /// Recompute every artist URL's normalized form, after the way URLs are
 /// compared changed; queued by the migration that changed it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

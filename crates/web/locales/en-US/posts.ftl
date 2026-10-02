@@ -146,6 +146,23 @@ upload-suggested-pending = The tagger is looking at this file. Its suggestions s
 upload-suggested-check = Check again
 upload-suggested-hint = Clicking one adds it to the form.
 upload-commentary-hint = What the artist wrote with the work, as they wrote it. It's filled in from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt and the other sites Danbooru supports, or a page with its image in its preview tags), and taken from there if left empty.
+upload-download = Download
+upload-copy-id = Copy ID
+upload-search-elsewhere = Search for it
+upload-warnings = Warnings
+upload-help = help
+upload-no-source = No Source
+upload-no-source-hint = Uploaded from a file: search SauceNAO for where it's from
+upload-no-source-detail = If you can, upload the link to where you found the file instead.
+upload-bad-source = Bad Source
+upload-bad-source-detail = The source is the image itself: upload the page it's on instead.
+upload-image-sample = Image Sample
+upload-image-sample-detail = This is a resized copy: upload the full image instead.
+upload-ai-generated = AI-Generated
+upload-ai-generated-detail = The file's metadata says an image generator made it; check the rules on AI-generated images.
+upload-pixel-duplicate = Pixel-Perfect Duplicate
+upload-pixel-duplicate-one = It has exactly the pixels of <a href="/posts/{ $id }">post #{ $id }</a>.
+upload-pixel-duplicate-many = It has exactly the pixels of <a href="{ $url }">{ $count } other posts</a>.
 
 posts-newest = Newest posts
 posts-syntax = See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.

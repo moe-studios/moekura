@@ -26,7 +26,9 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
         let sample = path
             .windows(2)
             .any(|w| matches!(w[0], "c" | "w") && w[1].contains(|c: char| c.is_ascii_digit()));
-        let found = found.file((!sample).then(|| p.without_query()));
+        let found = found
+            .file((!sample).then(|| p.without_query()))
+            .sample(sample);
         return Some(match path.as_slice() {
             [.., "creator", id, _, _] if is_digits(id) => found.profile(old_creator(id)),
             _ => found,

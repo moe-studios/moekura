@@ -123,7 +123,14 @@ fn image(p: &Parts, path: &[&str], found: SourceUrl) -> SourceUrl {
             _ => None,
         }
     });
-    let found = found.file(full);
+    // Anything but an original (or a ugoira's zip) is a resized copy.
+    let original = dated.is_some_and(|at| {
+        matches!(
+            path[at],
+            "img-original" | "novel-cover-original" | "img-zip-ugoira"
+        )
+    });
+    let found = found.file(full).sample(dated.is_some() && !original);
     match id {
         Some(id) if !stem.starts_with("ci") && !stem.starts_with("sci") => {
             found.page(format!("https://www.pixiv.net/artworks/{id}"))
@@ -134,7 +141,7 @@ fn image(p: &Parts, path: &[&str], found: SourceUrl) -> SourceUrl {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{file, on, page, profile};
+    use super::super::testing::{file, on, page, profile, sample};
     use super::*;
 
     #[test]
@@ -182,6 +189,30 @@ mod tests {
             "http://i2.pixiv.net/img18/img/evazion/14901720.png",
             None,
         );
+    }
+
+    #[test]
+    fn samples() {
+        for (raw, is_sample) in [
+            (
+                "https://i.pximg.net/img-original/img/2014/10/03/18/10/20/46324488_p0.png",
+                false,
+            ),
+            (
+                "https://i.pximg.net/img-master/img/2014/10/03/18/10/20/46324488_p0_master1200.jpg",
+                true,
+            ),
+            (
+                "https://i.pximg.net/c/250x250_80_a2/img-master/img/2014/10/29/09/27/19/46785915_p0_square1200.jpg",
+                true,
+            ),
+            (
+                "https://i.pximg.net/img-zip-ugoira/img/2016/04/09/14/25/29/56268141_ugoira1920x1080.zip",
+                false,
+            ),
+        ] {
+            sample(&PIXIV, raw, is_sample);
+        }
     }
 
     #[test]

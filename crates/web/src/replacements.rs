@@ -110,6 +110,13 @@ pub(crate) async fn replace_file(
         ReplaceError::Duplicate(id) => AppError::Duplicate(id),
         ReplaceError::Db(e) => e.into(),
     })?;
+    moekura_db::media::set_facts(
+        &mut *tx,
+        replaced.old.id,
+        prepared.pixel_hash.as_ref(),
+        &prepared.traits,
+    )
+    .await?;
     moekura_db::jobs::enqueue(
         &mut tx,
         &ProcessMedia {

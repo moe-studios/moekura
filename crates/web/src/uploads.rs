@@ -667,6 +667,118 @@ async fn asset_suggestions(
     ))
 }
 
+/// The wiki page about a problem with a link on `site` (a site's key):
+/// `<specific>` when that page exists, else `general`.
+async fn help_page(
+    state: &AppState,
+    specific: Option<String>,
+    general: &str,
+) -> Result<String, AppError> {
+    if let Some(title) = specific
+        && moekura_db::wiki::by_title(state.db.primary(), &title)
+            .await?
+            .is_some()
+    {
+        return Ok(title);
+    }
+    Ok(general.to_owned())
+}
+
+/// Most pixel-perfect duplicates named.
+const DUPLICATES_SHOWN: i64 = 20;
+
+/// What the post form warns about a file, as Danbooru's badges do: it was
+/// sent from disk (no source), its source is an image rather than its
+/// page, it's a resized copy, it was made by an image generator, or posts
+/// have exactly its pixels. `source` is the form's.
+async fn warnings(page: &Page, file: &Staged, source: &str) -> Result<Value, AppError> {
+    use moekura_core::file_traits::FileTrait;
+    use moekura_core::sites;
+
+    let state = page.state();
+    let db = state.db.primary();
+    let no_source = file.file_url.is_none() && file.source.is_empty();
+    let bad_link = match sites::parse(source).filter(|u| u.is_file && u.page_url.is_none()) {
+        Some(found) => {
+            let specific = format!("bad_{}_link", found.site.key);
+            Some(help_page(state, Some(specific), "bad_link").await?)
+        }
+        None => None,
+    };
+    let downloaded = file.file_url.as_deref().unwrap_or(&file.file_name);
+    let sample = match sites::parse(downloaded).filter(|u| u.is_sample) {
+        Some(found) => {
+            let specific = format!("{}_sample", found.site.key);
+            Some(help_page(state, Some(specific), "image_sample").await?)
+        }
+        None => None,
+    };
+    let traits = FileTrait::from_stored(&file.traits);
+    let duplicates = match &file.pixel_hash {
+        Some(hash) => {
+            let ids = moekura_db::media::posts_with_pixel_hash(db, hash, DUPLICATES_SHOWN).await?;
+            let visible = crate::posts::visibility(&page.current);
+            moekura_db::posts::by_ids(db, &ids)
+                .await?
+                .into_iter()
+                .filter(|p| visible.allows(p))
+                .map(|p| p.id)
+                .collect::<Vec<i64>>()
+        }
+        None => Vec::new(),
+    };
+    let duplicates_search = (duplicates.len() > 1).then(|| {
+        let ids: Vec<String> = duplicates.iter().map(i64::to_string).collect();
+        url_value(&format!("/posts?tags=id%3A{}", ids.join(",")))
+    });
+    Ok(context! {
+        no_source => no_source,
+        bad_link => bad_link,
+        sample => sample,
+        ai_generated => traits.contains(&FileTrait::AiGenerated),
+        duplicates => duplicates,
+        duplicates_search => duplicates_search,
+        any => no_source || bad_link.is_some() || sample.is_some()
+            || traits.contains(&FileTrait::AiGenerated) || !duplicates.is_empty(),
+    })
+}
+
+/// Links searching other sites for `original`, the file's absolute
+/// address, and this one's image search.
+fn search_links(original: &str) -> Value {
+    let encoded: String = url::form_urlencoded::byte_serialize(original.as_bytes()).collect();
+    let elsewhere: Vec<Value> = [
+        (
+            "SauceNAO",
+            format!("https://saucenao.com/search.php?url={encoded}"),
+        ),
+        (
+            "Ascii2D",
+            format!("https://ascii2d.net/search/url/{encoded}"),
+        ),
+        (
+            "Yandex",
+            format!("https://yandex.com/images/search?rpt=imageview&url={encoded}"),
+        ),
+        (
+            "Google Lens",
+            format!("https://lens.google.com/uploadbyurl?url={encoded}"),
+        ),
+        (
+            "Bing",
+            format!("https://www.bing.com/images/searchbyimage?cbir=sbi&imgurl={encoded}"),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, url)| context! { name => name, url => url_value(&url) })
+    .collect();
+    context! {
+        saucenao => elsewhere[0].get_attr("url").ok(),
+        elsewhere => elsewhere,
+        here => url_value(&format!("/iqdb_queries?url={encoded}")),
+    }
+}
+
 /// The page of file `files[index]` of `upload`: the file, the posts it
 /// looks like, and the form making it a post.
 async fn asset_page(
@@ -723,6 +835,20 @@ async fn asset_page(
         .map(|r| context! { code => r.code() })
         .collect();
     let status = error.map_or(StatusCode::OK, error_status);
+    let open = file.status == Status::Ready && file.post_id.is_none();
+    let warnings = if open {
+        Some(warnings(page, file, &fields.source).await?)
+    } else {
+        None
+    };
+    // Other sites fetch the file, so they're given its full address.
+    let absolute = file
+        .storage_key
+        .as_deref()
+        .and_then(moekura_storage::Key::parse)
+        .map(|key| state.file_url(&key))
+        .and_then(|url| state.config.server.public_url.join(&url).ok())
+        .map(String::from);
     Ok(page.render_with_status(
         status,
         "upload_asset.html",
@@ -732,6 +858,8 @@ async fn asset_page(
             previous_url => index.checked_sub(1).and_then(link),
             next_url => link(index + 1),
             similar => similar,
+            warnings => warnings,
+            search => absolute.as_deref().map(search_links),
             suggestions => suggestions,
             suggestions_url => url_value(&format!(
                 "/uploads/{}/assets/{}/suggestions",
@@ -1252,6 +1380,80 @@ mod tests {
         for site in ["Pixiv", "X", "Fantia"] {
             assert!(page.body.contains(&format!(">{site}</a>")), "{site}");
         }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_post_form_warns_about_the_file(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let posted = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &[("rating", "g".to_owned())],
+                Some(("a.png", &fixture::png(64, 48))),
+            )
+            .await;
+        let original = post_in(posted.location.as_deref());
+
+        // The same pixels with a generator's parameters, from disk.
+        let generated = fixture::png_with_chunk(64, 48, "parameters", "1girl, masterpiece");
+        let sent = app
+            .post_multipart("/uploads", Some(&alice), &[], Some(("b.png", &generated)))
+            .await;
+        let upload = upload_in(sent.location.as_deref());
+        let file = &files_of(&pool, upload).await[0];
+        assert_eq!(file.traits, ["ai_generated"]);
+        assert!(file.pixel_hash.is_some());
+        let form = app
+            .get(&format!("/uploads/{upload}"), Some(&alice))
+            .await
+            .body;
+        for badge in ["No Source", "AI-Generated", "Pixel-Perfect Duplicate"] {
+            assert!(form.contains(&format!("{badge}</a>")), "{badge}: {form}");
+        }
+        assert!(
+            form.contains(&format!(
+                "exactly the pixels of <a href=\"/posts/{original}\""
+            )),
+            "{form}"
+        );
+        assert!(
+            form.contains("href=\"https://saucenao.com/search.php?url=http%3A%2F%2F"),
+            "{form}"
+        );
+        assert!(form.contains("data-copy-text=\""), "{form}");
+        assert!(!form.contains("Bad Source"), "{form}");
+
+        // A link to an image sample that doesn't name its page.
+        let link = "https://pbs.twimg.com/media/EBGbJe_U8AA4Ekb.jpg";
+        let sample = staged_uploads::create_upload(&pool, file.uploader_id, link, "")
+            .await
+            .unwrap();
+        let slot = Slot {
+            upload_id: sample,
+            uploader_id: file.uploader_id,
+            position: 0,
+            file_name: link,
+            source: link,
+        };
+        let id = staged_uploads::create_pending(&pool, slot, link)
+            .await
+            .unwrap();
+        let mut stored = upload::Prepared::from_staged(file).unwrap();
+        stored.pixel_hash = None;
+        stored.traits.clear();
+        staged_uploads::stored(&pool, id, stored.stored(None))
+            .await
+            .unwrap();
+        let form = app
+            .get(&format!("/uploads/{sample}"), Some(&alice))
+            .await
+            .body;
+        assert!(form.contains("href=\"/wiki/bad_link\""), "{form}");
+        assert!(form.contains("Image Sample</a>"), "{form}");
+        assert!(!form.contains("No Source"), "{form}");
+        assert!(!form.contains("AI-Generated"), "{form}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

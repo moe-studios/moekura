@@ -6,6 +6,7 @@ PostgreSQL:
 | Job | Does |
 |---|---|
 | `media.process` | makes thumbnails, samples and video posters, and the perceptual hash for similar-image search, after an upload |
+| `media.hash_pixels` | once, after the upgrade that added pixel hashes: hashes the pixels of earlier posts, for pixel-perfect duplicate warnings |
 | `tags.apply_relation` | re-tags existing posts when an alias or implication is approved |
 | `posts.purge` | removes a purged post and its files |
 | `ml.tag_post` | suggests tags for a post; only [`moekura tagger`](tagger.md) takes these |

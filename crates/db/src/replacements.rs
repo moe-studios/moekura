@@ -63,7 +63,7 @@ pub async fn replace(
 ) -> Result<Replaced, ReplaceError> {
     let old: Asset = sqlx::query_as(
         "SELECT id, post_id, sha256, md5, media_type, width, height, duration_ms, frames,
-                has_audio, file_size, storage_key, phash, processed_at
+                has_audio, file_size, storage_key, phash, processed_at, pixel_hash, traits
          FROM media_assets WHERE post_id = $1 FOR UPDATE",
     )
     .bind(new.post_id)
@@ -108,7 +108,7 @@ pub async fn replace(
          SET sha256 = $2, md5 = $3, media_type = $4, width = $5, height = $6, duration_ms = $7,
              frames = $8, has_audio = $9, file_size = $10, storage_key = $11, metadata = '{}',
              phash = NULL, phash_0 = NULL, phash_1 = NULL, phash_2 = NULL, phash_3 = NULL,
-             processed_at = NULL
+             processed_at = NULL, pixel_hash = NULL, traits = '{}'
          WHERE id = $1",
     )
     .bind(old.id)

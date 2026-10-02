@@ -22,8 +22,9 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
         return Some(match path.as_slice() {
             [_, _, "creator", id, _, rest @ ..] => {
                 // Only `/upload/` files are originals.
-                let full = (rest.first() == Some(&"upload")).then(|| p.as_str().to_owned());
-                found.file(full).profile(creator(id))
+                let original = rest.first() == Some(&"upload");
+                let full = original.then(|| p.as_str().to_owned());
+                found.file(full).sample(!original).profile(creator(id))
             }
             _ => found.file(None),
         });

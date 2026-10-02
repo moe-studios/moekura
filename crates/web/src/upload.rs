@@ -18,6 +18,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use md5::Md5;
+use moekura_core::file_traits::FileTrait;
 use moekura_core::jobs::ProcessMedia;
 use moekura_core::permissions::Permission;
 use moekura_core::post_edit::Metatag;
@@ -628,6 +629,11 @@ pub struct Prepared {
     pub file_size: i64,
     /// Where the original is stored.
     pub storage_key: String,
+    /// The MD5 of the decoded pixels, for still images.
+    pub pixel_hash: Option<[u8; 16]>,
+    /// What the file's metadata says ([`FileTrait`]s, as stored), read
+    /// before any of it was removed.
+    pub traits: Vec<String>,
 }
 
 /// The rating, source and parent an upload gets: the fields, unless
@@ -864,6 +870,12 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
         .identify(file.path())
         .await
         .map_err(media_error)?;
+    // Read before removing it: AI generation parameters are metadata.
+    let metadata = match state.media.metadata(file.path(), media_type).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.is_internal() => return Err(media_error(error)),
+        Err(_) => moekura_media::metadata::Metadata::new(),
+    };
     // The stripped file is what's kept, so its hashes are the post's; a
     // file whose stripped bytes are a post's is that post's too.
     let stripped = strip_metadata(state, file, media_type).await?;
@@ -898,6 +910,23 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
             .await
             .map_err(|e| UploadError::Internal(e.to_string()))?;
     }
+    let traits = moekura_media::traits(&metadata, media_type, probe.frames);
+    let has_profile = metadata.contains_key("File:ICCProfile");
+    let pixel_hash = if probe.frames == 1 {
+        state
+            .media
+            .pixel_hash(
+                file.path(),
+                media_type,
+                (probe.width, probe.height),
+                has_profile,
+                &state.work_dir,
+            )
+            .await
+            .map_err(media_error)?
+    } else {
+        None
+    };
     let as_i32 = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
     Ok(Prepared {
         sha256: file.sha256,
@@ -910,6 +939,8 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
         has_audio: probe.has_audio,
         file_size: i64::try_from(file.size).unwrap_or(i64::MAX),
         storage_key: key.as_str().to_owned(),
+        pixel_hash,
+        traits: FileTrait::to_stored(&traits),
     })
 }
 
@@ -977,6 +1008,8 @@ impl Prepared {
             has_audio: staged.has_audio?,
             file_size: staged.file_size?,
             storage_key: staged.storage_key.clone()?,
+            pixel_hash: staged.pixel_hash.as_deref().and_then(|h| h.try_into().ok()),
+            traits: staged.traits.clone(),
         })
     }
 
@@ -995,6 +1028,8 @@ impl Prepared {
             storage_key: &self.storage_key,
             // Stored as Postgres stores it: the same 64 bits, signed.
             phash: phash.map(|h| h as i64),
+            pixel_hash: self.pixel_hash.as_ref().map(|h| &h[..]),
+            traits: &self.traits,
         }
     }
 }
@@ -1086,6 +1121,13 @@ pub async fn create_post(
         }
         Err(InsertAssetError::Db(error)) => return Err(error.into()),
     };
+    media::set_facts(
+        &mut *tx,
+        asset_id,
+        prepared.pixel_hash.as_ref(),
+        &prepared.traits,
+    )
+    .await?;
     moekura_db::jobs::enqueue(&mut tx, &ProcessMedia { asset_id }).await?;
     tx.commit().await?;
 

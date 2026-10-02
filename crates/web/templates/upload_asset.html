@@ -23,6 +23,31 @@
     {% else %}
     <p class="notice">{{ t("upload-no-preview", type=file.media_type|upper) }}</p>
     {% endif %}
+    {% if file.status == "ready" %}
+    <div class="upload-file-tools">
+      <a href="{{ file.original }}" download="{{ file.name }}">{{ t("upload-download") }}</a>
+      <button type="button" class="link" data-copy-text="{{ file.id }}" hidden>{{ t("upload-copy-id") }}</button>
+      {% if search %}
+      <details class="inline upload-search">
+        <summary>{{ t("upload-search-elsewhere") }}</summary>
+        <ul>
+          {% for link in search.elsewhere %}<li><a href="{{ link.url }}" rel="noopener noreferrer nofollow" target="_blank">{{ link.name }}</a></li>{% endfor %}
+          <li><a href="{{ search.here }}" target="_blank">{{ site.name }}</a></li>
+        </ul>
+      </details>
+      {% endif %}
+      {% if warnings and warnings.any %}
+      <ul class="upload-warning-badges" aria-label="{{ t('upload-warnings') }}">
+        {% if warnings.no_source %}<li><a class="warning-badge" href="{{ search.saucenao if search else '/wiki/non-web_source' }}" rel="noopener noreferrer nofollow" target="_blank" title="{{ t('upload-no-source-hint') }}">{{ t("upload-no-source") }}</a></li>
+        {% elif warnings.bad_link %}<li><a class="warning-badge" href="/wiki/{{ warnings.bad_link|urlencode }}">{{ t("upload-bad-source") }}</a></li>{% endif %}
+        {% if warnings.sample %}<li><a class="warning-badge" href="/wiki/{{ warnings.sample|urlencode }}">{{ t("upload-image-sample") }}</a></li>{% endif %}
+        {% if warnings.ai_generated %}<li><a class="warning-badge" href="/wiki/ai-generated">{{ t("upload-ai-generated") }}</a></li>{% endif %}
+        {% if warnings.duplicates|length == 1 %}<li><a class="warning-badge" href="/posts/{{ warnings.duplicates[0] }}">{{ t("upload-pixel-duplicate") }}</a></li>
+        {% elif warnings.duplicates %}<li><a class="warning-badge" href="{{ warnings.duplicates_search }}">{{ t("upload-pixel-duplicate") }}</a></li>{% endif %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endif %}
   </section>
 
   <section class="upload-details">
@@ -48,6 +73,16 @@
         {% for card in similar %}<li>{% include "card.html" %}</li>{% endfor %}
       </ul>
     </section>
+    {% endif %}
+    {% if warnings and warnings.any %}
+    <ul class="upload-warnings">
+      {% if warnings.no_source %}<li class="notice">{{ t("upload-no-source-detail") }} (<a href="/wiki/non-web_source">{{ t("upload-help") }}</a>)</li>
+      {% elif warnings.sample %}<li class="form-error">{{ t("upload-image-sample-detail") }} (<a href="/wiki/{{ warnings.sample|urlencode }}">{{ t("upload-help") }}</a>)</li>{% endif %}
+      {% if warnings.bad_link %}<li class="form-error">{{ t("upload-bad-source-detail") }} (<a href="/wiki/{{ warnings.bad_link|urlencode }}">{{ t("upload-help") }}</a>)</li>{% endif %}
+      {% if warnings.ai_generated %}<li class="form-error">{{ t("upload-ai-generated-detail") }} (<a href="{% if site.has_rules %}/rules{% else %}/wiki/ai-generated{% endif %}">{{ t("upload-help") }}</a>)</li>{% endif %}
+      {% if warnings.duplicates|length == 1 %}<li class="form-error">{{ t("upload-pixel-duplicate-one", id=warnings.duplicates[0]) }} (<a href="/wiki/pixel-perfect_duplicate">{{ t("upload-help") }}</a>)</li>
+      {% elif warnings.duplicates %}<li class="form-error">{{ t("upload-pixel-duplicate-many", count=warnings.duplicates|length, url=warnings.duplicates_search) }} (<a href="/wiki/pixel-perfect_duplicate">{{ t("upload-help") }}</a>)</li>{% endif %}
+    </ul>
     {% endif %}
     {% if duplicate_of %}
     <p class="form-error" role="alert">{{ t("upload-duplicate", id=duplicate_of) }}</p>

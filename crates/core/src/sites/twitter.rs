@@ -59,16 +59,18 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
                 ],
             ) => {
                 // `ABC.jpg:small`, or `ABC?format=jpg&name=900x900`.
-                let (file, _) = file.split_once(':').unwrap_or((file, ""));
+                let (file, size) = file.split_once(':').unwrap_or((file, ""));
                 let (name, ext) = file.split_once('.').unwrap_or((file, ""));
                 let ext = p.param("format").unwrap_or_else(|| ext.to_owned());
+                // Without a size, Twitter serves a medium one.
+                let size = p.param("name").unwrap_or_else(|| size.to_owned());
                 let mut path = vec![*kind];
                 path.extend_from_slice(dirs);
-                found.file(
-                    (!ext.is_empty()).then(|| {
+                found
+                    .file((!ext.is_empty()).then(|| {
                         format!("https://pbs.twimg.com/{}/{name}.{ext}:orig", path.join("/"))
-                    }),
-                )
+                    }))
+                    .sample(size != "orig")
             }
             ("pbs", ["profile_banners", id, file, ..]) if is_digits(id) => found.file(format!(
                 "https://pbs.twimg.com/profile_banners/{id}/{file}/1500x500"
@@ -117,7 +119,7 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{file, page, profile};
+    use super::super::testing::{file, page, profile, sample};
     use super::*;
 
     #[test]
@@ -162,5 +164,22 @@ mod tests {
             "https://pbs.twimg.com/profile_images/1425792004877733891/UM8s9d2x_400x400.png",
             Some("https://pbs.twimg.com/profile_images/1425792004877733891/UM8s9d2x.png"),
         );
+        for (raw, is_sample) in [
+            ("https://pbs.twimg.com/media/EBGbJe_U8AA4Ekb.jpg", true),
+            (
+                "https://pbs.twimg.com/media/EBGbJe_U8AA4Ekb.jpg:small",
+                true,
+            ),
+            (
+                "https://pbs.twimg.com/media/EBGbJe_U8AA4Ekb.jpg:orig",
+                false,
+            ),
+            (
+                "https://pbs.twimg.com/media/EBGbJe_U8AA4Ekb?format=jpg&name=orig",
+                false,
+            ),
+        ] {
+            sample(&TWITTER, raw, is_sample);
+        }
     }
 }

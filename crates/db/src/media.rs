@@ -33,6 +33,11 @@ pub struct Asset {
     pub storage_key: String,
     pub phash: Option<i64>,
     pub processed_at: Option<OffsetDateTime>,
+    /// The MD5 of the decoded pixels, for still images.
+    pub pixel_hash: Option<Vec<u8>>,
+    /// What the file's metadata said when it was uploaded
+    /// ([`moekura_core::file_traits::FileTrait`]s, as stored).
+    pub traits: Vec<String>,
 }
 
 impl Asset {
@@ -55,7 +60,7 @@ macro_rules! select_assets {
     ($rest:literal) => {
         concat!(
             "SELECT id, post_id, sha256, md5, media_type, width, height, duration_ms, frames, has_audio,
-                    file_size, storage_key, phash, processed_at
+                    file_size, storage_key, phash, processed_at, pixel_hash, traits
              FROM media_assets ",
             $rest
         )
@@ -242,6 +247,71 @@ pub async fn set_metadata(
         .execute(db)
         .await?;
     Ok(())
+}
+
+/// Records what's known of asset `id`'s file beyond its size: its pixel
+/// hash and traits (see [`Asset`]).
+pub async fn set_facts(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    pixel_hash: Option<&[u8; 16]>,
+    traits: &[String],
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE media_assets SET pixel_hash = $2, traits = $3 WHERE id = $1")
+        .bind(id)
+        .bind(pixel_hash.map(|h| &h[..]))
+        .bind(traits)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Sets asset `id`'s pixel hash, found after it was stored.
+pub async fn set_pixel_hash(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    pixel_hash: Option<&[u8; 16]>,
+) -> sqlx::Result<()> {
+    sqlx::query("UPDATE media_assets SET pixel_hash = $2 WHERE id = $1")
+        .bind(id)
+        .bind(pixel_hash.map(|h| &h[..]))
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Still images whose pixels haven't been hashed yet, after asset
+/// `after`, by id: what a job hashing them goes through.
+pub async fn unhashed_stills(
+    db: impl PgExecutor<'_>,
+    after: i64,
+    limit: i64,
+) -> sqlx::Result<Vec<Asset>> {
+    sqlx::query_as(select_assets!(
+        "WHERE id > $1 AND pixel_hash IS NULL AND frames = 1
+           AND media_type NOT IN ('mp4', 'webm', 'ugoira')
+         ORDER BY id LIMIT $2"
+    ))
+    .bind(after)
+    .bind(limit)
+    .fetch_all(db)
+    .await
+}
+
+/// The posts whose files have the pixels hashed as `pixel_hash`, newest
+/// first, at most `limit`.
+pub async fn posts_with_pixel_hash(
+    db: impl PgExecutor<'_>,
+    pixel_hash: &[u8],
+    limit: i64,
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(
+        "SELECT post_id FROM media_assets WHERE pixel_hash = $1 ORDER BY post_id DESC LIMIT $2",
+    )
+    .bind(pixel_hash)
+    .bind(limit)
+    .fetch_all(db)
+    .await
 }
 
 /// The metadata of post `post_id`'s file, by `Group:Tag`.

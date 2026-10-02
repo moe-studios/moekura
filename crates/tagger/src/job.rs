@@ -560,6 +560,8 @@ pub(crate) mod tests {
                 file_size: 1,
                 storage_key: &asset.storage_key,
                 phash: None,
+                pixel_hash: None,
+                traits: &[],
             },
         )
         .await

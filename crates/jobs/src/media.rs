@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use moekura_core::jobs::{
-    ExpireStagedUploads, ProcessMedia, PurgePost, RemoveSquareThumbnails, TagPost,
+    ExpireStagedUploads, HashPixels, ProcessMedia, PurgePost, RemoveSquareThumbnails, TagPost,
 };
 use moekura_core::posts::PostStatus;
 use moekura_db::media::{self, Asset, Variant};
@@ -79,6 +79,11 @@ impl MediaJobs {
         });
         let expirer = purger.clone();
         let remover = purger.clone();
+        let hasher = purger.clone();
+        registry.register(move |_: HashPixels| {
+            let jobs = hasher.clone();
+            async move { jobs.hash_pixels().await.map(|_| ()) }
+        });
         registry.register(move |job: PurgePost| {
             let jobs = purger.clone();
             async move { jobs.purge(job.post_id).await }
@@ -139,6 +144,74 @@ impl MediaJobs {
         Ok(removed)
     }
 
+    /// Hashes the pixels of still images that have no pixel hash, from
+    /// their originals. Returns how many were hashed. Files whose pixels
+    /// can't be read are passed over, so a retry carries on after them.
+    pub async fn hash_pixels(&self) -> Result<usize, JobError> {
+        let (mut after, mut hashed) = (0, 0);
+        loop {
+            let batch = media::unhashed_stills(&self.db, after, 100).await?;
+            let Some(last) = batch.last() else {
+                break;
+            };
+            after = last.id;
+            for asset in &batch {
+                let work =
+                    ScratchDir::named(&self.work_dir, &format!("job-pixels-{}", asset.id)).await?;
+                if let Some(hash) = self.pixel_hash_of(asset, work.path()).await? {
+                    media::set_pixel_hash(&self.db, asset.id, Some(&hash)).await?;
+                    hashed += 1;
+                }
+            }
+        }
+        tracing::info!(files = hashed, "hashed the pixels of earlier posts");
+        Ok(hashed)
+    }
+
+    /// The pixel hash of `asset`'s original, downloaded into `dir`.
+    async fn pixel_hash_of(&self, asset: &Asset, dir: &Path) -> Result<Option<[u8; 16]>, JobError> {
+        let (Ok(media_type), Some(key)) = (
+            asset.media_type.parse::<MediaType>(),
+            Key::parse(&asset.storage_key),
+        ) else {
+            return Ok(None);
+        };
+        let original = dir.join(format!("original.{}", key.extension()));
+        if let Err(error) = self.storage.download(&key, &original).await {
+            tracing::warn!(asset_id = asset.id, %error, "original missing; pixels not hashed");
+            return Ok(None);
+        }
+        self.pixel_hash_from(asset, media_type, &original, dir)
+            .await
+    }
+
+    /// The pixel hash of `asset`'s original, a `media_type` file at
+    /// `original`.
+    async fn pixel_hash_from(
+        &self,
+        asset: &Asset,
+        media_type: MediaType,
+        original: &Path,
+        dir: &Path,
+    ) -> Result<Option<[u8; 16]>, JobError> {
+        let has_profile = media::metadata_for_post(&self.db, asset.post_id)
+            .await?
+            .is_some_and(|m| m.contains_key("File:ICCProfile"));
+        let size = (
+            u32::try_from(asset.width).unwrap_or(0),
+            u32::try_from(asset.height).unwrap_or(0),
+        );
+        match self
+            .media
+            .pixel_hash(original, media_type, size, has_profile, dir)
+            .await
+        {
+            Ok(hash) => Ok(hash),
+            Err(error) if error.is_internal() => Err(media_error(error)),
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Removes a deleted post's files, then the post: see [`purge_post`].
     pub async fn purge(&self, post_id: i64) -> Result<(), JobError> {
         purge_post(&self.db, &self.storage, post_id)
@@ -177,6 +250,14 @@ impl MediaJobs {
             Ok(metadata) => media::set_metadata(&self.db, asset_id, &metadata).await?,
             Err(error) if error.is_internal() => return Err(media_error(error)),
             Err(error) => tracing::warn!(asset_id, %error, "could not read the file's metadata"),
+        }
+        // Files that didn't come through the upload form (imports) are
+        // hashed here.
+        if asset.pixel_hash.is_none() && asset.frames == 1 {
+            let hash = self
+                .pixel_hash_from(&asset, media_type, &original, work.path())
+                .await?;
+            media::set_pixel_hash(&self.db, asset_id, hash.as_ref()).await?;
         }
 
         // Videos are rendered from a still frame, ugoira from their first
@@ -326,7 +407,12 @@ struct ScratchDir(PathBuf);
 
 impl ScratchDir {
     async fn create(root: &Path, asset_id: i64) -> Result<Self, JobError> {
-        let path = root.join(format!("job-media-{asset_id}-{}", std::process::id()));
+        Self::named(root, &format!("job-media-{asset_id}")).await
+    }
+
+    /// A directory for one job, `name` for this process.
+    async fn named(root: &Path, name: &str) -> Result<Self, JobError> {
+        let path = root.join(format!("{name}-{}", std::process::id()));
         // A crashed earlier attempt may have left files behind.
         let _ = tokio::fs::remove_dir_all(&path).await;
         tokio::fs::create_dir_all(&path)
@@ -465,6 +551,40 @@ mod tests {
         assert!(jobs.storage.exists(&keys[2]).await.unwrap());
         // Nothing left to do the second time.
         assert_eq!(jobs.remove_square_thumbnails().await.unwrap(), 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn earlier_posts_get_their_pixels_hashed(pool: PgPool) {
+        let dir = scratch("pixels");
+        let png = dir.join("p.png");
+        ffmpeg(
+            &png,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=40x30:duration=1",
+                "-frames:v",
+                "1",
+            ],
+        );
+        let (jobs, asset_id) = stored_asset(&pool, &dir, &png, "png", (40, 30)).await;
+
+        assert_eq!(jobs.hash_pixels().await.unwrap(), 1);
+        let asset = media::by_id(&pool, asset_id).await.unwrap().unwrap();
+        let hash = asset.pixel_hash.expect("hashed");
+        assert_eq!(
+            media::posts_with_pixel_hash(&pool, &hash, 5).await.unwrap(),
+            [asset.post_id]
+        );
+        // Nothing left to do the second time.
+        assert_eq!(jobs.hash_pixels().await.unwrap(), 0);
+
+        // Processing hashes files that weren't.
+        media::set_pixel_hash(&pool, asset_id, None).await.unwrap();
+        jobs.process(asset_id).await.unwrap();
+        let asset = media::by_id(&pool, asset_id).await.unwrap().unwrap();
+        assert_eq!(asset.pixel_hash, Some(hash));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

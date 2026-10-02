@@ -234,6 +234,7 @@ impl Node {
                     | Filter::Duration(_)
                     | Filter::FileType(_)
                     | Filter::Md5(_)
+                    | Filter::PixelHash(_)
                     | Filter::Exif { .. }
             ),
             Node::Not(inner) => inner.uses_media(),
@@ -1625,6 +1626,10 @@ fn push_filter(sql: &mut QueryBuilder<Postgres>, filter: &Filter) {
             let hashes: Vec<Vec<u8>> = hashes.iter().map(|h| h.to_vec()).collect();
             sql.push("a.md5 = ANY(").push_bind(hashes).push(")");
         }
+        Filter::PixelHash(hashes) => {
+            let hashes: Vec<Vec<u8>> = hashes.iter().map(|h| h.to_vec()).collect();
+            sql.push("a.pixel_hash = ANY(").push_bind(hashes).push(")");
+        }
         Filter::Date { from, until } => push_dates(sql, "p.created_at", *from, *until),
         Filter::Age(ago) => push_ago(sql, "p.created_at", ago),
         Filter::Updated(When::Ago(ago)) => push_ago(sql, "p.updated_at", ago),
@@ -2637,6 +2642,22 @@ mod tests {
             .unwrap();
         assert_eq!(
             search(&pool, &format!("md5:{}", hex::encode(md5))).await,
+            [clip]
+        );
+        let pixels = [7u8; 16];
+        crate::media::set_pixel_hash(
+            &pool,
+            sqlx::query_scalar("SELECT id FROM media_assets WHERE post_id = $1")
+                .bind(clip)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            Some(&pixels),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            search(&pool, &format!("pixelhash:{}", hex::encode(pixels))).await,
             [clip]
         );
         let today = time::OffsetDateTime::now_utc().date();

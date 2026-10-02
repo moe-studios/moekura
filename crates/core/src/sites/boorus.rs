@@ -60,7 +60,7 @@ fn danbooru(p: &Parts) -> SourceUrl {
                     &md5[2..4]
                 )
             });
-            found.file(full).page(by_md5(md5))
+            found.file(full).sample(!original).page(by_md5(md5))
         }
         _ => found,
     }
@@ -86,9 +86,10 @@ fn e621(p: &Parts) -> SourceUrl {
         ["data", _, a, b, file] if is_hex(a, 2) && is_hex(b, 2) => {
             // Samples: `<md5>.jpg`, `<md5>_720p.mp4`.
             let md5 = file.get(..32).filter(|m| is_hex(m, 32));
+            let found = found.file(None).sample(true);
             match md5 {
-                Some(md5) => found.file(None).page(by_md5(md5)),
-                None => found.file(None),
+                Some(md5) => found.page(by_md5(md5)),
+                None => found,
             }
         }
         _ => found,
@@ -117,6 +118,7 @@ fn gelbooru(p: &Parts, site: &'static Site) -> SourceUrl {
         [kind @ ("images" | "samples" | "thumbnails"), .., file] => {
             let full = (*kind == "images").then(|| p.without_query());
             // `?<post id>` after some files names the post.
+            let found = found.sample(*kind != "images");
             let found = match p.query().filter(|q| is_digits(q)) {
                 Some(id) => found.page(post(id)),
                 None => found,
@@ -150,8 +152,8 @@ fn moebooru(p: &Parts, site: &'static Site) -> SourceUrl {
             None => found,
         },
         ["data", "preview", .., file] => match md5_in(file) {
-            Some(md5) => found.file(None).page(by_md5(md5)),
-            None => found.file(None),
+            Some(md5) => found.file(None).sample(true).page(by_md5(md5)),
+            None => found.file(None).sample(true),
         },
         [kind @ ("sample" | "jpeg" | "image"), md5, rest @ ..] => {
             let md5 = md5.get(..32).filter(|m| is_hex(m, 32));
@@ -165,7 +167,7 @@ fn moebooru(p: &Parts, site: &'static Site) -> SourceUrl {
                     .map(str::to_owned)
             });
             let full = (*kind == "image").then(|| p.without_query());
-            let found = found.file(full);
+            let found = found.file(full).sample(*kind != "image");
             match id {
                 Some(id) => found.page(post(&id)),
                 None => found.page(by_md5(md5)),
@@ -231,7 +233,7 @@ fn zerochan(p: &Parts) -> SourceUrl {
 
 #[cfg(test)]
 mod tests {
-    use super::super::testing::{file, on, page, profile};
+    use super::super::testing::{file, on, page, profile, sample};
     use super::*;
 
     #[test]
@@ -268,6 +270,25 @@ mod tests {
             &E621,
             "https://static1.e621.net/data/6d/1a/6d1a6090ea82c2524212499797e7e53a.png",
             Some("https://static1.e621.net/data/6d/1a/6d1a6090ea82c2524212499797e7e53a.png"),
+        );
+    }
+
+    #[test]
+    fn samples() {
+        sample(
+            &DANBOORU,
+            "https://cdn.donmai.us/original/8d/81/8d819da4871c3ca39f428999df8220ce.jpg",
+            false,
+        );
+        sample(
+            &DANBOORU,
+            "https://cdn.donmai.us/sample/8d/81/__sonetto_drawn_by_beishang_yutou__sample-8d819da4871c3ca39f428999df8220ce.jpg",
+            true,
+        );
+        sample(
+            &SAFEBOORU,
+            "https://safebooru.org//samples/4016/sample_64779fbfc87020ed5fd94854fe973bc0.jpg?4196692",
+            true,
         );
     }
 

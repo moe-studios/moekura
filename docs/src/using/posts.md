@@ -5,8 +5,9 @@
 Uploading takes two steps, as on Danbooru:
 
 1. **Upload** (`/uploads/new`) takes up to 20 files at once, chosen,
-   dropped onto the form or pasted from the clipboard; choosing them
-   sends them. Or give it [a link](#uploading-from-a-link).
+   dropped anywhere on the page or pasted from the clipboard; choosing
+   them sends them. Or give it [a link](#uploading-from-a-link): pasting
+   one anywhere on the page sends it.
 2. Each file then has its own page, showing it with its size and type,
    the posts it [looks like](#duplicates-and-look-alikes), and the form
    that makes it a post: source, rating, tags (with the related tags and
@@ -14,6 +15,28 @@ Uploading takes two steps, as on Danbooru:
    artist's commentary. An upload of one file shows its form straight
    away; one of several lists them, each linking to its page, with
    **‹ prev** and **next ›** between them.
+
+Under the file are a **Download** link, **Copy ID** (the file's number,
+which [Danbooru clients](danbooru-clients.md) post it by), links searching
+SauceNAO, Ascii2D, Yandex, Google Lens, Bing and this site for the
+picture, and warnings, each linking to its wiki page and explained above
+the form:
+
+- **No Source**: the file was sent from disk; if you can, upload the link
+  to where you found it instead (the badge searches SauceNAO for it).
+- **Bad Source**: the source is an image on a site whose image links
+  don't lead back to their page (X's, say): use the page. The wiki page
+  is `bad_<site>_link` when there is one (`bad_twitter_link`), else
+  `bad_link`.
+- **Image Sample**: the file is a resized copy (a Pixiv `img-master`
+  file, an X image without `name=orig`): upload the original. The wiki
+  page is `<site>_sample` when there is one, else `image_sample`.
+- **AI-Generated**: the file's metadata holds an image generator's
+  parameters (Stable Diffusion's or NovelAI's).
+- **Pixel-Perfect Duplicate**: posts have exactly the same pixels, though
+  the file differs (re-encoded, or with its metadata removed); the badge
+  links to the post, or a search of them. `pixelhash:<md5>` finds them
+  too.
 
 **My uploads** (`/uploads`) lists the files you uploaded, newest first,
 linking to their posts once posted. Files not posted within a day are
@@ -46,8 +69,10 @@ Give it the file itself, or a work's page on one of the
 boorus, Misskey and some ninety more.
 
 Moekura asks the site for the work's best (original) files and downloads
-them, every page of a work of several (up to 100), and the page, not the
-file, becomes each post's source. They download in the background: the
+them, every page of a work of several (up to 100). Each post's source is
+the file's own link when that names its work (Pixiv's
+`i.pximg.net/…_p3.png`, so the post says which of the work's images it
+is), else the work's page. They download in the background: the
 upload's page follows them, and a file that can't be downloaded says
 why. Any other
 page whose preview tags (OpenGraph) name an image works the same way.
@@ -68,6 +93,17 @@ The same happens with files sent with such a link, which becomes their
 source, and for uploads through the APIs (which download only the
 work's first file). When a site can't be reached or has
 changed, the link is downloaded as it is, without extras.
+
+### The bookmarklet
+
+**Bookmarklet** (`/uploads/bookmarklet`) has a **Post to …** link to drag
+to the bookmarks toolbar, and lists the sites whose works are read.
+Clicking it on a work's page opens the upload page with the page's link
+(`/uploads/new?url=…&ref=…`), which sends it straight away; going back
+skips the upload page. `ref` is the page you came from: when the link is
+a bare image, the work is read from that page if it's on the same site
+or shows the image. It's kept as the upload's `referer_url` (also in the
+Danbooru API's `upload[referer_url]`).
 
 ## Ugoira
 

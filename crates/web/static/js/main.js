@@ -198,6 +198,7 @@ var METATAGS = {
   date: [],
   filetype: ["jpg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm"],
   md5: [],
+  pixelhash: [],
   parent: ["none", "any"],
   tagcount: [],
   order: [
@@ -571,6 +572,44 @@ function enableAutosubmit() {
   });
 }
 
+// src/toast.ts
+var SHOW_FOR_MS = 6e3;
+function enableToasts() {
+  const list = document.createElement("ul");
+  list.id = "toasts";
+  list.className = "toasts";
+  list.setAttribute("role", "status");
+  document.body.append(list);
+}
+function toast(message) {
+  const region = document.getElementById("toasts");
+  if (!region) {
+    window.alert(message);
+    return;
+  }
+  const item = document.createElement("li");
+  item.className = "toast";
+  item.textContent = message;
+  region.append(item);
+  window.setTimeout(() => item.remove(), SHOW_FOR_MS);
+}
+
+// src/clipboard.ts
+function enableClipboard(root = document) {
+  const buttons = root.querySelectorAll("button[data-copy-text]");
+  if (buttons.length === 0 || !navigator.clipboard) return;
+  for (const button of buttons) {
+    button.hidden = false;
+    button.addEventListener("click", () => {
+      const text = button.dataset["copyText"] ?? "";
+      navigator.clipboard.writeText(text).then(
+        () => toast(t("copied", "Copied {$text}.", { text })),
+        () => toast(t("copy-failed", "Couldn't copy it."))
+      );
+    });
+  }
+}
+
 // src/confirm.ts
 function questionFor(form, submitter) {
   return submitter?.getAttribute("data-confirm") ?? form.getAttribute("data-confirm");
@@ -743,28 +782,6 @@ function enableLayout() {
     shortcuts.hidden = false;
     shortcuts.querySelector("button")?.addEventListener("click", showHelp);
   }
-}
-
-// src/toast.ts
-var SHOW_FOR_MS = 6e3;
-function enableToasts() {
-  const list = document.createElement("ul");
-  list.id = "toasts";
-  list.className = "toasts";
-  list.setAttribute("role", "status");
-  document.body.append(list);
-}
-function toast(message) {
-  const region = document.getElementById("toasts");
-  if (!region) {
-    window.alert(message);
-    return;
-  }
-  const item = document.createElement("li");
-  item.className = "toast";
-  item.textContent = message;
-  region.append(item);
-  window.setTimeout(() => item.remove(), SHOW_FOR_MS);
 }
 
 // src/note-editor.ts
@@ -1657,3 +1674,4 @@ enableRelatedTags();
 enableSelectAll();
 enableUpload();
 enableArtistFinder();
+enableClipboard();

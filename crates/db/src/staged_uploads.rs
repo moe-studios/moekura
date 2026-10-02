@@ -65,6 +65,11 @@ pub struct Staged {
     pub file_size: Option<i64>,
     pub storage_key: Option<String>,
     pub phash: Option<i64>,
+    /// The MD5 of the decoded pixels, for still images.
+    pub pixel_hash: Option<Vec<u8>>,
+    /// What the file's metadata says
+    /// ([`moekura_core::file_traits::FileTrait`]s, as stored).
+    pub traits: Vec<String>,
     pub post_id: Option<i64>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
@@ -84,6 +89,8 @@ pub struct StoredFile<'a> {
     pub file_size: i64,
     pub storage_key: &'a str,
     pub phash: Option<i64>,
+    pub pixel_hash: Option<&'a [u8]>,
+    pub traits: &'a [String],
 }
 
 /// Where a new file goes in an upload, and what it is.
@@ -147,8 +154,10 @@ pub async fn create(
     sqlx::query_scalar(
         "INSERT INTO staged_uploads (upload_id, uploader_id, position, file_name, source,
                                      sha256, md5, media_type, width, height, duration_ms,
-                                     frames, has_audio, file_size, storage_key, phash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                                     frames, has_audio, file_size, storage_key, phash,
+                                     pixel_hash, traits)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+                 $17, $18)
          RETURNING id",
     )
     .bind(slot.upload_id)
@@ -167,6 +176,8 @@ pub async fn create(
     .bind(file.file_size)
     .bind(file.storage_key)
     .bind(file.phash)
+    .bind(file.pixel_hash)
+    .bind(file.traits)
     .fetch_one(db)
     .await
 }
@@ -232,7 +243,8 @@ pub async fn stored(db: impl PgExecutor<'_>, id: i64, file: StoredFile<'_>) -> s
         "UPDATE staged_uploads
          SET status = 'ready', sha256 = $2, md5 = $3, media_type = $4, width = $5, height = $6,
              duration_ms = $7, frames = $8, has_audio = $9, file_size = $10,
-             storage_key = $11, phash = $12, updated_at = now()
+             storage_key = $11, phash = $12, pixel_hash = $13, traits = $14,
+             updated_at = now()
          WHERE id = $1 AND status = 'pending'",
     )
     .bind(id)
@@ -247,6 +259,8 @@ pub async fn stored(db: impl PgExecutor<'_>, id: i64, file: StoredFile<'_>) -> s
     .bind(file.file_size)
     .bind(file.storage_key)
     .bind(file.phash)
+    .bind(file.pixel_hash)
+    .bind(file.traits)
     .execute(db)
     .await?;
     Ok(())
@@ -392,6 +406,8 @@ mod tests {
             file_size: 1,
             storage_key: key,
             phash: None,
+            pixel_hash: None,
+            traits: &[],
         }
     }
 

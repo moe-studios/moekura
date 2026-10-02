@@ -15,7 +15,7 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
     let path = p.path();
     if p.sub.starts_with("static") {
         return Some(match path.as_slice() {
-            ["downloads" | "view" | "thumbs", a, b, file] => {
+            [kind @ ("downloads" | "view" | "thumbs"), a, b, file] => {
                 let id = p
                     .stem()
                     .map(|s| s.split('-').next().unwrap_or(s).to_owned());
@@ -23,6 +23,7 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
                     .file(format!(
                         "http://static.minitokyo.net/downloads/{a}/{b}/{file}"
                     ))
+                    .sample(*kind != "downloads")
                     .page(id.map(|id| page(&id)))
             }
             _ => found.file(None),

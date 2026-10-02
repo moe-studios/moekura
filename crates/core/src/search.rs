@@ -50,6 +50,7 @@ pub const METATAGS: &[&str] = &[
     "date",
     "filetype",
     "md5",
+    "pixelhash",
     "parent",
     "tagcount",
     "order",
@@ -408,6 +409,9 @@ pub enum Filter {
     Updated(When),
     FileType(Vec<String>),
     Md5(Vec<[u8; 16]>),
+    /// The MD5 of the file's decoded pixels: the same picture, whatever
+    /// the file.
+    PixelHash(Vec<[u8; 16]>),
     Parent(ParentFilter),
     /// Has children that aren't deleted (`true`), or none.
     Child(bool),
@@ -1294,6 +1298,9 @@ impl Query {
             "md5" => Filter::Md5(
                 list(value, md5).ok_or_else(|| invalid("expected 32 hexadecimal digits"))?,
             ),
+            "pixelhash" => Filter::PixelHash(
+                list(value, md5).ok_or_else(|| invalid("expected 32 hexadecimal digits"))?,
+            ),
             "source" => Filter::Source(match value {
                 "" => return Err(invalid("expected the start of a source, any or none")),
                 "any" => SourceFilter::Any,
@@ -1606,6 +1613,13 @@ impl fmt::Display for Filter {
             Filter::Md5(hashes) => {
                 write!(f, "md5:{}", join(hashes.iter().map(hex::encode).collect()))
             }
+            Filter::PixelHash(hashes) => {
+                write!(
+                    f,
+                    "pixelhash:{}",
+                    join(hashes.iter().map(hex::encode).collect())
+                )
+            }
             Filter::Parent(ParentFilter::None) => f.write_str("parent:none"),
             Filter::Parent(ParentFilter::Any) => f.write_str("parent:any"),
             Filter::Parent(ParentFilter::Of(id)) => write!(f, "parent:{id}"),
@@ -1852,6 +1866,14 @@ mod tests {
             Filter::Md5(vec![md5(hash).unwrap()])
         );
         assert!(error("md5:abc").contains("32 hexadecimal"));
+        assert_eq!(
+            filter(&format!("pixelhash:{hash}")),
+            Filter::PixelHash(vec![md5(hash).unwrap()])
+        );
+        assert_eq!(
+            filter(&format!("pixelhash:{hash}")).to_string(),
+            format!("pixelhash:{hash}")
+        );
     }
 
     #[test]

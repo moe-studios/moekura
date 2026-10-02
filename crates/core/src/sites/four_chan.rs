@@ -26,7 +26,9 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
         [_, file] | [_, "src", file] if p.has_file_ext() => {
             let thumb = p.stem().is_some_and(|s| s.ends_with('s'));
             let _ = file;
-            found.file((!thumb).then(|| p.without_query()))
+            found
+                .file((!thumb).then(|| p.without_query()))
+                .sample(thumb)
         }
         _ => found,
     })

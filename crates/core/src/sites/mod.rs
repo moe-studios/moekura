@@ -123,6 +123,10 @@ pub struct SourceUrl {
     /// For a file, its full-size version, when the link is a sample or
     /// thumbnail of it (or the link itself, when it's already that).
     pub file_url: Option<String>,
+    /// For a file, whether it's known to be a resized copy (a sample or
+    /// thumbnail) rather than the original, as Danbooru's
+    /// `image_sample?` says.
+    pub is_sample: bool,
     /// The work's page this link is (or, for a file, belongs to).
     pub page_url: Option<String>,
     /// The artist's profile this link is or belongs to.
@@ -135,6 +139,7 @@ impl SourceUrl {
             site,
             is_file: false,
             file_url: None,
+            is_sample: false,
             page_url: None,
             profile_url: None,
         }
@@ -144,6 +149,12 @@ impl SourceUrl {
     fn file(mut self, full: impl Into<Option<String>>) -> Self {
         self.is_file = true;
         self.file_url = full.into();
+        self
+    }
+
+    /// Marks the file a resized copy of the original, when `is_sample`.
+    fn sample(mut self, is_sample: bool) -> Self {
+        self.is_sample = is_sample;
         self
     }
 
@@ -308,6 +319,13 @@ pub(crate) mod testing {
         let found = on(site, raw);
         assert_eq!(found.kind(), Kind::File, "{raw}");
         assert_eq!(found.file_url.as_deref(), full, "{raw}");
+    }
+
+    /// Asserts whether file `raw` is known to be a sample.
+    pub fn sample(site: &'static Site, raw: &str, is_sample: bool) {
+        let found = on(site, raw);
+        assert_eq!(found.kind(), Kind::File, "{raw}");
+        assert_eq!(found.is_sample, is_sample, "{raw}");
     }
 }
 

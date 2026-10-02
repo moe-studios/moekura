@@ -411,8 +411,14 @@ pub mod fixture {
     /// A PNG with a text chunk saying `secret`, as cameras and editors
     /// leave in files.
     pub fn png_with_text(width: u32, height: u32, secret: &str) -> Vec<u8> {
+        png_with_chunk(width, height, "Comment", secret)
+    }
+
+    /// A PNG with a text chunk `keyword` saying `text` (`parameters` is
+    /// where Stable Diffusion front ends put theirs).
+    pub fn png_with_chunk(width: u32, height: u32, keyword: &str, text: &str) -> Vec<u8> {
         let plain = png(width, height);
-        let data = [&b"Comment\0"[..], secret.as_bytes()].concat();
+        let data = [keyword.as_bytes(), b"\0", text.as_bytes()].concat();
         let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
         chunk.extend_from_slice(b"tEXt");
         chunk.extend_from_slice(&data);

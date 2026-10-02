@@ -8,6 +8,7 @@ pub mod artists;
 pub mod blacklist;
 pub mod bulk;
 pub mod config;
+pub mod file_traits;
 pub mod import;
 pub mod jobs;
 pub mod markup;

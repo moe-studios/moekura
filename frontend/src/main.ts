@@ -4,6 +4,7 @@
 import { enableArtistFinder } from "./artist-finder.ts";
 import { attachAll } from "./autocomplete.ts";
 import { enableAutosubmit } from "./autosubmit.ts";
+import { enableClipboard } from "./clipboard.ts";
 import { enableConfirm } from "./confirm.ts";
 import { enableCopyTags } from "./copy-tags.ts";
 import { enableShortcuts } from "./keyboard.ts";
@@ -46,3 +47,4 @@ enableRelatedTags();
 enableSelectAll();
 enableUpload();
 enableArtistFinder();
+enableClipboard();

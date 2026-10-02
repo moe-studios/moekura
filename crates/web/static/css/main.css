@@ -907,6 +907,29 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 .upload-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 12px; margin: 0 0 16px; }
 .upload-facts dt { color: var(--muted); }
 .upload-facts dd { margin: 0; }
+.upload-file-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 16px;
+  margin-top: 8px;
+  font-size: 0.875rem;
+}
+.upload-search ul { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.upload-warning-badges { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.warning-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.warning-badge:hover { color: #fff; text-decoration: underline; }
+.upload-warnings { display: grid; gap: 6px; list-style: none; margin: 0 0 12px; padding: 0; }
+.upload-warnings > li { margin: 0; }
 @media (min-width: 900px) {
   .upload-layout { grid-template-columns: minmax(0, 1fr) minmax(340px, 30rem); }
   /* The file stays in view while the form scrolls. */

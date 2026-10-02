@@ -1,6 +1,7 @@
 //! Identifying, probing and processing post media with external tools
 //! (libvips for images, ffmpeg for video).
 
+mod facts;
 mod kind;
 pub mod metadata;
 pub mod phash;
@@ -19,6 +20,7 @@ use moekura_core::config::MediaConfig;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Semaphore;
 
+pub use crate::facts::{is_ai_generated, traits};
 pub use crate::kind::{MediaType, SNIFF_LEN};
 pub use crate::pixels::RgbImage;
 pub use crate::probe::Probe;

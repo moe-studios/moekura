@@ -20,7 +20,8 @@ pub(super) fn parse(p: &Parts) -> Option<SourceUrl> {
     // Files live on other hosts (media., files., file.).
     let is_instance = p.sub.is_empty() || p.sub == "www";
     if !is_instance {
-        return Some(found.file(None));
+        let thumbnail = p.basename().is_some_and(|b| b.starts_with("thumbnail-"));
+        return Some(found.file(None).sample(thumbnail));
     }
     let origin = format!("https://{}", p.domain);
     Some(match p.path().as_slice() {

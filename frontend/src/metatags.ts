@@ -21,6 +21,7 @@ export const METATAGS: Readonly<Record<string, readonly string[]>> = {
   date: [],
   filetype: ["jpg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm"],
   md5: [],
+  pixelhash: [],
   parent: ["none", "any"],
   tagcount: [],
   order: [

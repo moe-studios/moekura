@@ -237,6 +237,17 @@ log_format = "text"
 # tracing filter directive. RUST_LOG overrides it.
 # "info,tower_http=debug" also logs every request.
 log_filter = "info,sqlx::postgres::notice=warn,ort=warn"
+# Serve Prometheus metrics at /metrics on this address, in `serve` and
+# `worker`. A separate listener without authentication: keep it on
+# loopback or a private network. Unset: no metrics.
+# metrics_bind = "127.0.0.1:9100"
+# Send traces of requests and jobs over OTLP/HTTP to an OpenTelemetry
+# collector, at its /v1/traces. Unset: no traces.
+# otlp_endpoint = "http://otel-collector:4318"
+# The share of requests and jobs traced, from 0.0 to 1.0.
+otlp_sample_ratio = 1.0
+# service.name on exported traces.
+service_name = "moekura"
 
 [webhooks]
 # Let webhooks go to private, loopback and link-local addresses, e.g. a

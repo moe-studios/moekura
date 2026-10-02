@@ -232,6 +232,37 @@ pub async fn counts_by_kind(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<(String
     .await
 }
 
+/// How one kind of job is doing, for monitoring.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct QueueHealth {
+    pub kind: String,
+    /// Waiting and due now.
+    pub ready: i64,
+    /// Waiting for a later time (retries, scheduled jobs).
+    pub scheduled: i64,
+    pub running: i64,
+    pub dead: i64,
+    /// How long the longest-waiting due job has waited, in seconds.
+    pub oldest_ready_secs: f64,
+}
+
+/// [`QueueHealth`] by kind, for the kinds with jobs in the table.
+pub async fn queue_health(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<QueueHealth>> {
+    sqlx::query_as(
+        "SELECT kind,
+                count(*) FILTER (WHERE status = 'queued' AND run_at <= now()) AS ready,
+                count(*) FILTER (WHERE status = 'queued' AND run_at > now()) AS scheduled,
+                count(*) FILTER (WHERE status = 'running') AS running,
+                count(*) FILTER (WHERE status = 'dead') AS dead,
+                coalesce(extract(epoch FROM now() - min(run_at)
+                    FILTER (WHERE status = 'queued' AND run_at <= now())), 0)::float8
+                    AS oldest_ready_secs
+         FROM jobs GROUP BY kind ORDER BY kind",
+    )
+    .fetch_all(db)
+    .await
+}
+
 /// A job that ran out of attempts.
 #[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
 pub struct DeadJob {
@@ -325,6 +356,36 @@ mod tests {
                 dead: 0
             }
         );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn reports_queue_health(pool: PgPool) {
+        for n in 0..3 {
+            push(&pool, n).await;
+        }
+        sqlx::query("UPDATE jobs SET run_at = now() - interval '90 seconds' WHERE id = (SELECT min(id) FROM jobs)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE jobs SET run_at = now() + interval '1 hour' WHERE id = (SELECT max(id) FROM jobs)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        claim(&pool, "w1", LOCK, KINDS).await.unwrap().unwrap();
+        let health = queue_health(&pool).await.unwrap();
+        assert_eq!(health.len(), 1);
+        let ping = &health[0];
+        assert_eq!(
+            (
+                ping.kind.as_str(),
+                ping.ready,
+                ping.scheduled,
+                ping.running,
+                ping.dead
+            ),
+            ("test.ping", 1, 1, 1, 0)
+        );
+        assert!(ping.oldest_ready_secs < 60.0, "{}", ping.oldest_ready_secs);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

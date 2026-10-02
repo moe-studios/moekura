@@ -36,7 +36,26 @@ password**.
 
 ## Profiles
 
-Everyone's profile, at `/users/name`, counts what they've done, each
+Everyone's profile, at `/users/name`, opens with their banner, profile
+picture, name, role and bio, and a few headline counts; below are their
+latest uploads and favorites (leaving out what your blacklist hides),
+each with a link to all of them.
+
+To change yours, choose **Edit profile** on it, or **Settings → Your
+profile picture, banner and bio**:
+
+- The **profile picture** is cut to a square, and the **banner** to 3:1,
+  keeping the part of the picture that looks most interesting. They're
+  stored at most 400 × 400 and 1500 × 500 pixels, without the file's
+  metadata. JPEG, PNG, GIF, WebP and AVIF pictures of up to 10 MB work;
+  an animation keeps its first frame.
+- The **bio**, of up to 4000 characters, is formatted as comments are.
+
+While banned you can't change them. Staff who can rename someone can
+also clear their picture, banner or bio from their profile, under
+**Clear profile**; the moderation log keeps the bio removed.
+
+The details beside the latest posts count what they've done, each
 count linking to the list or search behind it: uploads (and those since
 deleted), the score their uploads add up to, favorites and favorite
 groups, post, note, wiki and pool changes, comments, forum posts and

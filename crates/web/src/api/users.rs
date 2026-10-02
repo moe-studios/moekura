@@ -24,6 +24,12 @@ pub struct ApiUser {
     pub created_at: OffsetDateTime,
     pub uploads: i64,
     pub favorites: i64,
+    /// What they wrote about themselves, in markup; empty for nothing.
+    pub bio: String,
+    /// Their profile picture: square, at most 400 pixels a side.
+    pub avatar_url: Option<String>,
+    /// Their banner: 3:1, at most 1500×500 pixels.
+    pub banner_url: Option<String>,
 }
 
 /// Get a user.
@@ -50,7 +56,16 @@ pub(crate) async fn show(
         .filter(|u| u.status == UserStatus::Active || current.can(Permission::ManageUsers))
         .ok_or(AppError::NotFound)?;
     let role = state.site.get().role(user.role_id).map(|r| r.name.clone());
+    let profile = users::profile(db, user.id).await?;
+    let url = |key: Option<String>| {
+        key.as_deref()
+            .and_then(moekura_storage::Key::parse)
+            .map(|k| state.file_url(&k))
+    };
     Ok(Json(ApiUser {
+        avatar_url: url(profile.avatar_key),
+        banner_url: url(profile.banner_key),
+        bio: profile.bio,
         uploads: posts::count_by_uploader(db, user.id).await?,
         favorites: favorites::count_by_user(db, user.id).await?,
         name: user.name,

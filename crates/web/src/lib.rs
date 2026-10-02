@@ -55,6 +55,7 @@ mod post_batches;
 mod post_history;
 mod posts;
 mod previews;
+mod profiles;
 pub mod rate_limit;
 mod recent_changes;
 mod related_tags;
@@ -370,6 +371,7 @@ pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
         .merge(two_factor::routes())
         .merge(user_moderation::routes())
         .merge(users::routes())
+        .merge(profiles::routes())
         .merge(webhooks::routes())
         .merge(wiki::routes())
         .merge(upload::routes(max_upload_bytes))

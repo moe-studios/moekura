@@ -584,6 +584,30 @@ fn with_blur(card: Value) -> Value {
     context! { ..card, ..context! { blacklisted => true } }
 }
 
+/// Cards for the first `limit` posts the search `tags` finds that the
+/// viewer may see, after their blacklist; none if the search fails.
+pub(crate) async fn preview(page: &Page, tags: &str, limit: u32) -> Result<Vec<Value>, AppError> {
+    let state = page.state();
+    let db = state.reader(&page.current);
+    let Ok(mut query) = SearchQuery::parse(tags) else {
+        return Ok(Vec::new());
+    };
+    query.limit = Some(limit);
+    let visible = visibility(&page.current);
+    let Ok(mut plan) = Plan::resolve(db, &query, &visible, &state.search_config()).await else {
+        return Ok(Vec::new());
+    };
+    plan.exclude(&crate::blacklist::exclusions(state, db, &page.current).await?);
+    let Ok(ids) = plan.ids(db, PageRef::default()).await else {
+        return Ok(Vec::new());
+    };
+    Ok(grid(page, db, &ids, None)
+        .await?
+        .into_iter()
+        .map(|(_, card)| card)
+        .collect())
+}
+
 /// Grid cards for posts `ids` (their ids and contexts, in order), leaving
 /// out posts the viewer's blacklist hides, or blurring them if they chose
 /// that. `post_query` is added to the post links, as for [`card_context`].

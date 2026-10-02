@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}{{ t("profile-edit-title") }} · {{ site.name }}{% endblock %}
+{% block content %}
+<section class="card medium">
+  <h1>{{ t("profile-edit-title") }}</h1>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <div class="profile-preview" aria-hidden="true">
+    <div class="profile-banner">{% if banner %}<img src="{{ banner }}" alt="">{% endif %}</div>
+    <div class="profile-avatar">{% if avatar %}<img src="{{ avatar }}" alt="">{% else %}<span>{{ name[:1]|upper }}</span>{% endif %}</div>
+  </div>
+  <form method="post" action="/settings/profile" enctype="multipart/form-data">
+    <label for="avatar">{{ t("profile-picture") }}</label>
+    <input id="avatar" name="avatar" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/avif">
+    <p class="hint">{{ t("profile-picture-hint", mb=max_mb) }}</p>
+    {% if avatar %}<label class="choice"><input type="checkbox" name="remove_avatar" value="1"> {{ t("profile-picture-remove") }}</label>{% endif %}
+    <label for="banner">{{ t("profile-banner") }}</label>
+    <input id="banner" name="banner" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/avif">
+    <p class="hint">{{ t("profile-banner-hint") }}</p>
+    {% if banner %}<label class="choice"><input type="checkbox" name="remove_banner" value="1"> {{ t("profile-banner-remove") }}</label>{% endif %}
+    <label for="bio">{{ t("profile-bio") }}</label>
+    <textarea id="bio" name="bio" rows="6" maxlength="{{ bio_max }}">{{ bio }}</textarea>
+    <p class="hint">{{ t("profile-bio-hint", max=bio_max) }}</p>
+    <button type="submit">{{ t("common-save") }}</button>
+  </form>
+  {% if name %}<p class="aside"><a href="/users/{{ name|urlencode }}">{{ t("profile-view") }}</a></p>{% endif %}
+</section>
+{% endblock %}

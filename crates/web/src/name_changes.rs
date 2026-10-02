@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(old.location.as_deref(), Some("/users/renamed"));
         let profile = app.get("/users/renamed", None).await.body;
         assert!(
-            profile.contains("<dt>Formerly</dt><dd>member</dd>"),
+            profile.contains("<span>Formerly member</span>"),
             "{profile}"
         );
         assert!(!profile.contains("Rename renamed"));

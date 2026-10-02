@@ -388,7 +388,7 @@ mod tests {
             app.get("/users/alice", None)
                 .await
                 .body
-                .contains("<dt>Invited by</dt><dd><a href=\"/users/moderator\">moderator</a>")
+                .contains("Invited by <a href=\"/users/moderator\">moderator</a>")
         );
 
         // Admins make any kind, see everyone's and revoke them.

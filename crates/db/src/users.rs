@@ -305,6 +305,46 @@ pub async fn set_settings(
     Ok(())
 }
 
+/// What a user wrote and chose for their profile.
+#[derive(Debug, Clone, Default, PartialEq, Eq, sqlx::FromRow)]
+pub struct Profile {
+    /// In markup; empty for none.
+    pub bio: String,
+    /// Storage keys of the profile picture and banner.
+    pub avatar_key: Option<String>,
+    pub banner_key: Option<String>,
+}
+
+pub async fn profile(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Profile> {
+    sqlx::query_as("SELECT bio, avatar_key, banner_key FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+        .map(Option::unwrap_or_default)
+}
+
+pub async fn set_profile(db: impl PgExecutor<'_>, id: i64, profile: &Profile) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET bio = $2, avatar_key = $3, banner_key = $4 WHERE id = $1")
+        .bind(id)
+        .bind(&profile.bio)
+        .bind(&profile.avatar_key)
+        .bind(&profile.banner_key)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Whether anyone's profile picture or banner is the file at `key`. Keys
+/// are content-addressed, so two users can share one.
+pub async fn profile_image_used(db: impl PgExecutor<'_>, key: &str) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM users WHERE avatar_key = $1 OR banner_key = $1)",
+    )
+    .bind(key)
+    .fetch_one(db)
+    .await
+}
+
 /// Which users [`list`] finds. Empty text and `None` match anyone.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct UserFilter<'a> {

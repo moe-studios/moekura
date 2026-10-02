@@ -807,6 +807,70 @@ html:not(.js) .select-all { display: none; }
 .bar-chart text { fill: var(--muted); font-size: 10px; }
 .top-tags li { display: inline-block; margin-right: 12px; }
 .history li.deleted { opacity: 0.6; }
+
+/* Profiles: a banner with the profile picture over its edge, then the
+   name, bio and counts; recent posts beside the details. */
+.profile { display: flex; flex-direction: column; gap: 24px; }
+.profile-header { background: var(--surface); border: 1px solid var(--border); border-radius: calc(var(--radius) * 1.5); overflow: hidden; }
+.profile-banner {
+  aspect-ratio: 3 / 1;
+  max-height: 280px;
+  width: 100%;
+  background: linear-gradient(135deg, color-mix(in oklab, var(--accent) 75%, var(--surface)), color-mix(in oklab, var(--tag-copyright) 55%, var(--accent)));
+}
+.profile-banner img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.profile-avatar {
+  --size: 136px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: var(--size);
+  height: var(--size);
+  border: 4px solid var(--surface);
+  border-radius: 50%;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--accent) 85%, var(--text));
+  color: var(--accent-text);
+  font-size: calc(var(--size) * 0.42);
+  font-weight: 700;
+  line-height: 1;
+}
+.profile-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.profile-top { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 0 24px; margin-top: calc(var(--avatar-overlap, 68px) * -1); }
+.profile-actions { justify-content: flex-end; padding-bottom: 6px; }
+.profile-intro { padding: 12px 24px 20px; }
+.profile-intro h1 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0; font-size: 1.75rem; line-height: 1.2; }
+.role-badge { padding: 2px 10px; border-radius: 999px; background: color-mix(in oklab, var(--accent) 14%, var(--surface)); color: var(--accent); font-size: 0.8125rem; font-weight: 600; }
+.role-badge:is(.is-pending, .is-unverified, .is-deactivated) { background: color-mix(in oklab, var(--danger) 14%, var(--surface)); color: var(--danger); }
+.profile-meta { display: flex; flex-wrap: wrap; gap: 2px 0; margin: 6px 0 0; color: var(--muted); font-size: 0.9375rem; }
+.profile-meta > span + span::before { content: "·"; margin: 0 8px; }
+.profile-bio { max-width: 70ch; margin-top: 14px; }
+.profile-counts { display: flex; flex-wrap: wrap; gap: 6px 24px; list-style: none; margin: 16px 0 0; padding: 0; }
+.profile-counts a { color: var(--muted); }
+.profile-counts strong { color: var(--text); font-size: 1.0625rem; font-variant-numeric: tabular-nums; }
+.profile-body { display: grid; gap: 24px; align-items: start; }
+@media (min-width: 900px) {
+  .profile-body { grid-template-columns: minmax(0, 1fr) 340px; }
+}
+.profile-main { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
+.profile-section h2 { margin: 0 0 12px; font-size: 1.25rem; }
+.profile-section-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.profile-main .post-grid { grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr)); }
+.profile-side { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.profile-side .card { padding: 18px 20px; }
+.profile-side h2 { margin: 0 0 12px; font-size: 1.0625rem; }
+.profile-side h3 { margin: 16px 0 6px; font-size: 1rem; }
+.profile-staff details.edit { margin-top: 10px; }
+@media (max-width: 599px) {
+  .profile-avatar { --size: 96px; }
+  .profile-top { --avatar-overlap: 48px; padding: 0 16px; }
+  .profile-intro { padding: 10px 16px 16px; }
+  .profile-intro h1 { font-size: 1.4rem; }
+}
+/* The edit form shows the images as the profile will. */
+.profile-preview { position: relative; margin: 0 0 56px; }
+.profile-preview .profile-banner { border-radius: var(--radius); overflow: hidden; }
+.profile-preview .profile-avatar { --size: 96px; position: absolute; left: 16px; bottom: -48px; }
 .flash.banned { border-left-color: var(--danger); }
 
 /* Admin */

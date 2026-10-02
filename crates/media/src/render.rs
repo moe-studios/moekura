@@ -124,6 +124,52 @@ impl Media {
         self.describe(out).await
     }
 
+    /// `source` (a still image, or the first frame of an animation, of
+    /// `source_size` pixels) scaled to cover a `width`×`height` box and
+    /// cut to it, keeping the part libvips's attention strategy finds most
+    /// interesting, written to `out` without metadata. Never enlarges: a
+    /// source smaller than the box gets a smaller box of the same shape.
+    pub async fn cover(
+        &self,
+        source: &Path,
+        source_type: MediaType,
+        source_size: (u32, u32),
+        (width, height): (u32, u32),
+        out: &Path,
+    ) -> Result<Rendition, MediaError> {
+        let shrink = (f64::from(source_size.0) / f64::from(width))
+            .min(f64::from(source_size.1) / f64::from(height))
+            .min(1.0);
+        // Rounded down, so the box never outgrows the source.
+        let scaled = |n: u32| ((f64::from(n) * shrink) as u32).max(1);
+        let (width, height) = (scaled(width), scaled(height));
+        let quality = if out.extension().is_some_and(|e| e == "avif") {
+            60
+        } else {
+            80
+        };
+        let mut target = out.as_os_str().to_owned();
+        target.push(format!("[Q={quality},keep=none]"));
+        let args: Vec<OsString> = vec![
+            source.into(),
+            "--size".into(),
+            format!("{width}x{height}").into(),
+            "--smartcrop".into(),
+            "attention".into(),
+            "-o".into(),
+            target,
+        ];
+        self.run(
+            &self.config.tools.vipsthumbnail,
+            args,
+            self.timeout(),
+            loaders_for(source_type),
+        )
+        .await
+        .map_err(corrupt_unless_missing)?;
+        self.describe(out).await
+    }
+
     /// Dimensions and size of a file we generated.
     async fn describe(&self, path: &Path) -> Result<Rendition, MediaError> {
         let header = |field: &'static str| {
@@ -225,6 +271,35 @@ mod tests {
             .await
             .unwrap();
         assert_eq!((thumb.width, thumb.height), (80, 60));
+    }
+
+    #[tokio::test]
+    async fn covers_a_box_without_enlarging() {
+        let dir = fixtures::dir("render-cover");
+        let wide = fixtures::image(&dir, "wide.png", 800, 300);
+        let square = media()
+            .cover(
+                &wide,
+                MediaType::Png,
+                (800, 300),
+                (200, 200),
+                &dir.join("a.webp"),
+            )
+            .await
+            .unwrap();
+        assert_eq!((square.width, square.height), (200, 200));
+        let small = fixtures::image(&dir, "small.png", 120, 90);
+        let banner = media()
+            .cover(
+                &small,
+                MediaType::Png,
+                (120, 90),
+                (1500, 500),
+                &dir.join("b.webp"),
+            )
+            .await
+            .unwrap();
+        assert_eq!((banner.width, banner.height), (120, 40));
     }
 
     #[tokio::test]

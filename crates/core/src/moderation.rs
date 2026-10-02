@@ -167,6 +167,7 @@ pub enum ActionKind {
     FeedbackDelete,
     FeedbackRestore,
     UserRename,
+    UserProfileClear,
     NewsPost,
     NewsDelete,
     TagCategoryCreate,
@@ -176,7 +177,7 @@ pub enum ActionKind {
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 58] = [
+    pub const ALL: [ActionKind; 59] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -229,6 +230,7 @@ impl ActionKind {
         ActionKind::FeedbackDelete,
         ActionKind::FeedbackRestore,
         ActionKind::UserRename,
+        ActionKind::UserProfileClear,
         ActionKind::NewsPost,
         ActionKind::NewsDelete,
         ActionKind::TagCategoryCreate,
@@ -291,6 +293,7 @@ impl ActionKind {
             ActionKind::FeedbackDelete => "user_feedback.delete",
             ActionKind::FeedbackRestore => "user_feedback.restore",
             ActionKind::UserRename => "user.rename",
+            ActionKind::UserProfileClear => "user.profile_clear",
             ActionKind::NewsPost => "news.post",
             ActionKind::NewsDelete => "news.delete",
             ActionKind::TagCategoryCreate => "tag_category.create",
@@ -355,6 +358,7 @@ impl ActionKind {
             ActionKind::FeedbackDelete => "deleted feedback on",
             ActionKind::FeedbackRestore => "restored feedback on",
             ActionKind::UserRename => "renamed",
+            ActionKind::UserProfileClear => "cleared the profile of",
             ActionKind::NewsPost => "posted site news",
             ActionKind::NewsDelete => "deleted site news",
             ActionKind::TagCategoryCreate => "added a tag category",

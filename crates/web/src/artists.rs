@@ -13,11 +13,9 @@ use moekura_core::artists::{ArtistUrl, GROUP_MAX_LEN};
 use moekura_core::markup;
 use moekura_core::moderation::ActionKind;
 use moekura_core::permissions::Permission;
-use moekura_core::search::Query as SearchQuery;
 use moekura_core::tags::TagName;
 use moekura_db::artists::{self, Artist, Contents, SaveError, VersionFilter};
 use moekura_db::mod_actions::{self, NewAction};
-use moekura_db::search::{PageRef, Plan};
 use moekura_db::{tags, wiki};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -477,29 +475,6 @@ async fn finder(
 
 // ---- one artist -------------------------------------------------------------
 
-/// The newest posts tagged `name` that `current` may see.
-async fn recent_posts(page: &Page, name: &str) -> Result<Vec<Value>, AppError> {
-    let state = page.state();
-    let db = state.reader(&page.current);
-    let Ok(mut query) = SearchQuery::parse(name) else {
-        return Ok(Vec::new());
-    };
-    query.limit = Some(POSTS_SHOWN);
-    let visible = crate::posts::visibility(&page.current);
-    let Ok(mut plan) = Plan::resolve(db, &query, &visible, &state.search_config()).await else {
-        return Ok(Vec::new());
-    };
-    plan.exclude(&crate::blacklist::exclusions(state, db, &page.current).await?);
-    let Ok(ids) = plan.ids(db, PageRef::default()).await else {
-        return Ok(Vec::new());
-    };
-    Ok(crate::posts::grid(page, db, &ids, None)
-        .await?
-        .into_iter()
-        .map(|(_, card)| card)
-        .collect())
-}
-
 async fn show(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> {
     let db = page.state().reader(&page.current);
     let artist = visible_artist(db, &page.current, id).await?;
@@ -510,7 +485,7 @@ async fn show(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> {
         .as_ref()
         .map(|p| markup::excerpt(&p.body))
         .filter(|e| !e.is_empty());
-    let posts = recent_posts(&page, &artist.name).await?;
+    let posts = crate::posts::preview(&page, &artist.name, POSTS_SHOWN).await?;
     let mine: Vec<_> = urls.iter().collect();
     Ok(page.render(
         "artist.html",

@@ -92,6 +92,7 @@ action-held_reject = turned away writing held as spam, by
 action-user_feedback_delete = deleted feedback on
 action-user_feedback_restore = restored feedback on
 action-user_rename = renamed
+action-user_profile_clear = cleared the profile of
 action-news_post = posted site news
 action-news_delete = deleted site news
 action-tag_category_create = added a tag category

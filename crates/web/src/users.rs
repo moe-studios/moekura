@@ -156,6 +156,13 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             }
         })
         .collect();
+    let profile = users::profile(db, user.id).await?;
+    let recent_uploads =
+        crate::posts::preview(&page, &format!("user:{}", user.name), RECENT_POSTS).await?;
+    let recent_favorites =
+        crate::posts::preview(&page, &format!("ordfav:{}", user.name), RECENT_POSTS).await?;
+    let has_profile =
+        !profile.bio.is_empty() || profile.avatar_key.is_some() || profile.banner_key.is_some();
     let comments_url = format!(
         "/comments?{}",
         url::form_urlencoded::Serializer::new(String::new())
@@ -173,6 +180,17 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             chart => chart,
             top_tags => top_tags,
             can_rename => can_rename,
+            can_edit_profile => own && page.current.ban.is_none(),
+            can_clear_profile => has_profile && can_rename,
+            profile => context! {
+                bio => crate::profiles::bio_html(&profile),
+                has_bio => !profile.bio.is_empty(),
+                avatar => crate::profiles::image_url(page.state(), profile.avatar_key.as_deref()),
+                banner => crate::profiles::image_url(page.state(), profile.banner_key.as_deref()),
+                initial => user.name.chars().next().map(|c| c.to_uppercase().to_string()),
+            },
+            recent_uploads => recent_uploads,
+            recent_favorites => recent_favorites,
             user => context! {
                 name => user.name,
                 role => role,
@@ -217,6 +235,8 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
 
 /// Months the profile's upload chart covers.
 const CHART_MONTHS: i32 = 12;
+/// Uploads and favorites shown on a profile.
+const RECENT_POSTS: u32 = 10;
 /// Tags listed as most used in someone's uploads.
 const TOP_TAGS: i64 = 10;
 /// A bar chart of uploads per month, unless there were none.

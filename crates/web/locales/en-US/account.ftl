@@ -144,6 +144,7 @@ settings-language-browser = Your browser's
 settings-custom-css = Custom CSS
 settings-custom-css-hint = Applied after the site's styles, on every page, for you alone.
 settings-account-link = Your email address and password
+settings-profile-link = Your profile picture, banner and bio
 settings-api-keys = <a href="/settings/api-keys">API keys</a> let scripts and apps use the site as you.
 settings-invites = <a href="/invites">Invites</a> let people sign up when it takes an invite code.
 settings-feeds = Feeds

@@ -57,10 +57,17 @@ stay part of the tag's name.
 | `rating` | `g`, `s`, `q`, `e`, their names, or `safe` |
 | `source` | where the file came from |
 | `description` | |
+| `parent_sha256` | the SHA-256 of the parent post's file, as [exports](#exporting) write it |
 
+Lists by category keep the categories this site has, its own as well as
+Danbooru's; tags in categories it lacks become general.
 Tags that aren't valid here (with `*`, or starting with a search prefix
 like `user:`) are left out with a note; the rest of the file is still
 imported.
+
+Once every file is in, posts whose sidecar names a parent's file get that
+post as their parent, if it's here (imported now or before). Pixiv ugoira
+are imported from their `.zip`.
 
 ## From other boorus
 
@@ -102,3 +109,59 @@ carries on where it stopped (after `--limit`, a failure or Ctrl-C), and
 once it's finished there's nothing to do; `--restart` starts from the
 newest posts again, which also picks up posts added since. To import from
 a site on your own network, add `--allow-private-addresses`.
+
+## Exporting
+
+`moekura admin export` writes posts' original files to a folder, each
+with a sidecar that `moekura admin import` reads back, here or on another
+site:
+
+```sh
+moekura admin export ~/export
+moekura admin export ~/export-cats --tags "cat rating:g"
+# with compose, mount a folder to write to:
+docker compose -f deploy/compose.tiny.yml run --rm -v ~/export:/export \
+  app admin export /export
+```
+
+| Option | Meaning |
+|---|---|
+| `--tags SEARCH` | only posts matching a search, as on the site (any filter, but no `order:`) |
+| `--include-deleted` | deleted posts too, unless the search has a `status:` |
+| `--dry-run` | show what would be written, without writing anything |
+
+Each post becomes `0000000123.png` (its number, padded so the folder sorts
+oldest first) and `0000000123.png.json`:
+
+```json
+{
+  "id": 123,
+  "status": "active",
+  "rating": "s",
+  "tags": {"artist": ["someone"], "general": ["cat", "sky"]},
+  "source": "https://example.com/art",
+  "description": "",
+  "parent_id": 120,
+  "parent_sha256": "9f2c…",
+  "sha256": "41ab…",
+  "md5": "5d1e…",
+  "media_type": "png"
+}
+```
+
+The files are byte for byte the originals, read from the site's storage,
+local or S3. Tags keep their categories by name. Post numbers can't carry
+over to another site, so the parent is found again by its file
+(`parent_sha256`), which works as long as the parent is exported too;
+`id` and `parent_id` only record the numbers here.
+
+Exports can be repeated and resumed: files already in the folder with the
+right size are kept rather than downloaded again, sidecars are rewritten
+when the post changed, and a file is only given its name once it's
+complete. Each post is reported as it goes, then a summary.
+
+An export is a way to move or share posts, not a backup. It has the
+files, tags, ratings, sources, descriptions and parents, but not
+accounts, favorites, votes, comments, notes, pools, the wiki, history or
+settings, and an import makes new posts with new numbers, uploaded by
+one account. To keep a whole site, see [Backups](backups.md).

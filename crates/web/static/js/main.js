@@ -656,6 +656,7 @@ var SHORTCUTS = [
   ["f", "favorite", "Favorite the post"],
   ["n", "notes", "Show or hide notes"],
   ["/", "search", "Search"],
+  ["Shift+R, Shift+L, Shift+B", "dock", "Upload form to the right, left or bottom"],
   ["?", "help", "Show these shortcuts"]
 ];
 function actionFor(key) {
@@ -676,6 +677,12 @@ function actionFor(key) {
       return "search";
     case "?":
       return "help";
+    case "R":
+      return "dock-right";
+    case "L":
+      return "dock-left";
+    case "B":
+      return "dock-bottom";
     default:
       return null;
   }
@@ -750,6 +757,14 @@ function run(action) {
     case "help":
       showHelp();
       return true;
+    case "dock-right":
+    case "dock-left":
+    case "dock-bottom": {
+      const button = document.querySelector(`button[data-dock-to=${action.slice(5)}]`);
+      if (!button) return false;
+      button.click();
+      return true;
+    }
     default:
       return false;
   }
@@ -1389,6 +1404,29 @@ function enableSelectAll() {
   }
 }
 
+// src/source-data.ts
+function enableSourceData(root = document) {
+  const button = root.querySelector("button[data-source-fetch]");
+  const form = button?.form;
+  const input = form?.querySelector('input[name="source"]');
+  const panel = form?.querySelector("[data-source-panel]");
+  if (!button || !input || !panel) return;
+  button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    const query = new URLSearchParams({ url: input.value.trim(), refresh: "1" });
+    button.disabled = true;
+    panel.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch(`/uploads/source-data?${query.toString()}`, { credentials: "same-origin" });
+      if (response.ok) panel.innerHTML = await response.text();
+    } catch {
+    } finally {
+      button.disabled = false;
+      panel.removeAttribute("aria-busy");
+    }
+  });
+}
+
 // src/tag-script.ts
 var RATINGS = {
   g: "g",
@@ -1439,28 +1477,28 @@ function enableTagScript(root = document) {
     field.hidden = !scripting();
     root.querySelector(".post-grid")?.classList.toggle("scripting", scripting());
   };
-  const stored = (key) => {
+  const stored2 = (key) => {
     try {
       return sessionStorage.getItem(key);
     } catch {
       return null;
     }
   };
-  const store = (key, value) => {
+  const store2 = (key, value) => {
     try {
       sessionStorage.setItem(key, value);
     } catch {
     }
   };
-  if (stored(MODE_KEY) === "script") mode.value = "script";
-  text.value = stored(SCRIPT_KEY) ?? text.value;
+  if (stored2(MODE_KEY) === "script") mode.value = "script";
+  text.value = stored2(SCRIPT_KEY) ?? text.value;
   show();
   mode.addEventListener("change", () => {
-    store(MODE_KEY, mode.value);
+    store2(MODE_KEY, mode.value);
     show();
     if (scripting()) text.focus();
   });
-  text.addEventListener("input", () => store(SCRIPT_KEY, text.value));
+  text.addEventListener("input", () => store2(SCRIPT_KEY, text.value));
   const say = (message) => {
     status.textContent = message;
   };
@@ -1652,6 +1690,116 @@ function enableUpload(root = document) {
   });
 }
 
+// src/upload-form.ts
+var DOCK_KEY = "upload-dock";
+var WIDTH_KEY = "upload-form-width";
+var MIN_WIDTH = 280;
+var MIN_MEDIA = 240;
+var STEP = 24;
+function tagCount(text) {
+  return text.split(/\s+/).filter((word) => {
+    if (word === "" || word.startsWith("-")) return false;
+    const colon = word.indexOf(":");
+    return colon <= 0 || !(word.slice(0, colon).toLowerCase() in EDIT_METATAGS);
+  }).length;
+}
+function asDock(value) {
+  return value === "right" || value === "left" || value === "bottom" ? value : null;
+}
+function stored(key) {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function store(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+  }
+}
+function enableUploadForm(root = document) {
+  const form = root.querySelector("form#upload-form");
+  if (!form) return;
+  form.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      form.querySelector("button[data-upload-post]")?.click();
+    }
+  });
+  const hint = form.querySelector("[data-ctrl-enter-hint]");
+  if (hint) hint.hidden = false;
+  const tags = form.querySelector("textarea[name=tags]");
+  const counter = form.querySelector("[data-tag-count]");
+  if (tags && counter) {
+    const update2 = () => {
+      const count = tagCount(tags.value);
+      counter.textContent = t("tag-count", "Tags: {$count}", { count });
+    };
+    tags.addEventListener("input", update2);
+    counter.hidden = false;
+    update2();
+  }
+  const layout = root.querySelector("[data-upload-layout]");
+  const divider = layout?.querySelector("[data-upload-divider]");
+  if (!layout || !divider) return;
+  const setDock = (dock) => {
+    layout.dataset["dock"] = dock;
+    for (const button of root.querySelectorAll("button[data-dock-to]")) {
+      button.setAttribute("aria-pressed", String(button.dataset["dockTo"] === dock));
+    }
+  };
+  const setWidth = (width2) => {
+    const most = Math.max(MIN_WIDTH, layout.clientWidth - MIN_MEDIA);
+    const clamped = Math.round(Math.min(Math.max(width2, MIN_WIDTH), most));
+    layout.style.setProperty("--upload-form-width", `${clamped}px`);
+    divider.setAttribute("aria-valuenow", String(clamped));
+    return clamped;
+  };
+  setDock(asDock(stored(DOCK_KEY)) ?? "right");
+  const width = Number(stored(WIDTH_KEY));
+  if (width > 0) setWidth(width);
+  for (const button of root.querySelectorAll("button[data-dock-to]")) {
+    button.addEventListener("click", () => {
+      const dock = asDock(button.dataset["dockTo"]);
+      if (!dock) return;
+      setDock(dock);
+      store(DOCK_KEY, dock);
+    });
+  }
+  const docks = root.querySelector("[data-upload-docks]");
+  if (docks) docks.hidden = false;
+  const widthAt = (x) => {
+    const box = layout.getBoundingClientRect();
+    return layout.dataset["dock"] === "left" ? x - box.left : box.right - x;
+  };
+  divider.addEventListener("pointerdown", (event) => {
+    if (layout.dataset["dock"] === "bottom") return;
+    event.preventDefault();
+    divider.setPointerCapture(event.pointerId);
+    layout.classList.add("resizing");
+    const move = (e) => setWidth(widthAt(e.clientX));
+    const done = (e) => {
+      store(WIDTH_KEY, String(setWidth(widthAt(e.clientX))));
+      layout.classList.remove("resizing");
+      divider.removeEventListener("pointermove", move);
+      divider.removeEventListener("pointerup", done);
+      divider.removeEventListener("pointercancel", done);
+    };
+    divider.addEventListener("pointermove", move);
+    divider.addEventListener("pointerup", done);
+    divider.addEventListener("pointercancel", done);
+  });
+  divider.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const current = Number(divider.getAttribute("aria-valuenow")) || form.getBoundingClientRect().width;
+    const wider = event.key === "ArrowLeft" === (layout.dataset["dock"] !== "left");
+    store(WIDTH_KEY, String(setWidth(current + (wider ? STEP : -STEP))));
+  });
+}
+
 // src/main.ts
 document.documentElement.classList.add("js");
 var off = (feature) => document.documentElement.dataset[feature] === "off";
@@ -1673,5 +1821,7 @@ enableCopyTags();
 enableRelatedTags();
 enableSelectAll();
 enableUpload();
+enableUploadForm();
 enableArtistFinder();
 enableClipboard();
+enableSourceData();

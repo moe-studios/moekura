@@ -49,6 +49,8 @@ pub(super) fn parse(work: &Value, target: &Target) -> Option<SourceInfo> {
         title: String::new(),
         description: text_of(&work["body"]),
         ugoira_frames: None,
+        published_at: work["created_at"].as_str().and_then(super::date),
+        updated_at: work["updated_at"].as_str().and_then(super::date),
     })
 }
 

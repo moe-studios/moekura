@@ -48,6 +48,8 @@ pub(super) fn parse(embed: &Value, page_url: &str) -> Option<SourceInfo> {
         title: text_of(&embed["title"]),
         description: String::new(),
         ugoira_frames: None,
+        published_at: embed["pubdate"].as_str().and_then(super::date),
+        updated_at: None,
     })
 }
 

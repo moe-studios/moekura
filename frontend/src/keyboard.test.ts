@@ -9,14 +9,17 @@ test("keys map to actions", () => {
   assert.equal(actionFor("e"), "edit");
   assert.equal(actionFor("n"), "notes");
   assert.equal(actionFor("x"), null);
-  // Upper case (shift held) isn't a shortcut, so capital letters type.
+  // Upper case (shift held) isn't a shortcut, so capital letters type,
+  // except where the upload form goes.
   assert.equal(actionFor("D"), null);
+  assert.equal(actionFor("L"), "dock-left");
+  assert.equal(actionFor("B"), "dock-bottom");
 });
 
 test("every documented key does something", () => {
   for (const [keys] of SHORTCUTS) {
     for (const key of keys.split(", ")) {
-      const name = key === "←" ? "ArrowLeft" : key === "→" ? "ArrowRight" : key;
+      const name = key === "←" ? "ArrowLeft" : key === "→" ? "ArrowRight" : key.replace(/^Shift\+/, "");
       assert.notEqual(actionFor(name), null, key);
     }
   }

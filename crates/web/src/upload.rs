@@ -77,9 +77,15 @@ pub struct UploadFields {
     /// source's (if it has one) is used.
     pub commentary_title: String,
     pub commentary_description: String,
+    /// The commentary in English, if given.
+    pub translated_title: String,
+    pub translated_description: String,
     /// Upload even if posts look like the file (the uploader saw the
     /// warning).
     pub allow_similar: bool,
+    /// Put the post in the approval queue though the uploader's posts
+    /// needn't wait there.
+    pub for_approval: bool,
     /// A file the uploader sent before and was warned about, to post
     /// instead of a new one.
     pub staged: Option<i64>,
@@ -161,7 +167,7 @@ pub struct Lookalikes {
 }
 
 /// Most look-alikes an upload warns about.
-const LOOKALIKES_SHOWN: usize = 8;
+pub(crate) const LOOKALIKES_SHOWN: usize = 8;
 
 /// What `uploader` may still upload now.
 pub(crate) struct Allowance {
@@ -193,10 +199,9 @@ pub(crate) async fn allowance(
             today_left: None,
         });
     }
-    let settings = &state.site.get().settings;
     let counts = posts::upload_counts(state.db.primary(), user.id).await?;
-    let queued = settings.upload_approval && !uploader.can(Permission::UploadWithoutApproval);
-    let scaling = settings.upload_limit_scaling;
+    let queued = queued(state, uploader);
+    let scaling = state.site.get().settings.upload_limit_scaling;
     Ok(Allowance {
         refusal: uploads::refusal(&limits, &counts, scaling, queued),
         pending_left: limits
@@ -207,6 +212,11 @@ pub(crate) async fn allowance(
             .daily
             .map(|daily| (i64::from(daily) - counts.today).max(0)),
     })
+}
+
+/// Whether `uploader`'s posts wait in the approval queue.
+pub(crate) fn queued(state: &AppState, uploader: &CurrentUser) -> bool {
+    state.site.get().settings.upload_approval && !uploader.can(Permission::UploadWithoutApproval)
 }
 
 /// Refuses an upload over `uploader`'s limits.
@@ -235,7 +245,7 @@ fn render_form(
         url: &fields.url,
         referer: &fields.referer,
     };
-    crate::uploads::new_form(page, link, Some(error), status, None)
+    crate::uploads::new_form(page, link, Some(error), status, None, false)
 }
 
 async fn upload(
@@ -365,8 +375,9 @@ pub(crate) async fn download(
     Ok(file)
 }
 
-/// Saves the upload's commentary on post `post_id`: the one given, or
-/// else the source's. Only logged if that fails; the post is made.
+/// Saves the upload's commentary on post `post_id`: the one given (with
+/// its translation), or else the source's. Only logged if that fails; the
+/// post is made.
 async fn save_commentary(
     state: &AppState,
     uploader: &CurrentUser,
@@ -376,9 +387,11 @@ async fn save_commentary(
     let mut texts = moekura_db::artist_commentaries::Texts {
         original_title: fields.commentary_title.clone(),
         original_description: fields.commentary_description.clone(),
-        ..Default::default()
+        translated_title: fields.translated_title.clone(),
+        translated_description: fields.translated_description.clone(),
     };
-    if texts.is_empty()
+    if texts.original_title.is_empty()
+        && texts.original_description.is_empty()
         && !fields.source.is_empty()
         && let Some(info) = state.sources.lookup(&fields.source).await
     {
@@ -456,12 +469,15 @@ pub(crate) async fn receive(
             | "rating"
             | "staged"
             | "allow_similar"
+            | "for_approval"
             | "tags"
             | "source"
             | "parent"
             | "description"
             | "commentary_title"
-            | "commentary_description" => {
+            | "commentary_description"
+            | "translated_title"
+            | "translated_description" => {
                 let text = match field.text().await {
                     Ok(text) => text,
                     Err(error) => return (fields, Err(multipart_error(state, &error))),
@@ -473,6 +489,9 @@ pub(crate) async fn receive(
                     "allow_similar" => {
                         fields.allow_similar = matches!(text.trim(), "1" | "true" | "on");
                     }
+                    "for_approval" => {
+                        fields.for_approval = matches!(text.trim(), "1" | "true" | "on");
+                    }
                     "rating" => fields.rating = text.parse().ok(),
                     "tags" => fields.tags = text,
                     "source" => fields.source = text.trim().to_owned(),
@@ -480,6 +499,10 @@ pub(crate) async fn receive(
                     "commentary_title" => fields.commentary_title = text.trim().to_owned(),
                     "commentary_description" => {
                         fields.commentary_description = text.trim().to_owned();
+                    }
+                    "translated_title" => fields.translated_title = text.trim().to_owned(),
+                    "translated_description" => {
+                        fields.translated_description = text.trim().to_owned();
                     }
                     _ => fields.description = text.trim().to_owned(),
                 }
@@ -718,7 +741,12 @@ pub async fn ingest(
         && let Some(user) = &uploader.user
     {
         let hash = phash(state, file).await;
-        let posts = lookalikes(state, uploader, hash, None).await?;
+        let close = media::SIMILAR_MAX_DISTANCE;
+        let posts: Vec<i64> = lookalikes(state, uploader, hash, None, close, LOOKALIKES_SHOWN)
+            .await?
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
         if !posts.is_empty() {
             let origin = Origin {
                 link: &fields.url,
@@ -751,43 +779,39 @@ pub(crate) async fn phash(state: &AppState, file: &TempUpload) -> Option<u64> {
     }
 }
 
-/// Posts that look like a file with perceptual hash `hash` (within the
-/// distance the index always finds) which `uploader` may see and hasn't
-/// blacklisted, closest first, leaving out `except`. Files that can't be
-/// hashed have none.
+/// Posts that look like a file with perceptual hash `hash`, within
+/// `max_distance` bits, which `uploader` may see and hasn't blacklisted,
+/// closest first, at most `limit`, leaving out `except`; each with its
+/// distance. Files that can't be hashed have none. Up to
+/// [`media::SIMILAR_MAX_DISTANCE`], every one is found.
 pub(crate) async fn lookalikes(
     state: &AppState,
     uploader: &CurrentUser,
     hash: Option<u64>,
     except: Option<i64>,
-) -> Result<Vec<i64>, UploadError> {
+    max_distance: u32,
+    limit: usize,
+) -> Result<Vec<(i64, u32)>, UploadError> {
     let Some(hash) = hash.filter(|_| uploader.can(Permission::ViewPosts)) else {
         return Ok(Vec::new());
     };
     let db = state.db.primary();
-    let found = media::similar(
-        db,
-        hash,
-        media::SIMILAR_MAX_DISTANCE,
-        except,
-        (LOOKALIKES_SHOWN * 3) as i64,
-    )
-    .await?;
+    let found = media::similar(db, hash, max_distance, except, (limit * 3) as i64).await?;
     let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
     let candidates = posts::by_ids(db, &ids).await?;
     let visible = crate::posts::visibility(uploader);
     let blacklist = crate::blacklist::for_viewer(state, db, uploader).await?;
     Ok(found
         .iter()
-        .filter_map(|s| candidates.iter().find(|p| p.id == s.post_id))
-        .filter(|p| {
+        .filter_map(|s| Some((candidates.iter().find(|p| p.id == s.post_id)?, s.distance)))
+        .filter(|(p, _)| {
             visible.allows(p)
                 && blacklist
                     .as_ref()
                     .is_none_or(|list| list.matching(p.rating, &p.tag_ids).is_none())
         })
-        .map(|p| p.id)
-        .take(LOOKALIKES_SHOWN)
+        .map(|(p, distance)| (p.id, u32::try_from(distance).unwrap_or(64)))
+        .take(limit)
         .collect())
 }
 
@@ -1058,12 +1082,11 @@ pub async fn create_post(
         }
     }
     let site = state.site.get();
-    let status =
-        if site.settings.upload_approval && !uploader.can(Permission::UploadWithoutApproval) {
-            PostStatus::Pending
-        } else {
-            PostStatus::Active
-        };
+    let status = if fields.for_approval || queued(state, uploader) {
+        PostStatus::Pending
+    } else {
+        PostStatus::Active
+    };
 
     let mut tx = db.begin().await?;
     // Credits the tags this creates; the post is the uploader's anyway.

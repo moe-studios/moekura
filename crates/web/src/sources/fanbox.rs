@@ -100,6 +100,8 @@ pub(super) fn parse(post: &Value, target: &Target) -> Option<SourceInfo> {
         title: text_of(&body["title"]),
         description: text.trim().to_owned(),
         ugoira_frames: None,
+        published_at: body["publishedDatetime"].as_str().and_then(super::date),
+        updated_at: body["updatedDatetime"].as_str().and_then(super::date),
     })
 }
 

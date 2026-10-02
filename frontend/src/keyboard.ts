@@ -12,6 +12,7 @@ export const SHORTCUTS: readonly (readonly [string, string, string])[] = [
   ["f", "favorite", "Favorite the post"],
   ["n", "notes", "Show or hide notes"],
   ["/", "search", "Search"],
+  ["Shift+R, Shift+L, Shift+B", "dock", "Upload form to the right, left or bottom"],
   ["?", "help", "Show these shortcuts"],
 ];
 
@@ -34,6 +35,12 @@ export function actionFor(key: string): string | null {
       return "search";
     case "?":
       return "help";
+    case "R":
+      return "dock-right";
+    case "L":
+      return "dock-left";
+    case "B":
+      return "dock-bottom";
     default:
       return null;
   }
@@ -116,6 +123,14 @@ function run(action: string): boolean {
     case "help":
       showHelp();
       return true;
+    case "dock-right":
+    case "dock-left":
+    case "dock-bottom": {
+      const button = document.querySelector<HTMLButtonElement>(`button[data-dock-to=${action.slice(5)}]`);
+      if (!button) return false;
+      button.click();
+      return true;
+    }
     default:
       return false;
   }

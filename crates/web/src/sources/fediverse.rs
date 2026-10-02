@@ -71,6 +71,8 @@ fn misskey_note(
         .map(without_emoji)
         .filter(|n| !n.is_empty());
     info.artist_account = Some(name.to_owned());
+    info.published_at = note["createdAt"].as_str().and_then(super::date);
+    info.updated_at = note["updatedAt"].as_str().and_then(super::date);
     // A note from another instance names it.
     match user["host"].as_str() {
         Some(host) => {
@@ -153,6 +155,8 @@ fn mastodon_status(known: &SourceUrl, origin: &str, status: &Value) -> Option<So
         .map(without_emoji)
         .filter(|n| !n.is_empty());
     info.artist_account = Some(name.to_owned());
+    info.published_at = status["created_at"].as_str().and_then(super::date);
+    info.updated_at = status["edited_at"].as_str().and_then(super::date);
     info.profile_urls.push(format!("{origin}/@{name}"));
     if let Some(id) = account["id"].as_str() {
         info.profile_urls

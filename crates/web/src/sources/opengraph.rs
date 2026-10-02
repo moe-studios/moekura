@@ -61,6 +61,9 @@ pub(super) fn parse(html: &str, page: &Url) -> Option<SourceInfo> {
         description: get(&["og:description", "twitter:description", "description"])
             .unwrap_or_default(),
         ugoira_frames: None,
+        published_at: get(&["article:published_time"]).and_then(|d| super::date(&d)),
+        updated_at: get(&["article:modified_time", "og:updated_time"])
+            .and_then(|d| super::date(&d)),
     })
 }
 

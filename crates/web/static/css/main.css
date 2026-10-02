@@ -930,12 +930,50 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 .warning-badge:hover { color: #fff; text-decoration: underline; }
 .upload-warnings { display: grid; gap: 6px; list-style: none; margin: 0 0 12px; padding: 0; }
 .upload-warnings > li { margin: 0; }
+/* The divider between them, dragged to size the form (scripts only). */
+.upload-divider { display: none; }
 @media (min-width: 900px) {
-  .upload-layout { grid-template-columns: minmax(0, 1fr) minmax(340px, 30rem); }
+  .upload-layout { grid-template-columns: minmax(0, 1fr) var(--upload-form-width, minmax(340px, 30rem)); }
   /* The file stays in view while the form scrolls. */
   .upload-media { position: sticky; top: 16px; align-self: start; }
   .upload-media img, .upload-media video { max-height: calc(100vh - 32px); }
+  .js .upload-layout {
+    grid-template-columns: minmax(0, 1fr) 12px var(--upload-form-width, minmax(340px, 30rem));
+    column-gap: 8px;
+  }
+  .js .upload-divider {
+    display: block;
+    cursor: col-resize;
+    touch-action: none;
+    background: linear-gradient(var(--border), var(--border)) center / 2px 100% no-repeat;
+  }
+  .js .upload-divider:hover, .upload-layout.resizing .upload-divider {
+    background-image: linear-gradient(var(--accent), var(--accent));
+  }
+  .upload-layout.resizing { user-select: none; }
+  .js .upload-layout[data-dock="left"] {
+    grid-template-columns: var(--upload-form-width, minmax(340px, 30rem)) 12px minmax(0, 1fr);
+  }
+  .upload-layout[data-dock="left"] > .upload-details { order: -1; }
+  .upload-layout[data-dock="left"] > .upload-media { order: 1; }
+  .js .upload-layout[data-dock="bottom"] { grid-template-columns: minmax(0, 1fr); }
+  .upload-layout[data-dock="bottom"] .upload-divider { display: none; }
+  .upload-layout[data-dock="bottom"] .upload-media { position: static; }
 }
+.upload-docks { margin: 0 0 12px; font-size: 0.875rem; color: var(--muted); }
+.upload-docks button[aria-pressed="true"] { color: var(--text); font-weight: 600; }
+.upload-submit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; }
+.tag-count { margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.source-field { display: flex; align-items: stretch; gap: 8px; }
+.source-field input { flex: 1; min-width: 0; margin: 0; }
+.source-field button[type="submit"] { margin: 0; flex: none; }
+.source-panel:not(:empty) { margin: 8px 0 4px; }
+.source-panel .upload-facts { margin: 0; font-size: 0.875rem; }
+.source-tags, .source-profiles { list-style: none; margin: 0; padding: 0; }
+.source-tags { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.source-profiles li { overflow-wrap: anywhere; }
+.upload-related h2, .upload-help summary { font-size: 1rem; }
+.upload-related { margin-bottom: 16px; }
 @media (max-width: 599px) {
   .card { padding: 16px; }
   .narrow, .medium { margin: 16px auto; }

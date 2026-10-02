@@ -381,6 +381,17 @@ pub async fn count_by_uploader(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::R
 }
 
 /// A user's uploads as upload limits count them.
+/// How many posts user `user_id` uploaded, and when they last did.
+pub async fn uploaded_by(
+    db: impl PgExecutor<'_>,
+    user_id: i64,
+) -> sqlx::Result<(i64, Option<OffsetDateTime>)> {
+    sqlx::query_as("SELECT count(*), max(created_at) FROM posts WHERE uploader_id = $1")
+        .bind(user_id)
+        .fetch_one(db)
+        .await
+}
+
 pub async fn upload_counts(
     db: impl PgExecutor<'_>,
     user_id: i64,

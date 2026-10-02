@@ -9,12 +9,23 @@ Uploading takes two steps, as on Danbooru:
    them sends them. Or give it [a link](#uploading-from-a-link): pasting
    one anywhere on the page sends it.
 2. Each file then has its own page, showing it with its size and type,
-   the posts it [looks like](#duplicates-and-look-alikes), and the form
-   that makes it a post: source, rating, tags (with the related tags and
-   the artist from the source), parent post, description and the
-   artist's commentary. An upload of one file shows its form straight
-   away; one of several lists them, each linking to its page, with
-   **‹ prev** and **next ›** between them.
+   the posts it [looks like](#duplicates-and-look-alikes), posts from the
+   same source, and the form that makes it a post: source (with
+   [what it says](#uploading-from-a-link)), rating, tags (with the related
+   tags and the artist from the source), parent post, description and the
+   artist's commentary, original and translated. An upload of one file
+   shows its form straight away; one of several lists them, each linking
+   to its page, with **‹ prev** and **next ›** between them.
+
+On the form, **Ctrl+Enter** posts, the tags box counts its tags, and the
+form can sit to the right of the file, to its left or below it (**Form:
+left · right · below**, or **Shift+L**, **Shift+R** and **Shift+B**),
+as wide as you drag the divider; both are remembered. Users whose posts
+needn't be approved can still tick **Upload for approval**; those whose
+posts wait see how many more they may upload. Until you've posted ten,
+the form points to the rules, and the wiki page `help:upload_notice`, if
+there is one, is shown as the form's help, open and marked *Updated* when
+it changed since your last post.
 
 Under the file are a **Download** link, **Copy ID** (the file's number,
 which [Danbooru clients](danbooru-clients.md) post it by), links searching
@@ -57,9 +68,14 @@ picture resized, recompressed or slightly edited, by
 [perceptual hash](search.md#searching-by-image)) shows those posts above
 its form. If yours is something else (another version, an edit, the
 next page), press **Post anyway**, perhaps making it a child or parent
-of the one it resembles. Only posts you can see and haven't blacklisted
-are shown, and posts whose files are still being processed aren't found
-yet.
+of the one it resembles. Each says how alike it is; less alike posts
+(75–94%) are behind **Show N low similarity matches**. Only posts you can
+see and haven't blacklisted are shown, and posts whose files are still
+being processed aren't found yet.
+
+**Related posts** lists posts already here from the same source (the
+work's page, or its files' links), with a link searching for all of
+them.
 
 ## Uploading from a link
 
@@ -76,11 +92,15 @@ is), else the work's page. They download in the background: the
 upload's page follows them, and a file that can't be downloaded says
 why. Any other
 page whose preview tags (OpenGraph) name an image works the same way.
-What the site says is used as well:
+What the site says is used as well, and shown under the source field:
+the site, the artist and their profiles, the site's tags, and when the
+work was published and last changed. **Fetch source data** reads the
+source again, after you change it or when the site has changed.
 
-- **The artist**: beside the tags box, the tag of the artist whose
-  [artist entry](artists.md) lists their profile there; an artist without
-  one gets a link to start it, filled in with their name and profiles.
+- **The artist**: the tag of the artist whose
+  [artist entry](artists.md) lists their profile there is put in the tags
+  box; an artist without one gets a link to start it (**Create new
+  artist**), filled in with their name and profiles.
 - **Tags**: the **Related tags** panel's *From Pixiv* (or the site's
   name) group lists the site's tags as this site's: tags whose wiki
   pages list one as an [other name](wiki.md#other-names), and tags named

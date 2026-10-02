@@ -129,6 +129,8 @@ pub(super) fn parse(post: &Value, target: &Target) -> Option<SourceInfo> {
         title: String::new(),
         description: super::decode_entities(text),
         ugoira_frames: None,
+        published_at: post["created_at"].as_str().and_then(super::date),
+        updated_at: None,
     })
 }
 

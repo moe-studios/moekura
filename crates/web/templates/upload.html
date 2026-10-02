@@ -4,7 +4,7 @@
 <section class="card medium">
   <h1>{{ t("nav-upload") }}</h1>
   {% include "upload_nav.html" %}
-  {% if site.has_rules %}<p class="hint">{{ t("upload-rules") }}</p>{% endif %}
+  {% if site.has_rules and new_uploader %}<p class="hint">{{ t("upload-rules") }}</p>{% endif %}
   {% if allowance and allowance.refusal %}<p class="notice" role="status">{{ allowance.refusal }}</p>
   {% elif allowance and (allowance.pending_left is not none or allowance.today_left is not none) %}<p class="hint">{% if allowance.pending_left is not none and allowance.today_left is not none %}{{ t("upload-left-both", pending=allowance.pending_left, today=allowance.today_left) }}{% elif allowance.pending_left is not none %}{{ t("upload-left-pending", pending=allowance.pending_left) }}{% else %}{{ t("upload-left-today", today=allowance.today_left) }}{% endif %}</p>{% endif %}
   {% if duplicate_of %}

@@ -83,6 +83,8 @@ pub(super) fn parse(thread: &Value, target: &Target) -> Option<SourceInfo> {
         title: String::new(),
         description: text_of(&post["record"]["text"]),
         ugoira_frames: None,
+        published_at: post["record"]["createdAt"].as_str().and_then(super::date),
+        updated_at: None,
     })
 }
 

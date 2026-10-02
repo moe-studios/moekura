@@ -145,8 +145,35 @@ commentary = Artist's commentary
 upload-suggested-pending = The tagger is looking at this file. Its suggestions show here when it's done; you can post without waiting for them.
 upload-suggested-check = Check again
 upload-suggested-hint = Clicking one adds it to the form.
-upload-commentary-hint = What the artist wrote with the work, as they wrote it. It's filled in from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt and the other sites Danbooru supports, or a page with its image in its preview tags), and taken from there if left empty.
+upload-commentary-hint = What the artist wrote with the work, as they wrote it, and an English translation. The original is filled in from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt and the other sites Danbooru supports, or a page with its image in its preview tags), and taken from there if left empty.
 upload-download = Download
+upload-for-approval = Upload for approval
+upload-ctrl-enter = Ctrl+Enter posts it.
+upload-divider = Width of the form
+upload-dock = Form:
+upload-dock-left = left
+upload-dock-right = right
+upload-dock-bottom = below
+upload-help-title = Help
+upload-help-new = Updated
+upload-help-changed = This has changed since your last upload.
+upload-help-page = The upload help page
+upload-less-similar = { $count ->
+    [one] Show 1 low similarity match
+   *[other] Show { $count } low similarity matches
+}
+upload-related-title = Related posts
+upload-related-found = { $count ->
+    [one] Found <a href="{ $url }">1 other post</a> from the same source.
+   *[other] Found <a href="{ $url }">{ $count } other posts</a> from the same source.
+}
+upload-source-fetch = Fetch source data
+upload-source-site = Site
+upload-source-artist = Artist
+upload-source-new-artist = Create new artist
+upload-source-published = Published
+upload-source-updated = updated { $date }
+upload-source-unread = Nothing could be read from this source.
 upload-copy-id = Copy ID
 upload-search-elsewhere = Search for it
 upload-warnings = Warnings

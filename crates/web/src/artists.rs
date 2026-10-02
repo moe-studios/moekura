@@ -353,13 +353,46 @@ struct Found {
 
 /// An artist the source names who has no entry yet.
 #[derive(Debug, Serialize)]
-struct Unknown {
+pub(crate) struct Unknown {
     /// Their name there.
-    name: String,
+    pub name: String,
     /// A tag name to suggest: their account's.
-    tag: Option<String>,
+    pub tag: Option<String>,
     /// The form to start their entry, filled in.
-    new_url: String,
+    pub new_url: String,
+}
+
+/// The artist a source names, and the form starting their entry, filled
+/// in with their account (as the tag), names and profiles; `None` when
+/// it names nobody.
+pub(crate) fn unknown_artist(info: &crate::sources::SourceInfo) -> Option<Unknown> {
+    let name = info
+        .artist_name
+        .clone()
+        .or_else(|| info.artist_account.clone())?;
+    let tag = info
+        .artist_account
+        .as_deref()
+        .and_then(|a| TagName::parse(a).ok())
+        .map(TagName::into_string);
+    let mut other_names: Vec<String> =
+        [info.artist_name.as_deref(), info.artist_account.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(moekura_core::wiki::normalize_other_name)
+            .filter(|n| Some(n) != tag.as_ref())
+            .collect();
+    other_names.dedup();
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("name", tag.as_deref().unwrap_or_default())
+        .append_pair("other_names", &other_names.join(" "))
+        .append_pair("urls", &info.profile_urls.join("\n"))
+        .finish();
+    Some(Unknown {
+        name,
+        tag,
+        new_url: format!("/artists/new?{query}"),
+    })
 }
 
 #[derive(Debug, Serialize)]
@@ -389,36 +422,8 @@ async fn find_for_url(
                 found.push(artist);
             }
         }
-        let name = info
-            .artist_name
-            .clone()
-            .or_else(|| info.artist_account.clone());
-        if found.is_empty()
-            && let Some(name) = name
-        {
-            let tag = info
-                .artist_account
-                .as_deref()
-                .and_then(|a| TagName::parse(a).ok())
-                .map(TagName::into_string);
-            let mut other_names: Vec<String> =
-                [info.artist_name.as_deref(), info.artist_account.as_deref()]
-                    .into_iter()
-                    .flatten()
-                    .map(moekura_core::wiki::normalize_other_name)
-                    .filter(|n| Some(n) != tag.as_ref())
-                    .collect();
-            other_names.dedup();
-            let query = url::form_urlencoded::Serializer::new(String::new())
-                .append_pair("name", tag.as_deref().unwrap_or_default())
-                .append_pair("other_names", &other_names.join(" "))
-                .append_pair("urls", &info.profile_urls.join("\n"))
-                .finish();
-            unknown = Some(Unknown {
-                name,
-                tag,
-                new_url: format!("/artists/new?{query}"),
-            });
+        if found.is_empty() {
+            unknown = unknown_artist(&info);
         }
     }
     Ok((found, unknown))

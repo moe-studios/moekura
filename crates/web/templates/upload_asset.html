@@ -3,7 +3,7 @@
 {% block title %}{% if upload.count > 1 %}{{ t("upload-file-title", number=file.number, count=upload.count) }} · {% endif %}{{ t("upload-title", id=upload.id) }} · {{ site.name }}{% endblock %}
 {% block head %}{% if refresh %}<meta http-equiv="refresh" content="{{ refresh }}">{% endif %}{% endblock %}
 {% block content %}
-<div class="upload-layout">
+<div class="upload-layout" data-upload-layout>
   <section class="post-media upload-media">
     {% if upload.count > 1 %}
     <nav class="pool-nav current" aria-label="{{ t('upload-files-nav') }}">
@@ -50,9 +50,16 @@
     {% endif %}
   </section>
 
+  <div class="upload-divider" data-upload-divider role="separator" aria-orientation="vertical" aria-label="{{ t('upload-divider') }}" aria-valuemin="280" tabindex="0"></div>
+
   <section class="upload-details">
     <h1>{{ t("upload-title", id=upload.id) }}</h1>
     {% include "upload_nav.html" %}
+    <p class="upload-docks" data-upload-docks hidden>{{ t("upload-dock") }}
+      <button type="button" class="link" data-dock-to="left" aria-pressed="false" title="Shift+L">{{ t("upload-dock-left") }}</button>
+      <button type="button" class="link" data-dock-to="right" aria-pressed="false" title="Shift+R">{{ t("upload-dock-right") }}</button>
+      <button type="button" class="link" data-dock-to="bottom" aria-pressed="false" title="Shift+B">{{ t("upload-dock-bottom") }}</button>
+    </p>
     <dl class="upload-facts">
       <dt>{{ t("upload-file") }}</dt><dd class="source" title="{{ file.full_name }}">{{ file.name or t("upload-unnamed") }}</dd>
       {% if file.status == "ready" %}
@@ -70,7 +77,24 @@
       <h2 id="upload-similar-title">{{ t("upload-similar-title", count=similar|length) }}</h2>
       <p>{{ t("upload-similar-hint") }}</p>
       <ul class="post-grid image-matches">
-        {% for card in similar %}<li>{% include "card.html" %}</li>{% endfor %}
+        {% for match in similar %}<li>{% with card = match.card %}{% include "card.html" %}{% endwith %}<span class="similarity">{{ t("image-search-alike", percent=match.similarity) }}</span></li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if less_similar %}
+    <details class="edit upload-less-similar">
+      <summary>{{ t("upload-less-similar", count=less_similar|length) }}</summary>
+      <ul class="post-grid image-matches">
+        {% for match in less_similar %}<li>{% with card = match.card %}{% include "card.html" %}{% endwith %}<span class="similarity">{{ t("image-search-alike", percent=match.similarity) }}</span></li>{% endfor %}
+      </ul>
+    </details>
+    {% endif %}
+    {% if related %}
+    <section class="upload-related" aria-labelledby="upload-related-title">
+      <h2 id="upload-related-title">{{ t("upload-related-title") }}</h2>
+      <p class="hint">{{ t("upload-related-found", count=related.count, url=related.search_url) }}</p>
+      <ul class="post-grid image-matches">
+        {% for card in related.posts %}<li>{% include "card.html" %}</li>{% endfor %}
       </ul>
     </section>
     {% endif %}
@@ -89,9 +113,15 @@
     {% elif error %}
     <p class="form-error" role="alert">{{ error }}</p>
     {% endif %}
-    <form method="post" action="{{ file.url }}">
+    <form method="post" action="{{ file.url }}" id="upload-form">
+      {# Enter in a field presses the form's first button: this one posts. #}
+      <button type="submit" class="visually-hidden" tabindex="-1" aria-hidden="true"></button>
       <label for="source">{{ t("source") }} <span class="optional">{{ t("optional") }}</span></label>
-      <input id="source" name="source" type="url" value="{{ form.source }}" placeholder="https://" maxlength="2048">
+      <div class="source-field">
+        <input id="source" name="source" type="url" value="{{ form.source }}" placeholder="https://" maxlength="2048">
+        <button type="submit" name="fetch_source" value="1" class="secondary" formnovalidate data-source-fetch>{{ t("upload-source-fetch") }}</button>
+      </div>
+      <div class="source-panel" data-source-panel aria-live="polite">{% include "upload_source.html" %}</div>
 
       <fieldset class="ratings">
         <legend>{{ t("rating") }}</legend>
@@ -105,6 +135,7 @@
 
       <label for="tags">{{ t("nav-tags") }}</label>
       <textarea id="tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="edit" autofocus>{{ form.tags }}</textarea>
+      <p class="hint tag-count" data-tag-count aria-live="polite" hidden></p>
       <p class="hint">{{ t("upload-tags-hint") }}</p>
       <p class="artist-finder" data-artist-finder="source" aria-live="polite" hidden></p>
       <div class="related-tags" data-related-tags="tags"><a class="hint" href="/tags/related">{{ t("related-title") }}</a></div>
@@ -115,18 +146,32 @@
       <label for="description">{{ t("description") }} <span class="optional">{{ t("optional") }}</span></label>
       <textarea id="description" name="description" rows="3" maxlength="20000">{{ form.description }}</textarea>
 
-      <details class="edit"{% if form.commentary_title or form.commentary_description %} open{% endif %}>
+      <details class="edit"{% if form.commentary_title or form.commentary_description or form.translated_title or form.translated_description %} open{% endif %}>
         <summary>{{ t("commentary") }} <span class="optional">{{ t("optional") }}</span></summary>
         <div class="edit-fields">
-          <label for="commentary_title">{{ t("field-title") }}</label>
+          <label for="commentary_title">{{ t("post-commentary-original-title") }}</label>
           <input id="commentary_title" name="commentary_title" value="{{ form.commentary_title }}" maxlength="1000">
-          <label for="commentary_description">{{ t("description") }}</label>
+          <label for="commentary_description">{{ t("post-commentary-original-description") }}</label>
           <textarea id="commentary_description" name="commentary_description" rows="3">{{ form.commentary_description }}</textarea>
+          <label for="translated_title">{{ t("post-commentary-translated-title") }}</label>
+          <input id="translated_title" name="translated_title" value="{{ form.translated_title }}" maxlength="1000">
+          <label for="translated_description">{{ t("post-commentary-translated-description") }}</label>
+          <textarea id="translated_description" name="translated_description" rows="3">{{ form.translated_description }}</textarea>
           <p class="hint">{{ t("upload-commentary-hint") }}</p>
         </div>
       </details>
 
-      <button type="submit">{% if similar %}{{ t("upload-post-anyway") }}{% else %}{{ t("upload-post") }}{% endif %}</button>
+      {% if can_choose_approval %}
+      <label class="choice"><input type="checkbox" name="for_approval" value="1"{% if form.for_approval %} checked{% endif %}> {{ t("upload-for-approval") }}</label>
+      {% endif %}
+      <div class="upload-submit">
+        <button type="submit" data-upload-post>{% if similar %}{{ t("upload-post-anyway") }}{% else %}{{ t("upload-post") }}{% endif %}</button>
+        {% if allowance and allowance.pending_left is not none and allowance.today_left is not none %}<span class="hint">{{ t("upload-left-both", pending=allowance.pending_left, today=allowance.today_left) }}</span>
+        {% elif allowance and allowance.pending_left is not none %}<span class="hint">{{ t("upload-left-pending", pending=allowance.pending_left) }}</span>
+        {% elif allowance and allowance.today_left is not none %}<span class="hint">{{ t("upload-left-today", today=allowance.today_left) }}</span>{% endif %}
+        <span class="hint" data-ctrl-enter-hint hidden>{{ t("upload-ctrl-enter") }}</span>
+      </div>
+      {% if show_rules %}<p class="hint">{{ t("upload-rules") }}</p>{% endif %}
       {# After Post, which Enter in a field must keep pressing. #}
       {% if suggestions %}
       <div class="suggestions" data-suggestions="upload"{% if suggestions.pending %} data-suggestions-poll="{{ suggestions_url }}"{% endif %}>
@@ -134,6 +179,14 @@
       </div>
       {% endif %}
     </form>
+    {% if help %}
+    <details class="edit upload-help"{% if help.changed %} open{% endif %}>
+      <summary>{{ t("upload-help-title") }}{% if help.changed %} <span class="warning-badge">{{ t("upload-help-new") }}</span>{% endif %}</summary>
+      {% if help.changed %}<p class="hint">{{ t("upload-help-changed") }}</p>{% endif %}
+      <div class="markup">{{ help.html }}</div>
+      <p class="hint"><a href="{{ help.url }}">{{ t("upload-help-page") }}</a></p>
+    </details>
+    {% endif %}
     {% endif %}
   </section>
 </div>

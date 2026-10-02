@@ -94,6 +94,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use moekura_core::config::SourcesConfig;
+use time::OffsetDateTime;
 use url::Url;
 
 use crate::fetch::Fetcher;
@@ -137,6 +138,14 @@ pub struct SourceInfo {
     /// For a Pixiv ugoira: each frame's file in the zip and delay (ms),
     /// which the zip itself lacks.
     pub ugoira_frames: Option<Vec<(String, u32)>>,
+    /// When the work was published, and last changed, as the site says.
+    pub published_at: Option<OffsetDateTime>,
+    pub updated_at: Option<OffsetDateTime>,
+}
+
+/// A date the way sites' APIs give them (RFC 3339, `2024-05-01T12:00:00Z`).
+pub(crate) fn date(text: &str) -> Option<OffsetDateTime> {
+    OffsetDateTime::parse(text.trim(), &time::format_description::well_known::Rfc3339).ok()
 }
 
 impl SourceInfo {
@@ -358,6 +367,11 @@ impl SourceCache {
         }
         entries.insert(url.to_owned(), (Instant::now(), info));
     }
+
+    fn forget(&self, url: &str) {
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        entries.remove(url);
+    }
 }
 
 /// Whether `url` is a file whose work isn't known from the link alone:
@@ -481,6 +495,12 @@ impl Sources {
         // The file isn't necessarily the one the page's frames are for.
         info.ugoira_frames = None;
         Some(Arc::new(info))
+    }
+
+    /// Looks `url` up again, rather than reusing what was found before.
+    pub async fn refresh(&self, url: &str) -> Option<Arc<SourceInfo>> {
+        self.cache.forget(url.trim());
+        self.lookup(url).await
     }
 
     /// Answers lookups of `url` with `info`, as if its page said so.

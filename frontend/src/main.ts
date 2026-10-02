@@ -17,10 +17,12 @@ import { enableReader } from "./reader.ts";
 import { enableRelatedTags } from "./related-tags.ts";
 import { enableResized } from "./resized.ts";
 import { enableSelectAll } from "./select-all.ts";
+import { enableSourceData } from "./source-data.ts";
 import { enableSuggestions } from "./suggestions.ts";
 import { enableTagScript } from "./tag-script.ts";
 import { enableToasts } from "./toast.ts";
 import { enableUpload } from "./upload.ts";
+import { enableUploadForm } from "./upload-form.ts";
 
 // Lets styles tell whether scripts run.
 document.documentElement.classList.add("js");
@@ -46,5 +48,7 @@ enableCopyTags();
 enableRelatedTags();
 enableSelectAll();
 enableUpload();
+enableUploadForm();
 enableArtistFinder();
 enableClipboard();
+enableSourceData();

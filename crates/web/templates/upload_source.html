@@ -1,0 +1,34 @@
+{# What a file's source says, on its post form; also sent alone to scripts fetching it again. #}
+{% from "site_icon.html" import site_icon %}
+{% if source %}
+<dl class="upload-facts source-data">
+  <dt>{{ t("upload-source-site") }}</dt>
+  <dd class="source">{{ site_icon(source.page_url) }}<a href="{{ source.page_url }}" rel="noopener noreferrer nofollow" target="_blank">{{ source.site }}</a></dd>
+  {% if source.artist_name or source.artist_account or source.artists %}
+  <dt>{{ t("upload-source-artist") }}</dt>
+  <dd>
+    {% for artist in source.artists %}<a class="tag-artist" href="{{ artist.url }}" target="_blank">{{ artist.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+    {% if not source.artists %}{{ source.artist_name or source.artist_account }}{% if source.artist_name and source.artist_account and source.artist_name != source.artist_account %} <span class="hint">({{ source.artist_account }})</span>{% endif %}{% if source.new_artist_url %} · <a href="{{ source.new_artist_url }}" target="_blank">{{ t("upload-source-new-artist") }}</a>{% endif %}{% endif %}
+    {% if source.profiles %}
+    <ul class="source-profiles">
+      {% for profile in source.profiles %}<li>{{ site_icon(profile) }}<a href="{{ profile }}" rel="noopener noreferrer nofollow" target="_blank">{{ profile }}</a></li>{% endfor %}
+    </ul>
+    {% endif %}
+  </dd>
+  {% endif %}
+  {% if source.tags %}
+  <dt>{{ t("nav-tags") }}</dt>
+  <dd>
+    <ul class="source-tags">
+      {% for tag in source.tags %}<li>{% if tag.local %}<a class="tag-{{ tag.local.category }}" href="{{ tag.local.url }}">{{ tag.local.name }}</a> <span class="hint">{{ tag.name }}</span>{% else %}{{ tag.name }}{% if tag.translation %} <span class="hint">{{ tag.translation }}</span>{% endif %}{% endif %}</li>{% endfor %}
+    </ul>
+  </dd>
+  {% endif %}
+  {% if source.published %}
+  <dt>{{ t("upload-source-published") }}</dt>
+  <dd>{{ source.published }}{% if source.updated %} · {{ t("upload-source-updated", date=source.updated) }}{% endif %}</dd>
+  {% endif %}
+</dl>
+{% elif source_url %}
+<p class="hint">{{ t("upload-source-unread") }}</p>
+{% endif %}

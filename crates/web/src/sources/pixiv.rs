@@ -134,6 +134,8 @@ pub(super) fn parse(
         title: text_of(&body["illustTitle"]),
         description: html_to_text(&text_of(&body["illustComment"])),
         ugoira_frames,
+        published_at: body["createDate"].as_str().and_then(super::date),
+        updated_at: body["uploadDate"].as_str().and_then(super::date),
     })
 }
 
@@ -208,6 +210,7 @@ mod tests {
         let work = json!({ "error": false, "body": {
             "illustTitle": "猫", "illustComment": "新作です<br />よろしく",
             "userId": "5", "userName": "Neko", "userAccount": "nekoart", "pageCount": 2,
+            "createDate": "2014-10-03T09:10:20+00:00", "uploadDate": "2014-10-04T09:10:20+00:00",
             "urls": { "original": "https://i.pximg.net/a_p0.png" },
             "tags": { "tags": [
                 { "tag": "猫", "translation": { "en": "cat" } },
@@ -232,6 +235,14 @@ mod tests {
         assert_eq!(info.tags[0].translation.as_deref(), Some("cat"));
         assert_eq!(info.artist_name.as_deref(), Some("Neko"));
         assert_eq!(info.ugoira_frames, None);
+        assert_eq!(
+            info.published_at.map(|d| d.unix_timestamp()),
+            Some(1_412_327_420)
+        );
+        assert_eq!(
+            info.updated_at.map(|d| d.unix_timestamp()),
+            Some(1_412_413_820)
+        );
 
         let meta = json!({ "body": {
             "originalSrc": "https://i.pximg.net/img-zip-ugoira/a_ugoira1920x1080.zip",

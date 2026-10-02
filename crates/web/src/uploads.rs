@@ -56,6 +56,7 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             "/uploads/{id}/assets/{file}/suggestions",
             get(asset_suggestions),
         )
+        .route("/uploads/source-data", get(source_data_fragment))
 }
 
 /// The uploading user: uploads are kept for an account.
@@ -77,8 +78,9 @@ struct NewQuery {
 }
 
 async fn new(page: Page, Query(query): Query<NewQuery>) -> Result<Response, AppError> {
-    uploader(&page.current)?;
+    let user = uploader(&page.current)?;
     let allowance = upload::allowance(page.state(), &page.current).await?;
+    let (new_uploader, _) = guidance(page.state(), user).await?;
     let link = Link {
         url: &query.url,
         referer: &query.referer,
@@ -89,6 +91,7 @@ async fn new(page: Page, Query(query): Query<NewQuery>) -> Result<Response, AppE
         None,
         StatusCode::OK,
         Some(&allowance),
+        new_uploader,
     ))
 }
 
@@ -140,6 +143,7 @@ pub(crate) fn new_form(
     error: Option<&UploadError>,
     status: StatusCode,
     allowance: Option<&Allowance>,
+    new_uploader: bool,
 ) -> Response {
     let (message, duplicate_of) = match error {
         Some(UploadError::Duplicate(id)) => (None, Some(*id)),
@@ -163,6 +167,8 @@ pub(crate) fn new_form(
                 pending_left => a.pending_left,
                 today_left => a.today_left,
             }),
+            // The rules are pointed out to those who've posted little.
+            new_uploader => new_uploader,
         },
     )
 }
@@ -232,7 +238,7 @@ async fn create(
         if let UploadError::Internal(detail) = &error {
             tracing::error!(error = %detail, "upload failed");
         }
-        new_form(&page, link, Some(&error), error_status(&error), None)
+        new_form(&page, link, Some(&error), error_status(&error), None, false)
     };
     if let Err(error) = upload::check_limits(&state, &page.current).await {
         return Ok(refuse(Link::default(), error));
@@ -523,6 +529,10 @@ struct AssetFields {
     description: String,
     commentary_title: String,
     commentary_description: String,
+    translated_title: String,
+    translated_description: String,
+    /// "Upload for approval", ticked.
+    for_approval: String,
     /// A suggested tag clicked on (without scripts, which add it to the
     /// tags box): added to the form, which is shown again.
     add: String,
@@ -530,11 +540,15 @@ struct AssetFields {
     suggested_rating: String,
     /// "Check again" for suggestions: the form is shown again.
     refresh: String,
+    /// "Fetch source data": the source is looked up again and the form
+    /// shown again.
+    fetch_source: String,
 }
 
 impl AssetFields {
-    /// The form as it starts: the file's source, and the artist's
-    /// commentary from its page when a source strategy reads it.
+    /// The form as it starts: the file's source, and, when a source
+    /// strategy reads its page, the artist's tag (when they have an
+    /// entry) and commentary.
     async fn for_file(state: &AppState, upload: &Upload, file: &Staged) -> Self {
         let source = if file.source.is_empty() {
             upload.source.clone()
@@ -552,6 +566,15 @@ impl AssetFields {
         {
             fields.commentary_title.clone_from(&info.title);
             fields.commentary_description.clone_from(&info.description);
+            match crate::sources::artists_for(state.db.primary(), &info).await {
+                Ok(artists) => {
+                    for artist in artists {
+                        fields.tags.push_str(&artist.name);
+                        fields.tags.push(' ');
+                    }
+                }
+                Err(error) => tracing::warn!(%error, "the source's artists weren't looked up"),
+            }
         }
         fields
     }
@@ -565,6 +588,9 @@ impl AssetFields {
             description: self.description.trim().to_owned(),
             commentary_title: self.commentary_title.trim().to_owned(),
             commentary_description: self.commentary_description.trim().to_owned(),
+            translated_title: self.translated_title.trim().to_owned(),
+            translated_description: self.translated_description.trim().to_owned(),
+            for_approval: !self.for_approval.is_empty(),
             ..UploadFields::default()
         }
     }
@@ -602,10 +628,18 @@ async fn post_asset(
     let user = uploader(&page.current)?;
     let state = page.state();
     let (upload, files, index) = own_file(state, user, id, file_id).await?;
-    // A suggestion taken, or a check for them, without scripts: the form
-    // again, with the suggestion in it, rather than a post.
-    if !(fields.add.is_empty() && fields.suggested_rating.is_empty() && fields.refresh.is_empty()) {
+    // A suggestion taken, or a check for them or the source, without
+    // scripts: the form again, with the suggestion in it, rather than a
+    // post.
+    if !(fields.add.is_empty()
+        && fields.suggested_rating.is_empty()
+        && fields.refresh.is_empty()
+        && fields.fetch_source.is_empty())
+    {
         let mut fields = fields;
+        if !fields.fetch_source.is_empty() && is_web_link(fields.source.trim()) {
+            state.sources.refresh(fields.source.trim()).await;
+        }
         let added = std::mem::take(&mut fields.add);
         if !added.trim().is_empty() {
             fields.tags = format!("{} {} ", fields.tags.trim_end(), added.trim())
@@ -665,6 +699,193 @@ async fn asset_suggestions(
         "upload_suggestions.html",
         context! { suggestions => suggestions },
     ))
+}
+
+/// What the post form shows of what a source said: the site and page,
+/// the artist (their entries here, or a link starting one) and profiles,
+/// the site's tags (linked to this site's where known), and when the work
+/// was published and changed.
+async fn source_data(state: &AppState, info: &SourceInfo) -> Result<Value, AppError> {
+    let db = state.db.primary();
+    let artists = crate::sources::artists_for(db, info).await?;
+    let new_artist = if artists.is_empty() {
+        crate::artists::unknown_artist(info)
+    } else {
+        None
+    };
+    let translated = crate::sources::translated_tags(db, info).await?;
+    let categories = moekura_db::tags::categories(db).await?;
+    let category = |id: i16| {
+        categories
+            .iter()
+            .find(|c| c.id == id)
+            .map_or("general", |c| c.name.as_str())
+    };
+    let tags: Vec<Value> = info
+        .tags
+        .iter()
+        .map(|tag| {
+            let local = translated.iter().find(|(_, from)| *from == tag.name);
+            context! {
+                name => tag.name,
+                translation => tag.translation,
+                local => local.map(|(t, _)| context! {
+                    name => t.name,
+                    category => category(t.category_id),
+                    url => url_value(&format!(
+                        "/posts?tags={}",
+                        url::form_urlencoded::byte_serialize(t.name.as_bytes()).collect::<String>()
+                    )),
+                }),
+            }
+        })
+        .collect();
+    Ok(context! {
+        site => info.site,
+        page_url => url_value(&info.page_url),
+        artist_name => info.artist_name,
+        artist_account => info.artist_account,
+        profiles => info.profile_urls.iter().map(|u| url_value(u)).collect::<Vec<_>>(),
+        artists => artists.iter().map(|a| context! {
+            name => a.name,
+            url => url_value(&format!("/artists/{}", a.id)),
+        }).collect::<Vec<_>>(),
+        new_artist_url => new_artist.map(|u| url_value(&u.new_url)),
+        tags => tags,
+        published => info.published_at.map(crate::dates::day),
+        updated => info
+            .updated_at
+            .filter(|u| Some(*u) != info.published_at)
+            .map(crate::dates::day),
+    })
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct SourceDataQuery {
+    url: String,
+    /// Look the source up again rather than reuse what was found.
+    refresh: String,
+}
+
+/// The post form's source panel for `url`, for scripts fetching it again
+/// after the source was changed. Empty when no strategy reads it.
+async fn source_data_fragment(
+    page: Page,
+    Query(query): Query<SourceDataQuery>,
+) -> Result<Response, AppError> {
+    uploader(&page.current)?;
+    let state = page.state();
+    let info = if !is_web_link(query.url.trim()) {
+        None
+    } else if query.refresh.is_empty() {
+        state.sources.lookup(&query.url).await
+    } else {
+        state.sources.refresh(&query.url).await
+    };
+    let source = match info {
+        Some(info) => Some(source_data(state, &info).await?),
+        None => None,
+    };
+    Ok(page.render(
+        "upload_source.html",
+        context! { source => source, source_url => query.url.trim() },
+    ))
+}
+
+/// Uploaders with fewer posts than this are shown the rules.
+const NEW_UPLOADER_POSTS: i64 = 10;
+/// The wiki page shown as the post form's help.
+const HELP_PAGE: &str = "help:upload_notice";
+
+/// Whether `user` is new to uploading (shown the rules), and the upload
+/// help ([`HELP_PAGE`]), saying whether it changed since their last
+/// post.
+async fn guidance(state: &AppState, user: &User) -> Result<(bool, Option<Value>), AppError> {
+    let db = state.db.primary();
+    let (posts, last) = moekura_db::posts::uploaded_by(db, user.id).await?;
+    let help = moekura_db::wiki::by_title(db, HELP_PAGE)
+        .await?
+        .map(|page| {
+            context! {
+                html => Value::from_safe_string(moekura_core::markup::render(&page.body)),
+                url => url_value(&moekura_core::markup::wiki_url(HELP_PAGE)),
+                changed => last.is_none_or(|last| page.updated_at > last),
+            }
+        });
+    Ok((posts < NEW_UPLOADER_POSTS, help))
+}
+
+/// Posts from the same source shown on the post form.
+const RELATED_SHOWN: u32 = 8;
+/// Most sources looked for.
+const RELATED_SOURCES: usize = 10;
+
+/// Posts already here from the same source as an upload's files: whose
+/// source starts with the work's page (`page_url`) or with one of the
+/// files' sources (a Pixiv work's images). With the search finding them
+/// all and how many it finds. `None` when there are none.
+async fn related_by_source(
+    page: &Page,
+    files: &[Staged],
+    page_url: Option<&str>,
+) -> Result<Option<Value>, AppError> {
+    use moekura_core::search::Query as SearchQuery;
+    use moekura_db::search::{Count, PageRef, Plan};
+
+    let mut sources: Vec<&str> = page_url.into_iter().collect();
+    for file in files {
+        if is_web_link(&file.source) && !sources.contains(&file.source.as_str()) {
+            sources.push(&file.source);
+        }
+    }
+    sources.truncate(RELATED_SOURCES);
+    // Terms are split at spaces, so links with any can't be searched.
+    sources.retain(|s| !s.contains(char::is_whitespace));
+    let terms: Vec<String> = sources.iter().map(|s| format!("source:{s}")).collect();
+    let search = match terms.as_slice() {
+        [] => return Ok(None),
+        [one] => one.clone(),
+        many => many
+            .iter()
+            .map(|t| format!("~{t}"))
+            .collect::<Vec<_>>()
+            .join(" "),
+    };
+    let Ok(mut query) = SearchQuery::parse(&search) else {
+        return Ok(None);
+    };
+    query.limit = Some(RELATED_SHOWN);
+    let state = page.state();
+    let db = state.db.primary();
+    let visible = crate::posts::visibility(&page.current);
+    let Ok(mut plan) = Plan::resolve(db, &query, &visible, &state.search_config()).await else {
+        return Ok(None);
+    };
+    plan.exclude(&crate::blacklist::exclusions(state, db, &page.current).await?);
+    let (Ok(ids), Ok(count)) = (plan.ids(db, PageRef::default()).await, plan.count(db).await)
+    else {
+        return Ok(None);
+    };
+    if ids.is_empty() {
+        return Ok(None);
+    }
+    let count = match count {
+        Count::Exact(n) | Count::About(n) | Count::AtLeast(n) => n,
+    };
+    let cards: Vec<Value> = crate::posts::grid(page, db, &ids, None)
+        .await?
+        .into_iter()
+        .map(|(_, card)| card)
+        .collect();
+    Ok(Some(context! {
+        posts => cards,
+        count => count,
+        search_url => url_value(&format!(
+            "/posts?tags={}",
+            url::form_urlencoded::byte_serialize(search.as_bytes()).collect::<String>()
+        )),
+    }))
 }
 
 /// The wiki page about a problem with a link on `site` (a site's key):
@@ -791,18 +1012,43 @@ async fn asset_page(
 ) -> Result<Response, AppError> {
     let state = page.state();
     let file = &files[index];
-    let similar = if file.status == Status::Ready && file.post_id.is_none() {
+    // Close matches are warned about; less alike ones are behind a
+    // button.
+    let (similar, less_similar) = if file.status == Status::Ready && file.post_id.is_none() {
         let hash = file.phash.map(|h| h as u64);
-        let posts = upload::lookalikes(state, &page.current, hash, None)
-            .await
-            .map_err(|e| AppError::Internal(e.to_string()))?;
-        crate::posts::grid(page, state.db.primary(), &posts, None)
-            .await?
-            .into_iter()
-            .map(|(_, card)| card)
-            .collect()
+        let found = upload::lookalikes(
+            state,
+            &page.current,
+            hash,
+            None,
+            crate::image_search::MAX_DISTANCE,
+            upload::LOOKALIKES_SHOWN * 2,
+        )
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+        let ids: Vec<i64> = found.iter().map(|(id, _)| *id).collect();
+        let cards = crate::posts::grid(page, state.db.primary(), &ids, None).await?;
+        let mut close = Vec::new();
+        let mut far = Vec::new();
+        for (id, distance) in found {
+            let Some((_, card)) = cards.iter().find(|(card_id, _)| *card_id == id) else {
+                continue;
+            };
+            let similarity = crate::image_search::Match {
+                post_id: id,
+                distance,
+            }
+            .similarity();
+            let shown = context! { card => card, similarity => similarity };
+            if distance <= moekura_db::media::SIMILAR_MAX_DISTANCE {
+                close.push(shown);
+            } else {
+                far.push(shown);
+            }
+        }
+        (close, far)
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
     let suggestions = if file.status == Status::Ready && file.post_id.is_none() {
         crate::suggestions::for_upload_form(
@@ -841,6 +1087,37 @@ async fn asset_page(
     } else {
         None
     };
+    let source_url = fields.source.trim();
+    let info = if open && is_web_link(source_url) {
+        state.sources.lookup(source_url).await
+    } else {
+        None
+    };
+    let source = match &info {
+        Some(info) => Some(source_data(state, info).await?),
+        None => None,
+    };
+    // Users whose posts wait for approval see how many more they may
+    // upload; others may choose to have theirs wait.
+    let queued = upload::queued(state, &page.current);
+    let allowance = if open && queued {
+        Some(upload::allowance(state, &page.current).await?)
+    } else {
+        None
+    };
+    let (new_uploader, help) = match &page.current.user {
+        Some(user) if open => guidance(state, user).await?,
+        _ => (false, None),
+    };
+    let related = if open {
+        let page_url = info
+            .as_deref()
+            .map(|i| i.page_url.as_str())
+            .or_else(|| (!upload.source.is_empty()).then_some(upload.source.as_str()));
+        related_by_source(page, files, page_url).await?
+    } else {
+        None
+    };
     // Other sites fetch the file, so they're given its full address.
     let absolute = file
         .storage_key
@@ -858,7 +1135,11 @@ async fn asset_page(
             previous_url => index.checked_sub(1).and_then(link),
             next_url => link(index + 1),
             similar => similar,
+            less_similar => less_similar,
+            related => related,
             warnings => warnings,
+            source => source,
+            source_url => source_url,
             search => absolute.as_deref().map(search_links),
             suggestions => suggestions,
             suggestions_url => url_value(&format!(
@@ -874,7 +1155,17 @@ async fn asset_page(
                 description => fields.description,
                 commentary_title => fields.commentary_title,
                 commentary_description => fields.commentary_description,
+                translated_title => fields.translated_title,
+                translated_description => fields.translated_description,
+                for_approval => !fields.for_approval.is_empty(),
             },
+            can_choose_approval => !queued,
+            show_rules => new_uploader && !state.site.get().settings.rules.trim().is_empty(),
+            help => help,
+            allowance => allowance.map(|a| context! {
+                pending_left => a.pending_left,
+                today_left => a.today_left,
+            }),
             error => message,
             duplicate_of => duplicate_of,
             refresh => (file.status == Status::Pending).then_some(REFRESH_SECS),
@@ -1454,6 +1745,191 @@ mod tests {
         assert!(form.contains("Image Sample</a>"), "{form}");
         assert!(!form.contains("No Source"), "{form}");
         assert!(!form.contains("AI-Generated"), "{form}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_post_form_shows_what_the_source_says(pool: PgPool) {
+        let png = fixture::png(48, 30);
+        let origin = Router::new().route("/1.png", get(move || async move { png }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, origin).await });
+
+        let mut state = test_state(&pool).await;
+        state.fetcher = crate::fetch::Fetcher::new(Duration::from_secs(10), true);
+        state.sources = Arc::new(crate::sources::Sources::new(
+            true,
+            moekura_core::config::SourcesConfig::default(),
+        ));
+        let work = format!("http://{addr}/work");
+        state.sources.remember(
+            &work,
+            SourceInfo {
+                site: "Example",
+                page_url: work.clone(),
+                files: vec![format!("http://{addr}/1.png")],
+                artist_name: Some("Cat Artist".into()),
+                artist_account: Some("catart".into()),
+                profile_urls: vec!["https://example.com/catart".into()],
+                tags: vec![crate::sources::SourceTag {
+                    name: "猫".into(),
+                    translation: Some("cat".into()),
+                }],
+                title: "Neko".into(),
+                published_at: Some(time::macros::datetime!(2024-05-01 12:00 UTC)),
+                ..SourceInfo::default()
+            },
+        );
+        let max = 10 * 1024 * 1024;
+        let routes = routes(max)
+            .merge(upload::routes(max))
+            .merge(crate::artists::routes())
+            .merge(crate::posts::routes());
+        let app = TestApp::new(state.clone(), routes);
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+
+        // An artist entry for the profile, and an earlier post of the work.
+        let created = app
+            .post_form(
+                "/artists",
+                Some(&alice),
+                &[],
+                "name=cat_artist&urls=https%3A%2F%2Fexample.com%2Fcatart",
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.body);
+        let earlier = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &[
+                    ("rating", "g".to_owned()),
+                    ("tags", "cat".to_owned()),
+                    ("source", work.clone()),
+                ],
+                Some(("a.png", &fixture::png(40, 30))),
+            )
+            .await;
+        let earlier = post_in(earlier.location.as_deref());
+        sqlx::query(
+            "INSERT INTO wiki_pages (title, body) VALUES ('help:upload_notice', 'Tag it *well*.')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let sent = app
+            .post_multipart("/uploads", Some(&alice), &[("url", work.clone())], None)
+            .await;
+        let upload = upload_in(sent.location.as_deref());
+        let form = app
+            .get(&format!("/uploads/{upload}"), Some(&alice))
+            .await
+            .body;
+        // The artist's tag is in the tags box, and the panel says who,
+        // what the site tagged it and when it was published.
+        assert!(form.contains(">cat_artist </textarea>"), "{form}");
+        assert!(form.contains(">cat_artist</a>"), "{form}");
+        assert!(form.contains("https://example.com/catart"), "{form}");
+        assert!(
+            form.contains(">cat</a> <span class=\"hint\">猫</span>"),
+            "{form}"
+        );
+        assert!(form.contains("2024-05-01"), "{form}");
+        assert!(form.contains("Fetch source data"), "{form}");
+        // Posts already from the same source.
+        assert!(form.contains("Related posts"), "{form}");
+        assert!(
+            form.contains("1 other post</a> from the same source"),
+            "{form}"
+        );
+        assert!(form.contains(&format!("href=\"/posts/{earlier}")), "{form}");
+        // Members' posts are active: they may choose to have it approved.
+        assert!(form.contains("name=\"for_approval\""), "{form}");
+        // The help, new to them since their last post.
+        assert!(form.contains("<p>Tag it *well*.</p>"), "{form}");
+        assert!(
+            form.contains("This has changed since your last upload."),
+            "{form}"
+        );
+
+        // Scripts fetch the panel again (`refresh=1` would ask the site).
+        let query: String = url::form_urlencoded::byte_serialize(work.as_bytes()).collect();
+        let panel = app
+            .get(&format!("/uploads/source-data?url={query}"), Some(&alice))
+            .await
+            .body;
+        assert!(panel.contains(">cat_artist</a>"), "{panel}");
+        assert!(!panel.contains("<html"), "{panel}");
+
+        // Posted with a translation, for approval.
+        let file = files_of(&pool, upload).await[0].id;
+        let posted = app
+            .post_form(
+                &format!("/uploads/{upload}/assets/{file}"),
+                Some(&alice),
+                &[],
+                "rating=g&tags=cat_artist&commentary_title=Neko&translated_title=Cat&for_approval=1",
+            )
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+        let post = moekura_db::posts::by_id(&pool, post_in(posted.location.as_deref()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(post.status, moekura_core::posts::PostStatus::Pending);
+        let commentary = moekura_db::artist_commentaries::for_post(&pool, post.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                commentary.texts.original_title.as_str(),
+                commentary.texts.translated_title.as_str()
+            ),
+            ("Neko", "Cat")
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn look_alikes_say_how_alike(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let mut posts = Vec::new();
+        for (name, size) in [("a.png", 40), ("b.png", 44)] {
+            let posted = app
+                .post_multipart(
+                    "/upload",
+                    Some(&alice),
+                    &[("rating", "g".to_owned())],
+                    Some((name, &fixture::png(size, 30))),
+                )
+                .await;
+            posts.push(post_in(posted.location.as_deref()));
+        }
+        let png = fixture::png(48, 30);
+        for post in &posts {
+            crate::test_support::hash_like(&state, &pool, *post, &png).await;
+        }
+        // The second differs in 10 of the 64 bits.
+        sqlx::query("UPDATE media_assets SET phash = phash # 1023 WHERE post_id = $1")
+            .bind(posts[1])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let sent = app
+            .post_multipart("/uploads", Some(&alice), &[], Some(("c.png", &png)))
+            .await;
+        let form = app
+            .get(
+                &format!("/uploads/{}", upload_in(sent.location.as_deref())),
+                Some(&alice),
+            )
+            .await
+            .body;
+        assert!(form.contains("100.0% alike"), "{form}");
+        assert!(form.contains("Show 1 low similarity match"), "{form}");
+        assert!(form.contains("84.4% alike"), "{form}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

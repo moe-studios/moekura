@@ -14,9 +14,11 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Form, Router};
+use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::{Rating, SOURCE_MAX_LEN};
+use moekura_db::posts;
 use moekura_db::staged_uploads::{self, Slot, Staged, Status, Upload};
 use moekura_db::users::User;
 use serde::Deserialize;
@@ -24,6 +26,7 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::AppError;
+use crate::flash::{self, Flash};
 use crate::pages::Page;
 use crate::sources::SourceInfo;
 use crate::templates::url_value;
@@ -33,8 +36,10 @@ use crate::upload::{self, Allowance, TempUpload, UploadError, UploadFields, erro
 pub const MAX_FILES: usize = 20;
 /// Most files taken from a link to a work.
 const MAX_LINK_FILES: usize = 100;
-/// How long creating an upload from a link waits for its files before
-/// showing the upload's page, which follows the rest.
+/// Most files a user may have waiting to be posted.
+pub const MAX_WAITING: i64 = 250;
+/// How long creating an upload from a link waits for its first file
+/// before showing the upload's page, which follows the rest.
 const WAIT_FOR_DOWNLOADS: Duration = Duration::from_secs(8);
 /// A file still waiting this long after its download started was
 /// abandoned (the server restarted meanwhile).
@@ -51,12 +56,26 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
         .route("/uploads/new", get(new))
         .route("/uploads/bookmarklet", get(bookmarklet))
         .route("/uploads/{id}", get(show))
+        .route("/uploads/{id}/status", get(status))
         .route("/uploads/{id}/assets/{file}", get(asset).post(post_asset))
         .route(
             "/uploads/{id}/assets/{file}/suggestions",
             get(asset_suggestions),
         )
         .route("/uploads/source-data", get(source_data_fragment))
+}
+
+/// How many more files `user` may have waiting to be posted; an error
+/// when none.
+pub(crate) async fn room(state: &AppState, user: &User) -> Result<usize, UploadError> {
+    let waiting = staged_uploads::waiting(state.db.primary(), user.id).await?;
+    if waiting >= MAX_WAITING {
+        return Err(UploadError::Limit(format!(
+            "You have {waiting} files waiting to be posted, the most you may have. \
+             Post some first, or wait for those you don't post to expire."
+        )));
+    }
+    Ok(usize::try_from(MAX_WAITING - waiting).unwrap_or(0))
 }
 
 /// The uploading user: uploads are kept for an account.
@@ -243,6 +262,10 @@ async fn create(
     if let Err(error) = upload::check_limits(&state, &page.current).await {
         return Ok(refuse(Link::default(), error));
     }
+    let room = match room(&state, &user).await {
+        Ok(room) => room,
+        Err(error) => return Ok(refuse(Link::default(), error)),
+    };
     let (mut sent, files) = match receive(&state, multipart).await {
         (sent, Ok(files)) => (sent, files),
         (sent, Err(error)) => return Ok(refuse(sent.link(), error)),
@@ -255,11 +278,21 @@ async fn create(
     if !is_web_link(&sent.referer) || sent.referer.chars().count() > SOURCE_MAX_LEN {
         sent.referer.clear();
     }
+    let files = match unpack_archives(&state, files).await {
+        Ok(files) => files,
+        Err(error) => return Ok(refuse(sent.link(), error)),
+    };
+    if files.len() > room {
+        let error = UploadError::Limit(format!(
+            "You may have {MAX_WAITING} files waiting to be posted, so you can send {room} more now."
+        ));
+        return Ok(refuse(sent.link(), error));
+    }
     let id = if !files.is_empty() {
         // A link sent with files says where they're from.
         stage_files(&state, user.id, &sent.url, &files).await?
     } else if is_web_link(&sent.url) {
-        stage_link(&state, user.id, sent.link()).await?
+        stage_link(&state, user.id, sent.link(), room).await?
     } else if sent.url.is_empty() {
         let error = UploadError::Invalid("Choose files to upload, or paste a link.".into());
         return Ok(refuse(sent.link(), error));
@@ -273,6 +306,85 @@ async fn create(
 
 fn is_web_link(value: &str) -> bool {
     url::Url::parse(value).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+}
+
+/// `files` with the zip archives among them (but not ugoira) replaced by
+/// their files, named `<archive>/<path>`: [`MAX_LINK_FILES`] at most in
+/// all, each within the upload size limit.
+async fn unpack_archives(
+    state: &AppState,
+    files: Vec<TempUpload>,
+) -> Result<Vec<TempUpload>, UploadError> {
+    use moekura_media::archive::{self, Limits};
+    use tokio::io::AsyncReadExt;
+
+    let max_mb = state.media.config().max_upload_mb;
+    let max_bytes = max_mb * 1024 * 1024;
+    let mut out = Vec::with_capacity(files.len());
+    for file in files {
+        let mut head = [0; 4];
+        let read = tokio::fs::File::open(file.path())
+            .await
+            .map_err(|e| UploadError::Internal(format!("reading an upload: {e}")))?
+            .read(&mut head)
+            .await
+            .map_err(|e| UploadError::Internal(format!("reading an upload: {e}")))?;
+        let refused =
+            |e: archive::ArchiveError| UploadError::Invalid(format!("{}: {e}.", file.name()));
+        if !archive::is_zip(&head[..read]) {
+            out.push(file);
+            continue;
+        }
+        let path = file.path().to_owned();
+        let is_ugoira = tokio::task::spawn_blocking(move || archive::is_ugoira(&path))
+            .await
+            .map_err(|e| UploadError::Internal(e.to_string()))?;
+        // A damaged zip is left to say so when it's stored.
+        if is_ugoira.unwrap_or(true) {
+            out.push(file);
+            continue;
+        }
+        let dir = state.work_dir.join(format!(
+            "unpacked-{}",
+            &hex::encode(moekura_core::tokens::NewToken::generate().hash)[..24]
+        ));
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .map_err(|e| UploadError::Internal(format!("unpacking: {e}")))?;
+        let limits = Limits {
+            max_files: MAX_LINK_FILES,
+            max_total_bytes: max_bytes.saturating_mul(MAX_FILES as u64),
+        };
+        let (path, into) = (file.path().to_owned(), dir.clone());
+        let unpacked = tokio::task::spawn_blocking(move || archive::unpack(&path, &into, limits))
+            .await
+            .map_err(|e| UploadError::Internal(e.to_string()));
+        let adopted = async {
+            for entry in unpacked?.map_err(refused)? {
+                let name = format!("{}/{}", file.name(), entry.name);
+                let size = tokio::fs::metadata(&entry.path)
+                    .await
+                    .map_err(|e| UploadError::Internal(format!("unpacking: {e}")))?
+                    .len();
+                if size > max_bytes {
+                    return Err(UploadError::Invalid(format!(
+                        "{name} is larger than {max_mb} MB."
+                    )));
+                }
+                out.push(TempUpload::adopt(&state.work_dir, &entry.path, &name).await?);
+            }
+            Ok(())
+        }
+        .await;
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        adopted?;
+        if out.len() > MAX_LINK_FILES {
+            return Err(UploadError::Invalid(format!(
+                "Upload at most {MAX_LINK_FILES} files at once, archives' files included."
+            )));
+        }
+    }
+    Ok(out)
 }
 
 /// Makes an upload of files sent from `source`, storing each. Returns the
@@ -327,17 +439,26 @@ fn failure(error: &UploadError) -> (String, Option<i64>) {
     }
 }
 
-/// Makes an upload of the files at `link`: a work's files when a source
-/// strategy reads its page (or the page it was found on, for a bare
-/// file), else the link itself. Each file's source is its
+/// Makes an upload of the files at `link` (at most `room`): a work's files
+/// when a source strategy reads its page (or the page it was found on,
+/// for a bare file), else the link itself. Each file's source is its
 /// [canonical one](upload::file_source). They're downloaded in the
 /// background; this waits a little for them. Returns the upload's id.
-async fn stage_link(state: &AppState, uploader_id: i64, link: Link<'_>) -> Result<i64, AppError> {
+async fn stage_link(
+    state: &AppState,
+    uploader_id: i64,
+    link: Link<'_>,
+    room: usize,
+) -> Result<i64, AppError> {
     let url = link.url;
     let info = state.sources.lookup_from(url, link.referer).await;
     let (files, source) = match info.as_deref() {
         Some(info) if !info.files.is_empty() => (
-            info.files.iter().take(MAX_LINK_FILES).cloned().collect(),
+            info.files
+                .iter()
+                .take(MAX_LINK_FILES.min(room))
+                .cloned()
+                .collect(),
             info.page_url.clone(),
         ),
         _ => (vec![url.to_owned()], url.to_owned()),
@@ -360,15 +481,23 @@ async fn stage_link(state: &AppState, uploader_id: i64, link: Link<'_>) -> Resul
         staged_uploads::create_pending(&mut *tx, slot, file_url).await?;
     }
     tx.commit().await?;
-    let downloads = tokio::spawn(download_pending(state.clone(), id, info));
-    // Downloads that take longer carry on; the page follows them.
-    let _ = tokio::time::timeout(WAIT_FOR_DOWNLOADS, downloads).await;
+    let (first, first_done) = tokio::sync::oneshot::channel();
+    tokio::spawn(download_pending(state.clone(), id, info, first));
+    // The page follows the rest (and one that takes long).
+    let _ = tokio::time::timeout(WAIT_FOR_DOWNLOADS, first_done).await;
     Ok(id)
 }
 
 /// Downloads and stores upload `upload_id`'s pending files, one at a
-/// time. `info` is what the link's page said, if a strategy read it.
-async fn download_pending(state: AppState, upload_id: i64, info: Option<Arc<SourceInfo>>) {
+/// time, saying on `first` when the first is done. `info` is what the
+/// link's page said, if a strategy read it.
+async fn download_pending(
+    state: AppState,
+    upload_id: i64,
+    info: Option<Arc<SourceInfo>>,
+    first: tokio::sync::oneshot::Sender<()>,
+) {
+    let mut first = Some(first);
     let db = state.db.primary();
     let pending = match staged_uploads::of_upload(db, upload_id).await {
         Ok(files) => files,
@@ -404,20 +533,58 @@ async fn download_pending(state: AppState, upload_id: i64, info: Option<Arc<Sour
         if let Err(error) = done {
             tracing::error!(upload_id, file = file.id, %error, "upload's file not downloaded");
         }
+        if let Some(first) = first.take() {
+            let _ = first.send(());
+        }
     }
 }
 
-/// Upload `id`, if it's `user`'s, and its files, giving up on downloads
-/// that were abandoned.
-async fn own_upload(
+/// An upload's files' progress, for scripts following it: how many are
+/// still downloading, and each one's status and page.
+async fn status(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
+    let state = page.state();
+    let (upload, files) = find_upload(state, &page.current, id, Access::View).await?;
+    let pending = files.iter().filter(|f| f.status == Status::Pending).count();
+    Ok(axum::Json(serde_json::json!({
+        "pending": pending,
+        "files": files.iter().map(|f| serde_json::json!({
+            "id": f.id,
+            "status": f.status.as_str(),
+            "url": format!("/uploads/{}/assets/{}", upload.id, f.id),
+        })).collect::<Vec<_>>(),
+    }))
+    .into_response())
+}
+
+/// What's wanted of an upload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Access {
+    /// To look at it: its uploader, or a moderator.
+    View,
+    /// To post its files: its uploader only.
+    Post,
+}
+
+/// Whether `current` may see others' uploads.
+fn sees_all_uploads(current: &CurrentUser) -> bool {
+    current.can(Permission::BanUsers)
+}
+
+/// Upload `id`, if `current` may have it for `access`, and its files,
+/// giving up on downloads that were abandoned.
+async fn find_upload(
     state: &AppState,
-    user: &User,
+    current: &CurrentUser,
     id: i64,
+    access: Access,
 ) -> Result<(Upload, Vec<Staged>), AppError> {
+    let user = uploader(current)?;
     let db = state.db.primary();
     let upload = staged_uploads::upload_by_id(db, id)
         .await?
-        .filter(|u| u.uploader_id == user.id)
+        .filter(|u| {
+            u.uploader_id == user.id || (access == Access::View && sees_all_uploads(current))
+        })
         .ok_or(AppError::NotFound)?;
     let abandoned = "The download stopped before it finished; upload the link again.";
     staged_uploads::fail_abandoned(db, id, ABANDONED_AFTER, abandoned).await?;
@@ -425,10 +592,19 @@ async fn own_upload(
     Ok((upload, files))
 }
 
-async fn show(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
-    let user = uploader(&page.current)?;
+async fn show(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
     let state = page.state();
-    let (upload, files) = own_upload(state, user, id).await?;
+    let (upload, files) = find_upload(state, &page.current, id, Access::View).await?;
+    // A file that's already a post is that post.
+    if let [file] = files.as_slice()
+        && let Some(post) = file.duplicate_of
+        && posts::by_id(state.db.primary(), post)
+            .await?
+            .is_some_and(|p| crate::posts::visibility(&page.current).allows(&p))
+    {
+        let to = Redirect::to(&format!("/posts/{post}"));
+        return Ok((flash::set(jar, Flash::Duplicate), to).into_response());
+    }
     // A single file is posted from the upload's own page.
     if let [file] = files.as_slice()
         && file.status != Status::Pending
@@ -444,6 +620,7 @@ async fn show(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
             upload => upload_context(&upload, &files),
             files => file_cards(&page, &files).await?,
             pending => pending,
+            ready => files.iter().filter(|f| f.status == Status::Ready).count(),
             posted => posted,
             refresh => (pending > 0).then_some(REFRESH_SECS),
         },
@@ -596,15 +773,15 @@ impl AssetFields {
     }
 }
 
-/// Upload `id`'s file `file_id`, if both are `user`'s, with the upload's
-/// files and its place among them.
-async fn own_file(
+/// Upload `id`'s file `file_id`, if `current` may have it for `access`,
+/// with the upload's files and its place among them.
+async fn find_file(
     state: &AppState,
-    user: &User,
-    id: i64,
-    file_id: i64,
+    current: &CurrentUser,
+    (id, file_id): (i64, i64),
+    access: Access,
 ) -> Result<(Upload, Vec<Staged>, usize), AppError> {
-    let (upload, files) = own_upload(state, user, id).await?;
+    let (upload, files) = find_upload(state, current, id, access).await?;
     let index = files
         .iter()
         .position(|f| f.id == file_id)
@@ -612,22 +789,21 @@ async fn own_file(
     Ok((upload, files, index))
 }
 
-async fn asset(page: Page, Path((id, file_id)): Path<(i64, i64)>) -> Result<Response, AppError> {
-    let user = uploader(&page.current)?;
+async fn asset(page: Page, Path(ids): Path<(i64, i64)>) -> Result<Response, AppError> {
     let state = page.state();
-    let (upload, files, index) = own_file(state, user, id, file_id).await?;
+    let (upload, files, index) = find_file(state, &page.current, ids, Access::View).await?;
     let fields = AssetFields::for_file(state, &upload, &files[index]).await;
     asset_page(&page, &upload, &files, index, &fields, None).await
 }
 
 async fn post_asset(
     page: Page,
-    Path((id, file_id)): Path<(i64, i64)>,
+    Path(ids): Path<(i64, i64)>,
     Form(fields): Form<AssetFields>,
 ) -> Result<Response, AppError> {
-    let user = uploader(&page.current)?;
     let state = page.state();
-    let (upload, files, index) = own_file(state, user, id, file_id).await?;
+    let (upload, files, index) = find_file(state, &page.current, ids, Access::Post).await?;
+    let file_id = files[index].id;
     // A suggestion taken, or a check for them or the source, without
     // scripts: the form again, with the suggestion in it, rather than a
     // post.
@@ -682,13 +858,9 @@ async fn post_asset(
 
 /// The tagger's suggestions for a file, as the box on its post form
 /// holds them, for scripts waiting for them. Empty when there are none.
-async fn asset_suggestions(
-    page: Page,
-    Path((id, file_id)): Path<(i64, i64)>,
-) -> Result<Response, AppError> {
-    let user = uploader(&page.current)?;
+async fn asset_suggestions(page: Page, Path(ids): Path<(i64, i64)>) -> Result<Response, AppError> {
     let state = page.state();
-    let (_, files, index) = own_file(state, user, id, file_id).await?;
+    let (_, files, index) = find_file(state, &page.current, ids, Access::Post).await?;
     let file = &files[index];
     let suggestions = if file.status == Status::Ready && file.post_id.is_none() {
         crate::suggestions::for_upload_form(state, state.db.primary(), file.id, "", "").await?
@@ -1081,7 +1253,20 @@ async fn asset_page(
         .map(|r| context! { code => r.code() })
         .collect();
     let status = error.map_or(StatusCode::OK, error_status);
-    let open = file.status == Status::Ready && file.post_id.is_none();
+    // Moderators may look at others' uploads, but not post them.
+    let mine = page
+        .current
+        .user
+        .as_ref()
+        .is_some_and(|u| u.id == upload.uploader_id);
+    let uploader_name = if mine {
+        None
+    } else {
+        moekura_db::users::by_id(state.db.primary(), upload.uploader_id)
+            .await?
+            .map(|u| u.name)
+    };
+    let open = file.status == Status::Ready && file.post_id.is_none() && mine;
     let warnings = if open {
         Some(warnings(page, file, &fields.source).await?)
     } else {
@@ -1134,6 +1319,8 @@ async fn asset_page(
             file => file_context(state, file, None),
             previous_url => index.checked_sub(1).and_then(link),
             next_url => link(index + 1),
+            mine => mine,
+            uploader_name => uploader_name,
             similar => similar,
             less_similar => less_similar,
             related => related,
@@ -1173,31 +1360,109 @@ async fn asset_page(
     ))
 }
 
+/// The file types an upload can be.
+const FILE_TYPES: &[&str] = &[
+    "jpeg", "png", "gif", "webp", "avif", "jxl", "mp4", "webm", "ugoira",
+];
+
 #[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct IndexQuery {
     page: Option<i64>,
+    /// `pending`, `ready` or `failed`.
+    status: String,
+    /// `yes` or `no`.
+    posted: String,
+    /// A file type.
+    #[serde(rename = "type")]
+    file_type: String,
+    /// The start of the source or link (`*` matches anything).
+    source: String,
+    /// For moderators: whose files, by name; blank for everyone's. Others
+    /// only ever see their own.
+    user: Option<String>,
 }
 
-/// The user's uploaded files, newest first.
+impl IndexQuery {
+    /// The query for page `number`, for links.
+    fn url(&self, number: i64) -> String {
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        for (name, value) in [
+            ("status", &self.status),
+            ("posted", &self.posted),
+            ("type", &self.file_type),
+            ("source", &self.source),
+        ] {
+            if !value.is_empty() {
+                query.append_pair(name, value);
+            }
+        }
+        if let Some(user) = &self.user {
+            query.append_pair("user", user);
+        }
+        query.append_pair("page", &number.to_string());
+        format!("/uploads?{}", query.finish())
+    }
+}
+
+/// The user's uploaded files, newest first, or (for moderators) anyone's;
+/// filtered by status, whether they were posted, file type and source.
 async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, AppError> {
     let user = uploader(&page.current)?;
+    let state = page.state();
+    let db = state.db.primary();
+    let everyone = sees_all_uploads(&page.current);
+    let uploader_id = match query.user.as_deref().map(str::trim) {
+        Some("") if everyone => None,
+        // A name nobody has matches no files.
+        Some(name) if everyone => Some(
+            moekura_db::users::by_name(db, name)
+                .await?
+                .map_or(-1, |u| u.id),
+        ),
+        _ => Some(user.id),
+    };
+    let filter = staged_uploads::Filter {
+        uploader_id,
+        status: match query.status.as_str() {
+            "pending" => Some(Status::Pending),
+            "ready" => Some(Status::Ready),
+            "failed" => Some(Status::Failed),
+            _ => None,
+        },
+        posted: match query.posted.as_str() {
+            "yes" => Some(true),
+            "no" => Some(false),
+            _ => None,
+        },
+        media_type: FILE_TYPES.iter().copied().find(|t| *t == query.file_type),
+        source: Some(query.source.trim()).filter(|s| !s.is_empty()),
+    };
     let number = query.page.unwrap_or(1).clamp(1, 10_000);
-    let mut files = staged_uploads::by_uploader(
-        page.state().db.primary(),
-        user.id,
-        (number - 1) * PAGE_SIZE,
-        PAGE_SIZE + 1,
-    )
-    .await?;
+    let mut files =
+        staged_uploads::search(db, &filter, (number - 1) * PAGE_SIZE, PAGE_SIZE + 1).await?;
     let more = files.len() > PAGE_SIZE as usize;
     files.truncate(PAGE_SIZE as usize);
-    let list_url = |n: i64| url_value(&format!("/uploads?page={n}"));
+    let list_url = |n: i64| url_value(&query.url(n));
     Ok(page.render(
         "uploads.html",
         context! {
             files => file_cards(&page, &files).await?,
             previous_url => (number > 1).then(|| list_url(number - 1)),
             next_url => more.then(|| list_url(number + 1)),
+            filter => context! {
+                status => query.status,
+                posted => query.posted,
+                file_type => query.file_type,
+                source => query.source,
+                user => query.user,
+                filtered => filter != staged_uploads::Filter {
+                    uploader_id: Some(user.id),
+                    ..staged_uploads::Filter::default()
+                },
+            },
+            file_types => FILE_TYPES,
+            sees_all => everyone,
         },
     ))
 }
@@ -2009,6 +2274,230 @@ mod tests {
         assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
     }
 
+    /// A zip of `entries` (`(name, bytes)`).
+    fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        for (name, data) in entries {
+            zip.start_file(*name, options).unwrap();
+            zip.write_all(data).unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn archives_are_unpacked(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let (a, b) = (fixture::png(40, 30), fixture::png(44, 30));
+        let archive = zip_of(&[
+            ("set/10.png", &a),
+            ("set/2.png", &b),
+            ("notes.txt", b"hello"),
+            ("__MACOSX/set/._2.png", b"fork"),
+        ]);
+        let sent = app
+            .post_multipart("/uploads", Some(&alice), &[], Some(("art.zip", &archive)))
+            .await;
+        assert_eq!(sent.status, StatusCode::SEE_OTHER, "{}", sent.body);
+        let files = files_of(&pool, upload_in(sent.location.as_deref())).await;
+        assert_eq!(
+            files
+                .iter()
+                .map(|f| (f.file_name.as_str(), f.status, f.width))
+                .collect::<Vec<_>>(),
+            [
+                ("art.zip/notes.txt", Status::Failed, None),
+                ("art.zip/set/2.png", Status::Ready, Some(44)),
+                ("art.zip/set/10.png", Status::Ready, Some(40)),
+            ]
+        );
+
+        // Paths leaving the archive are refused, and nothing is made.
+        let evil = zip_of(&[("../evil.png", &a)]);
+        let refused = app
+            .post_multipart("/uploads", Some(&alice), &[], Some(("evil.zip", &evil)))
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("goes outside it"), "{}", refused.body);
+
+        // Pixiv's animations stay one file.
+        let ugoira = zip_of(&[("000000.png", &a), ("000001.png", &a)]);
+        let sent = app
+            .post_multipart("/uploads", Some(&alice), &[], Some(("u.zip", &ugoira)))
+            .await;
+        let files = files_of(&pool, upload_in(sent.location.as_deref())).await;
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].media_type.as_deref(), Some("ugoira"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn uploading_a_post_again_leads_to_it(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let png = fixture::png(40, 30);
+        let posted = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &[("rating", "g".to_owned())],
+                Some(("a.png", &png)),
+            )
+            .await;
+        let post = post_in(posted.location.as_deref());
+        let again = app
+            .post_multipart("/uploads", Some(&alice), &[], Some(("a.png", &png)))
+            .await;
+        let shown = app
+            .get(
+                &format!("/uploads/{}", upload_in(again.location.as_deref())),
+                Some(&alice),
+            )
+            .await;
+        assert_eq!(
+            shown.location.as_deref(),
+            Some(format!("/posts/{post}").as_str())
+        );
+        assert!(
+            shown.set_cookie.iter().any(|c| c.contains("duplicate")),
+            "{:?}",
+            shown.set_cookie
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn files_waiting_are_capped(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let sent = app
+            .post_multipart(
+                "/uploads",
+                Some(&alice),
+                &[],
+                Some(("a.png", &fixture::png(40, 30))),
+            )
+            .await;
+        let upload = upload_in(sent.location.as_deref());
+        sqlx::query(
+            "INSERT INTO staged_uploads (upload_id, uploader_id, position, status, file_url)
+             SELECT upload_id, uploader_id, n, 'pending', 'https://example.com/x.png'
+             FROM staged_uploads, generate_series(1, $1 - 2) AS n WHERE upload_id = $2",
+        )
+        .bind(MAX_WAITING)
+        .bind(upload)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // One more fits; two don't.
+        let two = app
+            .post_multipart_files(
+                "/uploads",
+                Some(&alice),
+                &[],
+                &[
+                    ("file", "b.png", &fixture::png(44, 30)),
+                    ("file", "c.png", &fixture::png(48, 30)),
+                ],
+            )
+            .await;
+        assert_eq!(two.status, StatusCode::TOO_MANY_REQUESTS, "{}", two.body);
+        let one = app
+            .post_multipart(
+                "/uploads",
+                Some(&alice),
+                &[],
+                Some(("b.png", &fixture::png(44, 30))),
+            )
+            .await;
+        assert_eq!(one.status, StatusCode::SEE_OTHER, "{}", one.body);
+        let full = app
+            .post_multipart(
+                "/uploads",
+                Some(&alice),
+                &[],
+                Some(("c.png", &fixture::png(48, 30))),
+            )
+            .await;
+        assert_eq!(full.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            full.body.contains("files waiting to be posted"),
+            "{}",
+            full.body
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_list_filters_and_moderators_see_everyones(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let svg = b"<svg xmlns='http://www.w3.org/2000/svg'/>".to_vec();
+        let sent = app
+            .post_multipart_files(
+                "/uploads",
+                Some(&alice),
+                &[("url", "https://example.com/work/1".to_owned())],
+                &[
+                    ("file", "a.png", &fixture::png(40, 30)),
+                    ("file", "b.gif", &fixture::gif(44, 30)),
+                    ("file", "c.svg", &svg),
+                ],
+            )
+            .await;
+        let upload = upload_in(sent.location.as_deref());
+        let files = files_of(&pool, upload).await;
+        let shown = |body: &str| -> Vec<i64> {
+            files
+                .iter()
+                .filter(|f| body.contains(&format!("/uploads/{upload}/assets/{}\"", f.id)))
+                .map(|f| f.id)
+                .collect()
+        };
+        let list = async |query: &str, session: &str| {
+            app.get(&format!("/uploads?{query}"), Some(session))
+                .await
+                .body
+        };
+        let (a, b, c) = (files[0].id, files[1].id, files[2].id);
+        assert_eq!(shown(&list("", &alice).await), [a, b, c]);
+        assert_eq!(shown(&list("status=failed", &alice).await), [c]);
+        assert_eq!(shown(&list("type=gif", &alice).await), [b]);
+        assert_eq!(shown(&list("posted=no&type=png", &alice).await), [a]);
+        assert_eq!(
+            shown(&list("source=https%3A%2F%2Fexample.com%2Fwork", &alice).await),
+            [a, b, c]
+        );
+        assert!(shown(&list("source=https%3A%2F%2Felsewhere", &alice).await).is_empty());
+        // Others' files are only for moderators, who can look but not post.
+        assert!(shown(&list("user=", &bob).await).is_empty());
+        assert_eq!(shown(&list("user=", &moderator).await), [a, b, c]);
+        assert_eq!(shown(&list("user=alice", &moderator).await), [a, b, c]);
+        assert!(shown(&list("", &moderator).await).is_empty());
+        let page = app
+            .get(&format!("/uploads/{upload}/assets/{a}"), Some(&moderator))
+            .await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(page.body.contains("alice's upload"), "{}", page.body);
+        assert!(!page.body.contains("name=\"rating\""), "{}", page.body);
+        let post = app
+            .post_form(
+                &format!("/uploads/{upload}/assets/{a}"),
+                Some(&moderator),
+                &[],
+                "rating=g",
+            )
+            .await;
+        assert_eq!(post.status, StatusCode::NOT_FOUND);
+        assert_eq!(
+            app.get(&format!("/uploads/{upload}/assets/{a}"), Some(&bob))
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+    }
+
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn a_works_files_are_downloaded(pool: PgPool) {
         let (a, b) = (fixture::png(40, 30), fixture::png(48, 30));
@@ -2048,8 +2537,26 @@ mod tests {
             .await;
         assert_eq!(sent.status, StatusCode::SEE_OTHER, "{}", sent.body);
         let upload = upload_in(sent.location.as_deref());
-        // Local downloads finish while the request waits.
-        let files = files_of(&pool, upload).await;
+        // The first is ready when the page is shown; the rest follow.
+        assert_ne!(files_of(&pool, upload).await[0].status, Status::Pending);
+        let mut files = files_of(&pool, upload).await;
+        for _ in 0..100 {
+            if files.iter().all(|f| f.status != Status::Pending) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            files = files_of(&pool, upload).await;
+        }
+        let progress = app
+            .get_json(&format!("/uploads/{upload}/status"), Some(&alice))
+            .await;
+        let progress: serde_json::Value = serde_json::from_str(&progress.body).unwrap();
+        assert_eq!(progress["pending"], 0);
+        assert_eq!(progress["files"][1]["status"], "ready");
+        assert_eq!(
+            progress["files"][1]["url"],
+            format!("/uploads/{upload}/assets/{}", files[1].id)
+        );
         assert_eq!(
             files
                 .iter()

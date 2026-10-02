@@ -314,6 +314,18 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Stag
         .await
 }
 
+/// How many of user `uploader_id`'s files wait to be posted (or to be
+/// downloaded).
+pub async fn waiting(db: impl PgExecutor<'_>, uploader_id: i64) -> sqlx::Result<i64> {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM staged_uploads
+         WHERE uploader_id = $1 AND post_id IS NULL AND status <> 'failed'",
+    )
+    .bind(uploader_id)
+    .fetch_one(db)
+    .await
+}
+
 /// Upload `upload_id`'s files, in order.
 pub async fn of_upload(db: impl PgExecutor<'_>, upload_id: i64) -> sqlx::Result<Vec<Staged>> {
     sqlx::query_as("SELECT * FROM staged_uploads WHERE upload_id = $1 ORDER BY position, id")
@@ -322,22 +334,57 @@ pub async fn of_upload(db: impl PgExecutor<'_>, upload_id: i64) -> sqlx::Result<
         .await
 }
 
-/// User `uploader_id`'s files, newest upload first, from `offset`.
-pub async fn by_uploader(
+/// Which files a list of them shows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Filter<'a> {
+    /// One user's; everyone's when `None`.
+    pub uploader_id: Option<i64>,
+    pub status: Option<Status>,
+    /// Posted, or not yet.
+    pub posted: Option<bool>,
+    /// `media_assets.media_type`.
+    pub media_type: Option<&'a str>,
+    /// The start of the source or of the link the file came from (`*`
+    /// matches anything), regardless of case.
+    pub source: Option<&'a str>,
+}
+
+/// Files matching `filter`, newest upload first, from `offset`.
+pub async fn search(
     db: impl PgExecutor<'_>,
-    uploader_id: i64,
+    filter: &Filter<'_>,
     offset: i64,
     limit: i64,
 ) -> sqlx::Result<Vec<Staged>> {
-    sqlx::query_as(
-        "SELECT * FROM staged_uploads WHERE uploader_id = $1
-         ORDER BY upload_id DESC, position, id OFFSET $2 LIMIT $3",
-    )
-    .bind(uploader_id)
-    .bind(offset)
-    .bind(limit)
-    .fetch_all(db)
-    .await
+    let mut sql = sqlx::QueryBuilder::new("SELECT * FROM staged_uploads WHERE true");
+    if let Some(uploader) = filter.uploader_id {
+        sql.push(" AND uploader_id = ").push_bind(uploader);
+    }
+    if let Some(status) = filter.status {
+        sql.push(" AND status = ").push_bind(status.as_str());
+    }
+    match filter.posted {
+        Some(true) => sql.push(" AND post_id IS NOT NULL"),
+        Some(false) => sql.push(" AND post_id IS NULL"),
+        None => &mut sql,
+    };
+    if let Some(media_type) = filter.media_type {
+        sql.push(" AND media_type = ")
+            .push_bind(media_type.to_owned());
+    }
+    if let Some(source) = filter.source {
+        let pattern = crate::tags::like_pattern(source);
+        sql.push(" AND (source ILIKE ")
+            .push_bind(pattern.clone())
+            .push(" OR file_url ILIKE ")
+            .push_bind(pattern)
+            .push(")");
+    }
+    sql.push(" ORDER BY upload_id DESC, position, id OFFSET ")
+        .push_bind(offset)
+        .push(" LIMIT ")
+        .push_bind(limit);
+    sql.build_query_as().fetch_all(db).await
 }
 
 /// Records the post a staged upload became; false if it already became
@@ -533,6 +580,56 @@ mod tests {
             by_id(&pool, first).await.unwrap().unwrap().status,
             Status::Ready
         );
-        assert_eq!(by_uploader(&pool, user, 0, 10).await.unwrap().len(), 2);
+        let mine = Filter {
+            uploader_id: Some(user),
+            ..Filter::default()
+        };
+        assert_eq!(search(&pool, &mine, 0, 10).await.unwrap().len(), 2);
+        let found = |filter: Filter<'static>| {
+            let pool = pool.clone();
+            async move {
+                search(&pool, &filter, 0, 10)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|f| f.id)
+                    .collect::<Vec<_>>()
+            }
+        };
+        assert_eq!(
+            found(Filter {
+                status: Some(Status::Failed),
+                ..Filter::default()
+            })
+            .await,
+            [second]
+        );
+        assert_eq!(
+            found(Filter {
+                media_type: Some("png"),
+                posted: Some(false),
+                ..Filter::default()
+            })
+            .await,
+            [first]
+        );
+        assert_eq!(
+            found(Filter {
+                source: Some("HTTPS://example.com/2"),
+                ..Filter::default()
+            })
+            .await,
+            [second]
+        );
+        assert!(
+            found(Filter {
+                posted: Some(true),
+                ..Filter::default()
+            })
+            .await
+            .is_empty()
+        );
+        // Only the ready one waits to be posted.
+        assert_eq!(waiting(&pool, user).await.unwrap(), 1);
     }
 }

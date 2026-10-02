@@ -50,8 +50,22 @@ the form:
   too.
 
 **My uploads** (`/uploads`) lists the files you uploaded, newest first,
-linking to their posts once posted. Files not posted within a day are
-removed. Without scripts, choose the files and press **Upload**.
+linking to their posts once posted, and can be narrowed to those still
+downloading, ready or failed, posted or not, of one file type, or from a
+source (its start; `*` matches anything). Users who can ban (moderators)
+can list anyone's (**Uploader**, blank for everyone's) and look at their
+files, but only the uploader can post them. Files not posted within a day
+are removed, and you can have at most 250 waiting to be posted. Without
+scripts, choose the files and press **Upload**.
+
+A **zip** of pictures is unpacked into its files, in the order people
+sort their names (`2.jpg` before `10.jpg`): at most 100, each within the
+upload size limit, none outside the archive (`/…` or `..`); folders,
+hidden files and macOS's `__MACOSX` are left out. A zip with Pixiv's
+frame data, or only frames numbered as Pixiv numbers them (`000000.jpg`),
+is an [ugoira](#ugoira) instead.
+
+Uploading a file that's already a post takes you to that post.
 
 Scripts can still send a whole post in one form to `POST /upload`
 (`file` or `url`, `rating`, `tags`, `source`, `parent`, `description`,
@@ -85,7 +99,9 @@ Give it the file itself, or a work's page on one of the
 boorus, Misskey and some ninety more.
 
 Moekura asks the site for the work's best (original) files and downloads
-them, every page of a work of several (up to 100). Each post's source is
+them, every page of a work of several (up to 100). The upload's page
+shows as soon as the first is ready (with scripts, the post form
+follows the moment it is). Each post's source is
 the file's own link when that names its work (Pixiv's
 `i.pximg.net/…_p3.png`, so the post says which of the work's images it
 is), else the work's page. They download in the background: the

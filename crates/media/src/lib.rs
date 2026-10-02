@@ -1,6 +1,7 @@
 //! Identifying, probing and processing post media with external tools
 //! (libvips for images, ffmpeg for video).
 
+pub mod archive;
 mod facts;
 mod kind;
 pub mod metadata;

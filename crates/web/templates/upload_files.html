@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% from "site_icon.html" import site_icon %}
 {% block title %}{{ t("upload-title", id=upload.id) }} · {{ site.name }}{% endblock %}
-{% block head %}{% if refresh %}<meta http-equiv="refresh" content="{{ refresh }}">{% endif %}{% endblock %}
+{% block head %}{% if refresh %}<noscript><meta http-equiv="refresh" content="{{ refresh }}"></noscript>{% endif %}{% endblock %}
 {% block content %}
 <h1>{{ t("upload-title", id=upload.id) }}</h1>
 {% include "upload_nav.html" %}
 {% if upload.source %}<p class="source">{{ t("source") }}: {{ site_icon(upload.source) }}<a href="{{ upload.source }}" rel="noopener noreferrer nofollow">{{ upload.source }}</a></p>{% endif %}
 <p class="hint" role="status">{{ t("upload-summary", count=upload.count, posted=posted) }}{% if pending %} {{ t("upload-downloading", count=pending) }}{% endif %}</p>
+{% if refresh %}<div data-upload-follow="{{ upload.url }}/status" data-pending="{{ pending }}" data-ready="{{ ready }}" hidden></div>{% endif %}
 {% if files %}
 <ul class="post-grid upload-files">
   {% for file in files %}<li>{% include "upload_file_card.html" %}</li>{% endfor %}

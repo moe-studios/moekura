@@ -981,3 +981,9 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
   .card { padding: 16px; }
   .narrow, .medium { margin: 16px auto; }
 }
+
+/* Filtering the list of uploaded files. */
+.uploads-filter { flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; margin-bottom: 16px; }
+.uploads-filter label { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: 0.875rem; }
+.uploads-filter button[type="submit"] { margin: 0; }
+.uploads-filter input { min-width: 12rem; }

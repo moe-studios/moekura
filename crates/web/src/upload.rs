@@ -563,6 +563,25 @@ pub struct TempWriter {
 }
 
 impl TempUpload {
+    /// Takes over the file at `from` as an upload named `name`, moving it
+    /// into `dir`.
+    pub(crate) async fn adopt(dir: &Path, from: &Path, name: &str) -> Result<Self, UploadError> {
+        let random = hex::encode(moekura_core::tokens::NewToken::generate().hash);
+        let mut upload = TempUpload {
+            path: dir.join(format!("upload-{}", &random[..24])),
+            sha256: [0; 32],
+            md5: [0; 16],
+            size: 0,
+            name: String::new(),
+        };
+        tokio::fs::rename(from, &upload.path)
+            .await
+            .map_err(|e| UploadError::Internal(format!("moving an unpacked file: {e}")))?;
+        upload.set_name(name);
+        upload.rehash().await?;
+        Ok(upload)
+    }
+
     /// Recomputes the hashes and size after the file was changed.
     async fn rehash(&mut self) -> Result<(), UploadError> {
         use tokio::io::AsyncReadExt;

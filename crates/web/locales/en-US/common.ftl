@@ -17,6 +17,7 @@ flash-password_changed = Your password was changed.
 flash-some_skipped = Done. Some had been dealt with meanwhile, and were skipped.
 flash-queued = Started; it runs in the background.
 flash-held = Thanks! It looked like it might be spam, so the staff will check it before anyone sees it.
+flash-duplicate = Duplicate: that file was already uploaded as this post.
 
 optional = (optional)
 back-to-settings = Back to settings

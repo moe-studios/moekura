@@ -23,6 +23,7 @@ import { enableTagScript } from "./tag-script.ts";
 import { enableToasts } from "./toast.ts";
 import { enableUpload } from "./upload.ts";
 import { enableUploadForm } from "./upload-form.ts";
+import { enableUploadProgress } from "./upload-progress.ts";
 
 // Lets styles tell whether scripts run.
 document.documentElement.classList.add("js");
@@ -49,6 +50,7 @@ enableRelatedTags();
 enableSelectAll();
 enableUpload();
 enableUploadForm();
+enableUploadProgress();
 enableArtistFinder();
 enableClipboard();
 enableSourceData();

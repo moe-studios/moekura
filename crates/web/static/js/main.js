@@ -1800,6 +1800,49 @@ function enableUploadForm(root = document) {
   });
 }
 
+// src/upload-progress.ts
+var POLL_MS2 = 250;
+var GIVE_UP_MS = 11 * 60 * 1e3;
+function nextStep(now, before, file) {
+  if (file !== void 0) {
+    const mine = now.files.find((f) => f.id === file);
+    return mine && mine.status !== "pending" ? "reload" : null;
+  }
+  const ready = now.files.find((f) => f.status === "ready");
+  if (before.ready === 0 && ready) return ready.url;
+  return now.pending < before.pending ? "reload" : null;
+}
+function enableUploadProgress(root = document) {
+  const follow = root.querySelector("[data-upload-follow]");
+  const url = follow?.dataset["uploadFollow"];
+  if (!follow || !url) return;
+  const before = {
+    pending: Number(follow.dataset["pending"] ?? "0"),
+    ready: Number(follow.dataset["ready"] ?? "0")
+  };
+  const fileId = follow.dataset["file"] ? Number(follow.dataset["file"]) : void 0;
+  const started = Date.now();
+  const check = async () => {
+    try {
+      const response = await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } });
+      if (response.ok) {
+        const step = nextStep(await response.json(), before, fileId);
+        if (step === "reload") {
+          root.defaultView?.location.reload();
+          return;
+        }
+        if (step !== null) {
+          root.defaultView?.location.replace(step);
+          return;
+        }
+      }
+    } catch {
+    }
+    if (Date.now() - started < GIVE_UP_MS) window.setTimeout(() => void check(), POLL_MS2);
+  };
+  window.setTimeout(() => void check(), POLL_MS2);
+}
+
 // src/main.ts
 document.documentElement.classList.add("js");
 var off = (feature) => document.documentElement.dataset[feature] === "off";
@@ -1822,6 +1865,7 @@ enableRelatedTags();
 enableSelectAll();
 enableUpload();
 enableUploadForm();
+enableUploadProgress();
 enableArtistFinder();
 enableClipboard();
 enableSourceData();

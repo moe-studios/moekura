@@ -26,10 +26,12 @@ pub enum Flash {
     Queued,
     /// Held by the spam filter for the staff to check.
     Held,
+    /// An upload was already this post.
+    Duplicate,
 }
 
 impl Flash {
-    const ALL: [Flash; 12] = [
+    const ALL: [Flash; 13] = [
         Flash::LoggedIn,
         Flash::LoggedOut,
         Flash::Registered,
@@ -42,6 +44,7 @@ impl Flash {
         Flash::SomeSkipped,
         Flash::Queued,
         Flash::Held,
+        Flash::Duplicate,
     ];
 
     /// As in the cookie; the message is `flash-<key>`.
@@ -59,6 +62,7 @@ impl Flash {
             Flash::SomeSkipped => "some_skipped",
             Flash::Queued => "queued",
             Flash::Held => "held",
+            Flash::Duplicate => "duplicate",
         }
     }
 

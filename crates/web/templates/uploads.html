@@ -3,11 +3,43 @@
 {% block content %}
 <h1>{{ t("uploads-mine") }}</h1>
 {% include "upload_nav.html" %}
+<form method="get" action="/uploads" class="uploads-filter" aria-label="{{ t('uploads-filter') }}">
+  <label>{{ t("uploads-status") }}
+    <select name="status">
+      <option value="">{{ t("uploads-any") }}</option>
+      {% for value in ["pending", "ready", "failed"] %}<option value="{{ value }}"{% if filter.status == value %} selected{% endif %}>{{ t("uploads-status-" ~ value) }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>{{ t("uploads-posted") }}
+    <select name="posted">
+      <option value="">{{ t("uploads-any") }}</option>
+      <option value="yes"{% if filter.posted == "yes" %} selected{% endif %}>{{ t("uploads-posted-yes") }}</option>
+      <option value="no"{% if filter.posted == "no" %} selected{% endif %}>{{ t("uploads-posted-no") }}</option>
+    </select>
+  </label>
+  <label>{{ t("api-type") }}
+    <select name="type">
+      <option value="">{{ t("uploads-any") }}</option>
+      {% for type in file_types %}<option value="{{ type }}"{% if filter.file_type == type %} selected{% endif %}>{{ type|upper }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>{{ t("source") }}
+    <input name="source" value="{{ filter.source }}" placeholder="https://" autocapitalize="none" spellcheck="false">
+  </label>
+  {% if sees_all %}
+  <label>{{ t("uploads-uploader") }}
+    <input name="user" value="{{ filter.user if filter.user is not none else me.name }}" placeholder="{{ t('uploads-everyone') }}" autocapitalize="none" spellcheck="false">
+  </label>
+  {% endif %}
+  <button type="submit" class="secondary">{{ t("uploads-filter") }}</button>
+</form>
 {% if files %}
 <p class="hint">{{ t("uploads-hint") }}</p>
 <ul class="post-grid upload-files">
   {% for file in files %}<li>{% include "upload_file_card.html" %}</li>{% endfor %}
 </ul>
+{% elif filter.filtered %}
+<p class="empty">{{ t("uploads-none-found") }}</p>
 {% else %}
 <p class="empty">{{ t("uploads-none") }}</p>
 {% endif %}

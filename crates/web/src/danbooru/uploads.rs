@@ -188,6 +188,9 @@ async fn create(
     current.require(Permission::Upload)?;
     let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
     check_limits(&state, &current).await.map_err(upload_error)?;
+    crate::uploads::room(&state, user)
+        .await
+        .map_err(upload_error)?;
     let Sent {
         file,
         source: link,

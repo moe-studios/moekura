@@ -128,13 +128,13 @@ upload-similar-title = { $count ->
 upload-similar-hint = Check it isn't one of these. If it isn't (a different version, an edit, another page), post it anyway; consider making it a child or parent of the post it resembles.
 upload-drop-hint = Choose files, drop them onto this form, or paste them from your clipboard: up to { $max } at once. Choosing them uploads them.
 upload-url = …or a link
-upload-url-hint = Images or videos up to { $mb } MB. A work's page on Pixiv, X, Bluesky, DeviantArt, Fanbox or Skeb works too: its files are downloaded, and the page becomes the source. With files, the link is their source.
+upload-url-hint = Images or videos up to { $mb } MB. A work's page on Pixiv, X, Bluesky, DeviantArt, another booru or the many other sites Danbooru supports works too: its files are downloaded, and the page becomes the source. With files, the link is their source.
 upload-tags-hint = Separate tags with spaces. Give a new tag a category with a prefix, like <code>artist:name</code>. <code>-tag</code> and metatags like <code>rating:s</code> or <code>pool:name</code> work too.
 commentary = Artist's commentary
 upload-suggested-pending = The tagger is looking at this file. Its suggestions show here when it's done; you can post without waiting for them.
 upload-suggested-check = Check again
 upload-suggested-hint = Clicking one adds it to the form.
-upload-commentary-hint = What the artist wrote with the work, as they wrote it. It's filled in from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt, Fanbox, Skeb, or a page with its image in its preview tags), and taken from there if left empty.
+upload-commentary-hint = What the artist wrote with the work, as they wrote it. It's filled in from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt and the other sites Danbooru supports, or a page with its image in its preview tags), and taken from there if left empty.
 
 posts-newest = Newest posts
 posts-syntax = See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.

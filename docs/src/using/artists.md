@@ -21,22 +21,26 @@ posts.
 
 List the artist's profiles and galleries, one per line. Put `-` in front
 of ones no longer in use (a deleted account, a site that closed): they're
-shown struck out, but still identify the artist.
+shown struck out, but still identify the artist. Profiles on the
+[sites Moekura knows](sources.md) are saved in their canonical form
+(`pixiv.net/member.php?id=1` becomes `https://www.pixiv.net/users/1`) and
+shown with the site's icon.
 
 **Find an artist by URL** (`/artists/finder`) takes any address, a
 profile or a page of one of the artist's works, and lists the artists
 whose URLs it falls under: `https://x.com/someone/status/123` finds the
 artist with `https://twitter.com/someone`. Addresses are compared without
-`www.`, the scheme, or anything after `?`, and `x.com` counts as
-`twitter.com`.
+`www.`, the scheme, or anything after `?`, `x.com` counts as
+`twitter.com`, and a profile's other forms count as its canonical one
+(`someone.artstation.com` as `artstation.com/someone`).
 
 The upload form does the same with the link you upload from and the
 source: when they belong to a known artist, their tag is offered beside
-the tags box. For works on Pixiv, X, Bluesky, DeviantArt, Fanbox and
-Skeb, the site is asked who made it, so a work's page finds the artist
-whose entry lists their profile, even when the page's address doesn't
-contain it (Pixiv's don't); an artist without an entry gets a link to
-start one, with their name and profiles filled in.
+the tags box. For works on the sites Moekura reads, the site is asked
+who made it, so a work's page finds the artist whose entry lists their
+profile, even when the page's address doesn't contain it (Pixiv's
+don't); an artist without an entry gets a link to start one, with their
+name and profiles filled in.
 
 ## Banned artists
 

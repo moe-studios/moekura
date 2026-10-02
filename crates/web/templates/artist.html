@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "site_icon.html" import site_icon %}
 {% block title %}{{ artist.title }} · {{ t("tag-nav-artists") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
@@ -21,7 +22,7 @@
     <dd>
       {% if artist.urls %}
       <ul class="artist-urls">
-        {% for u in artist.urls %}<li>{% if u.active %}<a href="{{ u.href }}" rel="nofollow noopener">{{ u.url }}</a>{% else %}<del>{{ u.url }}</del> <span class="hint">{{ t("inactive") }}</span>{% endif %}</li>{% endfor %}
+        {% for u in artist.urls %}<li>{{ site_icon(u.url) }}{% if u.active %}<a href="{{ u.href }}" rel="nofollow noopener">{{ u.url }}</a>{% else %}<del>{{ u.url }}</del> <span class="hint">{{ t("inactive") }}</span>{% endif %}</li>{% endfor %}
       </ul>
       {% else %}<span class="hint">{{ t("none-yet") }}</span>{% endif %}
     </dd>

@@ -926,8 +926,10 @@ mod tests {
 
         let shown = app.get(&format!("/artists/{id}"), None).await;
         assert_eq!(shown.status, StatusCode::OK);
+        // Saved in its canonical form, with the site's icon.
+        assert!(shown.body.contains("x.com&#x2f;catart"), "{}", shown.body);
         assert!(
-            shown.body.contains("twitter.com&#x2f;catart"),
+            shown.body.contains(r#"<title>X</title>"#) && shown.body.contains("#twitter"),
             "{}",
             shown.body
         );

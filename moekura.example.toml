@@ -249,6 +249,17 @@ otlp_sample_ratio = 1.0
 # service.name on exported traces.
 service_name = "moekura"
 
+[sources]
+# Logins for sites that show some works only to members, by domain; see
+# "Sites" in the documentation for which want what. Requests to the
+# domain and its subdomains carry them.
+# [sources.logins."pixiv.net"]
+# cookie = "PHPSESSID=…"
+# [sources.logins."gelbooru.com"]
+# query = { user_id = "…", api_key = "…" }
+# [sources.logins."baraag.net"]
+# headers = { Authorization = "Bearer …" }
+
 [webhooks]
 # Let webhooks go to private, loopback and link-local addresses, e.g. a
 # bot on the same machine. Off, so a webhook can't reach this server's own

@@ -118,7 +118,7 @@ pub(super) fn parse(post: &Value, target: &Target) -> Option<SourceInfo> {
         .map_or(text.as_str(), |(before, _)| before)
         .trim();
     Some(SourceInfo {
-        site: "X",
+        site: moekura_core::sites::TWITTER.name,
         page_url: format!("https://twitter.com/{screen_name}/status/{}", target.id),
         files,
         headers: Vec::new(),

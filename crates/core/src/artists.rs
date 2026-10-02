@@ -63,8 +63,9 @@ impl ArtistUrl {
                 continue;
             }
             seen.push(normalized);
+            // A profile on a site we know is kept in its canonical form.
             out.push(Self {
-                url: url.to_string(),
+                url: crate::sites::canonical_artist_url(url.as_str()),
                 is_active,
             });
         }
@@ -89,16 +90,17 @@ impl ArtistUrl {
     }
 }
 
-/// A URL reduced for comparing: no scheme, `www.` or `mobile.`, query or
-/// fragment, lowercase host, and no trailing slash, like
-/// `twitter.com/Artist`. `None` for anything but a web address.
+/// A URL reduced for comparing: a profile on a site we know in its
+/// canonical form ([`crate::sites`]), then no scheme, `www.` or
+/// `mobile.`, query or fragment, lowercase host, and no trailing slash,
+/// like `twitter.com/Artist`. `None` for anything but a web address.
 pub fn normalize_url(raw: &str) -> Option<String> {
     let with_scheme = if raw.contains("://") {
         raw.trim().to_owned()
     } else {
         format!("https://{}", raw.trim())
     };
-    let url = Url::parse(&with_scheme).ok()?;
+    let url = Url::parse(&crate::sites::canonical_artist_url(&with_scheme)).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
         return None;
     }
@@ -116,8 +118,10 @@ pub fn normalize_url(raw: &str) -> Option<String> {
 
 /// What an artist URL must equal to match `raw` (see [`normalize_url`]):
 /// the URL itself and every shorter path on the same site, longest first,
-/// but not the bare site. A post's URL, `pixiv.net/users/1/artworks`,
-/// then finds the artist whose URL is `pixiv.net/users/1`.
+/// but not the bare site, then the profile the URL belongs to on a site
+/// we know. A post's URL, `pixiv.net/users/1/artworks`, then finds the
+/// artist whose URL is `pixiv.net/users/1`, and
+/// `artist.deviantart.com/art/x-1` the one with `deviantart.com/artist`.
 pub fn url_prefixes(raw: &str) -> Vec<String> {
     let Some(normalized) = normalize_url(raw) else {
         return Vec::new();
@@ -127,6 +131,19 @@ pub fn url_prefixes(raw: &str) -> Vec<String> {
     while let Some((shorter, _)) = current.rsplit_once('/') {
         out.push(current.to_owned());
         current = shorter;
+    }
+    let with_scheme = if raw.contains("://") {
+        raw.trim().to_owned()
+    } else {
+        format!("https://{}", raw.trim())
+    };
+    let profile = crate::sites::parse(&with_scheme)
+        .and_then(|u| u.profile_url)
+        .and_then(|p| normalize_url(&p));
+    if let Some(profile) = profile
+        && !out.contains(&profile)
+    {
+        out.push(profile);
     }
     out
 }
@@ -146,6 +163,15 @@ mod tests {
             Some("twitter.com/Artist")
         );
         assert_eq!(normalize_url("ftp://example.com/x"), None);
+        // Profiles on known sites compare in their canonical form.
+        assert_eq!(
+            normalize_url("https://www.artstation.com/artist/sa-dui/albums").as_deref(),
+            Some("artstation.com/sa-dui")
+        );
+        assert_eq!(
+            normalize_url("https://www.pixiv.net/member.php?id=5").as_deref(),
+            Some("pixiv.net/users/5")
+        );
     }
 
     #[test]
@@ -159,6 +185,13 @@ mod tests {
             ]
         );
         assert!(url_prefixes("https://twitter.com/").is_empty());
+        // A work's page also finds its artist's profile.
+        assert_eq!(
+            url_prefixes("https://noizave.deviantart.com/art/test-685436408")
+                .last()
+                .map(String::as_str),
+            Some("deviantart.com/noizave")
+        );
     }
 
     #[test]
@@ -171,11 +204,11 @@ mod tests {
             urls,
             [
                 ArtistUrl {
-                    url: "https://twitter.com/a".into(),
+                    url: "https://x.com/a".into(),
                     is_active: true
                 },
                 ArtistUrl {
-                    url: "https://pixiv.net/users/1".into(),
+                    url: "https://www.pixiv.net/users/1".into(),
                     is_active: false
                 },
             ]

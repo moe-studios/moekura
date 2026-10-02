@@ -1082,7 +1082,10 @@ mod tests {
 
         let mut state = test_state(&pool).await;
         state.fetcher = crate::fetch::Fetcher::new(Duration::from_secs(10), true);
-        state.sources = Arc::new(crate::sources::Sources::new(true));
+        state.sources = Arc::new(crate::sources::Sources::new(
+            true,
+            moekura_core::config::SourcesConfig::default(),
+        ));
         let page = format!("http://{addr}/work");
         state.sources.remember(
             &page,

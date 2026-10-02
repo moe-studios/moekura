@@ -1,27 +1,98 @@
 //! Understanding where an upload comes from: "source strategies" that
-//! read a work's page on Pixiv, X, Bluesky, DeviantArt, Fanbox or Skeb
-//! (and OpenGraph tags anywhere else) for the best file to download, the
-//! artist and their profiles, the site's tags and the artist's
-//! commentary.
+//! read a work's page for the best file to download, the artist and their
+//! profiles, the site's tags and the artist's commentary.
 //!
-//! Each strategy recognises its site's URLs and asks the site's public
-//! API or page; what it finds is cached for a few minutes, since the
-//! upload form asks about the same link as it's typed and again when it's
-//! sent. Nothing here is essential: a site that changed or is down just
-//! means the link is downloaded as it is, without extras.
+//! Which site a link is on, and its canonical page and profile, is
+//! [`moekura_core::sites`]'s: each site whose works can be read has a
+//! strategy here, which asks the site's public API or page. A site
+//! without one still gets its link's file and canonical page, and any
+//! other page's OpenGraph tags are read. What a lookup finds is cached for
+//! a few minutes, since the upload form asks about the same link as it's
+//! typed and again when it's sent. Nothing here is essential: a site that
+//! changed or is down just means the link is downloaded as it is, without
+//! extras. Sites that only show works to members can be given a login in
+//! `[sources.logins]`.
 
+mod apple_music;
+mod arca_live;
+mod art_station;
+mod art_street;
+mod artistree;
+mod behance;
+mod bilibili;
+mod blogger;
 mod bluesky;
+mod boorus;
+mod booth;
+mod carrd;
+mod ci_en;
+mod dc_inside;
 mod deviantart;
+mod dotpict;
 mod fanbox;
+mod fandom;
+mod fantia;
+mod fc2;
+mod fediverse;
+mod foriio;
+mod four_chan;
+mod furaffinity;
+mod galleria;
+mod grafolio;
+mod gumroad;
+mod hentai_foundry;
+pub(crate) mod html;
+mod huajia;
+mod huashijie;
+mod imgur;
+mod inkbunny;
+mod itaku;
+mod kofi;
+mod lofter;
+mod mihuashi;
+mod minitokyo;
+mod miyoushe;
+mod my_portfolio;
+mod naver;
+mod newgrounds;
+mod nico_seiga;
+mod nijie;
+mod note;
+mod odaibako;
 mod opengraph;
+mod opensea;
+mod patreon;
+mod piapro;
+mod pinterest;
 mod pixiv;
+mod pixiv_family;
+mod plurk;
+mod poipiku;
+mod postype;
+mod privatter;
+mod reddit;
+mod redgifs;
+mod sites;
 mod skeb;
+mod tinami;
+mod tistory;
+mod toyhouse;
+mod tumblr;
 mod twitter;
+mod vk;
+mod weibo;
+mod xfolio;
+mod xiaohongshu;
+mod yachiyo_room;
+mod youtube;
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use moekura_core::config::SourcesConfig;
 use url::Url;
 
 use crate::fetch::Fetcher;
@@ -68,26 +139,77 @@ pub struct SourceInfo {
 }
 
 impl SourceInfo {
+    /// A work on `site` whose page is `page_url`, nothing else known yet.
+    pub(crate) fn new(
+        site: &'static moekura_core::sites::Site,
+        page_url: impl Into<String>,
+    ) -> Self {
+        Self {
+            site: site.name,
+            page_url: page_url.into(),
+            ..Self::default()
+        }
+    }
+
     /// The headers for downloading, as the fetcher takes them.
     pub fn header_pairs(&self) -> Vec<(&str, &str)> {
         self.headers.iter().map(|(n, v)| (*n, v.as_str())).collect()
     }
 }
 
-/// Reading JSON and pages for the strategies.
+/// Reading JSON and pages for the strategies, logged in to the sites
+/// `[sources.logins]` has logins for.
 pub(crate) struct Http<'a> {
     fetcher: &'a Fetcher,
+    logins: &'a SourcesConfig,
 }
 
 impl Http<'_> {
+    /// `url` with its site's login added, and the headers to send.
+    fn logged_in(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(Url, Vec<(String, String)>), String> {
+        let mut url = Url::parse(url).map_err(|e| e.to_string())?;
+        let mut all: Vec<(String, String)> = headers
+            .iter()
+            .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
+            .collect();
+        if let Some(login) = url.host_str().and_then(|h| self.logins.login_for(h)) {
+            if !login.query.is_empty() {
+                url.query_pairs_mut().extend_pairs(&login.query);
+            }
+            if !login.cookie.is_empty() {
+                all.push(("Cookie".into(), login.cookie.clone()));
+            }
+            all.extend(login.headers.iter().map(|(n, v)| (n.clone(), v.clone())));
+        }
+        Ok((url, all))
+    }
+
+    /// Whether there's a login for `host`'s site.
+    pub fn has_login(&self, host: &str) -> bool {
+        self.logins.login_for(host).is_some()
+    }
+
     pub async fn text(
         &self,
         url: &str,
         headers: &[(&str, &str)],
     ) -> Result<(String, String), String> {
-        let url = Url::parse(url).map_err(|e| e.to_string())?;
-        let (content_type, body) = self.fetcher.get(&url, headers, MAX_RESPONSE).await?;
+        let (url, headers) = self.logged_in(url, headers)?;
+        let headers: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        let (content_type, body) = self.fetcher.get(&url, &headers, MAX_RESPONSE).await?;
         Ok((content_type, String::from_utf8_lossy(&body).into_owned()))
+    }
+
+    /// A page's HTML.
+    pub async fn page(&self, url: &str, headers: &[(&str, &str)]) -> Result<String, String> {
+        Ok(self.text(url, headers).await?.1)
     }
 
     pub async fn json(
@@ -97,6 +219,113 @@ impl Http<'_> {
     ) -> Result<serde_json::Value, String> {
         let (_, body) = self.text(url, headers).await?;
         serde_json::from_str(&body).map_err(|e| format!("unreadable answer: {e}"))
+    }
+
+    /// POSTs `body` as JSON and reads the JSON answer.
+    pub async fn post_json(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        let (url, headers) = self.logged_in(url, headers)?;
+        let mut headers: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        headers.push(("Content-Type", "application/json"));
+        let (_, answer) = self
+            .fetcher
+            .post(&url, &headers, body.to_string().into_bytes(), MAX_RESPONSE)
+            .await?;
+        serde_json::from_slice(&answer).map_err(|e| format!("unreadable answer: {e}"))
+    }
+
+    /// POSTs a form and reads the answer as text.
+    pub async fn post_form(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+        form: &[(&str, &str)],
+    ) -> Result<String, String> {
+        let (url, headers) = self.logged_in(url, headers)?;
+        let mut headers: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        headers.push(("Content-Type", "application/x-www-form-urlencoded"));
+        let body = url::form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(form)
+            .finish();
+        let (_, answer) = self
+            .fetcher
+            .post(&url, &headers, body.into_bytes(), MAX_RESPONSE)
+            .await?;
+        Ok(String::from_utf8_lossy(&answer).into_owned())
+    }
+
+    /// The first of `urls` that exists (asked with HEAD requests): the
+    /// best of a file's sizes when the site doesn't say which it has.
+    pub async fn first_existing(
+        &self,
+        urls: &[String],
+        headers: &[(&str, &str)],
+    ) -> Option<String> {
+        for url in urls {
+            if let Ok(parsed) = Url::parse(url)
+                && self.fetcher.exists(&parsed, headers).await
+            {
+                return Some(url.clone());
+            }
+        }
+        None
+    }
+
+    /// The cookies `url` sets (`name=value`).
+    pub async fn set_cookies(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<Vec<String>, String> {
+        let (url, headers) = self.logged_in(url, headers)?;
+        let headers: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        self.fetcher.set_cookies(&url, &headers, None).await
+    }
+
+    /// POSTs nothing to `url` and reads the answer as text.
+    pub async fn post_empty(&self, url: &str, headers: &[(&str, &str)]) -> Result<String, String> {
+        self.post_form(url, headers, &[]).await
+    }
+
+    /// Where `url` leads after its redirects.
+    pub async fn final_url(&self, url: &str, headers: &[(&str, &str)]) -> Result<Url, String> {
+        let (url, headers) = self.logged_in(url, headers)?;
+        let headers: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(n, v)| (n.as_str(), v.as_str()))
+            .collect();
+        self.fetcher.final_url(&url, &headers).await
+    }
+
+    /// What another link says (a booru post's original source), looked up
+    /// as one level deeper.
+    pub fn nested<'b>(
+        &'b self,
+        url: &'b Url,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<SourceInfo>, String>> + Send + 'b>> {
+        Box::pin(find(self, url, 1))
+    }
+
+    /// What a short link's target says, at the short link's `depth`.
+    pub fn redirected<'b>(
+        &'b self,
+        url: &'b Url,
+        depth: u8,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<SourceInfo>, String>> + Send + 'b>> {
+        Box::pin(find(self, url, depth))
     }
 }
 
@@ -131,7 +360,7 @@ impl SourceCache {
 }
 
 /// Which strategy handles `url`, if a site-specific one does.
-enum Site {
+enum Strategy {
     Pixiv(pixiv::Target),
     Twitter(twitter::Target),
     Bluesky(bluesky::Target),
@@ -140,14 +369,14 @@ enum Site {
     Skeb(skeb::Target),
 }
 
-fn site(url: &Url) -> Option<Site> {
+fn site(url: &Url) -> Option<Strategy> {
     pixiv::target(url)
-        .map(Site::Pixiv)
-        .or_else(|| twitter::target(url).map(Site::Twitter))
-        .or_else(|| bluesky::target(url).map(Site::Bluesky))
-        .or_else(|| deviantart::matches(url).then_some(Site::DeviantArt))
-        .or_else(|| fanbox::target(url).map(Site::Fanbox))
-        .or_else(|| skeb::target(url).map(Site::Skeb))
+        .map(Strategy::Pixiv)
+        .or_else(|| twitter::target(url).map(Strategy::Twitter))
+        .or_else(|| bluesky::target(url).map(Strategy::Bluesky))
+        .or_else(|| deviantart::matches(url).then_some(Strategy::DeviantArt))
+        .or_else(|| fanbox::target(url).map(Strategy::Fanbox))
+        .or_else(|| skeb::target(url).map(Strategy::Skeb))
 }
 
 /// Whether `url` looks like a file rather than a page.
@@ -160,17 +389,28 @@ fn is_file_url(url: &Url) -> bool {
     .any(|ext| path.ends_with(ext))
 }
 
-async fn find(fetcher: &Fetcher, url: &Url) -> Result<Option<SourceInfo>, String> {
-    let http = Http { fetcher };
+/// What `url` says. `depth` is 0 for the link itself and 1 for a link
+/// found while reading it, which isn't followed further.
+async fn find(http: &Http<'_>, url: &Url, depth: u8) -> Result<Option<SourceInfo>, String> {
     let found = match site(url) {
-        Some(Site::Pixiv(target)) => pixiv::fetch(&http, &target).await?,
-        Some(Site::Twitter(target)) => twitter::fetch(&http, &target).await?,
-        Some(Site::Bluesky(target)) => bluesky::fetch(&http, &target).await?,
-        Some(Site::DeviantArt) => deviantart::fetch(&http, url).await?,
-        Some(Site::Fanbox(target)) => fanbox::fetch(&http, &target).await?,
-        Some(Site::Skeb(target)) => skeb::fetch(&http, &target).await?,
-        None if is_file_url(url) => return Ok(None),
-        None => return opengraph::fetch(&http, url).await,
+        Some(Strategy::Pixiv(target)) => pixiv::fetch(http, &target).await?,
+        Some(Strategy::Twitter(target)) => twitter::fetch(http, &target).await?,
+        Some(Strategy::Bluesky(target)) => bluesky::fetch(http, &target).await?,
+        Some(Strategy::DeviantArt) => deviantart::fetch(http, url).await?,
+        Some(Strategy::Fanbox(target)) => fanbox::fetch(http, &target).await?,
+        Some(Strategy::Skeb(target)) => skeb::fetch(http, &target).await?,
+        None => {
+            if let Some(known) = moekura_core::sites::parse(url.as_str()) {
+                return sites::fetch(http, &known, url, depth).await;
+            }
+            if is_file_url(url) {
+                return Ok(None);
+            }
+            if let Some(note) = sites::other_misskey(http, url).await {
+                return Ok(Some(note));
+            }
+            return opengraph::fetch(http, url).await;
+        }
     };
     Ok(Some(found))
 }
@@ -178,24 +418,31 @@ async fn find(fetcher: &Fetcher, url: &Url) -> Result<Option<SourceInfo>, String
 /// How long asking a source may take: uploads can wait on it.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Source lookups, with their own quick fetcher and the cache.
+/// Source lookups, with their own quick fetcher, the sites' logins and
+/// the cache.
 pub struct Sources {
     fetcher: Fetcher,
+    logins: SourcesConfig,
     cache: SourceCache,
 }
 
 impl Sources {
     /// `allow_private` exists for tests against a local server.
-    pub fn new(allow_private: bool) -> Self {
+    pub fn new(allow_private: bool, config: SourcesConfig) -> Self {
         Self {
             fetcher: Fetcher::new(LOOKUP_TIMEOUT, allow_private),
+            logins: config,
             cache: SourceCache::default(),
         }
     }
 
     /// What `url`'s source says (see [`lookup`]).
     pub async fn lookup(&self, url: &str) -> Option<Arc<SourceInfo>> {
-        lookup(&self.fetcher, &self.cache, url).await
+        let http = Http {
+            fetcher: &self.fetcher,
+            logins: &self.logins,
+        };
+        lookup(&http, &self.cache, url).await
     }
 
     /// Answers lookups of `url` with `info`, as if its page said so.
@@ -207,7 +454,7 @@ impl Sources {
 
 /// What `url`'s source says, if it's a page some strategy reads (cached).
 /// Failures are logged and give `None`.
-pub async fn lookup(fetcher: &Fetcher, cache: &SourceCache, url: &str) -> Option<Arc<SourceInfo>> {
+async fn lookup(http: &Http<'_>, cache: &SourceCache, url: &str) -> Option<Arc<SourceInfo>> {
     let url = url.trim();
     let parsed = Url::parse(url)
         .ok()
@@ -215,7 +462,7 @@ pub async fn lookup(fetcher: &Fetcher, cache: &SourceCache, url: &str) -> Option
     if let Some(cached) = cache.get(url) {
         return cached;
     }
-    let found = match find(fetcher, &parsed).await {
+    let found = match find(http, &parsed, 0).await {
         Ok(found) => found.map(Arc::new),
         Err(error) => {
             tracing::info!(url, error, "could not read the source");
@@ -331,8 +578,9 @@ pub(crate) fn html_to_text(html: &str) -> String {
     // No runs of blank lines, no trailing spaces.
     let mut text = String::new();
     let mut blank = 0;
+    // HTML's indentation isn't text.
     for line in out.lines() {
-        let line = line.trim_end();
+        let line = line.trim();
         if line.trim().is_empty() {
             blank += 1;
             if blank > 1 {
@@ -393,6 +641,45 @@ pub(crate) fn text_of(value: &serde_json::Value) -> String {
     value.as_str().unwrap_or_default().to_owned()
 }
 
+/// An id that's a JSON string or number, as text.
+pub(crate) fn id_of(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// Tags from a list of names.
+pub(crate) fn tags_named<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> Vec<SourceTag> {
+    names
+        .into_iter()
+        .map(|n| n.as_ref().trim().to_owned())
+        .filter(|n| !n.is_empty())
+        .map(|name| SourceTag {
+            name,
+            translation: None,
+        })
+        .collect()
+}
+
+/// The strings in a JSON array (or the strings at `key` in its objects).
+pub(crate) fn strings(value: &serde_json::Value, key: Option<&str>) -> Vec<String> {
+    value
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| match key {
+                    Some(key) => v[key].as_str(),
+                    None => v.as_str(),
+                })
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,12 +701,12 @@ mod tests {
         let which = |u: &str| {
             let url = Url::parse(u).unwrap();
             match site(&url) {
-                Some(Site::Pixiv(_)) => "pixiv",
-                Some(Site::Twitter(_)) => "twitter",
-                Some(Site::Bluesky(_)) => "bluesky",
-                Some(Site::DeviantArt) => "deviantart",
-                Some(Site::Fanbox(_)) => "fanbox",
-                Some(Site::Skeb(_)) => "skeb",
+                Some(Strategy::Pixiv(_)) => "pixiv",
+                Some(Strategy::Twitter(_)) => "twitter",
+                Some(Strategy::Bluesky(_)) => "bluesky",
+                Some(Strategy::DeviantArt) => "deviantart",
+                Some(Strategy::Fanbox(_)) => "fanbox",
+                Some(Strategy::Skeb(_)) => "skeb",
                 None => "none",
             }
         };
@@ -457,9 +744,14 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await });
 
         let fetcher = Fetcher::new(Duration::from_secs(5), true);
+        let logins = SourcesConfig::default();
+        let http = Http {
+            fetcher: &fetcher,
+            logins: &logins,
+        };
         let cache = SourceCache::default();
         let url = format!("http://{addr}/work");
-        let info = lookup(&fetcher, &cache, &url).await.unwrap();
+        let info = lookup(&http, &cache, &url).await.unwrap();
         assert_eq!(info.files, [format!("http://{addr}/big.png")]);
         assert_eq!(info.title, "A cat & a dog");
         assert_eq!(info.description, "Drawn today");
@@ -467,11 +759,11 @@ mod tests {
         // Cached: the same answer without asking.
         assert!(Arc::ptr_eq(
             &info,
-            &lookup(&fetcher, &cache, &url).await.unwrap()
+            &lookup(&http, &cache, &url).await.unwrap()
         ));
         // Files aren't pages.
         assert!(
-            lookup(&fetcher, &cache, &format!("http://{addr}/a.png"))
+            lookup(&http, &cache, &format!("http://{addr}/a.png"))
                 .await
                 .is_none()
         );
@@ -500,7 +792,7 @@ mod tests {
 
         let mut state = test_state(&pool).await;
         state.fetcher = Fetcher::new(Duration::from_secs(10), true);
-        state.sources = Arc::new(Sources::new(true));
+        state.sources = Arc::new(Sources::new(true, SourcesConfig::default()));
         let app = TestApp::new(
             state.clone(),
             crate::upload::routes(1024 * 1024 * 10).merge(crate::related_tags::routes()),

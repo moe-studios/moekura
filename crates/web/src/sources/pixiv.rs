@@ -120,7 +120,7 @@ pub(super) fn parse(
         profile_urls.push(format!("https://www.pixiv.net/stacc/{account}"));
     }
     Some(SourceInfo {
-        site: "Pixiv",
+        site: moekura_core::sites::PIXIV.name,
         page_url: format!("https://www.pixiv.net/artworks/{}", target.id),
         files,
         headers: vec![("Referer", REFERER.to_owned())],
@@ -148,14 +148,15 @@ pub(super) async fn fetch(http: &Http<'_>, target: &Target) -> Result<SourceInfo
     if work["error"].as_bool() == Some(true) {
         return Err(format!("Pixiv: {}", text_of(&work["message"])));
     }
+    // Logged out, Pixiv sometimes won't list the pages; the first is
+    // still something.
     let pages = if work["body"]["pageCount"].as_u64().unwrap_or(1) > 1 {
-        Some(
-            http.json(
-                &format!("https://www.pixiv.net/ajax/illust/{}/pages", target.id),
-                &headers,
-            )
-            .await?,
+        http.json(
+            &format!("https://www.pixiv.net/ajax/illust/{}/pages", target.id),
+            &headers,
         )
+        .await
+        .ok()
     } else {
         None
     };

@@ -1,11 +1,12 @@
 //! The `tags.apply_relation` job, rewriting existing posts after a tag
 //! alias or implication is approved; `tags.mass_update`, adding and
-//! removing tags on every post matching a search; and `tags.bulk_update`,
-//! applying an approved bulk update request's commands.
+//! removing tags on every post matching a search; `tags.bulk_update`,
+//! applying an approved bulk update request's commands; and
+//! `artists.normalize_urls`, comparing artist URLs the current way.
 
 use moekura_core::bulk::{self, Command};
 use moekura_core::config::SearchConfig;
-use moekura_core::jobs::{ApplyBulkUpdate, ApplyTagRelation, MassUpdate};
+use moekura_core::jobs::{ApplyBulkUpdate, ApplyTagRelation, MassUpdate, NormalizeArtistUrls};
 use moekura_core::posts::{PostStatus, Rating};
 use moekura_core::search::Query;
 use moekura_db::posts::Visibility;
@@ -13,7 +14,7 @@ use moekura_db::search::{PageRef, Plan, SearchError};
 use moekura_db::tag_relations::{self, Kind, Status};
 use moekura_db::tag_relations::{NewRequest, RelationError, RuleError};
 use moekura_db::tags::{self, WantedTag};
-use moekura_db::{mass_updates, requests};
+use moekura_db::{artists, mass_updates, requests};
 use sqlx::PgPool;
 
 use crate::{JobError, Registry};
@@ -38,6 +39,15 @@ impl TagJobs {
         registry.register(move |job: ApplyBulkUpdate| {
             let jobs = bulk_jobs.clone();
             async move { jobs.bulk_update(job.request_id).await }
+        });
+        let artist_jobs = self.clone();
+        registry.register(move |_: NormalizeArtistUrls| {
+            let db = artist_jobs.db.clone();
+            async move {
+                let changed = artists::renormalize_urls(&db).await?;
+                tracing::info!(changed, "normalized artist URLs");
+                Ok(())
+            }
         });
         registry.register(move |job: MassUpdate| {
             let jobs = self.clone();

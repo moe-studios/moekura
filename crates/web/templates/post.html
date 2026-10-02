@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "site_icon.html" import site_icon %}
 {% from "reason_fields.html" import reason_fields %}
 {# The first few names that say what the post is, so tabs and history can be told apart. #}
 {% block title %}{% for group in tag_groups if group.name in ("character", "copyright", "artist") %}{% for tag in group.tags[:2] %}{{ tag.name }} · {% endfor %}{% endfor %}{{ t("post-number", id=post.id) }} · {{ site.name }}{% endblock %}
@@ -40,7 +41,7 @@
       <dt>{{ t("post-uploaded") }}</dt><dd><time datetime="{{ post.created_iso }}">{{ post.created }}</time>{% if uploader %} {{ t("by-user", user=uploader) }}{% endif %}</dd>
       {% if post.source %}
       <dt>{{ t("source") }}</dt>
-      <dd class="source">{% if post.source_link %}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
+      <dd class="source">{% if post.source_link %}{{ site_icon(post.source) }}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
       {% endif %}
     </dl>
     <p class="post-links">{% if edit %}<a href="#edit-tags" data-open-edit>{{ t("edit") }}</a>{% endif %}<a href="{{ file.original }}" download>{{ t("post-download") }}</a><a href="/posts/{{ post.id }}/history">{{ t("tag-nav-history") }}</a><a href="/posts/{{ post.id }}/metadata">{{ t("post-metadata") }}</a><a href="/posts/{{ post.id }}/replacements">{{ t("post-replacements") }}</a><a href="/iqdb_queries?post_id={{ post.id }}">{{ t("post-look-alikes") }}</a>{% if post.has_notes %}<a href="/posts/{{ post.id }}/notes/history">{{ t("post-note-history") }}</a>{% endif %}</p>

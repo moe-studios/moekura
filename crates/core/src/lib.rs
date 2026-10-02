@@ -21,6 +21,7 @@ pub mod promotion;
 pub mod remote;
 pub mod search;
 pub mod settings;
+pub mod sites;
 pub mod spam;
 pub mod tagger;
 pub mod tags;

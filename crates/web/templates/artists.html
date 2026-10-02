@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "site_icon.html" import site_icon %}
 {% block title %}{{ t("tag-nav-artists") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "tag_nav.html" %}
@@ -33,7 +34,7 @@
       <td><a class="tag tag-artist" href="{{ a.url }}">{{ a.title }}</a>{% if a.banned %} <span class="hint">{{ t("banned-word") }}</span>{% endif %}</td>
       <td>{{ a.other_names|join(", ") }}</td>
       <td>{{ a.group }}</td>
-      <td class="num">{{ a.urls|length }}</td>
+      <td class="artist-sites">{% for u in a.urls if u.active and site_of(u.url) %}<a href="{{ u.href }}" rel="nofollow noopener">{{ site_icon(u.url) }}</a>{% endfor %}<span class="num">{{ a.urls|length }}</span></td>
       <td>{{ a.date }}</td>
     </tr>
     {% endfor %}

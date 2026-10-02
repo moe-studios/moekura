@@ -326,6 +326,24 @@ collector next to moekura rather than sending to a hosted service
 directly. A busy site can lower `otlp_sample_ratio`: a sampled request
 traces everything beneath it.
 
+## `[sources]`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `logins` | none | logins for [sites](using/sources.md#logins) that show some works only to members, by domain |
+
+Each `[sources.logins."<domain>"]` covers the domain and its subdomains
+and can set any of:
+
+| Key | Meaning |
+|---|---|
+| `cookie` | the `Cookie` header, `"name=value; other=value"` |
+| `query` | parameters added to the address, such as an API key |
+| `headers` | other headers, such as `Authorization` |
+
+They're sent only to that site, when reading where an upload comes
+from; the files themselves are downloaded without them.
+
 ## `[webhooks]`
 
 | Key | Default | Meaning |

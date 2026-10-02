@@ -41,16 +41,9 @@ yet.
 ## Uploading from a link
 
 **…or a link** on the upload form downloads files from the web.
-Give it the file itself, or a work's page on a site Moekura can read:
-
-| Site | Pages |
-|---|---|
-| Pixiv | `pixiv.net/artworks/<id>`, and its files on `i.pximg.net` |
-| X (Twitter) | `x.com/<user>/status/<id>`, and `…/photo/<n>` for one picture |
-| Bluesky | `bsky.app/profile/<user>/post/<id>` |
-| DeviantArt | `deviantart.com/<user>/art/<work>` |
-| pixivFANBOX | `<creator>.fanbox.cc/posts/<id>` (public posts) |
-| Skeb | `skeb.jp/@<creator>/works/<n>` |
+Give it the file itself, or a work's page on one of the
+[sites Moekura knows](sources.md): Pixiv, X, Bluesky, DeviantArt, other
+boorus, Misskey and some ninety more.
 
 Moekura asks the site for the work's best (original) files and downloads
 them, every page of a work of several (up to 100), and the page, not the

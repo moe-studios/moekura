@@ -64,7 +64,7 @@ pub(super) fn parse(thread: &Value, target: &Target) -> Option<SourceInfo> {
         profile_urls.push(format!("https://bsky.app/profile/{did}"));
     }
     Some(SourceInfo {
-        site: "Bluesky",
+        site: moekura_core::sites::BLUESKY.name,
         page_url: format!("https://bsky.app/profile/{handle}/post/{}", target.post),
         files,
         headers: Vec::new(),

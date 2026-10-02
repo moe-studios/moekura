@@ -34,6 +34,7 @@
 
 - [Your account](using/account.md)
 - [Posts and files](using/posts.md)
+- [Sites](using/sources.md)
 - [Search syntax](using/search.md)
 - [Tags](using/tags.md)
 - [The wiki](using/wiki.md)

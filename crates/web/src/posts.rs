@@ -1514,6 +1514,18 @@ mod tests {
             !page.body.contains("href=\"javascript:"),
             "but not as a link"
         );
+        // A source on a site we know shows its icon and name.
+        sqlx::query("UPDATE posts SET source = 'https://www.pixiv.net/artworks/1' WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let page = app.get(&format!("/posts/{id}"), None).await;
+        assert!(
+            page.body.contains("<title>Pixiv</title>") && page.body.contains("#pixiv\""),
+            "{}",
+            page.body
+        );
 
         assert_eq!(
             app.get(&format!("/posts/{}", id + 100), None).await.status,

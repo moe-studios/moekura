@@ -38,7 +38,7 @@ pub(super) fn parse(work: &Value, target: &Target) -> Option<SourceInfo> {
         .filter_map(|p| p["url"].as_str().map(str::to_owned))
         .collect();
     Some(SourceInfo {
-        site: "Skeb",
+        site: moekura_core::sites::SKEB.name,
         page_url: format!("https://skeb.jp/@{name}/works/{}", target.work),
         files,
         headers: Vec::new(),

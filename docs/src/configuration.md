@@ -204,6 +204,7 @@ See [File storage](admin/storage.md).
 | `sample_size` | `1600` | larger images also get a resized copy for the post page |
 | `variant_format` | `"webp"` | `"webp"` or `"avif"` (smaller, slower) for thumbnails and samples |
 | `tool_timeout_secs` | `120` | longest a media tool may run |
+| `strip_metadata` | `"off"` | remove identifying metadata from uploaded originals too: `"off"`, `"strip"` (JPEG, PNG and WebP; other types kept as uploaded) or `"require"` (and refuse other types); see [File metadata](using/posts.md#file-metadata) |
 | `max_tool_processes` | `0` | media tools (`vips`, `ffmpeg`, …) running at once in one `serve` or `worker` process, uploads and jobs together; more wait their turn. `0`: one per CPU core |
 | `ffmpeg_threads` | `2` | threads each `ffmpeg` run may use for decoding, filters and encoding; `0` lets ffmpeg pick (about one per core) |
 | `ffmpeg_memory_mb` | `2048` | memory each `ffmpeg` or `ffprobe` run may use; `0` for no limit, otherwise at least `512` (Linux only) |

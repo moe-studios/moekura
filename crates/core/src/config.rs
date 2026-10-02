@@ -616,6 +616,9 @@ pub struct MediaConfig {
     pub variant_format: String,
     /// Kill media tools that run longer than this.
     pub tool_timeout_secs: u64,
+    /// Whether identifying metadata (EXIF, GPS, XMP, IPTC, comments) is
+    /// removed from uploaded originals, not just from thumbnails.
+    pub strip_metadata: StripMetadata,
     /// Media tool processes running at once in this process, for uploads
     /// and jobs together; more wait their turn. 0: one per CPU core.
     pub max_tool_processes: u32,
@@ -663,6 +666,7 @@ impl Default for MediaConfig {
             sample_size: 1600,
             variant_format: "webp".to_owned(),
             tool_timeout_secs: 120,
+            strip_metadata: StripMetadata::Off,
             max_tool_processes: 0,
             ffmpeg_threads: 2,
             ffmpeg_memory_mb: 2048,
@@ -671,6 +675,20 @@ impl Default for MediaConfig {
             tools: MediaTools::default(),
         }
     }
+}
+
+/// What happens to the metadata in uploaded originals.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StripMetadata {
+    /// Originals are kept exactly as uploaded.
+    #[default]
+    Off,
+    /// Removed from the types that support it (JPEG, PNG, WebP); others
+    /// are kept as uploaded.
+    Strip,
+    /// Removed, and files of other types refused.
+    Require,
 }
 
 /// Paths to the external programs used for media, if not on `PATH`.

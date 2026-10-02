@@ -553,12 +553,23 @@ pub struct TempWriter {
 impl TempUpload {
     /// Recomputes the hashes and size after the file was changed.
     async fn rehash(&mut self) -> Result<(), UploadError> {
-        let bytes = tokio::fs::read(&self.path)
-            .await
-            .map_err(|e| UploadError::Internal(format!("reading temp file: {e}")))?;
-        self.sha256 = Sha256::digest(&bytes).into();
-        self.md5 = Md5::digest(&bytes).into();
-        self.size = bytes.len() as u64;
+        use tokio::io::AsyncReadExt;
+        let failed = |e: std::io::Error| UploadError::Internal(format!("reading temp file: {e}"));
+        let mut file = tokio::fs::File::open(&self.path).await.map_err(failed)?;
+        let (mut sha256, mut md5, mut size) = (Sha256::new(), Md5::new(), 0u64);
+        let mut buffer = vec![0; 256 * 1024];
+        loop {
+            let read = file.read(&mut buffer).await.map_err(failed)?;
+            if read == 0 {
+                break;
+            }
+            sha256.update(&buffer[..read]);
+            md5.update(&buffer[..read]);
+            size += read as u64;
+        }
+        self.sha256 = sha256.finalize().into();
+        self.md5 = md5.finalize().into();
+        self.size = size;
         Ok(())
     }
 }
@@ -813,7 +824,8 @@ pub async fn post_staged(
 }
 
 /// Checks a received file isn't a duplicate, identifies and probes it,
-/// and stores the original.
+/// and stores the original (without its metadata, if the site strips
+/// it).
 pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, UploadError> {
     let db = state.db.primary();
     if let Some(existing) = media::post_with_sha256(db, &file.sha256).await? {
@@ -824,6 +836,18 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
         .identify(file.path())
         .await
         .map_err(media_error)?;
+    // The stripped file is what's kept, so its hashes are the post's; a
+    // file whose stripped bytes are a post's is that post's too.
+    let stripped = strip_metadata(state, file, media_type).await?;
+    let file = match &stripped {
+        Some(stripped) => {
+            if let Some(existing) = media::post_with_sha256(db, &stripped.sha256).await? {
+                return Err(UploadError::Duplicate(existing));
+            }
+            stripped
+        }
+        None => file,
+    };
     let probe = state
         .media
         .probe(file.path(), media_type)
@@ -859,6 +883,55 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
         file_size: i64::try_from(file.size).unwrap_or(i64::MAX),
         storage_key: key.as_str().to_owned(),
     })
+}
+
+/// `file` without its metadata, when `media.strip_metadata` asks for it
+/// and there was some to remove. `require` refuses types it can't be
+/// removed from.
+async fn strip_metadata(
+    state: &AppState,
+    file: &TempUpload,
+    media_type: moekura_media::MediaType,
+) -> Result<Option<TempUpload>, UploadError> {
+    use moekura_core::config::StripMetadata;
+    let setting = state.media.config().strip_metadata;
+    if setting == StripMetadata::Off {
+        return Ok(None);
+    }
+    if !moekura_media::strip::supports(media_type) {
+        if setting == StripMetadata::Require {
+            return Err(UploadError::Invalid(format!(
+                "This site removes identifying metadata from uploads, which it can't do for \
+                 {} files; JPEG, PNG and WebP files are accepted.",
+                media_type.name().to_uppercase()
+            )));
+        }
+        tracing::info!(
+            media_type = media_type.name(),
+            "metadata not stripped: unsupported type"
+        );
+        return Ok(None);
+    }
+    let path = file.path.with_extension("stripped");
+    // Removed when dropped, should hashing fail.
+    let mut stripped = TempUpload {
+        path,
+        sha256: [0; 32],
+        md5: [0; 16],
+        size: 0,
+    };
+    match state
+        .media
+        .strip_metadata(file.path(), media_type, &stripped.path)
+        .await
+        .map_err(media_error)?
+    {
+        moekura_media::strip::Stripped::Changed => {
+            stripped.rehash().await?;
+            Ok(Some(stripped))
+        }
+        _ => Ok(None),
+    }
 }
 
 impl Prepared {
@@ -1345,6 +1418,100 @@ mod tests {
             (job.kind.as_str(), job.payload["asset_id"].as_i64()),
             ("media.process", Some(asset.id))
         );
+    }
+
+    /// An app whose `[media] strip_metadata` is `setting`.
+    async fn stripping_app(
+        pool: &PgPool,
+        setting: moekura_core::config::StripMetadata,
+    ) -> (TestApp, AppState) {
+        let mut config = crate::test_support::test_config();
+        config.media.strip_metadata = setting;
+        let state = crate::test_support::test_state_with(pool, config).await;
+        let routes = routes(max_bytes(&state)).merge(crate::posts::routes());
+        (TestApp::new(state.clone(), routes), state)
+    }
+
+    async fn stored(state: &AppState, pool: &PgPool, post_id: i64) -> (media::Asset, Vec<u8>) {
+        let asset = media::for_post(pool, post_id).await.unwrap().unwrap();
+        let path = state.work_dir.join(format!("stored-{post_id}"));
+        let key = Key::parse(&asset.storage_key).unwrap();
+        state.storage.download(&key, &path).await.unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        (asset, bytes)
+    }
+
+    fn post_id(location: Option<String>) -> i64 {
+        location
+            .and_then(|l| l.strip_prefix("/posts/")?.split('?').next()?.parse().ok())
+            .expect("a redirect to the post")
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn originals_can_lose_their_metadata(pool: PgPool) {
+        use moekura_core::config::StripMetadata;
+        let (app, state) = stripping_app(&pool, StripMetadata::Strip).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let png = fixture::png_with_text(64, 48, "my home address");
+        let posted = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", &png)))
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+        let id = post_id(posted.location);
+        let (asset, bytes) = stored(&state, &pool, id).await;
+        assert!(!String::from_utf8_lossy(&bytes).contains("my home address"));
+        assert!(bytes.len() < png.len());
+        // The post's hashes are the stored file's.
+        assert_eq!(asset.sha256, Sha256::digest(&bytes).to_vec());
+        assert_eq!(asset.md5, Md5::digest(&bytes).to_vec());
+
+        // The same file again, or what was stored, is a duplicate.
+        for (name, again) in [("again.png", &png), ("stored.png", &bytes)] {
+            let refused = app
+                .post_multipart("/upload", Some(&alice), &fields("g"), Some((name, again)))
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+            assert!(
+                refused.body.contains(&format!("post #{id}")),
+                "{name}: {}",
+                refused.body
+            );
+        }
+
+        // Types it can't be removed from are kept as they are.
+        let gif = fixture::gif(32, 32);
+        let posted = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.gif", &gif)))
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+        let (_, bytes) = stored(&state, &pool, post_id(posted.location)).await;
+        assert_eq!(bytes, gif);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn metadata_is_kept_unless_asked_and_required_refuses(pool: PgPool) {
+        use moekura_core::config::StripMetadata;
+        let png = fixture::png_with_text(64, 48, "my home address");
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let posted = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", &png)))
+            .await;
+        let (_, bytes) = stored(&state, &pool, post_id(posted.location)).await;
+        assert_eq!(bytes, png, "kept byte for byte by default");
+
+        let (app, _) = stripping_app(&pool, StripMetadata::Require).await;
+        let refused = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &fields("g"),
+                Some(("a.gif", &fixture::gif(32, 32))),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("for GIF files"), "{}", refused.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -886,6 +886,17 @@ fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; 
 .upload-drop-zone.dragging { border-color: var(--accent); background: var(--surface); }
 .upload-drop-zone.sending { opacity: 0.6; }
 
+/* The bookmarklet, and the sites whose pages are read. */
+.bookmarklet .button { cursor: grab; }
+.bookmarklet-steps { padding-inline-start: 1.25em; }
+.supported-sites {
+  list-style: none;
+  padding: 0;
+  columns: 12rem;
+  column-gap: 16px;
+}
+.supported-sites li { break-inside: avoid; padding: 2px 0; }
+
 /* An upload's files, and the page posting one: the file beside its form. */
 .upload-files > li { display: flex; flex-direction: column; gap: 4px; }
 .upload-file-type { color: var(--muted); font-weight: 600; }

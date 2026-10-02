@@ -33,6 +33,8 @@ pub struct Upload {
     pub uploader_id: i64,
     /// The link uploaded from, if any.
     pub source: String,
+    /// The page the link was found on (sent by the bookmarklet), if any.
+    pub referer_url: String,
     pub created_at: OffsetDateTime,
 }
 
@@ -94,16 +96,22 @@ pub struct Slot<'a> {
     pub source: &'a str,
 }
 
+/// Makes an upload from link `source` (empty for files sent), found on
+/// page `referer_url` (empty when unknown).
 pub async fn create_upload(
     db: impl PgExecutor<'_>,
     uploader_id: i64,
     source: &str,
+    referer_url: &str,
 ) -> sqlx::Result<i64> {
-    sqlx::query_scalar("INSERT INTO uploads (uploader_id, source) VALUES ($1, $2) RETURNING id")
-        .bind(uploader_id)
-        .bind(source)
-        .fetch_one(db)
-        .await
+    sqlx::query_scalar(
+        "INSERT INTO uploads (uploader_id, source, referer_url) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(uploader_id)
+    .bind(source)
+    .bind(referer_url)
+    .fetch_one(db)
+    .await
 }
 
 pub async fn upload_by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Upload>> {
@@ -395,7 +403,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        let upload = create_upload(&pool, user, "").await.unwrap();
+        let upload = create_upload(&pool, user, "", "").await.unwrap();
         let slot = |position| Slot {
             upload_id: upload,
             uploader_id: user,
@@ -461,7 +469,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        let upload = create_upload(&pool, user, "https://example.com/work")
+        let upload = create_upload(&pool, user, "https://example.com/work", "")
             .await
             .unwrap();
         let slot = |position| Slot {

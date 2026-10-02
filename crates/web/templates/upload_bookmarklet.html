@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "site_icon.html" import site_icon %}
+{% block title %}{{ t("bookmarklet-title") }} · {{ site.name }}{% endblock %}
+{% block content %}
+<section class="card medium">
+  <h1>{{ t("bookmarklet-title") }}</h1>
+  {% include "upload_nav.html" %}
+  <p>{{ t("bookmarklet-intro") }}</p>
+  <p class="bookmarklet"><a class="button" href="{{ script }}">{{ t("bookmarklet-link", site=site.name) }}</a></p>
+  <ol class="bookmarklet-steps">
+    <li>{{ t("bookmarklet-step-drag") }}</li>
+    <li>{{ t("bookmarklet-step-open") }}</li>
+    <li>{{ t("bookmarklet-step-click") }}</li>
+  </ol>
+  <p class="hint">{{ t("bookmarklet-mobile") }}</p>
+
+  <h2 id="supported-sites">{{ t("bookmarklet-sites-title") }}</h2>
+  <p class="hint">{{ t("bookmarklet-sites-hint") }}</p>
+  <ul class="supported-sites">
+    {% for found in sites %}<li>{{ site_icon(found.url) }}<a href="{{ found.url }}" rel="noopener noreferrer nofollow">{{ found.name }}</a></li>{% endfor %}
+  </ul>
+</section>
+{% endblock %}

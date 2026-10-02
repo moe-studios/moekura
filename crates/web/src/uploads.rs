@@ -49,6 +49,7 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new()
         .route("/uploads", get(index).post(create).layer(body_limit))
         .route("/uploads/new", get(new))
+        .route("/uploads/bookmarklet", get(bookmarklet))
         .route("/uploads/{id}", get(show))
         .route("/uploads/{id}/assets/{file}", get(asset).post(post_asset))
         .route(
@@ -64,29 +65,78 @@ fn uploader(current: &CurrentUser) -> Result<&User, AppError> {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[serde(default)]
 struct NewQuery {
-    /// A link to upload from, filled in (for bookmarklets).
-    #[serde(default)]
+    /// A link to upload from, filled in (by the bookmarklet), which
+    /// scripts send straight away.
     url: String,
+    /// The page the link is from (the bookmarklet sends
+    /// `document.referrer`).
+    #[serde(rename = "ref")]
+    referer: String,
 }
 
 async fn new(page: Page, Query(query): Query<NewQuery>) -> Result<Response, AppError> {
     uploader(&page.current)?;
     let allowance = upload::allowance(page.state(), &page.current).await?;
+    let link = Link {
+        url: &query.url,
+        referer: &query.referer,
+    };
     Ok(new_form(
         &page,
-        &query.url,
+        link,
         None,
         StatusCode::OK,
         Some(&allowance),
     ))
 }
 
+/// The bookmarklet to drag to the toolbar, and the sites whose works'
+/// pages are read.
+async fn bookmarklet(page: Page) -> Response {
+    let new_url = page
+        .state()
+        .config
+        .server
+        .public_url
+        .join("/uploads/new")
+        .map_or_else(|_| "/uploads/new".to_owned(), String::from);
+    let script = format!(
+        "javascript:location.href='{new_url}?url='+encodeURIComponent(location.href)\
+         +'&ref='+encodeURIComponent(document.referrer)"
+    );
+    let mut sites: Vec<&moekura_core::sites::Site> = moekura_core::sites::ALL
+        .iter()
+        .copied()
+        .filter(|site| crate::sources::READ.contains(&site.key))
+        .collect();
+    sites.sort_by_cached_key(|site| site.name.to_lowercase());
+    sites.dedup_by_key(|site| site.name);
+    page.render(
+        "upload_bookmarklet.html",
+        context! {
+            script => script,
+            sites => sites.iter().map(|site| context! {
+                name => site.name,
+                url => site.url,
+            }).collect::<Vec<_>>(),
+        },
+    )
+}
+
+/// The link on the upload form, and the page it was found on.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Link<'a> {
+    pub url: &'a str,
+    pub referer: &'a str,
+}
+
 /// The upload form, with the link typed and what went wrong, if
 /// anything.
 pub(crate) fn new_form(
     page: &Page,
-    url: &str,
+    link: Link<'_>,
     error: Option<&UploadError>,
     status: StatusCode,
     allowance: Option<&Allowance>,
@@ -100,7 +150,10 @@ pub(crate) fn new_form(
         status,
         "upload.html",
         context! {
-            url => url,
+            url => link.url,
+            referer => link.referer,
+            // A link given before the page was asked for is sent at once.
+            send_now => error.is_none() && !link.url.is_empty(),
             error => message,
             duplicate_of => duplicate_of,
             max_mb => page.state().media.config().max_upload_mb,
@@ -114,39 +167,59 @@ pub(crate) fn new_form(
     )
 }
 
+/// The link sent to `/uploads` and the page it's from.
+#[derive(Debug, Default)]
+struct SentLink {
+    url: String,
+    referer: String,
+}
+
+impl SentLink {
+    fn link(&self) -> Link<'_> {
+        Link {
+            url: &self.url,
+            referer: &self.referer,
+        }
+    }
+}
+
 /// The files and the link sent to `/uploads`.
 async fn receive(
     state: &AppState,
     mut multipart: Multipart,
-) -> (String, Result<Vec<TempUpload>, UploadError>) {
-    let mut url = String::new();
+) -> (SentLink, Result<Vec<TempUpload>, UploadError>) {
+    let mut link = SentLink::default();
     let mut files = Vec::new();
     loop {
         let field = match multipart.next_field().await {
             Ok(Some(field)) => field,
             Ok(None) => break,
-            Err(error) => return (url, Err(upload::multipart_error(state, &error))),
+            Err(error) => return (link, Err(upload::multipart_error(state, &error))),
         };
         match field.name().unwrap_or_default() {
             // Browsers send an empty part when no file was chosen.
             "file" if field.file_name().is_some_and(|name| !name.is_empty()) => {
                 if files.len() == MAX_FILES {
                     let error = format!("Upload at most {MAX_FILES} files at once.");
-                    return (url, Err(UploadError::Invalid(error)));
+                    return (link, Err(UploadError::Invalid(error)));
                 }
                 match upload::save_to_temp(state, field).await {
                     Ok(file) => files.push(file),
-                    Err(error) => return (url, Err(error)),
+                    Err(error) => return (link, Err(error)),
                 }
             }
-            "url" => match field.text().await {
-                Ok(text) => url = text.trim().to_owned(),
-                Err(error) => return (url, Err(upload::multipart_error(state, &error))),
-            },
+            name @ ("url" | "ref") => {
+                let name = name.to_owned();
+                match field.text().await {
+                    Ok(text) if name == "url" => link.url = text.trim().to_owned(),
+                    Ok(text) => link.referer = text.trim().to_owned(),
+                    Err(error) => return (link, Err(upload::multipart_error(state, &error))),
+                }
+            }
             _ => {}
         }
     }
-    (url, Ok(files))
+    (link, Ok(files))
 }
 
 async fn create(
@@ -155,34 +228,38 @@ async fn create(
     multipart: Multipart,
 ) -> Result<Response, AppError> {
     let user = uploader(&page.current)?.clone();
-    let refuse = |url: &str, error: UploadError| {
+    let refuse = |link: Link<'_>, error: UploadError| {
         if let UploadError::Internal(detail) = &error {
             tracing::error!(error = %detail, "upload failed");
         }
-        new_form(&page, url, Some(&error), error_status(&error), None)
+        new_form(&page, link, Some(&error), error_status(&error), None)
     };
     if let Err(error) = upload::check_limits(&state, &page.current).await {
-        return Ok(refuse("", error));
+        return Ok(refuse(Link::default(), error));
     }
-    let (url, files) = match receive(&state, multipart).await {
-        (url, Ok(files)) => (url, files),
-        (url, Err(error)) => return Ok(refuse(&url, error)),
+    let (mut sent, files) = match receive(&state, multipart).await {
+        (sent, Ok(files)) => (sent, files),
+        (sent, Err(error)) => return Ok(refuse(sent.link(), error)),
     };
-    if url.chars().count() > SOURCE_MAX_LEN {
+    if sent.url.chars().count() > SOURCE_MAX_LEN {
         let error = format!("The link may be at most {SOURCE_MAX_LEN} characters.");
-        return Ok(refuse(&url, UploadError::Invalid(error)));
+        return Ok(refuse(sent.link(), UploadError::Invalid(error)));
+    }
+    // Only a web page can have been where the link was found.
+    if !is_web_link(&sent.referer) || sent.referer.chars().count() > SOURCE_MAX_LEN {
+        sent.referer.clear();
     }
     let id = if !files.is_empty() {
         // A link sent with files says where they're from.
-        stage_files(&state, user.id, &url, &files).await?
-    } else if is_web_link(&url) {
-        stage_link(&state, user.id, &url).await?
-    } else if url.is_empty() {
+        stage_files(&state, user.id, &sent.url, &files).await?
+    } else if is_web_link(&sent.url) {
+        stage_link(&state, user.id, sent.link()).await?
+    } else if sent.url.is_empty() {
         let error = UploadError::Invalid("Choose files to upload, or paste a link.".into());
-        return Ok(refuse(&url, error));
+        return Ok(refuse(sent.link(), error));
     } else {
         let error = UploadError::Invalid("That isn't a valid link.".into());
-        return Ok(refuse(&url, error));
+        return Ok(refuse(sent.link(), error));
     };
     tracing::info!(upload = id, user = user.name, "upload created");
     Ok(Redirect::to(&format!("/uploads/{id}")).into_response())
@@ -201,7 +278,7 @@ async fn stage_files(
     files: &[TempUpload],
 ) -> Result<i64, AppError> {
     let db = state.db.primary();
-    let id = staged_uploads::create_upload(db, uploader_id, source).await?;
+    let id = staged_uploads::create_upload(db, uploader_id, source, "").await?;
     for (position, file) in (0..).zip(files) {
         let slot = Slot {
             upload_id: id,
@@ -244,11 +321,14 @@ fn failure(error: &UploadError) -> (String, Option<i64>) {
     }
 }
 
-/// Makes an upload of the files at `url`: a work's files when a source
-/// strategy reads its page, else the link itself. They're downloaded in
-/// the background; this waits a little for them. Returns the upload's id.
-async fn stage_link(state: &AppState, uploader_id: i64, url: &str) -> Result<i64, AppError> {
-    let info = state.sources.lookup(url).await;
+/// Makes an upload of the files at `link`: a work's files when a source
+/// strategy reads its page (or the page it was found on, for a bare
+/// file), else the link itself. Each file's source is its
+/// [canonical one](upload::file_source). They're downloaded in the
+/// background; this waits a little for them. Returns the upload's id.
+async fn stage_link(state: &AppState, uploader_id: i64, link: Link<'_>) -> Result<i64, AppError> {
+    let url = link.url;
+    let info = state.sources.lookup_from(url, link.referer).await;
     let (files, source) = match info.as_deref() {
         Some(info) if !info.files.is_empty() => (
             info.files.iter().take(MAX_LINK_FILES).cloned().collect(),
@@ -258,17 +338,18 @@ async fn stage_link(state: &AppState, uploader_id: i64, url: &str) -> Result<i64
     };
     let source: String = source.chars().take(SOURCE_MAX_LEN).collect();
     let mut tx = state.db.primary().begin().await?;
-    let id = staged_uploads::create_upload(&mut *tx, uploader_id, &source).await?;
+    let id = staged_uploads::create_upload(&mut *tx, uploader_id, &source, link.referer).await?;
     for (position, file_url) in (0..).zip(&files) {
         if file_url.chars().count() > SOURCE_MAX_LEN {
             continue;
         }
+        let file_source = upload::file_source(file_url, info.as_deref(), url);
         let slot = Slot {
             upload_id: id,
             uploader_id,
             position,
             file_name: file_url,
-            source: &source,
+            source: &file_source,
         };
         staged_uploads::create_pending(&mut *tx, slot, file_url).await?;
     }
@@ -1068,6 +1149,109 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn bookmarklet_links_bring_the_page_they_were_on(pool: PgPool) {
+        let png = fixture::png(40, 30);
+        let origin = Router::new().route("/img/1.png", get(move || async move { png }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, origin).await });
+
+        let mut state = test_state(&pool).await;
+        state.fetcher = crate::fetch::Fetcher::new(Duration::from_secs(10), true);
+        state.sources = Arc::new(crate::sources::Sources::new(
+            true,
+            moekura_core::config::SourcesConfig::default(),
+        ));
+        let (work, file) = (
+            format!("http://{addr}/work"),
+            format!("http://{addr}/img/1.png"),
+        );
+        state.sources.remember(
+            &work,
+            SourceInfo {
+                site: "Example",
+                page_url: work.clone(),
+                files: vec![file.clone()],
+                ..SourceInfo::default()
+            },
+        );
+        let max = 10 * 1024 * 1024;
+        let app = TestApp::new(state.clone(), routes(max).merge(upload::routes(max)));
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+
+        // The bookmarklet opens the form with the link, which scripts send.
+        let query = url::form_urlencoded::Serializer::new(String::new())
+            .append_pair("url", &file)
+            .append_pair("ref", &work)
+            .finish();
+        let form = app
+            .get(&format!("/uploads/new?{query}"), Some(&alice))
+            .await;
+        assert!(form.body.contains("data-upload-send-now"), "{}", form.body);
+        assert!(form.body.contains("name=\"ref\""), "{}", form.body);
+        let plain = app.get("/uploads/new", Some(&alice)).await;
+        assert!(!plain.body.contains("data-upload-send-now"));
+
+        // The bare image's work is the page it was found on.
+        let sent = app
+            .post_multipart(
+                "/uploads",
+                Some(&alice),
+                &[("url", file.clone()), ("ref", work.clone())],
+                None,
+            )
+            .await;
+        assert_eq!(sent.status, StatusCode::SEE_OTHER, "{}", sent.body);
+        let upload = upload_in(sent.location.as_deref());
+        let files = files_of(&pool, upload).await;
+        assert_eq!(files[0].source, work);
+        assert_eq!(files[0].status, Status::Ready);
+        let saved = staged_uploads::upload_by_id(&pool, upload)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.referer_url, work);
+
+        // Without it, the image is its own source; a page that isn't a
+        // web page isn't kept.
+        let sent = app
+            .post_multipart(
+                "/uploads",
+                Some(&alice),
+                &[("url", file.clone()), ("ref", "javascript:x".to_owned())],
+                None,
+            )
+            .await;
+        let upload = upload_in(sent.location.as_deref());
+        assert_eq!(files_of(&pool, upload).await[0].source, file);
+        let saved = staged_uploads::upload_by_id(&pool, upload)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.referer_url, "");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_bookmarklet_page_lists_the_sites_read(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let page = app.get("/uploads/bookmarklet", None).await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(
+            page.body.contains("href=\"javascript:location.href="),
+            "{}",
+            page.body
+        );
+        assert!(
+            page.body.contains("&#x2f;uploads&#x2f;new?url="),
+            "{}",
+            page.body
+        );
+        for site in ["Pixiv", "X", "Fantia"] {
+            assert!(page.body.contains(&format!(">{site}</a>")), "{site}");
+        }
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

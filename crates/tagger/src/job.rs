@@ -535,7 +535,7 @@ pub(crate) mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        let upload = staged_uploads::create_upload(&pool, uploader, "")
+        let upload = staged_uploads::create_upload(&pool, uploader, "", "")
             .await
             .unwrap();
         let slot = staged_uploads::Slot {

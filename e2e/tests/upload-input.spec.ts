@@ -10,6 +10,8 @@ const script = readFileSync(new URL("../../crates/web/static/js/main.js", import
 
 /** The file names in each upload the form sent. */
 let sent: string[][] = [];
+/** The links the form sent. */
+let links: string[] = [];
 
 async function transfer(page: Page, kind: "paste" | "drop", names = ["picture.png"]): Promise<boolean> {
   return page.evaluate(({ kind, names }) => {
@@ -25,11 +27,13 @@ async function transfer(page: Page, kind: "paste" | "drop", names = ["picture.pn
 
 test.beforeEach(async ({ page }) => {
   sent = [];
+  links = [];
   await page.route("**/uploads/new", (route) => route.fulfill({ contentType: "text/html", body: form }));
   await page.route("**/uploads", (route) => {
     const body = route.request().postDataBuffer()?.toString("latin1") ?? "";
     // Without a file chosen, browsers send an empty one, which the server skips.
     sent.push([...body.matchAll(/name="file"; filename="([^"]*)"/g)].map((match) => match[1]!).filter(Boolean));
+    links.push(...[...body.matchAll(/name="url"\r\n\r\n([^\r]+)/g)].map((match) => match[1]!));
     return route.fulfill({ contentType: "text/html", body: "<p>sent</p>" });
   });
   await page.goto("/uploads/new");
@@ -58,22 +62,56 @@ test("choosing files in the picker sends them", async ({ page }) => {
   expect(sent).toEqual([["picked.webm"]]);
 });
 
-test("a link is sent with the button, and text pastes stay in their field", async ({ page }) => {
-  const prevented = await page.locator("#url").evaluate((element) => {
+test("a pasted link is sent right away; other text stays in its field", async ({ page }) => {
+  const paste = (text: string) =>
+    page.locator("#url").evaluate((element, text) => {
+      const data = new DataTransfer();
+      data.setData("text/plain", text);
+      const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+      element.dispatchEvent(event);
+      return event.defaultPrevented;
+    }, text);
+  expect(await paste("long_hair")).toBe(false);
+  const dropped = await page.locator("#url").evaluate((element) => {
     const data = new DataTransfer();
-    data.setData("text/plain", "https://example.com/image.png");
-    const paste = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    data.setData("text/plain", "some words");
     const drop = new DragEvent("drop", { dataTransfer: data, bubbles: true, cancelable: true });
-    element.dispatchEvent(paste);
     element.dispatchEvent(drop);
-    return [paste.defaultPrevented, drop.defaultPrevented];
+    return drop.defaultPrevented;
   });
-  expect(prevented).toEqual([false, false]);
+  expect(dropped).toBe(false);
   await expect(page.locator("[data-upload-status]")).toBeEmpty();
+  expect(sent).toEqual([]);
+
+  // A link (with or without its https://) is sent, wherever it's pasted.
+  expect(await paste("example.com/image.png")).toBe(true);
+  await expect(page.getByText("sent")).toBeVisible();
+  expect(sent).toEqual([[]]);
+  expect(links).toEqual(["https://example.com/image.png"]);
+});
+
+test("a typed link is sent with the button", async ({ page }) => {
   await page.locator("#url").fill("https://example.com/image.png");
   await page.getByRole("button", { name: "upload-continue" }).click();
   await expect(page.getByText("sent")).toBeVisible();
-  expect(sent).toEqual([[]]);
+  expect(links).toEqual(["https://example.com/image.png"]);
+});
+
+test("a link given with the page is sent at once, and going back skips the form", async ({ page }) => {
+  const prefilled = form.replace('id="url" name="url" type="url" value=""', 'id="url" name="url" type="url" value="https://example.com/work"');
+  await page.route("**/uploads/new?*", (route) => route.fulfill({ contentType: "text/html", body: prefilled }));
+  await page.route("**/uploads", (route) => {
+    links.push(...[...(route.request().postData() ?? "").matchAll(/name="url"\r\n\r\n([^\r]*)/g)].map((m) => m[1]!));
+    // Requests following a redirect aren't routed: this page is the site's.
+    return route.fulfill({ status: 303, headers: { Location: "/wiki" } });
+  });
+  await page.goto("/uploads/new?url=https%3A%2F%2Fexample.com%2Fwork");
+  await page.addScriptTag({ content: script, type: "module" });
+  await expect(page).toHaveURL(/\/wiki$/);
+  expect(links).toEqual(["https://example.com/work"]);
+  // Back goes to the page before, not the one sending the link again.
+  await page.goBack();
+  await expect(page).not.toHaveURL(/url=/);
 });
 
 test("file drag highlights the form through child transitions and clears on leave/drop", async ({ page }) => {

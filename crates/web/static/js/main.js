@@ -1502,14 +1502,35 @@ function enableTagScript(root = document) {
 }
 
 // src/upload.ts
+function asLink(text) {
+  const trimmed = text.trim();
+  if (trimmed === "" || /\s/.test(trimmed)) return null;
+  for (const candidate of [trimmed, `https://${trimmed}`]) {
+    try {
+      const url = new URL(candidate);
+      if ((url.protocol === "http:" || url.protocol === "https:") && /[.:]|^localhost$/.test(url.hostname)) {
+        return url.href;
+      }
+    } catch {
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null;
+  }
+  return null;
+}
 function enableUpload(root = document) {
   const form = root.querySelector("form[data-upload]");
   const input = form?.querySelector('input[type="file"]');
   const zone = form?.querySelector("[data-upload-drop-zone]");
   const status = form?.querySelector("[data-upload-status]");
-  if (!form || !input || !zone || !status) return;
+  const link = form?.querySelector('input[name="url"]');
+  if (!form || !input || !zone || !status || !link) return;
   const max = Number(input.dataset["max"] ?? "1") || 1;
   let sending = false;
+  const busy2 = (on) => {
+    sending = on;
+    zone.classList.toggle("sending", on);
+    for (const button of form.querySelectorAll("button[type=submit]")) button.disabled = on;
+  };
   const send2 = (files) => {
     if (sending || files.length === 0) return;
     if (files.length > max) {
@@ -1522,55 +1543,95 @@ function enableUpload(root = document) {
       input.files = transfer.files;
     }
     status.textContent = files.length === 1 ? t("upload-sending-one", "Uploading {$name}\u2026", { name: files[0].name }) : t("upload-sending-many", "Uploading {$count} files\u2026", { count: files.length });
-    sending = true;
-    zone.classList.add("sending");
+    busy2(true);
     form.requestSubmit();
+  };
+  const sendInPlace = async () => {
+    const error = form.querySelector("[data-upload-error]");
+    busy2(true);
+    status.textContent = t("upload-sending-link", "Uploading {$url}\u2026", { url: link.value });
+    try {
+      const body = new FormData(form);
+      body.delete("file");
+      const response = await fetch(form.action, { method: "POST", body, credentials: "same-origin" });
+      if (response.redirected) {
+        root.defaultView?.location.replace(response.url);
+        return;
+      }
+      const page = new DOMParser().parseFromString(await response.text(), "text/html");
+      const message = page.querySelector(".form-error")?.textContent?.trim();
+      if (error) {
+        error.textContent = message || t("upload-failed", "The upload failed. Please try again.");
+        error.hidden = false;
+      }
+    } catch {
+      if (error) {
+        error.textContent = t("upload-failed", "The upload failed. Please try again.");
+        error.hidden = false;
+      }
+    }
+    status.textContent = "";
+    busy2(false);
   };
   input.addEventListener("change", () => {
     if (input.files) send2(input.files);
   });
-  form.addEventListener("submit", () => {
-    sending = true;
-    for (const button of form.querySelectorAll("button[type=submit]")) button.disabled = true;
+  form.addEventListener("submit", () => busy2(true));
+  root.defaultView?.addEventListener("pageshow", () => busy2(false));
+  root.addEventListener("paste", (event) => {
+    const files = event.clipboardData?.files;
+    if (files?.length && typeof DataTransfer !== "undefined") {
+      event.preventDefault();
+      send2(files);
+      return;
+    }
+    const pasted = asLink(event.clipboardData?.getData("text") ?? "");
+    if (pasted === null || sending) return;
+    event.preventDefault();
+    link.value = pasted;
+    busy2(true);
+    form.requestSubmit();
   });
-  root.defaultView?.addEventListener("pageshow", () => {
-    sending = false;
-    zone.classList.remove("sending");
-    for (const button of form.querySelectorAll("button[type=submit]")) button.disabled = false;
-  });
+  if (form.hasAttribute("data-upload-send-now") && link.value) void sendInPlace();
   if (typeof DataTransfer === "undefined") return;
   zone.classList.add("enhanced");
   const hint = form.querySelector("[data-upload-hint]");
   if (hint) hint.hidden = false;
-  root.addEventListener("paste", (event) => {
-    const files = event.clipboardData?.files;
-    if (!files?.length) return;
-    event.preventDefault();
-    send2(files);
-  });
-  const hasFiles = (event) => event.dataTransfer?.types.includes("Files") ?? false;
+  const carries = (event) => {
+    const types = event.dataTransfer?.types ?? [];
+    return types.includes("Files") || types.includes("text/uri-list");
+  };
   let depth = 0;
-  form.addEventListener("dragenter", (event) => {
-    if (!hasFiles(event)) return;
+  root.addEventListener("dragenter", (event) => {
+    if (!carries(event)) return;
     event.preventDefault();
     depth++;
     zone.classList.add("dragging");
   });
-  form.addEventListener("dragover", (event) => {
-    if (!hasFiles(event)) return;
+  root.addEventListener("dragover", (event) => {
+    if (!carries(event)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
   });
-  form.addEventListener("dragleave", () => {
+  root.addEventListener("dragleave", () => {
     depth = Math.max(0, depth - 1);
     if (!depth) zone.classList.remove("dragging");
   });
-  form.addEventListener("drop", (event) => {
+  root.addEventListener("drop", (event) => {
     depth = 0;
     zone.classList.remove("dragging");
-    if (!hasFiles(event)) return;
+    if (!carries(event)) return;
     event.preventDefault();
-    if (event.dataTransfer?.files.length) send2(event.dataTransfer.files);
+    const dropped = event.dataTransfer;
+    if (dropped?.files.length) {
+      send2(dropped.files);
+      return;
+    }
+    const url = asLink(dropped?.getData("text/uri-list").split(/\r?\n/).find((line) => line && !line.startsWith("#")) ?? "");
+    if (url === null || sending) return;
+    link.value = url;
+    busy2(true);
+    form.requestSubmit();
   });
 }
 

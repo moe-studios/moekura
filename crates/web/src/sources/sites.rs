@@ -15,6 +15,97 @@ use super::{
     toyhouse, tumblr, vk, weibo, xfolio, xiaohongshu, yachiyo_room, youtube,
 };
 
+/// The sites whose works a strategy reads (here, or in [`super`] for the
+/// first few sites), by key: the bookmarklet page lists them.
+pub(crate) const READ: &[&str] = &[
+    "adobe_portfolio",
+    "apple_music",
+    "arca_live",
+    "artistree",
+    "artstation",
+    "artstreet",
+    "baraag",
+    "behance",
+    "bilibili",
+    "blogger",
+    "bluesky",
+    "booth",
+    "carrd",
+    "ci_en",
+    "danbooru",
+    "dc_inside",
+    "deviantart",
+    "dotpict",
+    "e621",
+    "fanbox",
+    "fandom",
+    "fantia",
+    "fc2",
+    "foriio",
+    "fourchan",
+    "furaffinity",
+    "galleria",
+    "gelbooru",
+    "grafolio",
+    "gumroad",
+    "hentai_foundry",
+    "huajia",
+    "huashijie",
+    "imgur",
+    "inkbunny",
+    "itaku",
+    "kofi",
+    "konachan",
+    "lofter",
+    "mihuashi",
+    "minitokyo",
+    "misskey",
+    "misskey_art",
+    "misskey_design",
+    "misskey_io",
+    "miyoushe",
+    "naver_blog",
+    "naver_cafe",
+    "newgrounds",
+    "nico_seiga",
+    "nijie",
+    "note",
+    "odaibako",
+    "opensea",
+    "patreon",
+    "pawoo",
+    "piapro",
+    "pinterest",
+    "pixiv",
+    "pixiv_comic",
+    "pixiv_factory",
+    "pixiv_sketch",
+    "plurk",
+    "poipiku",
+    "postype",
+    "privatter",
+    "reddit",
+    "redgifs",
+    "rule34_us",
+    "rule34_xxx",
+    "safebooru",
+    "skeb",
+    "tbib",
+    "tinami",
+    "tistory",
+    "toyhouse",
+    "tumblr",
+    "twitter",
+    "vk",
+    "weibo",
+    "xfolio",
+    "xiaohongshu",
+    "yachiyo_room",
+    "yandere",
+    "youtube",
+    "zerochan",
+];
+
 /// What `url` (on a known site, as `known`) says.
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -216,4 +307,19 @@ async fn generic(
 /// (`<instance>/notes/<id>`), if the instance answers Misskey's API.
 pub(super) async fn other_misskey(http: &Http<'_>, url: &Url) -> Option<SourceInfo> {
     fediverse::other_misskey(http, url).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::READ;
+
+    #[test]
+    fn read_sites_are_known_sites() {
+        for key in READ {
+            assert!(
+                moekura_core::sites::ALL.iter().any(|s| s.key == *key),
+                "{key}"
+            );
+        }
+    }
 }

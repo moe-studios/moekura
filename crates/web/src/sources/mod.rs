@@ -73,6 +73,7 @@ mod privatter;
 mod reddit;
 mod redgifs;
 mod sites;
+pub(crate) use sites::READ;
 mod skeb;
 mod tinami;
 mod tistory;
@@ -359,6 +360,19 @@ impl SourceCache {
     }
 }
 
+/// Whether `url` is a file whose work isn't known from the link alone:
+/// what it says (`found`) names no page but the file itself.
+fn is_bare_file(url: &str, found: Option<&SourceInfo>) -> bool {
+    let known = moekura_core::sites::parse(url);
+    let is_file = match &known {
+        Some(known) => known.is_file,
+        None => Url::parse(url).is_ok_and(|u| is_file_url(&u)),
+    };
+    is_file
+        && known.as_ref().is_none_or(|k| k.page_url.is_none())
+        && found.is_none_or(|info| info.page_url.is_empty() || info.page_url == url)
+}
+
 /// Which strategy handles `url`, if a site-specific one does.
 enum Strategy {
     Pixiv(pixiv::Target),
@@ -443,6 +457,30 @@ impl Sources {
             logins: &self.logins,
         };
         lookup(&http, &self.cache, url).await
+    }
+
+    /// What `url` says, or, when it's a bare file nothing names the work
+    /// of, what `referer` (the page it was found on, from a bookmarklet)
+    /// says, with `url` as the work's first file. The referring page
+    /// counts when it's on the file's site, or lists the file.
+    pub async fn lookup_from(&self, url: &str, referer: &str) -> Option<Arc<SourceInfo>> {
+        let found = self.lookup(url).await;
+        let referer = referer.trim();
+        if referer.is_empty() || referer == url || !is_bare_file(url, found.as_deref()) {
+            return found;
+        }
+        let page = self.lookup(referer).await?;
+        let same_site = moekura_core::sites::site_of(url)
+            .is_some_and(|site| moekura_core::sites::site_of(referer) == Some(site));
+        if !same_site && !page.files.iter().any(|f| f == url) {
+            return found;
+        }
+        let mut info = (*page).clone();
+        info.files.retain(|f| f != url);
+        info.files.insert(0, url.to_owned());
+        // The file isn't necessarily the one the page's frames are for.
+        info.ugoira_frames = None;
+        Some(Arc::new(info))
     }
 
     /// Answers lookups of `url` with `info`, as if its page said so.

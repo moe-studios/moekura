@@ -11,6 +11,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use moekura_core::permissions::Permission;
+use moekura_core::posts::SOURCE_MAX_LEN;
 use moekura_db::staged_uploads::{self, Staged, Status, Upload};
 use serde_json::{Value, json};
 
@@ -108,23 +109,30 @@ fn upload_json(upload: &Upload, files: &[Staged]) -> Value {
         "media_asset_count": files.iter().filter(|f| f.status == Status::Ready).count(),
         "created_at": created,
         "updated_at": created,
-        "referer_url": null,
+        "referer_url": (!upload.referer_url.is_empty()).then_some(&upload.referer_url),
         "error": error,
         "upload_media_assets": files.iter().map(asset_json).collect::<Vec<_>>(),
     })
 }
 
+/// What `POST /uploads.json` sends.
+#[derive(Default)]
+struct Sent {
+    file: Option<TempUpload>,
+    source: String,
+    /// The page the source was found on.
+    referer: String,
+}
+
 /// A file from `upload[files][0]` (or any `upload[files]…` part), or the
-/// source to fetch.
-async fn receive(
-    state: &AppState,
-    request: Request,
-) -> Result<(Option<TempUpload>, String), AppError> {
+/// source to fetch, and the page it's from.
+async fn receive(state: &AppState, request: Request) -> Result<Sent, AppError> {
     let multipart = request
         .headers()
         .get(CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.starts_with("multipart/form-data"));
+    let clean = |text: &str| -> String { text.trim().chars().take(SOURCE_MAX_LEN).collect() };
     if !multipart {
         let fields = Fields::from_request(request, state).await?;
         let source = fields
@@ -133,12 +141,17 @@ async fn receive(
             .unwrap_or_default()
             .trim()
             .to_owned();
-        return Ok((None, source));
+        let referer = clean(fields.get("upload[referer_url]").unwrap_or_default());
+        return Ok(Sent {
+            file: None,
+            source,
+            referer,
+        });
     }
     let mut multipart = Multipart::from_request(request, state)
         .await
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
-    let (mut file, mut source) = (None, String::new());
+    let mut sent = Sent::default();
     while let Some(field) = multipart
         .next_field()
         .await
@@ -146,19 +159,25 @@ async fn receive(
     {
         let name = field.name().unwrap_or_default().to_owned();
         if name.starts_with("upload[files]") || name == "upload[file]" {
-            if file.is_none() && field.file_name().is_some_and(|f| !f.is_empty()) {
-                file = Some(save_to_temp(state, field).await.map_err(upload_error)?);
+            if sent.file.is_none() && field.file_name().is_some_and(|f| !f.is_empty()) {
+                sent.file = Some(save_to_temp(state, field).await.map_err(upload_error)?);
             }
-        } else if name == "upload[source]" || name == "upload[source_url]" {
-            source = field
+        } else if matches!(
+            name.as_str(),
+            "upload[source]" | "upload[source_url]" | "upload[referer_url]"
+        ) {
+            let text = field
                 .text()
                 .await
-                .map_err(|e| AppError::BadRequest(e.to_string()))?
-                .trim()
-                .to_owned();
+                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            if name == "upload[referer_url]" {
+                sent.referer = clean(&text);
+            } else {
+                sent.source = text.trim().to_owned();
+            }
         }
     }
-    Ok((file, source))
+    Ok(sent)
 }
 
 async fn create(
@@ -169,15 +188,23 @@ async fn create(
     current.require(Permission::Upload)?;
     let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
     check_limits(&state, &current).await.map_err(upload_error)?;
-    let (file, source) = receive(&state, request).await?;
+    let Sent {
+        file,
+        source: link,
+        referer,
+    } = receive(&state, request).await?;
+    let mut source = link.clone();
     let file = match file {
         Some(file) => file,
-        None if !source.is_empty() => {
+        None if !link.is_empty() => {
             let mut fields = UploadFields {
-                url: source.clone(),
+                url: link.clone(),
+                referer: referer.clone(),
                 ..UploadFields::default()
             };
-            fetch_url(&state, &mut fields).await.map_err(upload_error)?
+            let file = fetch_url(&state, &mut fields).await.map_err(upload_error)?;
+            source = fields.source;
+            file
         }
         None => {
             return Err(AppError::Unprocessable(
@@ -187,7 +214,12 @@ async fn create(
     };
     let prepared = prepare(&state, &file).await.map_err(upload_error)?;
     let hash = crate::upload::phash(&state, &file).await;
-    let (id, _) = crate::upload::stage(&state, user.id, &file, &prepared, hash, &source)
+    let origin = crate::upload::Origin {
+        link: &link,
+        source: &source,
+        referer: &referer,
+    };
+    let (id, _) = crate::upload::stage(&state, user.id, &file, &prepared, hash, origin)
         .await
         .map_err(upload_error)?;
     let (upload, files) = own_upload(&state, &current, id).await?;
@@ -364,13 +396,17 @@ mod tests {
             .post_multipart_as(
                 "/uploads.json",
                 Some(&alice),
-                &[],
+                &[(
+                    "upload[referer_url]",
+                    "https://example.com/gallery".to_owned(),
+                )],
                 "upload[files][0]",
                 Some(("a.png", &png)),
             )
             .await;
         assert_eq!(staged.status, StatusCode::CREATED, "{}", staged.body);
         let upload = parse(&staged.body);
+        assert_eq!(upload["referer_url"], json!("https://example.com/gallery"));
         let asset = &upload["upload_media_assets"][0];
         let id = asset["id"].as_i64().unwrap();
         let upload_id = upload["id"].as_i64().unwrap();

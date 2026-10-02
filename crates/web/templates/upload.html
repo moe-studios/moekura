@@ -12,7 +12,7 @@
   {% elif error %}
   <p class="form-error" role="alert">{{ error }}</p>
   {% endif %}
-  <form method="post" action="/uploads" enctype="multipart/form-data" data-upload>
+  <form method="post" action="/uploads" enctype="multipart/form-data" data-upload{% if send_now %} data-upload-send-now{% endif %}>
     <div class="upload-drop-zone" data-upload-drop-zone>
       <label for="file">{{ t("upload-files") }}</label>
       <input id="file" name="file" type="file" multiple data-max="{{ max_files }}"
@@ -22,9 +22,11 @@
     </div>
     <label for="url">{{ t("upload-url") }}</label>
     <input id="url" name="url" type="url" value="{{ url }}" placeholder="https://" maxlength="2048">
-    <p class="hint">{{ t("upload-url-hint", mb=max_mb) }}</p>
+    {% if referer %}<input type="hidden" name="ref" value="{{ referer }}">{% endif %}
+    <p class="hint">{{ t("upload-url-hint", mb=max_mb) }} <a href="/uploads/bookmarklet#supported-sites">{{ t("upload-supported-sites") }}</a></p>
+    <p class="form-error" data-upload-error role="alert" hidden></p>
     <button type="submit">{{ t("upload-continue") }}</button>
   </form>
-  <p class="aside">{{ t("upload-next-step") }}</p>
+  <p class="aside">{{ t("upload-next-step") }} {{ t("upload-bookmarklet-hint") }}</p>
 </section>
 {% endblock %}

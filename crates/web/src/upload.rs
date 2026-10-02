@@ -36,6 +36,7 @@ use crate::auth::CurrentUser;
 use crate::edit::Refused;
 use crate::error::AppError;
 use crate::pages::Page;
+use crate::sources::SourceInfo;
 
 /// Room for the text fields and multipart framing on top of the file.
 const FORM_OVERHEAD: usize = 64 * 1024;
@@ -62,6 +63,8 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
 pub struct UploadFields {
     /// Download the file from here when no file was sent.
     pub url: String,
+    /// The page `url` was found on, if known (a bookmarklet sends it).
+    pub referer: String,
     pub rating: Option<Rating>,
     /// Whitespace-separated, as typed.
     pub tags: String,
@@ -227,7 +230,11 @@ fn render_form(
     error: &UploadError,
     status: StatusCode,
 ) -> Response {
-    crate::uploads::new_form(page, &fields.url, Some(error), status, None)
+    let link = crate::uploads::Link {
+        url: &fields.url,
+        referer: &fields.referer,
+    };
+    crate::uploads::new_form(page, link, Some(error), status, None)
 }
 
 async fn upload(
@@ -272,24 +279,47 @@ async fn upload(
     }
 }
 
-/// Downloads `fields.url`, which also becomes the source if none was
-/// given. A work's page on a site the source strategies know (or any page
-/// naming its image) downloads the work's best file instead, and the page
-/// becomes the source.
+/// Downloads `fields.url`. A work's page on a site the source strategies
+/// know (or any page naming its image) downloads the work's best file
+/// instead. Unless a source was given, the file's
+/// [`canonical source`](file_source) becomes it.
 pub(crate) async fn fetch_url(
     state: &AppState,
     fields: &mut UploadFields,
 ) -> Result<TempUpload, UploadError> {
-    let found = state.sources.lookup(&fields.url).await;
-    let (file_url, page) = match found.as_deref() {
-        Some(info) if !info.files.is_empty() => (info.files[0].clone(), info.page_url.clone()),
-        _ => (fields.url.clone(), fields.url.clone()),
+    let found = state
+        .sources
+        .lookup_from(&fields.url, &fields.referer)
+        .await;
+    let file_url = match found.as_deref() {
+        Some(info) if !info.files.is_empty() => info.files[0].clone(),
+        _ => fields.url.clone(),
     };
     let file = download(state, &file_url, found.as_deref()).await?;
     if fields.source.is_empty() {
-        fields.source = page;
+        fields.source = file_source(&file_url, found.as_deref(), &fields.url);
     }
     Ok(file)
+}
+
+/// The source of a file downloaded from `file_url`, found through link
+/// `link` that said `info`, as Danbooru picks it: the file's own link when
+/// it names its work (`i.pximg.net/…_p3.png`), so the post says which of
+/// the work's images it is; else the work's page as the source said it;
+/// else the link; else the file's link.
+pub(crate) fn file_source(file_url: &str, info: Option<&SourceInfo>, link: &str) -> String {
+    let names_its_work = moekura_core::sites::parse(file_url)
+        .is_some_and(|known| known.is_file && known.page_url.is_some());
+    let source = if names_its_work {
+        file_url
+    } else if let Some(page) = info.map(|i| i.page_url.as_str()).filter(|p| !p.is_empty()) {
+        page
+    } else if !link.is_empty() {
+        link
+    } else {
+        file_url
+    };
+    source.chars().take(SOURCE_MAX_LEN).collect()
 }
 
 /// Downloads `file_url`, one of the files of `info` if it came from a
@@ -298,7 +328,7 @@ pub(crate) async fn fetch_url(
 pub(crate) async fn download(
     state: &AppState,
     file_url: &str,
-    info: Option<&crate::sources::SourceInfo>,
+    info: Option<&SourceInfo>,
 ) -> Result<TempUpload, UploadError> {
     let url = url::Url::parse(file_url).map_err(|_| match info {
         Some(info) => {
@@ -421,6 +451,7 @@ pub(crate) async fn receive(
                 }
             }
             "url"
+            | "ref"
             | "rating"
             | "staged"
             | "allow_similar"
@@ -436,6 +467,7 @@ pub(crate) async fn receive(
                 };
                 match name.as_str() {
                     "url" => fields.url = text.trim().to_owned(),
+                    "ref" => fields.referer = text.trim().chars().take(SOURCE_MAX_LEN).collect(),
                     "staged" => fields.staged = text.trim().parse().ok(),
                     "allow_similar" => {
                         fields.allow_similar = matches!(text.trim(), "1" | "true" | "on");
@@ -682,8 +714,12 @@ pub async fn ingest(
         let hash = phash(state, file).await;
         let posts = lookalikes(state, uploader, hash, None).await?;
         if !posts.is_empty() {
-            let (upload, staged) =
-                stage(state, user.id, file, &prepared, hash, &fields.source).await?;
+            let origin = Origin {
+                link: &fields.url,
+                source: &fields.source,
+                referer: &fields.referer,
+            };
+            let (upload, staged) = stage(state, user.id, file, &prepared, hash, origin).await?;
             return Err(UploadError::Similar(Lookalikes {
                 posts,
                 staged,
@@ -749,6 +785,16 @@ pub(crate) async fn lookalikes(
         .collect())
 }
 
+/// Where a staged file came from.
+pub(crate) struct Origin<'a> {
+    /// The link uploaded, if any.
+    pub link: &'a str,
+    /// What the post's source should be.
+    pub source: &'a str,
+    /// The page the link was found on, if known.
+    pub referer: &'a str,
+}
+
 /// Keeps a prepared file for `uploader_id` to post later, as an upload of
 /// its own. Returns the upload's id and the staged file's. Unused staged
 /// uploads expire with their files.
@@ -758,16 +804,21 @@ pub(crate) async fn stage(
     file: &TempUpload,
     prepared: &Prepared,
     hash: Option<u64>,
-    source: &str,
+    origin: Origin<'_>,
 ) -> Result<(i64, i64), UploadError> {
+    let link = if origin.link.is_empty() {
+        origin.source
+    } else {
+        origin.link
+    };
     let mut tx = state.db.primary().begin().await?;
-    let upload = staged_uploads::create_upload(&mut *tx, uploader_id, source).await?;
+    let upload = staged_uploads::create_upload(&mut *tx, uploader_id, link, origin.referer).await?;
     let slot = staged_uploads::Slot {
         upload_id: upload,
         uploader_id,
         position: 0,
         file_name: file.name(),
-        source,
+        source: origin.source,
     };
     let staged = staged_uploads::create(&mut *tx, slot, prepared.stored(hash)).await?;
     crate::suggestions::queue_staged(state, &mut tx, staged).await?;
@@ -1100,6 +1151,39 @@ mod tests {
             .merge(crate::uploads::routes(max_bytes(&state)))
             .merge(crate::posts::routes());
         (TestApp::new(state.clone(), routes), state)
+    }
+
+    #[test]
+    fn files_get_their_canonical_source() {
+        let image = "https://i.pximg.net/img-original/img/2014/10/03/18/10/20/46324488_p3.png";
+        let work = SourceInfo {
+            page_url: "https://www.pixiv.net/artworks/46324488".into(),
+            ..SourceInfo::default()
+        };
+        // An image that names its work says which of its images it is.
+        assert_eq!(
+            file_source(
+                image,
+                Some(&work),
+                "https://www.pixiv.net/artworks/46324488"
+            ),
+            image
+        );
+        // One that doesn't gets the work's page, or the link.
+        let tweet = SourceInfo {
+            page_url: "https://x.com/artist/status/1".into(),
+            ..SourceInfo::default()
+        };
+        let media = "https://pbs.twimg.com/media/EBGbJe_U8AA4Ekb.jpg:orig";
+        assert_eq!(
+            file_source(media, Some(&tweet), "https://twitter.com/artist/status/1"),
+            "https://x.com/artist/status/1"
+        );
+        assert_eq!(
+            file_source(media, None, "https://x.com/artist/status/1"),
+            "https://x.com/artist/status/1"
+        );
+        assert_eq!(file_source(media, None, ""), media);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -25,6 +25,16 @@ request_timeout_secs = 30
 api_requests_per_minute = 300
 api_burst = 60
 
+[server.cors]
+# Other websites whose scripts may call the APIs from a browser, e.g.
+# ["https://app.example.com"], or ["*"] for any. None by default.
+allowed_origins = []
+# Let those origins send the visitor's login cookie. Off: cross-origin
+# requests need an API key. Needs explicit origins, not "*".
+allow_credentials = false
+# Seconds browsers may cache a preflight answer.
+max_age_secs = 600
+
 [database]
 # Required. Connection URL of the primary.
 url = "postgres://moekura:CHANGE_ME@localhost/moekura"

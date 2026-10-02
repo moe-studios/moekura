@@ -15,6 +15,7 @@ mod charts;
 mod client_ip;
 mod commentary;
 mod comments;
+mod cors;
 mod counts;
 mod danbooru;
 mod dates;
@@ -308,8 +309,14 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
+    let routes = all_routes(&state);
+    with_middleware(routes, state)
+}
+
+/// Every page and API route, before the middleware.
+pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
-    let routes = posts::routes()
+    posts::routes()
         .merge(api::routes(max_upload_bytes))
         .merge(api_keys::routes())
         .merge(artists::routes())
@@ -361,8 +368,7 @@ pub fn router(state: AppState) -> Router {
         .merge(users::routes())
         .merge(webhooks::routes())
         .merge(wiki::routes())
-        .merge(upload::routes(max_upload_bytes));
-    with_middleware(routes, state)
+        .merge(upload::routes(max_upload_bytes))
 }
 
 /// Wraps `routes` (the pages and API) in session handling and the global
@@ -374,6 +380,7 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
     let csrf = CsrfLayer::new()
         .add_trusted_origin(&public_origin)
         .expect("an http(s) origin is a valid trusted origin");
+    let cors = cors::Cors::new(&server.cors, &public_origin);
 
     let middleware = ServiceBuilder::new()
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
@@ -385,7 +392,6 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
             Duration::from_secs(server.request_timeout_secs),
         ))
         .layer(CompressionLayer::new())
-        .layer(csrf)
         .layer(SetResponseHeaderLayer::if_not_present(
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_str(&content_security_policy(
@@ -433,8 +439,8 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .merge(health::routes())
         .route("/static/{*path}", get(assets::serve))
         .route("/data/{*key}", get(files::serve))
-        .layer(middleware)
         .with_state(state);
+    let routes = cors::protect(routes, csrf, cors).layer(middleware);
     // Before routing, which layers on the router run after.
     let danbooru_urls = tower::util::MapRequestLayer::new(danbooru::rewrite);
     Router::new().fallback_service(tower::Layer::layer(&danbooru_urls, routes))

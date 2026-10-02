@@ -39,6 +39,23 @@ with passwords redacted.
 | `api_requests_per_minute` | `300` | [API](api.md#rate-limits) requests a client may make a minute on average (per account, or per address for visitors); `0` for no limit |
 | `api_burst` | `60` | how many API requests may come at once before the per-minute rate applies |
 
+## `[server.cors]`
+
+Which other websites' scripts may call the [API](api.md#browser-apps-on-other-websites)
+(`/api/v1` and the Danbooru-compatible API) from a browser. Pages and forms
+are never available to other websites.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `allowed_origins` | `[]` | origins such as `"https://app.example.com"` (scheme, host and port, no path), or `["*"]` for any website |
+| `allow_credentials` | `false` | let the listed origins send the visitor's login cookie; without it, cross-origin requests count as a visitor's unless they carry an API key. Needs explicit origins, not `"*"` |
+| `max_age_secs` | `600` | how long browsers may remember a preflight answer |
+
+```toml
+[server.cors]
+allowed_origins = ["https://viewer.example.com", "http://localhost:5173"]
+```
+
 ## `[database]`
 
 | Key | Default | Meaning |

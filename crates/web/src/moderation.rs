@@ -744,7 +744,7 @@ async fn unmoderated(
     query: &moekura_core::search::Query,
     page: u32,
 ) -> Result<Result<Vec<i64>, String>, AppError> {
-    let mut config = state.config.search.clone();
+    let mut config = state.search_config();
     config.per_page = QUEUE_PAGE as u32;
     let db = state.db.primary();
     let visibility = crate::posts::visibility(current);

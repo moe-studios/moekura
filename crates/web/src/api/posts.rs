@@ -255,8 +255,8 @@ pub struct SearchParams {
     /// numbered pages stop at the site's limit.
     #[serde(default)]
     page: String,
-    /// Posts per page, up to the site's maximum. Defaults to the site's
-    /// page size.
+    /// Posts per page, up to the site's maximum. Defaults to your page
+    /// size setting, or the site's.
     limit: Option<u32>,
 }
 
@@ -339,7 +339,9 @@ pub(crate) async fn search(
         }
         query.limit = Some(limit);
     }
-    let plan = Plan::resolve(db, &query, &visibility(&current), &state.config.search)
+    // The caller's page size unless they give a `limit`.
+    let config = state.search_config_for(&current);
+    let plan = Plan::resolve(db, &query, &visibility(&current), &config)
         .await
         .map_err(search_error)?;
     let ids = plan.ids(db, page).await.map_err(search_error)?;
@@ -366,7 +368,7 @@ pub(crate) async fn search(
         cursor(towards_end, ids.last())
     } else {
         match page {
-            PageRef::Number(n) if n < state.config.search.max_page => Some((n + 1).to_string()),
+            PageRef::Number(n) if n < config.max_page => Some((n + 1).to_string()),
             _ => None,
         }
     };
@@ -868,6 +870,54 @@ mod tests {
                 .body,
         );
         assert_eq!(by_score["next"], json!("2"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn follows_the_pagination_settings(pool: PgPool) {
+        settings::set(
+            &pool,
+            "pagination",
+            json!({ "per_page": 2, "max_per_page": 3, "max_page": 2 }),
+        )
+        .await
+        .unwrap();
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        for n in 0..5 {
+            upload(&app, &alice, &fixture::png(20 + 2 * n, 20 + 2 * n), "cat").await;
+        }
+
+        let first = json(&app.get("/api/v1/posts?tags=order:score", None).await.body);
+        assert_eq!(first["posts"].as_array().unwrap().len(), 2);
+        assert_eq!(first["next"], json!("2"));
+        // The deepest numbered page has no next one.
+        let second = json(
+            &app.get("/api/v1/posts?tags=order:score&page=2", None)
+                .await
+                .body,
+        );
+        assert_eq!(second["next"], json!(null));
+        let deeper = app.get("/api/v1/posts?tags=order:score&page=3", None).await;
+        assert_eq!(deeper.status, StatusCode::BAD_REQUEST, "{}", deeper.body);
+
+        let three = json(&app.get("/api/v1/posts?limit=3", None).await.body);
+        assert_eq!(three["posts"].as_array().unwrap().len(), 3);
+        let too_many = app.get("/api/v1/posts?limit=4", None).await;
+        assert_eq!(
+            too_many.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            too_many.body
+        );
+
+        // A user's own page size, within the largest page.
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        sqlx::query("UPDATE users SET settings = '{\"per_page\": 100}' WHERE name = 'bob'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let theirs = json(&app.get("/api/v1/posts", Some(&bob)).await.body);
+        assert_eq!(theirs["posts"].as_array().unwrap().len(), 3);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

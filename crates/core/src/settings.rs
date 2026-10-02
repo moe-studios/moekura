@@ -80,6 +80,68 @@ pub struct SiteSettings {
     pub banned_artists: BannedArtists,
     /// Served as `/robots.txt`; empty for the default.
     pub robots_txt: String,
+    /// Search page sizes and depth, over the server configuration's.
+    pub pagination: Pagination,
+}
+
+/// Search pagination limits. Each one left unset uses the server
+/// configuration's `[search]` value, read at startup.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Pagination {
+    /// Posts per page for searches that don't ask for a `limit`, unless
+    /// the user picked their own page size.
+    pub per_page: Option<u32>,
+    /// The largest page anyone may ask for (`limit:`, `limit=`, or their
+    /// own page size).
+    pub max_per_page: Option<u32>,
+    /// The deepest numbered page; further pages are reached with "next"
+    /// links (`page=b<id>`).
+    pub max_page: Option<u32>,
+}
+
+/// The highest [`Pagination::max_per_page`].
+pub const MAX_PER_PAGE: u32 = 1000;
+/// The highest [`Pagination::max_page`].
+pub const MAX_PAGE: u32 = 100_000;
+
+impl Pagination {
+    /// `config` with these limits applied. A default page size above the
+    /// largest allowed one shrinks to it.
+    pub fn apply(&self, config: &crate::config::SearchConfig) -> crate::config::SearchConfig {
+        let mut config = config.clone();
+        if let Some(n) = self.max_per_page {
+            config.max_per_page = n;
+        }
+        if let Some(n) = self.per_page {
+            config.per_page = n;
+        }
+        if let Some(n) = self.max_page {
+            config.max_page = n;
+        }
+        config.per_page = config.per_page.min(config.max_per_page);
+        config
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        for (name, value, max) in [
+            ("posts per page", self.per_page, MAX_PER_PAGE),
+            ("largest page", self.max_per_page, MAX_PER_PAGE),
+            ("deepest page", self.max_page, MAX_PAGE),
+        ] {
+            if let Some(n) = value
+                && !(1..=max).contains(&n)
+            {
+                return Err(format!("the {name} must be from 1 to {max}"));
+            }
+        }
+        if let (Some(per_page), Some(max)) = (self.per_page, self.max_per_page)
+            && per_page > max
+        {
+            return Err("posts per page must not exceed the largest page".into());
+        }
+        Ok(())
+    }
 }
 
 /// What banning an artist does, for everyone but those who approve posts.
@@ -143,6 +205,7 @@ impl Default for SiteSettings {
             request_tags: false,
             banned_artists: BannedArtists::default(),
             robots_txt: String::new(),
+            pagination: Pagination::default(),
         }
     }
 }
@@ -319,6 +382,7 @@ impl SiteSettings {
         self.email_domains.validate()?;
         self.spam_filter.validate()?;
         self.post_reasons.validate()?;
+        self.pagination.validate()?;
         if self.robots_txt.len() > MAX_ROBOTS_TXT {
             return Err(format!("at most {MAX_ROBOTS_TXT} bytes"));
         }
@@ -356,6 +420,7 @@ mod tests {
                 "invite_quota",
                 "ip_history_days",
                 "logo",
+                "pagination",
                 "post_reasons",
                 "preview_all_ratings",
                 "promotion_rules",
@@ -390,6 +455,47 @@ mod tests {
                 crate::posts::Rating::Sensitive
             ]
         );
+    }
+
+    #[test]
+    fn pagination_overrides_the_server_configuration() {
+        let config = crate::config::SearchConfig::default();
+        let unset = Pagination::default().apply(&config);
+        assert_eq!(unset, config);
+
+        let settings = SiteSettings::default()
+            .with_value(
+                "pagination",
+                json!({ "per_page": 60, "max_per_page": 100, "max_page": 50 }),
+            )
+            .unwrap();
+        let applied = settings.pagination.apply(&config);
+        assert_eq!(
+            (applied.per_page, applied.max_per_page, applied.max_page),
+            (60, 100, 50)
+        );
+
+        // The configured page size shrinks to a smaller largest page.
+        let small = Pagination {
+            max_per_page: Some(20),
+            ..Pagination::default()
+        };
+        assert_eq!(small.apply(&config).per_page, 20);
+
+        for bad in [
+            json!({ "per_page": 0 }),
+            json!({ "max_per_page": MAX_PER_PAGE + 1 }),
+            json!({ "max_page": MAX_PAGE + 1 }),
+            json!({ "per_page": 50, "max_per_page": 40 }),
+        ] {
+            assert!(
+                matches!(
+                    SiteSettings::default().with_value("pagination", bad.clone()),
+                    Err(SettingError::InvalidValue { .. })
+                ),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

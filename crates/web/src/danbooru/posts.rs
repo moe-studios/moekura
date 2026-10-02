@@ -304,7 +304,7 @@ pub(super) async fn find(
     let mut query =
         SearchQuery::parse(tags.trim()).map_err(|e| AppError::Unprocessable(e.to_string()))?;
     query.limit = Some(limit);
-    let plan = Plan::resolve(db, &query, &visibility(current), &state.config.search)
+    let plan = Plan::resolve(db, &query, &visibility(current), &state.search_config())
         .await
         .map_err(search_error)?;
     let ids = plan.ids(db, page).await.map_err(search_error)?;
@@ -326,7 +326,7 @@ async fn index(
             .parse()
             .map_err(|()| AppError::BadRequest("`page` must be a number, b<id> or a<id>".into()))?,
     };
-    let limit = list.limit(state.config.search.max_per_page);
+    let limit = list.limit(state.search_config().max_per_page);
     let found = find(&state, &current, &params.tags, limit, page).await?;
     let db = state.reader(&current);
     json(danbooru_posts(&state, db, found).await?, &list.only)
@@ -500,7 +500,7 @@ async fn count(
     let db = state.reader(&current);
     let query = SearchQuery::parse(params.tags.trim())
         .map_err(|e| AppError::Unprocessable(e.to_string()))?;
-    let plan = Plan::resolve(db, &query, &visibility(&current), &state.config.search)
+    let plan = Plan::resolve(db, &query, &visibility(&current), &state.search_config())
         .await
         .map_err(search_error)?;
     let count = state

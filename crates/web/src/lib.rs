@@ -15,6 +15,7 @@ mod charts;
 mod client_ip;
 mod commentary;
 mod comments;
+mod cors;
 mod counts;
 mod danbooru;
 mod dates;
@@ -270,6 +271,31 @@ impl AppState {
         }
     }
 
+    /// Search limits: the server configuration's `[search]`, with the
+    /// pagination site settings over it.
+    pub fn search_config(&self) -> moekura_core::config::SearchConfig {
+        self.site
+            .get()
+            .settings
+            .pagination
+            .apply(&self.config.search)
+    }
+
+    /// [`Self::search_config`] with `current`'s own page size, within the
+    /// site's largest.
+    pub(crate) fn search_config_for(
+        &self,
+        current: &auth::CurrentUser,
+    ) -> moekura_core::config::SearchConfig {
+        let mut config = self.search_config();
+        if let Some(per_page) = current.user.as_ref().and_then(|u| {
+            moekura_core::user_settings::UserSettings::from_json(&u.settings).per_page
+        }) {
+            config.per_page = per_page.min(config.max_per_page);
+        }
+        config
+    }
+
     /// The URL browsers load a stored file from, signed on private sites
     /// when this server serves the files.
     pub fn file_url(&self, key: &moekura_storage::Key) -> String {
@@ -284,8 +310,14 @@ impl AppState {
 }
 
 pub fn router(state: AppState) -> Router {
+    let routes = all_routes(&state);
+    with_middleware(routes, state)
+}
+
+/// Every page and API route, before the middleware.
+pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
     let max_upload_bytes = state.config.media.max_upload_mb * 1024 * 1024;
-    let routes = posts::routes()
+    posts::routes()
         .merge(api::routes(max_upload_bytes))
         .merge(api_keys::routes())
         .merge(artists::routes())
@@ -338,8 +370,7 @@ pub fn router(state: AppState) -> Router {
         .merge(users::routes())
         .merge(webhooks::routes())
         .merge(wiki::routes())
-        .merge(upload::routes(max_upload_bytes));
-    with_middleware(routes, state)
+        .merge(upload::routes(max_upload_bytes))
 }
 
 /// Wraps `routes` (the pages and API) in session handling and the global
@@ -351,6 +382,7 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
     let csrf = CsrfLayer::new()
         .add_trusted_origin(&public_origin)
         .expect("an http(s) origin is a valid trusted origin");
+    let cors = cors::Cors::new(&server.cors, &public_origin);
 
     let middleware = ServiceBuilder::new()
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
@@ -362,7 +394,6 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
             Duration::from_secs(server.request_timeout_secs),
         ))
         .layer(CompressionLayer::new())
-        .layer(csrf)
         .layer(SetResponseHeaderLayer::if_not_present(
             CONTENT_SECURITY_POLICY,
             HeaderValue::from_str(&content_security_policy(
@@ -410,8 +441,8 @@ pub(crate) fn with_middleware(routes: Router<AppState>, state: AppState) -> Rout
         .merge(health::routes())
         .route("/static/{*path}", get(assets::serve))
         .route("/data/{*key}", get(files::serve))
-        .layer(middleware)
         .with_state(state);
+    let routes = cors::protect(routes, csrf, cors).layer(middleware);
     // Before routing, which layers on the router run after.
     let danbooru_urls = tower::util::MapRequestLayer::new(danbooru::rewrite);
     Router::new().fallback_service(tower::Layer::layer(&danbooru_urls, routes))

@@ -39,6 +39,23 @@ with passwords redacted.
 | `api_requests_per_minute` | `300` | [API](api.md#rate-limits) requests a client may make a minute on average (per account, or per address for visitors); `0` for no limit |
 | `api_burst` | `60` | how many API requests may come at once before the per-minute rate applies |
 
+## `[server.cors]`
+
+Which other websites' scripts may call the [API](api.md#browser-apps-on-other-websites)
+(`/api/v1` and the Danbooru-compatible API) from a browser. Pages and forms
+are never available to other websites.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `allowed_origins` | `[]` | origins such as `"https://app.example.com"` (scheme, host and port, no path), or `["*"]` for any website |
+| `allow_credentials` | `false` | let the listed origins send the visitor's login cookie; without it, cross-origin requests count as a visitor's unless they carry an API key. Needs explicit origins, not `"*"` |
+| `max_age_secs` | `600` | how long browsers may remember a preflight answer |
+
+```toml
+[server.cors]
+allowed_origins = ["https://viewer.example.com", "http://localhost:5173"]
+```
+
 ## `[database]`
 
 | Key | Default | Meaning |
@@ -141,6 +158,10 @@ which sends straight away and prints any error.
 
 ## `[search]`
 
+The first three are defaults: the site settings' **Search pages**
+(`pagination`) override each of them while the site runs, on every
+server, without a restart. See [Search pages](#search-pages).
+
 | Key | Default | Meaning |
 |---|---|---|
 | `per_page` | `40` | posts per page |
@@ -227,3 +248,23 @@ The optional [tagger](admin/tagger.md), which suggests tags for new uploads.
 |---|---|---|
 | `allow_private_addresses` | `false` | let [webhooks](admin/webhooks.md) go to private, loopback and link-local addresses (a service on the same machine or network) |
 | `timeout_secs` | `10` | how long a delivery may take |
+
+## Search pages
+
+How many posts a search shows and how deep its numbered pages go is
+decided, for each limit, by the first of these that is set:
+
+1. the site setting, under **Admin → Settings → Search pages** or
+   `moekura admin settings set pagination '{"per_page": 60, "max_per_page": 100, "max_page": 500}'`
+   (leave a key out, or blank on the form, to fall back),
+2. `[search]` in the server configuration,
+3. the built-in default.
+
+A user's own page size (in their settings) replaces the posts per page
+for their searches, but never goes over the largest page; neither does a
+search's `limit:`, nor `limit=` in the APIs. Searches through the site,
+`/api/v1` and the Danbooru-compatible API all follow the same limits
+(Danbooru apps get 20 posts unless they ask for more, as on Danbooru).
+Past the deepest numbered page, "next" links (`page=b<id>`) keep going.
+`moekura check-config` shows only the server configuration's values;
+`moekura admin settings` shows the site settings.

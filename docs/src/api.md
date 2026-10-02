@@ -31,6 +31,19 @@ Errors are JSON with the HTTP status:
 A duplicate upload is a `409` whose error also has `post_id`, the post that
 already has the file.
 
+An upload that looks like posts already on the site (see
+[Duplicates and look-alikes](using/posts.md#duplicates-and-look-alikes))
+is a `409` too, with `similar`, those posts closest first, and `staged`,
+the number of the file kept meanwhile:
+
+```json
+{"error": {"status": 409, "message": "This file looks like posts…", "similar": [12], "staged": 3}}
+```
+
+To post it anyway, send the same fields again with `staged=3` instead of
+the file, or the file with `allow_similar=true`. Automated uploaders that
+check for themselves can always send `allow_similar=true`.
+
 ## Rate limits
 
 Each client may make a few hundred requests a minute (300 by default,

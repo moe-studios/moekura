@@ -332,6 +332,28 @@ pub async fn member(pool: &PgPool, name: &str, email: &str) -> (moekura_db::user
     (user, session)
 }
 
+/// Gives post `post_id` the perceptual hash of `png`, as processing
+/// would if they were the same picture.
+pub async fn hash_like(state: &AppState, pool: &PgPool, post_id: i64, png: &[u8]) {
+    let dir = state.work_dir.join(format!("hash-like-{post_id}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("a.png");
+    std::fs::write(&path, png).unwrap();
+    let hash = state
+        .media
+        .perceptual_hash(&path, moekura_media::MediaType::Png, &dir)
+        .await
+        .unwrap();
+    let asset = moekura_db::media::for_post(pool, post_id)
+        .await
+        .unwrap()
+        .unwrap();
+    moekura_db::media::mark_processed(pool, asset.id, Some(hash))
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// Media files made with ffmpeg on demand, so the repository carries no
 /// binary fixtures.
 pub mod fixture {

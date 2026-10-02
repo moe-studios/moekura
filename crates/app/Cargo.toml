@@ -38,6 +38,7 @@ tagger = ["dep:moekura-tagger"]
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
+sha2.workspace = true
 
 [lints]
 workspace = true

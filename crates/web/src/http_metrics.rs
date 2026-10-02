@@ -3,6 +3,7 @@
 //! template (`/posts/{id}`), method and status, so the series are a
 //! small, fixed set whatever is requested.
 
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use axum::extract::{MatchedPath, Request};
@@ -43,18 +44,35 @@ impl Drop for InFlight {
     }
 }
 
-/// Middleware on every route (and the fallback), outside the others:
-/// times each request and counts it by route, method and status.
-pub(crate) async fn measure(request: Request, next: Next) -> Response {
-    let route = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map_or_else(|| UNMATCHED.to_owned(), |p| p.as_str().to_owned());
+/// Where [`note_route`] leaves the matched route for [`measure`], which
+/// wraps the routing (and the CORS and form checks around it), so can't
+/// see it itself. Filled in even if the request then times out.
+#[derive(Clone, Default)]
+struct RouteSlot(Arc<OnceLock<String>>);
+
+/// Middleware on every route (and the fallback): records which route
+/// matched.
+pub(crate) async fn note_route(request: Request, next: Next) -> Response {
+    if let (Some(slot), Some(path)) = (
+        request.extensions().get::<RouteSlot>(),
+        request.extensions().get::<MatchedPath>(),
+    ) {
+        let _ = slot.0.set(path.as_str().to_owned());
+    }
+    next.run(request).await
+}
+
+/// Middleware outside all the others: times each request and counts it by
+/// route, method and status.
+pub(crate) async fn measure(mut request: Request, next: Next) -> Response {
+    let slot = RouteSlot::default();
+    request.extensions_mut().insert(slot.clone());
     let method = method_label(request.method());
     let started = Instant::now();
     let in_flight = InFlight::start();
     let response = next.run(request).await;
     drop(in_flight);
+    let route = slot.0.get().map_or(UNMATCHED, String::as_str).to_owned();
     metrics::counter!(
         "moekura_http_requests_total",
         "method" => method,

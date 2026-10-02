@@ -93,6 +93,11 @@ impl TestApp {
         }
     }
 
+    /// Sends `request` as is and returns the raw response.
+    pub async fn raw(&self, request: Request<Body>) -> axum::response::Response {
+        self.router.clone().oneshot(request).await.unwrap()
+    }
+
     /// The raw response, for checking headers.
     pub async fn get_full(&self, path: &str) -> axum::response::Response {
         let request = Request::get(path).body(Body::empty()).unwrap();
@@ -332,6 +337,28 @@ pub async fn member(pool: &PgPool, name: &str, email: &str) -> (moekura_db::user
     (user, session)
 }
 
+/// Gives post `post_id` the perceptual hash of `png`, as processing
+/// would if they were the same picture.
+pub async fn hash_like(state: &AppState, pool: &PgPool, post_id: i64, png: &[u8]) {
+    let dir = state.work_dir.join(format!("hash-like-{post_id}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("a.png");
+    std::fs::write(&path, png).unwrap();
+    let hash = state
+        .media
+        .perceptual_hash(&path, moekura_media::MediaType::Png, &dir)
+        .await
+        .unwrap();
+    let asset = moekura_db::media::for_post(pool, post_id)
+        .await
+        .unwrap()
+        .unwrap();
+    moekura_db::media::mark_processed(pool, asset.id, Some(hash))
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// Media files made with ffmpeg on demand, so the repository carries no
 /// binary fixtures.
 pub mod fixture {
@@ -358,6 +385,35 @@ pub mod fixture {
 
     pub fn png(width: u32, height: u32) -> Vec<u8> {
         encode(width, height, "png")
+    }
+
+    pub fn gif(width: u32, height: u32) -> Vec<u8> {
+        encode(width, height, "gif")
+    }
+
+    /// A PNG with a text chunk saying `secret`, as cameras and editors
+    /// leave in files.
+    pub fn png_with_text(width: u32, height: u32, secret: &str) -> Vec<u8> {
+        let plain = png(width, height);
+        let data = [&b"Comment\0"[..], secret.as_bytes()].concat();
+        let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
+        chunk.extend_from_slice(b"tEXt");
+        chunk.extend_from_slice(&data);
+        // CRC-32 of the type and data.
+        let mut crc = 0xFFFF_FFFFu32;
+        for byte in b"tEXt".iter().chain(&data) {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = if crc & 1 == 1 {
+                    (crc >> 1) ^ 0xEDB8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        chunk.extend_from_slice(&(!crc).to_be_bytes());
+        // After the signature and IHDR.
+        [&plain[..33], &chunk, &plain[33..]].concat()
     }
 }
 

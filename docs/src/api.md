@@ -31,6 +31,19 @@ Errors are JSON with the HTTP status:
 A duplicate upload is a `409` whose error also has `post_id`, the post that
 already has the file.
 
+An upload that looks like posts already on the site (see
+[Duplicates and look-alikes](using/posts.md#duplicates-and-look-alikes))
+is a `409` too, with `similar`, those posts closest first, and `staged`,
+the number of the file kept meanwhile:
+
+```json
+{"error": {"status": 409, "message": "This file looks like posts…", "similar": [12], "staged": 3}}
+```
+
+To post it anyway, send the same fields again with `staged=3` instead of
+the file, or the file with `allow_similar=true`. Automated uploaders that
+check for themselves can always send `allow_similar=true`.
+
 ## Rate limits
 
 Each client may make a few hundred requests a minute (300 by default,
@@ -50,6 +63,32 @@ Past the limit, requests get a `429` with `Retry-After`, the seconds to
 wait. Some actions also have their own, tighter limits, the same as on the
 site: logging in, posting comments, flagging and reporting, and forms that
 send email.
+
+## Browser apps on other websites
+
+Browsers only let a script on another website call the API if the site
+allows that website. Admins list the allowed origins in
+[`[server.cors]`](configuration.md#servercors); by default none are, and
+only the site's own pages can call it from a browser.
+
+From an allowed origin, scripts can use `/api/v1` and the
+Danbooru-compatible API with any method, sending `Authorization` and
+`Content-Type` headers, and can read the rate-limit headers, `Retry-After`,
+`Location` and `X-Request-Id` in answers. Authenticate with an API key:
+
+```js
+const response = await fetch("https://booru.example.com/api/v1/me", {
+  headers: { Authorization: `Bearer ${apiKey}` },
+});
+```
+
+Cookies are ignored on these requests, so an app can't act through the
+visitor's login on the site, unless the admins turn on
+`allow_credentials` for origins they trust. Then a script can send
+`credentials: "include"` to act as whoever is logged in; the site's
+cookies are `SameSite=Lax`, so that only works for origins on the same
+site (another subdomain of the same domain). A private site still
+refuses requests without a key or login, wherever they come from.
 
 ## Examples
 

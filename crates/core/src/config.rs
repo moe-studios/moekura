@@ -51,6 +51,8 @@ pub struct ServerConfig {
     /// How many of those may come at once, before the per-minute rate
     /// applies.
     pub api_burst: u32,
+    /// Which other websites' scripts may call the APIs.
+    pub cors: CorsConfig,
 }
 
 impl Default for ServerConfig {
@@ -62,8 +64,57 @@ impl Default for ServerConfig {
             request_timeout_secs: 30,
             api_requests_per_minute: 300,
             api_burst: 60,
+            cors: CorsConfig::default(),
         }
     }
+}
+
+/// Cross-origin access to `/api/v1` and the Danbooru-compatible API from
+/// scripts on other websites. Nothing is allowed by default.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CorsConfig {
+    /// Origins (`https://app.example.com`) whose scripts may call the
+    /// APIs, or `"*"` for any website.
+    pub allowed_origins: Vec<String>,
+    /// Whether scripts on the listed origins may send the visitor's
+    /// session cookie. Without it, cross-origin requests authenticate with
+    /// an API key only. Needs explicit origins, not `"*"`.
+    pub allow_credentials: bool,
+    /// How long browsers may cache a preflight answer, in seconds.
+    pub max_age_secs: u64,
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            allowed_origins: Vec::new(),
+            allow_credentials: false,
+            max_age_secs: 600,
+        }
+    }
+}
+
+impl CorsConfig {
+    /// Whether any website is allowed.
+    pub fn allows_any(&self) -> bool {
+        self.allowed_origins.iter().any(|o| o == "*")
+    }
+}
+
+/// Why `origin` isn't a bare `scheme://host[:port]` origin.
+fn check_origin(origin: &str) -> Result<(), String> {
+    let url = Url::parse(origin).map_err(|e| format!("`{origin}` is not a URL ({e})"))?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(format!("`{origin}` must be an http:// or https:// origin"));
+    }
+    let serialized = url.origin().ascii_serialization();
+    if serialized != origin {
+        return Err(format!(
+            "`{origin}` must be just an origin, written `{serialized}`"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -565,11 +616,31 @@ pub struct MediaConfig {
     pub variant_format: String,
     /// Kill media tools that run longer than this.
     pub tool_timeout_secs: u64,
+    /// Whether identifying metadata (EXIF, GPS, XMP, IPTC, comments) is
+    /// removed from uploaded originals, not just from thumbnails.
+    pub strip_metadata: StripMetadata,
+    /// Media tool processes running at once in this process, for uploads
+    /// and jobs together; more wait their turn. 0: one per CPU core.
+    pub max_tool_processes: u32,
+    /// Threads each ffmpeg run may use for decoding, filtering and
+    /// encoding. 0: ffmpeg's choice (about one per core).
+    pub ffmpeg_threads: u32,
+    /// Memory (address space, including its libraries and thread stacks)
+    /// each ffmpeg or ffprobe run may use, in MB. 0: no limit. Linux only.
+    pub ffmpeg_memory_mb: u64,
+    /// CPU time each ffmpeg or ffprobe run may use, in seconds, all its
+    /// threads together. 0: no limit (`tool_timeout_secs` and
+    /// `ffmpeg_threads` still bound it). Linux only.
+    pub ffmpeg_cpu_secs: u64,
     /// Scratch space for uploads and processing. Defaults to the system
     /// temporary directory.
     pub work_dir: Option<PathBuf>,
     pub tools: MediaTools,
 }
+
+/// The least `media.ffmpeg_memory_mb` ffmpeg starts with (its libraries
+/// alone take a few hundred MB of address space).
+pub const MIN_FFMPEG_MEMORY_MB: u64 = 512;
 
 impl MediaConfig {
     /// `work_dir`, or a directory under the system temp dir.
@@ -595,10 +666,29 @@ impl Default for MediaConfig {
             sample_size: 1600,
             variant_format: "webp".to_owned(),
             tool_timeout_secs: 120,
+            strip_metadata: StripMetadata::Off,
+            max_tool_processes: 0,
+            ffmpeg_threads: 2,
+            ffmpeg_memory_mb: 2048,
+            ffmpeg_cpu_secs: 0,
             work_dir: None,
             tools: MediaTools::default(),
         }
     }
+}
+
+/// What happens to the metadata in uploaded originals.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StripMetadata {
+    /// Originals are kept exactly as uploaded.
+    #[default]
+    Off,
+    /// Removed from the types that support it (JPEG, PNG, WebP); others
+    /// are kept as uploaded.
+    Strip,
+    /// Removed, and files of other types refused.
+    Require,
 }
 
 /// Paths to the external programs used for media, if not on `PATH`.
@@ -761,6 +851,21 @@ impl Config {
                 message: "must differ from server.bind; metrics have their own listener".into(),
             });
         }
+        let cors = &self.server.cors;
+        for origin in cors.allowed_origins.iter().filter(|o| *o != "*") {
+            if let Err(message) = check_origin(origin) {
+                problems.push(ConfigProblem {
+                    key: "server.cors.allowed_origins",
+                    message,
+                });
+            }
+        }
+        if cors.allow_credentials && cors.allows_any() {
+            problems.push(ConfigProblem {
+                key: "server.cors.allow_credentials",
+                message: "needs explicit allowed_origins, not \"*\"".into(),
+            });
+        }
         if db.max_connections == 0 {
             problems.push(ConfigProblem {
                 key: "database.max_connections",
@@ -815,6 +920,14 @@ impl Config {
             problems.push(ConfigProblem {
                 key: "storage.public_base_url",
                 message: "must be an http:// or https:// URL".into(),
+            });
+        }
+        if (1..MIN_FFMPEG_MEMORY_MB).contains(&self.media.ffmpeg_memory_mb) {
+            problems.push(ConfigProblem {
+                key: "media.ffmpeg_memory_mb",
+                message: format!(
+                    "must be 0 (no limit) or at least {MIN_FFMPEG_MEMORY_MB}: ffmpeg needs that much to start"
+                ),
             });
         }
         const MEDIA_TYPES: &[&str] = crate::search::FILETYPES;
@@ -1177,6 +1290,39 @@ mod tests {
                 "telemetry.metrics_bind"
             ]
         );
+    }
+
+    #[test]
+    fn ffmpeg_memory_is_off_or_enough_to_start() {
+        let mut config = valid();
+        config.media.ffmpeg_memory_mb = 0;
+        config.validate().unwrap();
+        config.media.ffmpeg_memory_mb = 100;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "media.ffmpeg_memory_mb");
+    }
+
+    #[test]
+    fn checks_cors_origins() {
+        let mut config = valid();
+        config.server.cors.allowed_origins = vec![
+            "https://app.example.com".into(),
+            "http://localhost:5173".into(),
+        ];
+        config.server.cors.allow_credentials = true;
+        config.validate().unwrap();
+
+        for bad in ["https://app.example.com/", "app.example.com", "ftp://x.org"] {
+            config.server.cors.allowed_origins = vec![bad.into()];
+            let problems = config.validate().unwrap_err();
+            assert_eq!(problems[0].key, "server.cors.allowed_origins", "{bad}");
+        }
+
+        config.server.cors.allowed_origins = vec!["*".into()];
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "server.cors.allow_credentials");
+        config.server.cors.allow_credentials = false;
+        config.validate().unwrap();
     }
 
     #[test]

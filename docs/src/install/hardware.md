@@ -26,7 +26,9 @@ no files.
 `moekura serve` stays under 150 MB; CI fails if it doesn't. PostgreSQL
 grows to its `shared_buffers` (128 MB in the compose file) plus what its
 connections use. Making thumbnails runs `vips` and `ffmpeg` for a moment
-per upload, which for large images and videos takes some more.
+per upload, which for large images and videos takes some more; see
+[Limits on media tools](../configuration.md#limits-on-media-tools) to
+bound it.
 
 That leaves about 150 MB of a 1 GB machine for the system and for the
 operating system's file cache. Adding swap is a cheap safety net.

@@ -1,5 +1,19 @@
 # Posts and files
 
+## Duplicates and look-alikes
+
+A file that's already a post is refused, with a link to that post.
+
+A file that only *looks like* posts already on the site (the same
+picture resized, recompressed or slightly edited, by
+[perceptual hash](search.md#searching-by-image)) isn't posted straight
+away: the form comes back showing those posts. If yours is something
+else (another version, an edit, the next page), press **Upload anyway**;
+the file you sent is kept, so you needn't choose it again, and you can
+still change the fields first. Only posts you can see and haven't
+blacklisted are shown, and posts whose files are still being processed
+aren't found yet. A kept file you don't post is dropped after a day.
+
 ## Uploading from a link
 
 **…or a link to it** on the upload form downloads a file from the web.
@@ -91,8 +105,42 @@ post's page, lists it by group, with names like exiftool's: `EXIF:Make`,
 
 Where a photo was taken and whose camera took it stay private: GPS and
 other location fields, serial numbers and owners' names are never read
-into it. The original file itself is kept as it was uploaded, so
-**Download original** still has whatever it contained.
+into it. Thumbnails and samples never carry metadata. By default the
+original file itself is kept as it was uploaded, so **Download original**
+still has whatever it contained; sites can remove it from originals too,
+below.
+
+### Removing metadata from originals
+
+With `strip_metadata` in [`[media]`](../configuration.md#media) set to
+`"strip"` or `"require"`, metadata is taken out of uploaded originals
+before they're stored:
+
+| Type | What's removed | What stays |
+|---|---|---|
+| JPEG | EXIF (GPS, camera, dates…), XMP, IPTC and other Photoshop data, comments, other application segments, and anything after the picture (extra images some phones append) | JFIF, colour profiles (ICC), Adobe's colour transform |
+| PNG | text (`tEXt`, `zTXt`, `iTXt`, which hold XMP), `eXIf`, `tIME`, private chunks, anything after the end | transparency, colour profiles and colour space, gamma, pixel density, animation (APNG) |
+| WebP | `EXIF`, `XMP ` and unknown chunks | colour profiles, transparency, animation |
+
+The picture itself isn't re-encoded: its compressed data is copied byte
+for byte, so it looks exactly the same and loses no quality. A picture
+that's turned by its EXIF orientation keeps the orientation, in an EXIF
+block holding nothing else. Other types (GIF, AVIF, JPEG XL, videos,
+ugoira) aren't changed by `"strip"`, and are refused by `"require"` with
+a message saying so.
+
+Removing metadata changes the file's bytes, so its SHA-256 and MD5 are
+those of the stored, cleaned file, as is its storage name. Duplicates are
+still found: an upload is a duplicate if either the file as sent or the
+file as cleaned is already a post, so uploading the same photo again, or
+downloading the original and uploading it, finds the post. This holds for
+uploads, links, imports, the APIs and replacements alike. Lookups by the
+MD5 of the file as it was elsewhere (Danbooru apps checking whether a file
+is here, [`import-remote`](../admin/import.md#from-other-boorus)'s check)
+don't match a cleaned file; the file is then downloaded and recognised
+as a duplicate when it's cleaned. Posts uploaded before the setting was
+turned on keep their originals as they are. The metadata shown on post
+pages is read from the stored original, so it only lists what's left.
 
 Posts uploaded before metadata was read get it when their files are
 processed again: `moekura admin regenerate-media --all`.

@@ -55,7 +55,7 @@ async fn assets(
             .parse()
             .map_err(|()| AppError::BadRequest("`page` must be a number".into()))?,
     };
-    let limit = list.limit(state.config.search.max_per_page);
+    let limit = list.limit(state.search_config().max_per_page);
     let found = super::posts::find(state, current, tags, limit, page).await?;
     let db = state.reader(current);
     Ok(super::posts::danbooru_posts(state, db, found)

@@ -67,6 +67,12 @@ pub struct UploadFields {
     /// source's (if it has one) is used.
     pub commentary_title: String,
     pub commentary_description: String,
+    /// Upload even if posts look like the file (the uploader saw the
+    /// warning).
+    pub allow_similar: bool,
+    /// A file the uploader sent before and was warned about, to post
+    /// instead of a new one.
+    pub staged: Option<i64>,
 }
 
 /// An uploaded file on local disk, removed when dropped.
@@ -96,6 +102,10 @@ pub enum UploadError {
     Invalid(String),
     #[error("this file was already uploaded as post #{0}")]
     Duplicate(i64),
+    /// Posts look like the file; it waits as a staged upload until the
+    /// uploader confirms.
+    #[error("this file looks like posts already here")]
+    Similar(Lookalikes),
     /// Over the uploader's upload limits.
     #[error("{0}")]
     Limit(String),
@@ -117,6 +127,18 @@ impl From<sqlx::Error> for UploadError {
         Self::Internal(format!("database: {error}"))
     }
 }
+
+/// Posts an upload looks like, and where the file waits meanwhile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Lookalikes {
+    /// Closest first, only those the uploader may see.
+    pub posts: Vec<i64>,
+    /// The staged upload holding the file: confirming posts it.
+    pub staged: i64,
+}
+
+/// Most look-alikes an upload warns about.
+const LOOKALIKES_SHOWN: usize = 8;
 
 /// What `uploader` may still upload now.
 pub(crate) struct Allowance {
@@ -191,6 +213,30 @@ async fn upload_form(page: Page) -> Result<Response, AppError> {
     ))
 }
 
+/// The form again with a warning about the posts the file looks like,
+/// their thumbnails, and a button to upload it anyway.
+async fn similar_form(
+    page: &Page,
+    fields: &UploadFields,
+    found: &Lookalikes,
+) -> Result<Response, AppError> {
+    let db = page.state().db.primary();
+    let cards: Vec<minijinja::Value> = crate::posts::grid(page, db, &found.posts, None)
+        .await?
+        .into_iter()
+        .map(|(_, card)| card)
+        .collect();
+    let fields = UploadFields {
+        staged: Some(found.staged),
+        ..fields.clone()
+    };
+    Ok(page.render_with_status(
+        StatusCode::CONFLICT,
+        "upload.html",
+        form_context(page, &fields, None, None, Some(cards)),
+    ))
+}
+
 fn render_form(
     page: &Page,
     fields: &UploadFields,
@@ -198,6 +244,20 @@ fn render_form(
     status: StatusCode,
     allowance: Option<&Allowance>,
 ) -> Response {
+    page.render_with_status(
+        status,
+        "upload.html",
+        form_context(page, fields, error, allowance, None),
+    )
+}
+
+fn form_context(
+    page: &Page,
+    fields: &UploadFields,
+    error: Option<&UploadError>,
+    allowance: Option<&Allowance>,
+    similar: Option<Vec<minijinja::Value>>,
+) -> minijinja::Value {
     let ratings: Vec<_> = Rating::ALL
         .iter()
         .map(|r| context! { code => r.code(), label => r.label() })
@@ -207,30 +267,29 @@ fn render_form(
         Some(e) => (Some(e.to_string()), None),
         None => (None, None),
     };
-    page.render_with_status(
-        status,
-        "upload.html",
-        context! {
-            ratings => ratings,
-            form => context! {
-                rating => fields.rating.map(Rating::code),
-                url => fields.url,
-                tags => fields.tags,
-                source => fields.source,
-                description => fields.description,
-                commentary_title => fields.commentary_title,
-                commentary_description => fields.commentary_description,
-            },
-            error => message,
-            duplicate_of => duplicate_of,
-            max_mb => page.state().media.config().max_upload_mb,
-            allowance => allowance.map(|a| context! {
-                refusal => a.refusal,
-                pending_left => a.pending_left,
-                today_left => a.today_left,
-            }),
+    context! {
+        ratings => ratings,
+        form => context! {
+            rating => fields.rating.map(Rating::code),
+            url => fields.url,
+            tags => fields.tags,
+            source => fields.source,
+            description => fields.description,
+            commentary_title => fields.commentary_title,
+            commentary_description => fields.commentary_description,
+            // A file sent before, waiting, so it needn't be sent again.
+            staged => fields.staged,
         },
-    )
+        error => message,
+        duplicate_of => duplicate_of,
+        similar => similar,
+        max_mb => page.state().media.config().max_upload_mb,
+        allowance => allowance.map(|a| context! {
+            refusal => a.refusal,
+            pending_left => a.pending_left,
+            today_left => a.today_left,
+        }),
+    }
 }
 
 async fn upload(
@@ -246,18 +305,19 @@ async fn upload(
         (fields, Ok(file)) => (fields, file),
         (fields, Err(error)) => return Ok(failed(&page, &fields, error)),
     };
-    let file = match file {
-        Some(file) => file,
-        None if !fields.url.is_empty() => match fetch_url(&state, &mut fields).await {
-            Ok(file) => file,
-            Err(error) => return Ok(failed(&page, &fields, error)),
+    // A new file, else the one waiting from a warning, else a link.
+    let posted = match (file, fields.staged) {
+        (Some(file), _) => ingest(&state, &page.current, &file, &fields, true).await,
+        (None, Some(staged)) => post_staged(&state, &page.current, staged, &fields).await,
+        (None, None) if !fields.url.is_empty() => match fetch_url(&state, &mut fields).await {
+            Ok(file) => ingest(&state, &page.current, &file, &fields, true).await,
+            Err(error) => Err(error),
         },
-        None => {
-            let error = UploadError::Invalid("Choose a file to upload, or paste a link.".into());
-            return Ok(failed(&page, &fields, error));
-        }
+        (None, None) => Err(UploadError::Invalid(
+            "Choose a file to upload, or paste a link.".into(),
+        )),
     };
-    match ingest(&state, &page.current, &file, &fields).await {
+    match posted {
         Ok(post_id) => {
             let kept =
                 crate::tag_warnings::kept_categories(state.db.primary(), &fields.tags, post_id)
@@ -265,6 +325,7 @@ async fn upload(
             let query = crate::tag_warnings::check_query(&kept);
             Ok(Redirect::to(&format!("/posts/{post_id}?{query}")).into_response())
         }
+        Err(UploadError::Similar(found)) => similar_form(&page, &fields, &found).await,
         Err(error) => Ok(failed(&page, &fields, error)),
     }
 }
@@ -409,6 +470,8 @@ pub(crate) async fn receive(
             }
             "url"
             | "rating"
+            | "staged"
+            | "allow_similar"
             | "tags"
             | "source"
             | "description"
@@ -420,6 +483,10 @@ pub(crate) async fn receive(
                 };
                 match name.as_str() {
                     "url" => fields.url = text.trim().to_owned(),
+                    "staged" => fields.staged = text.trim().parse().ok(),
+                    "allow_similar" => {
+                        fields.allow_similar = matches!(text.trim(), "1" | "true" | "on");
+                    }
                     "rating" => fields.rating = text.parse().ok(),
                     "tags" => fields.tags = text,
                     "source" => fields.source = text.trim().to_owned(),
@@ -486,12 +553,23 @@ pub struct TempWriter {
 impl TempUpload {
     /// Recomputes the hashes and size after the file was changed.
     async fn rehash(&mut self) -> Result<(), UploadError> {
-        let bytes = tokio::fs::read(&self.path)
-            .await
-            .map_err(|e| UploadError::Internal(format!("reading temp file: {e}")))?;
-        self.sha256 = Sha256::digest(&bytes).into();
-        self.md5 = Md5::digest(&bytes).into();
-        self.size = bytes.len() as u64;
+        use tokio::io::AsyncReadExt;
+        let failed = |e: std::io::Error| UploadError::Internal(format!("reading temp file: {e}"));
+        let mut file = tokio::fs::File::open(&self.path).await.map_err(failed)?;
+        let (mut sha256, mut md5, mut size) = (Sha256::new(), Md5::new(), 0u64);
+        let mut buffer = vec![0; 256 * 1024];
+        loop {
+            let read = file.read(&mut buffer).await.map_err(failed)?;
+            if read == 0 {
+                break;
+            }
+            sha256.update(&buffer[..read]);
+            md5.update(&buffer[..read]);
+            size += read as u64;
+        }
+        self.sha256 = sha256.finalize().into();
+        self.md5 = md5.finalize().into();
+        self.size = size;
         Ok(())
     }
 }
@@ -613,22 +691,141 @@ impl From<Refused> for UploadError {
 }
 
 /// Turns a received file into a post. Returns the new post's id.
+///
+/// With `warn_similar`, unless `fields.allow_similar` is set, a file that
+/// looks like posts the uploader can see isn't posted: it's kept as a
+/// staged upload and [`UploadError::Similar`] names the posts, so the
+/// uploader can look and then confirm with [`post_staged`].
 pub async fn ingest(
     state: &AppState,
     uploader: &CurrentUser,
     file: &TempUpload,
     fields: &UploadFields,
+    warn_similar: bool,
 ) -> Result<i64, UploadError> {
     // Bad tags and fields are refused before the file is looked at.
     let tags = crate::tags::parse_field(state.db.primary(), &fields.tags).await?;
     check_fields(fields, &tags.metatags)?;
     crate::metatags::prepare(state, uploader, None, &tags.metatags).await?;
     let prepared = prepare(state, file).await?;
+    // Staging needs an account to hold the file for.
+    if warn_similar
+        && !fields.allow_similar
+        && let Some(user) = &uploader.user
+    {
+        let posts = lookalikes(state, uploader, file).await?;
+        if !posts.is_empty() {
+            let staged = stage(state, user.id, &prepared, &fields.source).await?;
+            return Err(UploadError::Similar(Lookalikes { posts, staged }));
+        }
+    }
     create_post(state, uploader, &prepared, fields).await
 }
 
+/// Posts that look like `file` (by perceptual hash, within the distance
+/// the index always finds) which `uploader` may see and hasn't
+/// blacklisted, closest first. Files that can't be hashed have none.
+async fn lookalikes(
+    state: &AppState,
+    uploader: &CurrentUser,
+    file: &TempUpload,
+) -> Result<Vec<i64>, UploadError> {
+    if !uploader.can(Permission::ViewPosts) {
+        return Ok(Vec::new());
+    }
+    let hash = match crate::image_search::hash_file(state, file).await {
+        Ok(hash) => hash,
+        Err(error) => {
+            tracing::debug!(
+                error = error.public_message(),
+                "upload not checked for similar posts"
+            );
+            return Ok(Vec::new());
+        }
+    };
+    let db = state.db.primary();
+    let found = media::similar(
+        db,
+        hash,
+        media::SIMILAR_MAX_DISTANCE,
+        None,
+        (LOOKALIKES_SHOWN * 3) as i64,
+    )
+    .await?;
+    let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
+    let candidates = posts::by_ids(db, &ids).await?;
+    let visible = crate::posts::visibility(uploader);
+    let blacklist = crate::blacklist::for_viewer(state, db, uploader).await?;
+    Ok(found
+        .iter()
+        .filter_map(|s| candidates.iter().find(|p| p.id == s.post_id))
+        .filter(|p| {
+            visible.allows(p)
+                && blacklist
+                    .as_ref()
+                    .is_none_or(|list| list.matching(p.rating, &p.tag_ids).is_none())
+        })
+        .map(|p| p.id)
+        .take(LOOKALIKES_SHOWN)
+        .collect())
+}
+
+/// Keeps a prepared file for `uploader_id` to post later. Unused staged
+/// uploads expire with their files.
+pub(crate) async fn stage(
+    state: &AppState,
+    uploader_id: i64,
+    prepared: &Prepared,
+    source: &str,
+) -> Result<i64, UploadError> {
+    Ok(moekura_db::staged_uploads::create(
+        state.db.primary(),
+        moekura_db::staged_uploads::NewStaged {
+            uploader_id,
+            source,
+            sha256: &prepared.sha256,
+            md5: &prepared.md5,
+            media_type: &prepared.media_type,
+            width: prepared.width,
+            height: prepared.height,
+            duration_ms: prepared.duration_ms,
+            frames: prepared.frames,
+            has_audio: prepared.has_audio,
+            file_size: prepared.file_size,
+            storage_key: &prepared.storage_key,
+        },
+    )
+    .await?)
+}
+
+/// Posts staged upload `id`, which must be `uploader`'s and not posted
+/// yet, with `fields`. Returns the new post's id.
+pub async fn post_staged(
+    state: &AppState,
+    uploader: &CurrentUser,
+    id: i64,
+    fields: &UploadFields,
+) -> Result<i64, UploadError> {
+    let db = state.db.primary();
+    let gone =
+        || UploadError::Invalid("The file you sent before has expired; send it again.".into());
+    let user = uploader.user.as_ref().ok_or_else(gone)?;
+    let staged = moekura_db::staged_uploads::by_id(db, id)
+        .await?
+        .filter(|s| s.uploader_id == user.id)
+        .ok_or_else(gone)?;
+    if let Some(post) = staged.post_id {
+        return Err(UploadError::Duplicate(post));
+    }
+    let prepared = Prepared::from_staged(&staged).ok_or_else(gone)?;
+    let post_id = create_post(state, uploader, &prepared, fields).await?;
+    moekura_db::staged_uploads::used(db, id, post_id).await?;
+    Ok(post_id)
+}
+
 /// Checks a received file isn't a duplicate, identifies and probes it,
-/// and stores the original.
+/// and stores the original (without its metadata, if the site strips
+/// it).
 pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, UploadError> {
     let db = state.db.primary();
     if let Some(existing) = media::post_with_sha256(db, &file.sha256).await? {
@@ -639,6 +836,18 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
         .identify(file.path())
         .await
         .map_err(media_error)?;
+    // The stripped file is what's kept, so its hashes are the post's; a
+    // file whose stripped bytes are a post's is that post's too.
+    let stripped = strip_metadata(state, file, media_type).await?;
+    let file = match &stripped {
+        Some(stripped) => {
+            if let Some(existing) = media::post_with_sha256(db, &stripped.sha256).await? {
+                return Err(UploadError::Duplicate(existing));
+            }
+            stripped
+        }
+        None => file,
+    };
     let probe = state
         .media
         .probe(file.path(), media_type)
@@ -674,6 +883,73 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
         file_size: i64::try_from(file.size).unwrap_or(i64::MAX),
         storage_key: key.as_str().to_owned(),
     })
+}
+
+/// `file` without its metadata, when `media.strip_metadata` asks for it
+/// and there was some to remove. `require` refuses types it can't be
+/// removed from.
+async fn strip_metadata(
+    state: &AppState,
+    file: &TempUpload,
+    media_type: moekura_media::MediaType,
+) -> Result<Option<TempUpload>, UploadError> {
+    use moekura_core::config::StripMetadata;
+    let setting = state.media.config().strip_metadata;
+    if setting == StripMetadata::Off {
+        return Ok(None);
+    }
+    if !moekura_media::strip::supports(media_type) {
+        if setting == StripMetadata::Require {
+            return Err(UploadError::Invalid(format!(
+                "This site removes identifying metadata from uploads, which it can't do for \
+                 {} files; JPEG, PNG and WebP files are accepted.",
+                media_type.name().to_uppercase()
+            )));
+        }
+        tracing::info!(
+            media_type = media_type.name(),
+            "metadata not stripped: unsupported type"
+        );
+        return Ok(None);
+    }
+    let path = file.path.with_extension("stripped");
+    // Removed when dropped, should hashing fail.
+    let mut stripped = TempUpload {
+        path,
+        sha256: [0; 32],
+        md5: [0; 16],
+        size: 0,
+    };
+    match state
+        .media
+        .strip_metadata(file.path(), media_type, &stripped.path)
+        .await
+        .map_err(media_error)?
+    {
+        moekura_media::strip::Stripped::Changed => {
+            stripped.rehash().await?;
+            Ok(Some(stripped))
+        }
+        _ => Ok(None),
+    }
+}
+
+impl Prepared {
+    /// The file a staged upload keeps.
+    pub fn from_staged(staged: &moekura_db::staged_uploads::Staged) -> Option<Self> {
+        Some(Self {
+            sha256: staged.sha256.as_slice().try_into().ok()?,
+            md5: staged.md5.as_slice().try_into().ok()?,
+            media_type: staged.media_type.clone(),
+            width: staged.width,
+            height: staged.height,
+            duration_ms: staged.duration_ms,
+            frames: staged.frames,
+            has_audio: staged.has_audio,
+            file_size: staged.file_size,
+            storage_key: staged.storage_key.clone(),
+        })
+    }
 }
 
 /// Makes a post of a prepared file. Returns the new post's id.
@@ -944,6 +1220,136 @@ mod tests {
         }
     }
 
+    /// The id in a `/posts/<id>?…` redirect.
+    fn post_in(location: Option<&str>) -> i64 {
+        location
+            .and_then(|l| l.strip_prefix("/posts/"))
+            .and_then(|rest| rest.split('?').next())
+            .and_then(|id| id.parse().ok())
+            .expect("a redirect to a post")
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn look_alikes_are_shown_before_posting(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let first = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &fields("s"),
+                Some(("a.png", &fixture::png(64, 64))),
+            )
+            .await;
+        let original = post_in(first.location.as_deref());
+        let again = fixture::png(66, 66);
+        crate::test_support::hash_like(&state, &pool, original, &again).await;
+
+        let mut tagged = fields("s");
+        tagged.push(("tags", "cat".to_owned()));
+        let warned = app
+            .post_multipart("/upload", Some(&alice), &tagged, Some(("b.png", &again)))
+            .await;
+        assert_eq!(warned.status, StatusCode::CONFLICT, "{}", warned.body);
+        assert!(
+            warned.body.contains(&format!("href=\"/posts/{original}")),
+            "{}",
+            warned.body
+        );
+        assert!(warned.body.contains("Upload anyway"), "{}", warned.body);
+        assert!(warned.body.contains(">cat</textarea>"), "the fields stay");
+        let staged: i64 = sqlx::query_scalar("SELECT id FROM staged_uploads")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(
+            warned
+                .body
+                .contains(&format!("name=\"staged\" value=\"{staged}\"")),
+            "{}",
+            warned.body
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM posts")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            1
+        );
+
+        // Confirming posts the kept file, without sending it again; only
+        // its uploader can.
+        let mut confirm = tagged.clone();
+        confirm.push(("staged", staged.to_string()));
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let theirs = app
+            .post_multipart("/upload", Some(&bob), &confirm, None)
+            .await;
+        assert_eq!(theirs.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let posted = app
+            .post_multipart("/upload", Some(&alice), &confirm, None)
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+        let post = post_in(posted.location.as_deref());
+        let asset = media::for_post(&pool, post).await.unwrap().unwrap();
+        assert_eq!(asset.sha256, Sha256::digest(&again).to_vec());
+        let twice = app
+            .post_multipart("/upload", Some(&alice), &confirm, None)
+            .await;
+        assert!(
+            twice.body.contains(&format!("post #{post}")),
+            "{}",
+            twice.body
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn hidden_and_blacklisted_posts_dont_warn(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let mut tagged = fields("s");
+        tagged.push(("tags", "dog".to_owned()));
+        let first = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &tagged,
+                Some(("a.png", &fixture::png(64, 64))),
+            )
+            .await;
+        let original = post_in(first.location.as_deref());
+        let again = fixture::png(66, 66);
+        crate::test_support::hash_like(&state, &pool, original, &again).await;
+
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        sqlx::query("UPDATE users SET settings = '{\"blacklist\": \"dog\"}' WHERE name = 'bob'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let posted = app
+            .post_multipart("/upload", Some(&bob), &fields("s"), Some(("b.png", &again)))
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+
+        // Deleted posts aren't shown to members either.
+        sqlx::query("UPDATE posts SET status = 'deleted'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let carol = session_for(&pool, "carol", SystemRole::Member).await;
+        let third = fixture::png(68, 68);
+        crate::test_support::hash_like(&state, &pool, original, &third).await;
+        let posted = app
+            .post_multipart(
+                "/upload",
+                Some(&carol),
+                &fields("s"),
+                Some(("c.png", &third)),
+            )
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+    }
+
     fn fields(rating: &str) -> Vec<(&'static str, String)> {
         vec![
             ("rating", rating.to_owned()),
@@ -1012,6 +1418,100 @@ mod tests {
             (job.kind.as_str(), job.payload["asset_id"].as_i64()),
             ("media.process", Some(asset.id))
         );
+    }
+
+    /// An app whose `[media] strip_metadata` is `setting`.
+    async fn stripping_app(
+        pool: &PgPool,
+        setting: moekura_core::config::StripMetadata,
+    ) -> (TestApp, AppState) {
+        let mut config = crate::test_support::test_config();
+        config.media.strip_metadata = setting;
+        let state = crate::test_support::test_state_with(pool, config).await;
+        let routes = routes(max_bytes(&state)).merge(crate::posts::routes());
+        (TestApp::new(state.clone(), routes), state)
+    }
+
+    async fn stored(state: &AppState, pool: &PgPool, post_id: i64) -> (media::Asset, Vec<u8>) {
+        let asset = media::for_post(pool, post_id).await.unwrap().unwrap();
+        let path = state.work_dir.join(format!("stored-{post_id}"));
+        let key = Key::parse(&asset.storage_key).unwrap();
+        state.storage.download(&key, &path).await.unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        std::fs::remove_file(path).unwrap();
+        (asset, bytes)
+    }
+
+    fn post_id(location: Option<String>) -> i64 {
+        location
+            .and_then(|l| l.strip_prefix("/posts/")?.split('?').next()?.parse().ok())
+            .expect("a redirect to the post")
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn originals_can_lose_their_metadata(pool: PgPool) {
+        use moekura_core::config::StripMetadata;
+        let (app, state) = stripping_app(&pool, StripMetadata::Strip).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let png = fixture::png_with_text(64, 48, "my home address");
+        let posted = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", &png)))
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+        let id = post_id(posted.location);
+        let (asset, bytes) = stored(&state, &pool, id).await;
+        assert!(!String::from_utf8_lossy(&bytes).contains("my home address"));
+        assert!(bytes.len() < png.len());
+        // The post's hashes are the stored file's.
+        assert_eq!(asset.sha256, Sha256::digest(&bytes).to_vec());
+        assert_eq!(asset.md5, Md5::digest(&bytes).to_vec());
+
+        // The same file again, or what was stored, is a duplicate.
+        for (name, again) in [("again.png", &png), ("stored.png", &bytes)] {
+            let refused = app
+                .post_multipart("/upload", Some(&alice), &fields("g"), Some((name, again)))
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+            assert!(
+                refused.body.contains(&format!("post #{id}")),
+                "{name}: {}",
+                refused.body
+            );
+        }
+
+        // Types it can't be removed from are kept as they are.
+        let gif = fixture::gif(32, 32);
+        let posted = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.gif", &gif)))
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+        let (_, bytes) = stored(&state, &pool, post_id(posted.location)).await;
+        assert_eq!(bytes, gif);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn metadata_is_kept_unless_asked_and_required_refuses(pool: PgPool) {
+        use moekura_core::config::StripMetadata;
+        let png = fixture::png_with_text(64, 48, "my home address");
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let posted = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", &png)))
+            .await;
+        let (_, bytes) = stored(&state, &pool, post_id(posted.location)).await;
+        assert_eq!(bytes, png, "kept byte for byte by default");
+
+        let (app, _) = stripping_app(&pool, StripMetadata::Require).await;
+        let refused = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &fields("g"),
+                Some(("a.gif", &fixture::gif(32, 32))),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("for GIF files"), "{}", refused.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

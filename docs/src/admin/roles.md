@@ -35,12 +35,12 @@ roles can't be deleted and keep their ranks.
 | Approve posts and handle flags | the approval and flag queues |
 | Delete and restore posts | |
 | Purge posts | removing deleted posts and their files for good |
-| Manage tags, aliases and implications | tag categories, deprecating tags, deciding alias and implication requests |
+| Manage tags, aliases and implications | moving tags between categories, deprecating tags, deciding alias and implication requests |
 | See deleted posts | deleted posts and comments |
 | Hide comments and handle reports about them | hiding and restoring anyone's comments, and the reported comments queue |
 | Ban users and networks | |
 | Manage users | changing other users' roles and account status; any number and kind of invites |
-| Manage site settings and roles | |
+| Manage site settings and roles | also the admin pages for tag categories, news and webhooks |
 | Read the moderation log | |
 
 The built-in roles and what they start with:

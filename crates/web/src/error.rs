@@ -25,6 +25,12 @@ pub enum AppError {
     Unprocessable(String),
     /// The uploaded file is already post `.0`.
     Duplicate(i64),
+    /// The uploaded file looks like `posts`; it waits as staged upload
+    /// `staged` until the uploader confirms.
+    Similar {
+        posts: Vec<i64>,
+        staged: i64,
+    },
     /// Someone else changed the thing first.
     Conflict(String),
     TooManyRequests {
@@ -42,7 +48,9 @@ impl AppError {
             AppError::Forbidden | AppError::Blocked(_) => StatusCode::FORBIDDEN,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
             AppError::Unprocessable(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            AppError::Duplicate(_) | AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Duplicate(_) | AppError::Similar { .. } | AppError::Conflict(_) => {
+                StatusCode::CONFLICT
+            }
             AppError::TooManyRequests { .. } => StatusCode::TOO_MANY_REQUESTS,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -59,6 +67,10 @@ impl AppError {
             | AppError::Unprocessable(message)
             | AppError::Conflict(message) => message,
             AppError::Duplicate(_) => "This file was already uploaded",
+            AppError::Similar { .. } => {
+                "This file looks like posts already on the site; send `staged` (or the file \
+                 again with `allow_similar=true`) to upload it anyway"
+            }
             AppError::TooManyRequests { .. } => {
                 "Too many attempts. Please wait a moment and try again"
             }
@@ -94,6 +106,10 @@ impl IntoResponse for AppError {
                 AppError::Duplicate(id) => Some(id),
                 _ => None,
             },
+            similar: match &self {
+                AppError::Similar { posts, staged } => Some((posts.clone(), *staged)),
+                _ => None,
+            },
         };
         // Plain text by default; `render_errors` upgrades it to a page.
         let mut response = (page.status, page.message.clone()).into_response();
@@ -116,6 +132,8 @@ struct ErrorPage {
     key: Option<&'static str>,
     /// The post the error is about, for API clients.
     post_id: Option<i64>,
+    /// Look-alike posts and the staged upload, for API clients.
+    similar: Option<(Vec<i64>, i64)>,
 }
 
 /// Middleware: renders [`AppError`] responses as HTML pages. Visitors who
@@ -192,6 +210,14 @@ pub struct ErrorDetail {
     /// For a duplicate upload, the post that already has the file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_id: Option<i64>,
+    /// For an upload that looks like existing posts: those posts, closest
+    /// first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub similar: Option<Vec<i64>>,
+    /// For an upload that looks like existing posts: the staged upload
+    /// keeping the file. Send it as `staged` to post the file anyway.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staged: Option<i64>,
 }
 
 /// Turns an error response into an [`ErrorBody`]: [`AppError`]s keep their
@@ -220,6 +246,8 @@ pub(crate) async fn json_error(response: Response) -> Response {
             status: status.as_u16(),
             message,
             post_id: page.and_then(|p| p.post_id),
+            similar: page.and_then(|p| p.similar.as_ref().map(|s| s.0.clone())),
+            staged: page.and_then(|p| p.similar.as_ref().map(|s| s.1)),
         },
     };
     let mut rendered = (status, axum::Json(body)).into_response();

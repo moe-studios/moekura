@@ -94,6 +94,10 @@ action-user_feedback_restore = restored feedback on
 action-user_rename = renamed
 action-news_post = posted site news
 action-news_delete = deleted site news
+action-tag_category_create = added a tag category
+action-tag_category_update = renamed a tag category
+action-tag_category_move = reordered the tag categories
+action-tag_category_delete = deleted a tag category
 
 mod-log-title = Moderation log
 mod-log-action = Action

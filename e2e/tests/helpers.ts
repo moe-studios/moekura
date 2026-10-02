@@ -15,12 +15,24 @@ export async function logIn(page: Page, name: string, password: string): Promise
   await expect(page.getByText("Welcome back!")).toBeVisible();
 }
 
-/** A solid-colour PNG; a random colour, so reruns don't upload duplicates. */
+/**
+ * A PNG of random 8×8 blocks, so reruns don't upload duplicates and no two
+ * look alike (solid colours would all share a perceptual hash, and the
+ * upload form would warn about look-alikes).
+ */
 export function png(width = 32, height = 32): Buffer {
-  const [r, g, b] = [0, 0, 0].map(() => Math.floor(Math.random() * 256));
-  const row = Buffer.alloc(1 + width * 3);
-  for (let x = 0; x < width; x++) row.set([r, g, b], 1 + x * 3);
-  const pixels = Buffer.concat(Array.from({ length: height }, () => row));
+  const block = 8;
+  const colours = Array.from({ length: Math.ceil(width / block) * Math.ceil(height / block) }, () =>
+    [0, 0, 0].map(() => Math.floor(Math.random() * 256)),
+  );
+  const rows = Array.from({ length: height }, (_, y) => {
+    const row = Buffer.alloc(1 + width * 3);
+    for (let x = 0; x < width; x++) {
+      row.set(colours[Math.floor(y / block) * Math.ceil(width / block) + Math.floor(x / block)], 1 + x * 3);
+    }
+    return row;
+  });
+  const pixels = Buffer.concat(rows);
   const chunk = (type: string, data: Buffer) => {
     const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
     const length = Buffer.alloc(4);

@@ -212,9 +212,89 @@ pub fn parse_input(input: &str, categories: &[&str]) -> (Vec<TagInput>, Vec<Inva
     (tags, invalid)
 }
 
+/// Danbooru's tag categories, by id. The Danbooru-compatible API passes
+/// ids through and imports map these names, so they keep both; their
+/// labels and order can change.
+pub const BUILT_IN_CATEGORIES: &[(i16, &str)] = &[
+    (0, "general"),
+    (1, "artist"),
+    (3, "copyright"),
+    (4, "character"),
+    (5, "meta"),
+];
+
+/// Categories a site adds get ids from here up, past Danbooru's.
+pub const FIRST_CUSTOM_CATEGORY: i16 = 6;
+
+/// The longest category name, which is also its prefix in tag boxes.
+pub const CATEGORY_NAME_MAX_LEN: usize = 32;
+/// The longest category label, in characters.
+pub const CATEGORY_LABEL_MAX_LEN: usize = 64;
+
+/// Whether category `id` is one of Danbooru's.
+pub fn is_built_in_category(id: i16) -> bool {
+    BUILT_IN_CATEGORIES
+        .iter()
+        .any(|(built_in, _)| *built_in == id)
+}
+
+/// Why `name` can't name a new category: it must be a lowercase word
+/// that search and tag boxes don't already read as something else.
+pub fn check_category_name(name: &str) -> Result<(), String> {
+    let mut chars = name.chars();
+    let word = chars.next().is_some_and(|c| c.is_ascii_lowercase())
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        && name.len() <= CATEGORY_NAME_MAX_LEN;
+    if !word {
+        return Err(format!(
+            "A category's name is up to {CATEGORY_NAME_MAX_LEN} lowercase letters, digits \
+             and underscores, starting with a letter"
+        ));
+    }
+    let short = crate::search::CATEGORY_SHORT_NAMES
+        .iter()
+        .any(|(short, _)| *short == name);
+    if RESERVED_PREFIXES.contains(&name) || short {
+        return Err(format!("`{name}` already means something in searches"));
+    }
+    Ok(())
+}
+
+/// Why `label` can't label a category.
+pub fn check_category_label(label: &str) -> Result<(), String> {
+    let length = label.chars().count();
+    if length == 0 || length > CATEGORY_LABEL_MAX_LEN || label.chars().any(char::is_control) {
+        return Err(format!(
+            "A category's label is 1 to {CATEGORY_LABEL_MAX_LEN} characters"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checks_category_names() {
+        assert!(check_category_name("species").is_ok());
+        assert!(check_category_name("lore_2").is_ok());
+        for bad in [
+            "",
+            "Species",
+            "2d",
+            "has space",
+            "rating",
+            "artist",
+            "gen",
+            &"x".repeat(33),
+        ] {
+            assert!(check_category_name(bad).is_err(), "{bad}");
+        }
+        assert!(check_category_label("Species").is_ok());
+        assert!(check_category_label("").is_err());
+        assert!(is_built_in_category(3) && !is_built_in_category(6));
+    }
 
     fn parse(raw: &str) -> Result<String, TagNameError> {
         TagName::parse(raw).map(TagName::into_string)

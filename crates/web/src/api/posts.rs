@@ -255,8 +255,8 @@ pub struct SearchParams {
     /// numbered pages stop at the site's limit.
     #[serde(default)]
     page: String,
-    /// Posts per page, up to the site's maximum. Defaults to the site's
-    /// page size.
+    /// Posts per page, up to the site's maximum. Defaults to your page
+    /// size setting, or the site's.
     limit: Option<u32>,
 }
 
@@ -339,7 +339,9 @@ pub(crate) async fn search(
         }
         query.limit = Some(limit);
     }
-    let plan = Plan::resolve(db, &query, &visibility(&current), &state.config.search)
+    // The caller's page size unless they give a `limit`.
+    let config = state.search_config_for(&current);
+    let plan = Plan::resolve(db, &query, &visibility(&current), &config)
         .await
         .map_err(search_error)?;
     let ids = plan.ids(db, page).await.map_err(search_error)?;
@@ -366,7 +368,7 @@ pub(crate) async fn search(
         cursor(towards_end, ids.last())
     } else {
         match page {
-            PageRef::Number(n) if n < state.config.search.max_page => Some((n + 1).to_string()),
+            PageRef::Number(n) if n < config.max_page => Some((n + 1).to_string()),
             _ => None,
         }
     };
@@ -519,12 +521,21 @@ pub struct UploadRequest {
     tags: Option<String>,
     source: Option<String>,
     description: Option<String>,
+    /// `true` to upload even if the file looks like posts already here.
+    allow_similar: Option<bool>,
+    /// A file kept after an earlier upload looked like other posts: send
+    /// its number instead of the file to post it.
+    staged: Option<i64>,
 }
 
 fn upload_error(error: UploadError) -> AppError {
     match error {
         UploadError::Invalid(message) => AppError::Unprocessable(message),
         UploadError::Duplicate(id) => AppError::Duplicate(id),
+        UploadError::Similar(found) => AppError::Similar {
+            posts: found.posts,
+            staged: found.staged,
+        },
         UploadError::Limit(message) => AppError::Blocked(message),
         UploadError::Internal(detail) => AppError::Internal(detail),
     }
@@ -535,6 +546,12 @@ fn upload_error(error: UploadError) -> AppError {
 /// Needs `upload`. The post is `pending` when the site reviews uploads and
 /// you lack `upload_without_approval`. Thumbnails are made in the
 /// background: `file.processed` turns true when they're ready.
+///
+/// A file that looks like posts you can see (and haven't blacklisted) isn't
+/// posted at first: the answer is a `409` listing them in `similar`, with
+/// the file kept as `staged`. To post it anyway, send the fields again with
+/// `staged` instead of the file, or the file with `allow_similar=true`.
+/// Kept files are dropped after a day. Exact duplicates are always refused.
 #[utoipa::path(
     post,
     path = "/posts",
@@ -543,7 +560,7 @@ fn upload_error(error: UploadError) -> AppError {
     request_body(content = UploadRequest, content_type = "multipart/form-data"),
     responses(
         (status = 201, body = ApiPost, headers(("Location" = String, description = "The new post"))),
-        (status = 409, body = ErrorBody, description = "The file was already uploaded; `post_id` names that post"),
+        (status = 409, body = ErrorBody, description = "The file was already uploaded, and `post_id` names that post; or it looks like posts already here, named in `similar`, and waits as `staged` until you confirm"),
         (status = 413, body = ErrorBody, description = "The request is larger than the site allows"),
         (status = 422, body = ErrorBody, description = "A field or the file isn't acceptable"),
     ),
@@ -558,20 +575,22 @@ pub(crate) async fn upload(
         .await
         .map_err(upload_error)?;
     let (mut fields, file) = crate::upload::receive(&state, multipart).await;
-    let file = match file.map_err(upload_error)? {
-        Some(file) => file,
-        None if !fields.url.is_empty() => crate::upload::fetch_url(&state, &mut fields)
-            .await
-            .map_err(upload_error)?,
-        None => {
+    let id = match (file.map_err(upload_error)?, fields.staged) {
+        (Some(file), _) => crate::upload::ingest(&state, &current, &file, &fields, true).await,
+        (None, Some(staged)) => crate::upload::post_staged(&state, &current, staged, &fields).await,
+        (None, None) if !fields.url.is_empty() => {
+            let file = crate::upload::fetch_url(&state, &mut fields)
+                .await
+                .map_err(upload_error)?;
+            crate::upload::ingest(&state, &current, &file, &fields, true).await
+        }
+        (None, None) => {
             return Err(AppError::Unprocessable(
                 "Send a `file`, or a `url` to download it from.".into(),
             ));
         }
-    };
-    let id = crate::upload::ingest(&state, &current, &file, &fields)
-        .await
-        .map_err(upload_error)?;
+    }
+    .map_err(upload_error)?;
     let post = one(&state, &current, id).await?;
     Ok((
         StatusCode::CREATED,
@@ -871,6 +890,54 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn follows_the_pagination_settings(pool: PgPool) {
+        settings::set(
+            &pool,
+            "pagination",
+            json!({ "per_page": 2, "max_per_page": 3, "max_page": 2 }),
+        )
+        .await
+        .unwrap();
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        for n in 0..5 {
+            upload(&app, &alice, &fixture::png(20 + 2 * n, 20 + 2 * n), "cat").await;
+        }
+
+        let first = json(&app.get("/api/v1/posts?tags=order:score", None).await.body);
+        assert_eq!(first["posts"].as_array().unwrap().len(), 2);
+        assert_eq!(first["next"], json!("2"));
+        // The deepest numbered page has no next one.
+        let second = json(
+            &app.get("/api/v1/posts?tags=order:score&page=2", None)
+                .await
+                .body,
+        );
+        assert_eq!(second["next"], json!(null));
+        let deeper = app.get("/api/v1/posts?tags=order:score&page=3", None).await;
+        assert_eq!(deeper.status, StatusCode::BAD_REQUEST, "{}", deeper.body);
+
+        let three = json(&app.get("/api/v1/posts?limit=3", None).await.body);
+        assert_eq!(three["posts"].as_array().unwrap().len(), 3);
+        let too_many = app.get("/api/v1/posts?limit=4", None).await;
+        assert_eq!(
+            too_many.status,
+            StatusCode::BAD_REQUEST,
+            "{}",
+            too_many.body
+        );
+
+        // A user's own page size, within the largest page.
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        sqlx::query("UPDATE users SET settings = '{\"per_page\": 100}' WHERE name = 'bob'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let theirs = json(&app.get("/api/v1/posts", Some(&bob)).await.body);
+        assert_eq!(theirs["posts"].as_array().unwrap().len(), 3);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn posts_carry_tags_and_files(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -1043,6 +1110,56 @@ mod tests {
             .post_multipart("/api/v1/posts", None, &fields, Some(("d.png", &png)))
             .await;
         assert_eq!(visitor.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn api_uploads_confirm_look_alikes(pool: PgPool) {
+        let state = crate::test_support::test_state(&pool).await;
+        let app = crate::test_support::TestApp::new(
+            state.clone(),
+            super::super::routes(10 * 1024 * 1024).merge(crate::upload::routes(10 * 1024 * 1024)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let original = upload(&app, &alice, &fixture::png(64, 64), "cat").await;
+        let again = fixture::png(66, 66);
+        crate::test_support::hash_like(&state, &pool, original, &again).await;
+
+        let fields = vec![("rating", "s".to_owned()), ("tags", "cat".to_owned())];
+        let warned = app
+            .post_multipart(
+                "/api/v1/posts",
+                Some(&alice),
+                &fields,
+                Some(("b.png", &again)),
+            )
+            .await;
+        assert_eq!(warned.status, StatusCode::CONFLICT, "{}", warned.body);
+        let error = &json(&warned.body)["error"];
+        assert_eq!(error["similar"], json!([original]));
+        let staged = error["staged"].as_i64().unwrap();
+        assert!(error.get("post_id").is_none());
+
+        let mut confirm = fields.clone();
+        confirm.push(("staged", staged.to_string()));
+        let created = app
+            .post_multipart("/api/v1/posts", Some(&alice), &confirm, None)
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
+
+        // Or the file again, saying it's fine.
+        let third = fixture::png(68, 68);
+        crate::test_support::hash_like(&state, &pool, original, &third).await;
+        let mut allowed = fields.clone();
+        allowed.push(("allow_similar", "true".to_owned()));
+        let created = app
+            .post_multipart(
+                "/api/v1/posts",
+                Some(&alice),
+                &allowed,
+                Some(("c.png", &third)),
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::CREATED, "{}", created.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

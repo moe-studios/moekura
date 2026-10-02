@@ -25,6 +25,16 @@ request_timeout_secs = 30
 api_requests_per_minute = 300
 api_burst = 60
 
+[server.cors]
+# Other websites whose scripts may call the APIs from a browser, e.g.
+# ["https://app.example.com"], or ["*"] for any. None by default.
+allowed_origins = []
+# Let those origins send the visitor's login cookie. Off: cross-origin
+# requests need an API key. Needs explicit origins, not "*".
+allow_credentials = false
+# Seconds browsers may cache a preflight answer.
+max_age_secs = 600
+
 [database]
 # Required. Connection URL of the primary.
 url = "postgres://moekura:CHANGE_ME@localhost/moekura"
@@ -110,7 +120,9 @@ from = ""
 timeout_secs = 30
 
 [search]
-# Posts per page, and the most a search may ask for with limit:.
+# Posts per page, and the most a search may ask for with limit:. These and
+# max_page are defaults: the site settings' "Search pages" override them
+# without a restart.
 per_page = 40
 max_per_page = 200
 # Deepest numbered page; "next" links keep working beyond it.
@@ -163,6 +175,20 @@ sample_size = 1600
 # "webp" or "avif" (smaller, slower to encode).
 variant_format = "webp"
 tool_timeout_secs = 120
+# Remove identifying metadata (EXIF and GPS, XMP, IPTC, comments) from the
+# originals too, not only from thumbnails: "off" keeps originals exactly as
+# uploaded; "strip" cleans JPEG, PNG and WebP and keeps other types as
+# they are; "require" also refuses the other types.
+strip_metadata = "off"
+# Media tool processes at once in this process (uploads and jobs); 0: one
+# per CPU core.
+max_tool_processes = 0
+# Threads per ffmpeg run; 0 lets ffmpeg use about one per core.
+ffmpeg_threads = 2
+# Memory (address space) and CPU seconds each ffmpeg/ffprobe run may use;
+# 0 for no limit. Linux only. Files needing more are refused.
+ffmpeg_memory_mb = 2048
+ffmpeg_cpu_secs = 0
 # Scratch space for uploads and processing; the system temp dir by default.
 # work_dir = "/var/tmp/moekura"
 

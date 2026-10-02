@@ -90,6 +90,13 @@ upload-left-pending = You can upload { $pending } more before some are approved.
 upload-left-today = You can upload { $today } more today.
 upload-duplicate = This file was already uploaded as <a href="/posts/{ $id }">post #{ $id }</a>.
 upload-file = File
+upload-similar-title = { $count ->
+    [one] This looks like a post already here
+   *[other] This looks like { $count } posts already here
+}
+upload-similar-hint = Check it isn't one of these. If it isn't (a different version, an edit, another page), upload it anyway; consider making it a child or parent of the post it resembles.
+upload-staged = The file you sent is kept: change the fields and submit, or choose another file instead.
+upload-anyway = Upload anyway
 upload-drop-hint = Choose a file, drop it onto this form, or paste it from your clipboard. One file at a time.
 upload-url = …or a link to it
 upload-url-hint = Images or videos up to { $mb } MB. A work's page on Pixiv, X, Bluesky, DeviantArt, Fanbox or Skeb works too: its best file is downloaded, and the page becomes the source.

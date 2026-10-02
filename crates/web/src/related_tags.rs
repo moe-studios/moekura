@@ -88,12 +88,12 @@ pub(crate) async fn co_occurring(
     let db = state.reader(current);
     let mut query =
         SearchQuery::parse(query.trim()).map_err(|e| AppError::Unprocessable(e.to_string()))?;
-    query.limit = Some(SAMPLE.min(state.config.search.max_per_page));
+    query.limit = Some(SAMPLE.min(state.search_config().max_per_page));
     let search_error = |e| match e {
         moekura_db::search::SearchError::Invalid(message) => AppError::Unprocessable(message),
         moekura_db::search::SearchError::Db(e) => e.into(),
     };
-    let plan = Plan::resolve(db, &query, &visibility(current), &state.config.search)
+    let plan = Plan::resolve(db, &query, &visibility(current), &state.search_config())
         .await
         .map_err(search_error)?;
     let ids = plan

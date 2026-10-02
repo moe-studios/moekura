@@ -204,7 +204,39 @@ See [File storage](admin/storage.md).
 | `sample_size` | `1600` | larger images also get a resized copy for the post page |
 | `variant_format` | `"webp"` | `"webp"` or `"avif"` (smaller, slower) for thumbnails and samples |
 | `tool_timeout_secs` | `120` | longest a media tool may run |
+| `max_tool_processes` | `0` | media tools (`vips`, `ffmpeg`, …) running at once in one `serve` or `worker` process, uploads and jobs together; more wait their turn. `0`: one per CPU core |
+| `ffmpeg_threads` | `2` | threads each `ffmpeg` run may use for decoding, filters and encoding; `0` lets ffmpeg pick (about one per core) |
+| `ffmpeg_memory_mb` | `2048` | memory each `ffmpeg` or `ffprobe` run may use; `0` for no limit, otherwise at least `512` (Linux only) |
+| `ffmpeg_cpu_secs` | `0` | CPU time each `ffmpeg` or `ffprobe` run may use, all threads together; `0` for no limit (Linux only) |
 | `work_dir` | system temp dir | scratch space for uploads and processing |
+
+### Limits on media tools
+
+Files are decoded by `vips`, `ffmpeg` and `ffprobe` in their own
+processes, so a hostile or broken file costs at most one of those, never
+the server. Each run is stopped after `tool_timeout_secs`, and at most
+`max_tool_processes` run at once. ffmpeg also uses at most
+`ffmpeg_threads` threads, so one video can't take every core.
+
+On Linux, `ffmpeg` and `ffprobe` are also held to `ffmpeg_memory_mb` and
+`ffmpeg_cpu_secs`, set with `ulimit` by `/bin/sh` before they start. The
+memory limit is on address space, which counts the program's libraries and
+thread stacks too, so it's well above what the process really uses; ffmpeg
+alone needs a few hundred MB of it to start. A file that would need more is
+refused with an explanation ("too demanding to process") rather than as an
+error on the site's side: on upload, or in the failed job's message when
+thumbnails are made. ffmpeg doesn't always say an allocation failed, so
+some such files are reported as damaged instead. Without a CPU limit, a
+run still can't use more than `ffmpeg_threads` × `tool_timeout_secs` of
+CPU time. Other systems ignore both limits.
+
+These limits are per process. A container's memory limit (Docker
+`mem_limit`, or the cgroup a service runs in) counts the real memory of
+the server and every tool running at once; when it's reached, the kernel
+stops whichever process it picks, possibly the server. On a small
+machine, keep `max_tool_processes` low (1 or 2 on 1 GB) so tools fit
+beside the server, and let `ffmpeg_memory_mb` stop single runs that grow
+too large.
 
 ### `[media.tools]`
 

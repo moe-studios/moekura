@@ -269,6 +269,31 @@ impl AppState {
         }
     }
 
+    /// Search limits: the server configuration's `[search]`, with the
+    /// pagination site settings over it.
+    pub fn search_config(&self) -> moekura_core::config::SearchConfig {
+        self.site
+            .get()
+            .settings
+            .pagination
+            .apply(&self.config.search)
+    }
+
+    /// [`Self::search_config`] with `current`'s own page size, within the
+    /// site's largest.
+    pub(crate) fn search_config_for(
+        &self,
+        current: &auth::CurrentUser,
+    ) -> moekura_core::config::SearchConfig {
+        let mut config = self.search_config();
+        if let Some(per_page) = current.user.as_ref().and_then(|u| {
+            moekura_core::user_settings::UserSettings::from_json(&u.settings).per_page
+        }) {
+            config.per_page = per_page.min(config.max_per_page);
+        }
+        config
+    }
+
     /// The URL browsers load a stored file from, signed on private sites
     /// when this server serves the files.
     pub fn file_url(&self, key: &moekura_storage::Key) -> String {

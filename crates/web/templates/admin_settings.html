@@ -115,6 +115,17 @@
     <label for="ip_history_days">{{ t("as-ip-days") }}</label>
     <input id="ip_history_days" name="ip_history_days" type="number" min="0" max="3650" value="{{ settings.ip_history_days }}">
     <p class="hint">{{ t("as-ip-days-hint") }}</p>
+    <fieldset class="limits">
+      <legend>{{ t("as-pagination") }}</legend>
+      <p class="hint">{{ t("as-pagination-hint") }}</p>
+      <label for="pagination_per_page">{{ t("as-per-page") }}</label>
+      <input id="pagination_per_page" name="pagination_per_page" type="number" min="1" max="{{ pagination_limits.max_per_page }}" value="{{ settings.pagination.per_page if settings.pagination.per_page is not none else "" }}" placeholder="{{ pagination_defaults.per_page }}">
+      <label for="pagination_max_per_page">{{ t("as-max-per-page") }}</label>
+      <input id="pagination_max_per_page" name="pagination_max_per_page" type="number" min="1" max="{{ pagination_limits.max_per_page }}" value="{{ settings.pagination.max_per_page if settings.pagination.max_per_page is not none else "" }}" placeholder="{{ pagination_defaults.max_per_page }}">
+      <label for="pagination_max_page">{{ t("as-max-page") }}</label>
+      <input id="pagination_max_page" name="pagination_max_page" type="number" min="1" max="{{ pagination_limits.max_page }}" value="{{ settings.pagination.max_page if settings.pagination.max_page is not none else "" }}" placeholder="{{ pagination_defaults.max_page }}">
+      <p class="hint">{{ t("as-max-page-hint") }}</p>
+    </fieldset>
     <label for="default_theme">{{ t("as-default-theme") }}</label>
     <select id="default_theme" name="default_theme">
       {% for choice in themes %}<option value="{{ choice.name }}"{% if settings.default_theme == choice.name %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}

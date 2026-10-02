@@ -192,6 +192,11 @@ fn render_settings(
                     words => current.spam_filter.words.join("\n"),
                 },
                 default_theme => current.default_theme,
+                pagination => context! {
+                    per_page => current.pagination.per_page,
+                    max_per_page => current.pagination.max_per_page,
+                    max_page => current.pagination.max_page,
+                },
                 tagger => context! {
                     thresholds => thresholds,
                     auto_apply => current.tagger.auto_apply,
@@ -207,6 +212,15 @@ fn render_settings(
             registration_modes => ["open", "invite", "approval", "closed"],
             themes => crate::themes::choices(&page.state().assets),
             default_robots => crate::sitemap::default_robots(page.state()),
+            pagination_defaults => context! {
+                per_page => page.state().config.search.per_page,
+                max_per_page => page.state().config.search.max_per_page,
+                max_page => page.state().config.search.max_page,
+            },
+            pagination_limits => context! {
+                max_per_page => moekura_core::settings::MAX_PER_PAGE,
+                max_page => moekura_core::settings::MAX_PAGE,
+            },
             error => error,
         },
     )
@@ -309,6 +323,10 @@ struct SettingsForm {
     /// One per line.
     flag_reasons: Option<String>,
     default_theme: Option<String>,
+    /// Blank: the server configuration's.
+    pagination_per_page: Option<String>,
+    pagination_max_per_page: Option<String>,
+    pagination_max_page: Option<String>,
     /// Present when ticked.
     tagger_auto_apply: Option<String>,
     tagger_auto_threshold: Option<String>,
@@ -325,6 +343,16 @@ fn number(text: &str) -> serde_json::Value {
     text.trim()
         .parse::<u32>()
         .map_or_else(|_| json!(text.trim()), |n| json!(n))
+}
+
+/// An optional number field as JSON: null when blank, `before` when the
+/// form didn't have it.
+fn optional_number(text: Option<&str>, before: Option<u32>) -> serde_json::Value {
+    match text.map(str::trim) {
+        None => json!(before),
+        Some("") => serde_json::Value::Null,
+        Some(text) => number(text),
+    }
 }
 
 async fn save_settings(
@@ -440,6 +468,14 @@ async fn save_settings(
                 || json!(before.robots_txt),
                 |text| json!(text.replace("\r\n", "\n").trim()),
             ),
+        ),
+        (
+            "pagination",
+            json!({
+                "per_page": optional_number(form.pagination_per_page.as_deref(), before.pagination.per_page),
+                "max_per_page": optional_number(form.pagination_max_per_page.as_deref(), before.pagination.max_per_page),
+                "max_page": optional_number(form.pagination_max_page.as_deref(), before.pagination.max_page),
+            }),
         ),
         (
             "invite_quota",
@@ -1065,6 +1101,50 @@ mod tests {
             app.get("/admin", Some(&member)).await.status,
             StatusCode::FORBIDDEN
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn pagination_settings(pool: PgPool) {
+        let app = app(&pool).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let base = "site_name=Moekura&registration_mode=open&promotion_uploads=50\
+                    &promotion_edits=0&promotion_account_days=30&promotion_max_recent_deletions=0";
+        let form = app.get("/admin/settings", Some(&admin)).await.body;
+        assert!(
+            form.contains("name=\"pagination_per_page\" type=\"number\" min=\"1\" max=\"1000\" value=\"\" placeholder=\"40\""),
+            "{form}"
+        );
+        let response = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                &format!(
+                    "{base}&pagination_per_page=60&pagination_max_per_page=&pagination_max_page=200"
+                ),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let stored = moekura_db::settings::load(&pool).await.unwrap().pagination;
+        assert_eq!(
+            stored,
+            moekura_core::settings::Pagination {
+                per_page: Some(60),
+                max_per_page: None,
+                max_page: Some(200),
+            }
+        );
+
+        let bad = app
+            .post_form(
+                "/admin/settings",
+                Some(&admin),
+                &[],
+                &format!("{base}&pagination_per_page=100&pagination_max_per_page=50"),
+            )
+            .await;
+        assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(bad.body.contains("must not exceed"), "{}", bad.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

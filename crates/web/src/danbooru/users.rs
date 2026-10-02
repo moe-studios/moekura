@@ -132,7 +132,7 @@ async fn profile(
     let extra = serde_json::json!({
         "blacklisted_tags": settings.blacklist.unwrap_or_else(|| site.settings.default_blacklist.clone()),
         "favorite_tags": "",
-        "per_page": settings.per_page.unwrap_or(state.config.search.per_page),
+        "per_page": settings.per_page.unwrap_or(state.search_config().per_page),
         "time_zone": settings.time_zone.as_deref().unwrap_or("UTC"),
         "default_image_size": if settings.original_images { "original" } else { "large" },
         "comment_threshold": 0,

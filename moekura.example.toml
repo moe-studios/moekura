@@ -110,7 +110,9 @@ from = ""
 timeout_secs = 30
 
 [search]
-# Posts per page, and the most a search may ask for with limit:.
+# Posts per page, and the most a search may ask for with limit:. These and
+# max_page are defaults: the site settings' "Search pages" override them
+# without a restart.
 per_page = 40
 max_per_page = 200
 # Deepest numbered page; "next" links keep working beyond it.

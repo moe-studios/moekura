@@ -38,6 +38,119 @@ pub async fn categories(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<Category>> 
         .await
 }
 
+/// The category with `id`.
+pub async fn category(db: impl PgExecutor<'_>, id: i16) -> sqlx::Result<Option<Category>> {
+    sqlx::query_as("SELECT id, name, label, position FROM tag_categories WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// Adds a category after the others, with the next id from
+/// [`moekura_core::tags::FIRST_CUSTOM_CATEGORY`] that no category, nor
+/// any tag's history, has used.
+pub async fn create_category(
+    conn: &mut PgConnection,
+    name: &str,
+    label: &str,
+) -> sqlx::Result<Category> {
+    // One at a time, so two can't take the same id.
+    sqlx::query("LOCK TABLE tag_categories IN SHARE ROW EXCLUSIVE MODE")
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query_as(
+        "INSERT INTO tag_categories (id, name, label, position)
+         SELECT greatest(
+                    max(id) + 1,
+                    $3,
+                    (SELECT max(category_id) + 1 FROM tag_versions)
+                ),
+                $1, $2, coalesce(max(position) + 1, 0)
+         FROM tag_categories
+         RETURNING id, name, label, position",
+    )
+    .bind(name)
+    .bind(label)
+    .bind(moekura_core::tags::FIRST_CUSTOM_CATEGORY)
+    .fetch_one(conn)
+    .await
+}
+
+/// Renames a category; `false` if there's none with `id`.
+pub async fn rename_category(
+    db: impl PgExecutor<'_>,
+    id: i16,
+    name: &str,
+    label: &str,
+) -> sqlx::Result<bool> {
+    let done = sqlx::query("UPDATE tag_categories SET name = $2, label = $3 WHERE id = $1")
+        .bind(id)
+        .bind(name)
+        .bind(label)
+        .execute(db)
+        .await?;
+    Ok(done.rows_affected() == 1)
+}
+
+/// Moves a category one place earlier (`up`) or later in display order;
+/// `false` if it's already first or last.
+pub async fn move_category(conn: &mut PgConnection, id: i16, up: bool) -> sqlx::Result<bool> {
+    let mut order: Vec<i16> =
+        sqlx::query_scalar("SELECT id FROM tag_categories ORDER BY position, id FOR UPDATE")
+            .fetch_all(&mut *conn)
+            .await?;
+    let Some(at) = order.iter().position(|c| *c == id) else {
+        return Ok(false);
+    };
+    let to = if up { at.checked_sub(1) } else { Some(at + 1) };
+    let Some(to) = to.filter(|to| *to < order.len()) else {
+        return Ok(false);
+    };
+    order.swap(at, to);
+    // Renumbered from 0, which also untangles equal positions.
+    sqlx::query(
+        "UPDATE tag_categories c SET position = o.n - 1
+         FROM unnest($1::smallint[]) WITH ORDINALITY AS o (id, n)
+         WHERE c.id = o.id",
+    )
+    .bind(&order)
+    .execute(conn)
+    .await?;
+    Ok(true)
+}
+
+/// Tags in category `id`.
+pub async fn count_in_category(db: impl PgExecutor<'_>, id: i16) -> sqlx::Result<i64> {
+    sqlx::query_scalar("SELECT count(*) FROM tags WHERE category_id = $1")
+        .bind(id)
+        .fetch_one(db)
+        .await
+}
+
+/// Whether any tag's name starts with `prefix:`, which a category named
+/// `prefix` would turn into a category prefix.
+pub async fn any_with_prefix(db: impl PgExecutor<'_>, prefix: &str) -> sqlx::Result<bool> {
+    // `:` and `;` are neighbours, so this is a range on the name index.
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM tags WHERE name >= $1 || ':' AND name < $1 || ';')",
+    )
+    .bind(prefix)
+    .fetch_one(db)
+    .await
+}
+
+/// Deletes category `id` if no tag is in it; `false` otherwise.
+pub async fn delete_category(db: impl PgExecutor<'_>, id: i16) -> sqlx::Result<bool> {
+    let done = sqlx::query(
+        "DELETE FROM tag_categories
+         WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM tags WHERE category_id = $1)",
+    )
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
+}
+
 pub async fn by_name(db: impl PgExecutor<'_>, name: &str) -> sqlx::Result<Option<Tag>> {
     sqlx::query_as(select_tags!("WHERE name = $1"))
         .bind(name)
@@ -644,6 +757,79 @@ pub(crate) mod tests {
             names,
             ["artist", "copyright", "character", "general", "meta"]
         );
+    }
+
+    async fn add_category(pool: &PgPool, name: &str, label: &str) -> Category {
+        let mut tx = pool.begin().await.unwrap();
+        let category = create_category(&mut tx, name, label).await.unwrap();
+        tx.commit().await.unwrap();
+        category
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn edits_categories(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        let species = add_category(&pool, "species", "Species").await;
+        assert_eq!((species.id, species.position), (6, 5));
+        let lore = add_category(&pool, "lore", "Lore").await;
+        assert_eq!(lore.id, 7);
+
+        assert!(move_category(&mut conn, lore.id, true).await.unwrap());
+        assert!(move_category(&mut conn, lore.id, false).await.unwrap());
+        let names = |cats: Vec<Category>| cats.into_iter().map(|c| c.name).collect::<Vec<_>>();
+        assert_eq!(
+            names(categories(&pool).await.unwrap()),
+            [
+                "artist",
+                "copyright",
+                "character",
+                "general",
+                "meta",
+                "species",
+                "lore"
+            ]
+        );
+        let first = categories(&pool).await.unwrap()[0].id;
+        assert!(!move_category(&mut conn, first, true).await.unwrap());
+        assert!(move_category(&mut conn, species.id, true).await.unwrap());
+        assert_eq!(
+            names(categories(&pool).await.unwrap())[4..],
+            ["species", "meta", "lore"]
+        );
+
+        assert!(
+            rename_category(&pool, lore.id, "story", "Story")
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            category(&pool, lore.id).await.unwrap().unwrap().label,
+            "Story"
+        );
+
+        assert!(!any_with_prefix(&pool, "species").await.unwrap());
+        let wanted = [WantedTag {
+            name: "species:cat",
+            category_id: Some(species.id),
+        }];
+        ensure(&mut conn, &wanted, false).await.unwrap();
+        assert!(any_with_prefix(&pool, "species").await.unwrap());
+        assert!(!any_with_prefix(&pool, "specie").await.unwrap());
+
+        assert_eq!(count_in_category(&pool, species.id).await.unwrap(), 1);
+        assert!(!delete_category(&pool, species.id).await.unwrap());
+        assert!(delete_category(&pool, lore.id).await.unwrap());
+        // No tag ever had lore's id, so it's free again; species' isn't.
+        let next = add_category(&pool, "lore", "Lore").await;
+        assert_eq!(next.id, 7);
+        sqlx::query("UPDATE tags SET category_id = 0")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(delete_category(&pool, next.id).await.unwrap());
+        assert!(delete_category(&pool, species.id).await.unwrap());
+        let after = add_category(&pool, "lore", "Lore").await;
+        assert_eq!(after.id, 7);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

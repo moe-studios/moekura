@@ -65,6 +65,7 @@ mod site;
 mod sitemap;
 pub(crate) mod sources;
 mod suggestions;
+mod tag_categories;
 mod tag_history;
 mod tag_relations;
 mod tag_warnings;
@@ -328,6 +329,7 @@ pub fn router(state: AppState) -> Router {
         .merge(site::routes())
         .merge(sitemap::routes())
         .merge(tags::routes())
+        .merge(tag_categories::routes())
         .merge(tag_history::routes())
         .merge(tag_relations::routes())
         .merge(thumbnail_crop::routes())

@@ -116,16 +116,7 @@ async fn index(
     let state = page.state();
     let db = state.reader(&page.current);
     // The user's page size, within the site's limit.
-    let mut config = state.config.search.clone();
-    if let Some(per_page) = page
-        .current
-        .user
-        .as_ref()
-        .and_then(|u| UserSettings::from_json(&u.settings).per_page)
-    {
-        config.per_page = per_page.min(config.max_per_page);
-    }
-    let config = &config;
+    let config = &state.search_config_for(&page.current);
     let input = params.tags.trim();
     let page_ref: PageRef = if params.page.is_empty() {
         PageRef::default()
@@ -733,12 +724,18 @@ async fn step(page: Page, id: i64, q: &str, forward: bool) -> Result<Response, A
     let db = state.reader(&page.current);
     let mut query = SearchQuery::parse(q).map_err(|e| AppError::BadRequest(e.to_string()))?;
     query.limit = Some(1);
-    let plan =
-        match Plan::resolve(db, &query, &visibility(&page.current), &state.config.search).await {
-            Ok(plan) => plan,
-            Err(SearchError::Invalid(message)) => return Err(AppError::BadRequest(message)),
-            Err(SearchError::Db(error)) => return Err(error.into()),
-        };
+    let plan = match Plan::resolve(
+        db,
+        &query,
+        &visibility(&page.current),
+        &state.search_config(),
+    )
+    .await
+    {
+        Ok(plan) => plan,
+        Err(SearchError::Invalid(message)) => return Err(AppError::BadRequest(message)),
+        Err(SearchError::Db(error)) => return Err(error.into()),
+    };
     // "Next" is further along the display order: lower ids when newest
     // come first.
     let towards_lower = forward == (plan.order() != Order::IdAsc);

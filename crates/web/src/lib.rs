@@ -76,7 +76,6 @@ mod templates;
 #[cfg(test)]
 mod test_support;
 mod themes;
-mod thumbnail_crop;
 mod two_factor;
 mod upload;
 mod uploads;
@@ -366,7 +365,6 @@ pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
         .merge(tag_categories::routes())
         .merge(tag_history::routes())
         .merge(tag_relations::routes())
-        .merge(thumbnail_crop::routes())
         .merge(two_factor::routes())
         .merge(user_moderation::routes())
         .merge(users::routes())

@@ -2,7 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
-use moekura_core::jobs::{ExpireStagedUploads, ProcessMedia, PurgePost, TagPost};
+use moekura_core::jobs::{
+    ExpireStagedUploads, ProcessMedia, PurgePost, RemoveSquareThumbnails, TagPost,
+};
 use moekura_core::posts::PostStatus;
 use moekura_db::media::{self, Asset, Variant};
 use moekura_media::{Media, MediaError, MediaType};
@@ -76,9 +78,14 @@ impl MediaJobs {
             async move { jobs.process(job.asset_id).await }
         });
         let expirer = purger.clone();
+        let remover = purger.clone();
         registry.register(move |job: PurgePost| {
             let jobs = purger.clone();
             async move { jobs.purge(job.post_id).await }
+        });
+        registry.register(move |_: RemoveSquareThumbnails| {
+            let jobs = remover.clone();
+            async move { jobs.remove_square_thumbnails().await.map(|_| ()) }
         });
         registry
             .register(move |_: ExpireStagedUploads| {
@@ -105,6 +112,31 @@ impl MediaJobs {
             tracing::info!(files = keys.len(), "removed unused staged uploads");
         }
         Ok(keys.len())
+    }
+
+    /// Removes the square thumbnails (`crop-<size>` variants) earlier
+    /// versions made: each file, then its row, so a retry picks up where
+    /// this stopped. Returns how many were removed.
+    pub async fn remove_square_thumbnails(&self) -> Result<usize, JobError> {
+        let mut removed = 0;
+        loop {
+            let batch = media::variants_with_prefix(&self.db, "crop-", 500).await?;
+            if batch.is_empty() {
+                break;
+            }
+            for variant in &batch {
+                if let Some(key) = Key::parse(&variant.storage_key) {
+                    self.storage
+                        .delete(&key)
+                        .await
+                        .map_err(|e| JobError::retry(format!("deleting {}: {e}", key.as_str())))?;
+                }
+                media::delete_variant(&self.db, variant.asset_id, &variant.kind).await?;
+            }
+            removed += batch.len();
+        }
+        tracing::info!(files = removed, "removed square thumbnails");
+        Ok(removed)
     }
 
     /// Removes a deleted post's files, then the post: see [`purge_post`].
@@ -188,37 +220,6 @@ impl MediaJobs {
         for (kind, size) in wanted {
             self.render_variant(&asset, &source, source_type, &kind, size, work.path())
                 .await?;
-        }
-        // Square thumbnails, of the chosen region (unless the file changed
-        // size since) or the most interesting part.
-        let crop = media::crop(&self.db, asset.id)
-            .await?
-            .and_then(|[x, y, side]| {
-                let fits = x + side <= asset.width && y + side <= asset.height;
-                fits.then(|| [x, y, side].map(|n| u32::try_from(n).unwrap_or(0)))
-            });
-        // Never larger than the picture's (or the region's) short side.
-        let shortest = crop.map_or_else(
-            || u32::try_from(asset.width.min(asset.height)).unwrap_or(1),
-            |[_, _, side]| side,
-        );
-        for &size in &config.thumbnail_sizes {
-            let kind = format!("crop-{size}");
-            let format = self.media.variant_format();
-            let out = work.path().join(format!("{kind}.{format}"));
-            let rendition = self
-                .media
-                .square(
-                    &source,
-                    source_type,
-                    size.min(shortest).max(1),
-                    crop,
-                    &out,
-                    work.path(),
-                )
-                .await
-                .map_err(media_error)?;
-            self.store_rendition(&asset, &kind, &rendition).await?;
         }
         let phash = self
             .media
@@ -433,6 +434,40 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn square_thumbnails_are_removed(pool: PgPool) {
+        let dir = scratch("squares");
+        let file = dir.join("p.png");
+        std::fs::write(&file, b"not processed").unwrap();
+        let (jobs, asset_id) = stored_asset(&pool, &dir, &file, "png", (40, 20)).await;
+        let asset = media::by_id(&pool, asset_id).await.unwrap().unwrap();
+        let mut keys = Vec::new();
+        for kind in ["crop-250", "crop-500", "thumb-250"] {
+            let key = Key::variant(kind, &asset.sha256_hex(), "webp");
+            jobs.storage.put_file(&key, &file).await.unwrap();
+            let variant = Variant {
+                asset_id,
+                kind: kind.to_owned(),
+                format: "webp".to_owned(),
+                width: 20,
+                height: 20,
+                file_size: 1,
+                storage_key: key.as_str().to_owned(),
+            };
+            media::save_variant(&pool, &variant).await.unwrap();
+            keys.push(key);
+        }
+
+        assert_eq!(jobs.remove_square_thumbnails().await.unwrap(), 2);
+        let left = media::variants(&pool, asset_id).await.unwrap();
+        assert_eq!(summary(&left), [("thumb-250".to_owned(), 20, 20)]);
+        assert!(!jobs.storage.exists(&keys[0]).await.unwrap());
+        assert!(!jobs.storage.exists(&keys[1]).await.unwrap());
+        assert!(jobs.storage.exists(&keys[2]).await.unwrap());
+        // Nothing left to do the second time.
+        assert_eq!(jobs.remove_square_thumbnails().await.unwrap(), 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn large_images_get_thumbnails_and_a_sample(pool: PgPool) {
         let dir = scratch("image");
         let png = dir.join("big.png");
@@ -455,8 +490,6 @@ mod tests {
         assert_eq!(
             summary(&variants),
             [
-                ("crop-250".to_owned(), 250, 250),
-                ("crop-500".to_owned(), 500, 500),
                 ("sample".to_owned(), 1600, 1200),
                 ("thumb-250".to_owned(), 250, 188),
                 ("thumb-500".to_owned(), 500, 375),
@@ -483,7 +516,7 @@ mod tests {
 
         // Running again is harmless.
         jobs.process(asset_id).await.unwrap();
-        assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 5);
+        assert_eq!(media::variants(&pool, asset_id).await.unwrap().len(), 3);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
@@ -592,8 +625,6 @@ mod tests {
         assert_eq!(
             summary(&variants),
             [
-                ("crop-250".to_owned(), 240, 240),
-                ("crop-500".to_owned(), 240, 240),
                 ("poster".to_owned(), 320, 240),
                 ("thumb-250".to_owned(), 250, 188),
                 ("thumb-500".to_owned(), 320, 240),

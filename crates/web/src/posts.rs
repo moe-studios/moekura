@@ -541,20 +541,14 @@ impl Thumbs {
         let sizes = &state.media.config().thumbnail_sizes;
         let small = sizes.first().copied().unwrap_or(250);
         let large = sizes.get(1).copied().unwrap_or(small);
-        let prefs = current
+        let wants_large = current
             .user
             .as_ref()
-            .map(|u| UserSettings::from_json(&u.settings))
-            .unwrap_or_default();
-        let size = if prefs.large_thumbnails { large } else { small };
-        let kind = if prefs.square_thumbnails {
-            "crop"
-        } else {
-            "thumb"
-        };
+            .is_some_and(|u| UserSettings::from_json(&u.settings).large_thumbnails);
+        let size = if wants_large { large } else { small };
         Self {
             size,
-            kinds: (format!("{kind}-{size}"), format!("{kind}-{large}")),
+            kinds: (format!("thumb-{size}"), format!("thumb-{large}")),
         }
     }
 
@@ -663,11 +657,7 @@ pub(crate) async fn displays(
 /// page can lead back to the search.
 fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option<&str>) -> Value {
     let url = |key: &Option<String>| key.as_deref().and_then(|k| file_url(state, k));
-    let (width, height) = if card.square {
-        (box_size, box_size)
-    } else {
-        fit(card.width, card.height, box_size)
-    };
+    let (width, height) = fit(card.width, card.height, box_size);
     let href = match post_query {
         Some(query) => format!("/posts/{}?{query}", card.id),
         None => format!("/posts/{}", card.id),
@@ -680,10 +670,24 @@ fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option
         width => width,
         height => height,
         rating => card.rating,
-        pending => card.status == "pending",
-        deleted => card.status == "deleted",
+        status => card.status,
+        has_parent => card.has_parent,
+        has_children => card.has_children,
         video => is_video(&card.media_type),
         animated => card.frames > 1,
+        duration => card.duration_ms.map(duration),
+        sound => card.has_audio,
+    }
+}
+
+/// A video's or animation's length as `m:ss`, or `h:mm:ss` from an hour.
+fn duration(ms: i32) -> String {
+    let seconds = ms.max(0) / 1000;
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
     }
 }
 
@@ -1037,7 +1041,7 @@ pub(crate) async fn render_post(
         height => asset.height,
         size => human_size(asset.file_size),
         media_type => asset.media_type.to_uppercase(),
-        duration => asset.duration_ms.map(|ms| format!("{}:{:02}", ms / 60_000, ms / 1000 % 60)),
+        duration => asset.duration_ms.map(duration),
         has_audio => asset.has_audio,
     };
     let post_context = context! {
@@ -1104,11 +1108,6 @@ pub(crate) async fn render_post(
         .map(|r| context! { code => r.code(), label => r.label() })
         .collect();
     let commentary = crate::commentary::for_post(db, id, edit.is_some()).await?;
-    let crop = if page.current.can(Permission::ApprovePosts) {
-        media::crop(db, asset.id).await?
-    } else {
-        None
-    };
     let comments =
         crate::comments::thread(state, &page.current, &post, extra.comment.as_ref()).await?;
     let pools = crate::pools::for_post(
@@ -1166,10 +1165,6 @@ pub(crate) async fn render_post(
             notes => notes,
             preview => preview,
             can_replace => page.current.can(Permission::ReplacePosts),
-            crop => page.current.can(Permission::ApprovePosts).then(|| {
-                let [left, top, side] = crop.unwrap_or([0, 0, asset.width.min(asset.height)]);
-                context! { left => left, top => top, side => side, chosen => crop.is_some() }
-            }),
             can_edit_notes => !video
                 && page.current.is_logged_in()
                 && page.current.can(Permission::EditNotes)
@@ -1766,48 +1761,59 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
-    async fn square_thumbnails(pool: PgPool) {
+    async fn cards_show_status_family_and_length(pool: PgPool) {
         let (app, _) = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
-        let with = upload(&app, &alice, &fixture::png(40, 20), &[]).await;
-        let without = upload(&app, &alice, &fixture::png(24, 20), &[]).await;
-        // As processing leaves them: thumbnails for both, squares for one.
-        for (post, kinds) in [
-            (with, &["thumb-250", "crop-250"][..]),
-            (without, &["thumb-250"][..]),
-        ] {
-            let asset = media::for_post(&pool, post).await.unwrap().unwrap();
-            for kind in kinds {
-                media::save_variant(
-                    &pool,
-                    &Variant {
-                        asset_id: asset.id,
-                        kind: (*kind).to_owned(),
-                        format: "webp".into(),
-                        width: 20,
-                        height: 20,
-                        file_size: 1,
-                        storage_key: format!("{kind}/aa/bb/aabb{post:04}.webp"),
-                    },
-                )
-                .await
-                .unwrap();
-            }
-        }
-        set_user_settings(
-            &pool,
-            "alice",
-            serde_json::json!({ "square_thumbnails": true }),
+        let parent = upload(&app, &alice, &fixture::png(20, 20), &[]).await;
+        let child = upload(&app, &alice, &fixture::png(24, 20), &[]).await;
+        sqlx::query("UPDATE posts SET parent_id = $1, status = 'flagged' WHERE id = $2")
+            .bind(parent)
+            .bind(child)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE media_assets SET media_type = 'mp4', duration_ms = 75400, has_audio = true
+             WHERE post_id = $1",
         )
-        .await;
+        .bind(child)
+        .execute(&pool)
+        .await
+        .unwrap();
+
         let grid = app.get("/", Some(&alice)).await.body;
         assert!(
-            grid.contains(&format!("crop-250/aa/bb/aabb{with:04}")),
+            grid.contains("class=\"card rating-s is-active has-children\""),
             "{grid}"
         );
-        // Older posts keep their usual thumbnails.
-        assert!(grid.contains(&format!("aabb{without:04}")), "{grid}");
-        assert!(grid.contains("width=\"250\" height=\"250\""), "{grid}");
+        assert!(
+            grid.contains("class=\"card rating-s is-flagged has-parent\""),
+            "{grid}"
+        );
+        assert!(grid.contains("(flagged, has a parent)"), "{grid}");
+        assert!(
+            grid.contains("<span class=\"badge duration\">1:15<svg"),
+            "{grid}"
+        );
+        assert!(grid.contains(", with sound"), "{grid}");
+        assert!(!grid.contains(">video<"), "{grid}");
+
+        // A deleted child no longer counts.
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(child)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let grid = app.get("/", Some(&alice)).await.body;
+        assert!(!grid.contains("has-children"), "{grid}");
+    }
+
+    #[test]
+    fn durations() {
+        assert_eq!(duration(0), "0:00");
+        assert_eq!(duration(5_999), "0:05");
+        assert_eq!(duration(75_400), "1:15");
+        assert_eq!(duration(3_723_000), "1:02:03");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

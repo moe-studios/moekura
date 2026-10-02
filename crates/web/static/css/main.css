@@ -23,6 +23,13 @@
   --tag-copyright: light-dark(#a800aa, #d98cff);
   --tag-character: light-dark(#007e25, #35c64a);
   --tag-meta: light-dark(#ad5c00, #ffb54a);
+  /* Thumbnail borders for a post's status and family, Danbooru's colours,
+     lightened where the dark background would swallow them. */
+  --post-pending: light-dark(#0000ff, #6b9bff);
+  --post-flagged: light-dark(#ff0000, #ff6b6b);
+  --post-deleted: light-dark(#000000, #f0f0f0);
+  --post-children: light-dark(#00a000, #35c64a);
+  --post-parent: light-dark(#c0a000, #e6cc00);
   --radius: 8px;
   --gutter: 16px;
   --max-width: 1200px;
@@ -245,24 +252,25 @@ label.choice input { margin-right: 6px; vertical-align: middle; }
   grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
   gap: 12px;
 }
-.post-grid .card {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: 1;
-  padding: 6px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-.post-grid .card:hover { border-color: var(--accent); text-decoration: none; }
-.post-grid .thumb { max-width: 100%; max-height: 100%; width: auto; height: auto; border-radius: calc(var(--radius) / 2); }
+.post-grid > li { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+/* No box around thumbnails: the picture stands on its own, never cropped. */
+.post-grid .card { position: relative; display: block; max-width: 100%; padding: 0; background: none; border: 0; border-radius: 0; }
+.post-grid .card:hover { text-decoration: none; }
+.post-grid .thumb { display: block; max-width: 100%; height: auto; border: 2px solid transparent; }
 .post-grid .pending-media { background: var(--border); object-fit: none; }
-.post-grid .is-pending { border-style: dashed; }
-.post-grid .is-deleted { opacity: 0.5; }
 .post-grid .is-blacklisted .thumb { filter: blur(16px); }
+/* Status and family borders, as on Danbooru: one colour all round, or the
+   family's on the top and left and the status's on the right and bottom. */
+.post-grid .is-pending { --status: var(--post-pending); }
+.post-grid .is-flagged { --status: var(--post-flagged); }
+.post-grid .is-deleted { --status: var(--post-deleted); }
+.post-grid .has-parent .thumb { border-color: var(--post-parent); }
+.post-grid .has-children .thumb { border-color: var(--post-children); }
+.post-grid .has-children.has-parent .thumb { border-color: var(--post-children) var(--post-parent) var(--post-parent) var(--post-children); }
+.post-grid :is(.is-pending, .is-flagged, .is-deleted) .thumb { border-color: var(--status); }
+.post-grid :is(.is-pending, .is-flagged, .is-deleted).has-parent .thumb { border-color: var(--post-parent) var(--status) var(--status) var(--post-parent); }
+.post-grid :is(.is-pending, .is-flagged, .is-deleted).has-children .thumb { border-color: var(--post-children) var(--status) var(--status) var(--post-children); }
+.post-grid :is(.is-pending, .is-flagged, .is-deleted).has-children.has-parent .thumb { border-color: var(--post-children) var(--status) var(--status) var(--post-parent); }
 .post-grid.tickable > li { position: relative; }
 .post-grid.tickable > li > input[type="checkbox"] { position: absolute; top: 6px; left: 6px; z-index: 1; }
 [data-thumbs="large"] .post-grid { grid-template-columns: repeat(auto-fill, minmax(min(400px, 100%), 1fr)); }
@@ -271,8 +279,11 @@ label.choice input { margin-right: 6px; vertical-align: middle; }
 }
 .badge {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   padding: 1px 6px;
   border-radius: 4px;
   background: rgb(0 0 0 / 0.65);
@@ -281,6 +292,8 @@ label.choice input { margin-right: 6px; vertical-align: middle; }
   font-weight: 600;
   text-transform: uppercase;
 }
+.badge.duration { font-variant-numeric: tabular-nums; }
+.badge .sound { width: 12px; height: 12px; }
 .pager { display: flex; justify-content: center; margin: 24px 0 8px; }
 
 /* Post page */
@@ -658,8 +671,6 @@ tr.is-deleted td { opacity: 0.6; }
 .image-matches .similarity { font-size: 0.8125rem; color: var(--muted); }
 .upload-similar { margin-bottom: 16px; }
 .upload-similar h2 { font-size: 1rem; margin: 0 0 4px; }
-.crop-outline { position: absolute; outline: 2px dashed var(--accent); background: rgb(255 255 255 / 0.15); pointer-events: none; }
-.crop-outline[hidden] { display: none; }
 .note-embedded { position: absolute; overflow: auto; padding: 2px 4px; background: rgb(255 255 238 / 0.92); color: #111; font-size: 0.8125rem; line-height: 1.25; pointer-events: none; }
 .note-embedded .markup > :first-child { margin-top: 0; }
 .note-embedded .markup > :last-child { margin-bottom: 0; }

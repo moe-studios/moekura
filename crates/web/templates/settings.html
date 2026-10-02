@@ -35,7 +35,6 @@
       <label class="choice"><input type="checkbox" name="original_images" value="1"{% if prefs_form.original_images %} checked{% endif %}> {{ t("settings-original") }}</label>
       {% if can_view_deleted %}<label class="choice"><input type="checkbox" name="show_deleted" value="1"{% if prefs_form.show_deleted %} checked{% endif %}> {{ t("settings-show-deleted") }}</label>{% endif %}
       {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> {{ t("settings-large-thumbs", size=large_thumbnail_size) }}</label>{% endif %}
-      <label class="choice"><input type="checkbox" name="square_thumbnails" value="1"{% if prefs_form.square_thumbnails %} checked{% endif %}> {{ t("settings-square") }}</label>
       <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> {{ t("settings-hide-comments") }}</label>
       <label class="choice"><input type="checkbox" name="email_notifications" value="1"{% if prefs_form.email_notifications %} checked{% endif %}> {{ t("settings-email-notifications") }}</label>
       <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> {{ t("settings-autocomplete") }}</label>

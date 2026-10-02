@@ -134,7 +134,6 @@ settings-safe-mode = Safe mode: only show general-rated posts
 settings-original = Show original images on post pages, not resized ones
 settings-show-deleted = Include deleted posts in searches
 settings-large-thumbs = Large thumbnails ({ $size } pixels)
-settings-square = Square thumbnails, cropped to the picture's most interesting part
 settings-hide-comments = Hide comments on post pages
 settings-email-notifications = Email me my notifications (to a confirmed address)
 settings-autocomplete = Suggest tags while typing

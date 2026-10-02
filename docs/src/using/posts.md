@@ -109,17 +109,24 @@ by whom and why, and the file before (still downloadable, until the post
 is purged) and after. Replacements are recorded in the moderation log,
 and Danbooru clients can read them at `/post_replacements.json`.
 
-## Square thumbnails
+## Thumbnails
 
-**Square thumbnails**, under **Settings**, makes grids show every post as
-a square: the part of the picture libvips finds most interesting, which
-is usually the face or the subject rather than the middle. Staff who
-review posts can choose the square themselves under **Square thumbnail**
-on a post's page: give its left and top edges and its side in the
-picture's pixels, or with scripts, click the picture where it should be
-centred. **Back to automatic** undoes the choice. Squares are made when a
-file is processed; for older posts, `moekura admin regenerate-media
---all` makes them, and until then grids show their usual thumbnails.
+Grids show each post's whole picture, scaled to fit, as on Danbooru.
+A coloured border says what to know about the post:
+
+| Border | Means |
+|---|---|
+| blue | pending approval |
+| red | flagged |
+| black (white in dark mode) | deleted |
+| green | has children |
+| yellow | has a parent |
+
+When several apply, the family's colour takes the top and left edges and
+the status's the right and bottom; a post with both children and a
+parent has green on the top and left and yellow on the right and bottom.
+Videos and animations show their length in the corner, with a speaker
+when they have sound.
 
 ## File metadata
 

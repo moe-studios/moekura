@@ -29,6 +29,12 @@ card-alt-processing = Post #{ $id } (still processing)
 card-blacklisted = blacklisted
 card-video = video
 card-animated = anim
+card-sound = with sound
+card-pending = pending
+card-flagged = flagged
+card-deleted = deleted
+card-has-parent = has a parent
+card-has-children = has children
 
 error-back = Back to the front page
 error-not-found = Not found

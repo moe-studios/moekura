@@ -268,24 +268,6 @@
       </form>
     </details>
     {% endif %}
-    {% if crop %}
-    <details class="edit">
-      <summary>{{ t("post-crop") }}</summary>
-      <form method="post" action="/posts/{{ post.id }}/crop" data-crop-form data-width="{{ file.width }}" data-height="{{ file.height }}">
-        <p class="hint">{% if crop.chosen %}{{ t("post-crop-hint-chosen", width=file.width, height=file.height) }}{% else %}{{ t("post-crop-hint-auto", width=file.width, height=file.height) }}{% endif %}</p>
-        <label for="crop-left">{{ t("post-crop-left") }}</label>
-        <input id="crop-left" name="left" type="number" min="0" value="{{ crop.left }}" data-crop="left">
-        <label for="crop-top">{{ t("post-crop-top") }}</label>
-        <input id="crop-top" name="top" type="number" min="0" value="{{ crop.top }}" data-crop="top">
-        <label for="crop-side">{{ t("post-crop-side") }}</label>
-        <input id="crop-side" name="side" type="number" min="1" value="{{ crop.side }}" data-crop="side">
-        <div class="actions">
-          <button type="submit">{{ t("post-crop-use") }}</button>
-          {% if crop.chosen %}<button type="submit" class="secondary" name="reset" value="1">{{ t("post-crop-auto") }}</button>{% endif %}
-        </div>
-      </form>
-    </details>
-    {% endif %}
     {% if can_replace %}
     <details class="edit">
       <summary>{{ t("post-replace") }}</summary>

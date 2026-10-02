@@ -21,6 +21,15 @@ impl Job for ProcessMedia {
     const KIND: &'static str = "media.process";
 }
 
+/// Remove the square thumbnails (`crop-<size>` variants) earlier versions
+/// made, files and all; queued once by the migration that dropped them.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoveSquareThumbnails {}
+
+impl Job for RemoveSquareThumbnails {
+    const KIND: &'static str = "media.remove_square_thumbnails";
+}
+
 /// Bring existing posts in line with a newly approved tag alias (replace
 /// the antecedent) or implication (add the implied tags).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

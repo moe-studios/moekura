@@ -163,6 +163,15 @@ sample_size = 1600
 # "webp" or "avif" (smaller, slower to encode).
 variant_format = "webp"
 tool_timeout_secs = 120
+# Media tool processes at once in this process (uploads and jobs); 0: one
+# per CPU core.
+max_tool_processes = 0
+# Threads per ffmpeg run; 0 lets ffmpeg use about one per core.
+ffmpeg_threads = 2
+# Memory (address space) and CPU seconds each ffmpeg/ffprobe run may use;
+# 0 for no limit. Linux only. Files needing more are refused.
+ffmpeg_memory_mb = 2048
+ffmpeg_cpu_secs = 0
 # Scratch space for uploads and processing; the system temp dir by default.
 # work_dir = "/var/tmp/moekura"
 

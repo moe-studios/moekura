@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::kind::MediaType;
-use crate::tool::{self, Loaders, ToolError};
+use crate::tool::{Loaders, ToolError};
 use crate::{Media, MediaError};
 
 /// Facts about a media file.
@@ -55,14 +55,15 @@ impl Media {
 
     async fn probe_image(&self, path: &Path, media_type: MediaType) -> Result<Probe, MediaError> {
         let args = [OsStr::new("-a"), path.as_os_str()];
-        let out = tool::run_with(
-            &self.config.tools.vipsheader,
-            args,
-            self.timeout(),
-            loaders_for(media_type),
-        )
-        .await
-        .map_err(corrupt_unless_missing)?;
+        let out = self
+            .run(
+                &self.config.tools.vipsheader,
+                args,
+                self.timeout(),
+                loaders_for(media_type),
+            )
+            .await
+            .map_err(corrupt_unless_missing)?;
         let text = String::from_utf8_lossy(&out);
         let field = |name: &str| {
             text.lines()
@@ -120,7 +121,8 @@ impl Media {
             OsStr::new("-show_format"),
             path.as_os_str(),
         ];
-        let out = tool::run(&self.config.tools.ffprobe, args, self.timeout())
+        let out = self
+            .run_trusted(&self.config.tools.ffprobe, args, self.timeout())
             .await
             .map_err(corrupt_unless_missing)?;
         let report: FfprobeReport = serde_json::from_slice(&out)
@@ -233,6 +235,7 @@ pub(crate) fn loaders_for(media_type: MediaType) -> Loaders {
 pub(crate) fn corrupt_unless_missing(error: ToolError) -> MediaError {
     match error {
         ToolError::Failed { stderr, .. } => MediaError::Corrupt(stderr),
+        other if other.is_over_limit() => MediaError::OverLimit(other),
         other => MediaError::Tool(other),
     }
 }

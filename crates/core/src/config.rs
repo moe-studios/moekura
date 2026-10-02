@@ -565,11 +565,28 @@ pub struct MediaConfig {
     pub variant_format: String,
     /// Kill media tools that run longer than this.
     pub tool_timeout_secs: u64,
+    /// Media tool processes running at once in this process, for uploads
+    /// and jobs together; more wait their turn. 0: one per CPU core.
+    pub max_tool_processes: u32,
+    /// Threads each ffmpeg run may use for decoding, filtering and
+    /// encoding. 0: ffmpeg's choice (about one per core).
+    pub ffmpeg_threads: u32,
+    /// Memory (address space, including its libraries and thread stacks)
+    /// each ffmpeg or ffprobe run may use, in MB. 0: no limit. Linux only.
+    pub ffmpeg_memory_mb: u64,
+    /// CPU time each ffmpeg or ffprobe run may use, in seconds, all its
+    /// threads together. 0: no limit (`tool_timeout_secs` and
+    /// `ffmpeg_threads` still bound it). Linux only.
+    pub ffmpeg_cpu_secs: u64,
     /// Scratch space for uploads and processing. Defaults to the system
     /// temporary directory.
     pub work_dir: Option<PathBuf>,
     pub tools: MediaTools,
 }
+
+/// The least `media.ffmpeg_memory_mb` ffmpeg starts with (its libraries
+/// alone take a few hundred MB of address space).
+pub const MIN_FFMPEG_MEMORY_MB: u64 = 512;
 
 impl MediaConfig {
     /// `work_dir`, or a directory under the system temp dir.
@@ -595,6 +612,10 @@ impl Default for MediaConfig {
             sample_size: 1600,
             variant_format: "webp".to_owned(),
             tool_timeout_secs: 120,
+            max_tool_processes: 0,
+            ffmpeg_threads: 2,
+            ffmpeg_memory_mb: 2048,
+            ffmpeg_cpu_secs: 0,
             work_dir: None,
             tools: MediaTools::default(),
         }
@@ -778,6 +799,14 @@ impl Config {
             problems.push(ConfigProblem {
                 key: "storage.public_base_url",
                 message: "must be an http:// or https:// URL".into(),
+            });
+        }
+        if (1..MIN_FFMPEG_MEMORY_MB).contains(&self.media.ffmpeg_memory_mb) {
+            problems.push(ConfigProblem {
+                key: "media.ffmpeg_memory_mb",
+                message: format!(
+                    "must be 0 (no limit) or at least {MIN_FFMPEG_MEMORY_MB}: ffmpeg needs that much to start"
+                ),
             });
         }
         const MEDIA_TYPES: &[&str] = crate::search::FILETYPES;
@@ -1114,6 +1143,16 @@ mod tests {
             .map(|p| p.key)
             .collect();
         assert_eq!(keys, ["server.public_url", "auth.session_max_days"]);
+    }
+
+    #[test]
+    fn ffmpeg_memory_is_off_or_enough_to_start() {
+        let mut config = valid();
+        config.media.ffmpeg_memory_mb = 0;
+        config.validate().unwrap();
+        config.media.ffmpeg_memory_mb = 100;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "media.ffmpeg_memory_mb");
     }
 
     #[test]

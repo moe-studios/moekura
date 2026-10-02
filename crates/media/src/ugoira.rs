@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::kind::MediaType;
-use crate::tool;
 use crate::{Media, MediaError};
 
 /// A frame's delay when the zip doesn't say.
@@ -240,7 +239,7 @@ impl Media {
             if frame_type(file) == MediaType::Jpeg {
                 let png = file.with_extension("png");
                 let target = format!("{}[compression=1]", png.display());
-                tool::run(
+                self.run_trusted(
                     &self.config.tools.vips,
                     [OsStr::new("copy"), file.as_os_str(), OsStr::new(&target)],
                     self.timeout(),
@@ -283,7 +282,7 @@ impl Media {
             OsStr::new("-an"),
             out.as_os_str(),
         ];
-        tool::run(&self.config.tools.ffmpeg, args, self.timeout() * 4)
+        self.run_trusted(&self.config.tools.ffmpeg, args, self.timeout() * 4)
             .await
             .map_err(crate::probe::corrupt_unless_missing)?;
         Ok((out, first, first_type))

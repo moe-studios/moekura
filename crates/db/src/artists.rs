@@ -345,6 +345,46 @@ async fn announce_bans(conn: &mut PgConnection) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Recomputes every artist URL's normalized form with the current rules
+/// ([`normalize_url`]), a batch at a time. Returns how many changed.
+pub async fn renormalize_urls(db: &PgPool) -> sqlx::Result<u64> {
+    let mut changed = 0;
+    let mut after = 0_i64;
+    loop {
+        let batch: Vec<(i64, String, String)> = sqlx::query_as(
+            "SELECT id, url, normalized_url FROM artist_urls WHERE id > $1 ORDER BY id LIMIT 1000",
+        )
+        .bind(after)
+        .fetch_all(db)
+        .await?;
+        let Some((last, _, _)) = batch.last() else {
+            break;
+        };
+        after = *last;
+        let updates: Vec<(i64, String)> = batch
+            .into_iter()
+            .filter_map(|(id, url, old)| {
+                let new = normalize_url(&url).unwrap_or(url);
+                (new != old).then_some((id, new))
+            })
+            .collect();
+        if updates.is_empty() {
+            continue;
+        }
+        let (ids, normalized): (Vec<i64>, Vec<String>) = updates.into_iter().unzip();
+        changed += sqlx::query(
+            "UPDATE artist_urls au SET normalized_url = n.normalized
+             FROM unnest($1::bigint[], $2::text[]) AS n(id, normalized) WHERE au.id = n.id",
+        )
+        .bind(ids)
+        .bind(normalized)
+        .execute(db)
+        .await?
+        .rows_affected();
+    }
+    Ok(changed)
+}
+
 async fn write_urls(conn: &mut PgConnection, id: i32, urls: &[ArtistUrl]) -> sqlx::Result<()> {
     sqlx::query("DELETE FROM artist_urls WHERE artist_id = $1")
         .bind(id)
@@ -491,6 +531,34 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn renormalizes_old_urls(pool: PgPool) {
+        let id = create(&pool, &sample("sa_dui", "https://example.com/a"), None)
+            .await
+            .unwrap();
+        // Saved before profiles were made canonical.
+        sqlx::query(
+            "UPDATE artist_urls SET url = 'https://www.artstation.com/artist/sa-dui',
+             normalized_url = 'artstation.com/artist/sa-dui' WHERE artist_id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(
+            find_by_url(&pool, "https://sa-dui.artstation.com")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 1);
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 0);
+        let found = find_by_url(&pool, "https://sa-dui.artstation.com")
+            .await
+            .unwrap();
+        assert_eq!(found.iter().map(|a| a.id).collect::<Vec<_>>(), [id]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn saves_with_history_and_finds_by_url(pool: PgPool) {
         let cat = create(
             &pool,
@@ -546,13 +614,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(history.len(), 2);
-        assert_eq!(history[0].urls, ["-https://twitter.com/cat"]);
+        assert_eq!(history[0].urls, ["-https://x.com/cat"]);
         assert_eq!(
             history[0].previous_urls.as_deref(),
             Some(
                 &[
-                    "https://twitter.com/cat".to_owned(),
-                    "https://pixiv.net/users/1".to_owned()
+                    "https://x.com/cat".to_owned(),
+                    "https://www.pixiv.net/users/1".to_owned()
                 ][..]
             )
         );

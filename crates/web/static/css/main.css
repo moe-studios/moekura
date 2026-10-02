@@ -321,6 +321,14 @@ label.choice input { margin-right: 6px; vertical-align: middle; }
 .post-info dt { color: var(--muted); }
 .post-info dd { margin: 0; }
 .source { overflow-wrap: anywhere; }
+/* The site a link is on (site_icon.html). */
+.site-icon { width: 1em; height: 1em; fill: currentColor; vertical-align: -0.125em; margin-inline-end: .3em; flex: none; }
+/* Kept beside a long source as it wraps. */
+dd.source:has(> .site-icon) { display: flex; align-items: flex-start; }
+dd.source > .site-icon { margin-top: .2em; }
+.artist-sites { white-space: nowrap; }
+.artist-sites a { text-decoration: none; }
+.artist-sites .num { margin-inline-start: .2em; }
 .description { white-space: pre-wrap; }
 .notice {
   padding: 8px 12px;

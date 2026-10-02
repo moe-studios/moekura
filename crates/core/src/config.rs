@@ -4,6 +4,7 @@
 //! variables and require a restart to change. Site settings that admins edit
 //! at runtime live in the database instead.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
@@ -24,6 +25,7 @@ pub struct Config {
     pub media: MediaConfig,
     pub paths: PathsConfig,
     pub search: SearchConfig,
+    pub sources: SourcesConfig,
     pub storage: StorageConfig,
     pub tagger: TaggerConfig,
     pub telemetry: TelemetryConfig,
@@ -350,6 +352,39 @@ impl Default for WebhooksConfig {
             allow_private_addresses: false,
             timeout_secs: 10,
         }
+    }
+}
+
+/// Reading where uploads come from (the source strategies).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SourcesConfig {
+    /// Logins for sites that only show works (or all of them) to
+    /// members, by domain: `[sources.logins."gelbooru.com"]`. Requests to
+    /// that domain and its subdomains carry them.
+    pub logins: BTreeMap<String, SiteLogin>,
+}
+
+/// What requests to a site carry to be logged in.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SiteLogin {
+    /// The `Cookie` header: `"PHPSESSID=…"`, `"a=…; b=…"`.
+    pub cookie: String,
+    /// Added to the address's query (Gelbooru's `user_id` and `api_key`).
+    pub query: BTreeMap<String, String>,
+    /// Other headers (`Authorization = "Bearer …"`).
+    pub headers: BTreeMap<String, String>,
+}
+
+impl SourcesConfig {
+    /// The login for `host`: its domain's, or a parent domain's.
+    pub fn login_for(&self, host: &str) -> Option<&SiteLogin> {
+        let host = host.to_ascii_lowercase();
+        self.logins.iter().find_map(|(domain, login)| {
+            let domain = domain.to_ascii_lowercase();
+            (host == domain || host.ends_with(&format!(".{domain}"))).then_some(login)
+        })
     }
 }
 
@@ -1215,6 +1250,23 @@ mod tests {
         let mut config = Config::default();
         config.database.url = "postgres://moekura:hunter2@localhost/moekura".into();
         config
+    }
+
+    #[test]
+    fn site_logins_cover_subdomains() {
+        let config: Config = toml::from_str(
+            r#"
+            [sources.logins."gelbooru.com"]
+            query = { user_id = "7", api_key = "k" }
+            [sources.logins."pawoo.net"]
+            headers = { Authorization = "Bearer t" }
+            "#,
+        )
+        .unwrap();
+        let login = config.sources.login_for("img2.gelbooru.com").unwrap();
+        assert_eq!(login.query["api_key"], "k");
+        assert!(config.sources.login_for("pawoo.net").is_some());
+        assert!(config.sources.login_for("notgelbooru.com").is_none());
     }
 
     #[test]

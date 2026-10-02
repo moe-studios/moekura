@@ -14,7 +14,12 @@ pub(super) fn matches(url: &Url) -> bool {
 
 pub(super) fn parse(embed: &Value, page_url: &str) -> Option<SourceInfo> {
     let author = embed["author_name"].as_str()?.to_owned();
-    let file = embed["url"].as_str().map(str::to_owned);
+    // The embed's file is a sample; the original is often known.
+    let file = embed["url"].as_str().map(|url| {
+        moekura_core::sites::parse(url)
+            .and_then(|u| u.file_url)
+            .unwrap_or_else(|| url.to_owned())
+    });
     let tags = embed["tags"]
         .as_str()
         .map(|tags| {
@@ -29,7 +34,7 @@ pub(super) fn parse(embed: &Value, page_url: &str) -> Option<SourceInfo> {
         })
         .unwrap_or_default();
     Some(SourceInfo {
-        site: "DeviantArt",
+        site: moekura_core::sites::DEVIANTART.name,
         page_url: page_url.to_owned(),
         files: file.into_iter().collect(),
         headers: Vec::new(),

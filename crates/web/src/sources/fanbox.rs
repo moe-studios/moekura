@@ -74,7 +74,7 @@ pub(super) fn parse(post: &Value, target: &Target) -> Option<SourceInfo> {
         profile_urls.push(format!("https://www.pixiv.net/users/{user}"));
     }
     Some(SourceInfo {
-        site: "pixivFANBOX",
+        site: moekura_core::sites::FANBOX.name,
         page_url: format!("https://{creator}.fanbox.cc/posts/{}", target.id),
         files,
         headers: vec![

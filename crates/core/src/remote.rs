@@ -147,6 +147,48 @@ pub fn next_cursor(kind: Kind, current: Cursor, posts: &[RemotePost]) -> Option<
     })
 }
 
+/// Which post a single-post lookup asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostRef<'a> {
+    Id(i64),
+    Md5(&'a str),
+}
+
+/// The URL of one post's JSON (see [`parse_post`]).
+pub fn post_url(kind: Kind, base: &str, post: PostRef) -> String {
+    let base = base.trim_end_matches('/');
+    let search = match post {
+        PostRef::Id(id) => format!("id:{id}"),
+        PostRef::Md5(md5) => format!("md5:{md5}"),
+    };
+    match (kind, post) {
+        (Kind::Danbooru | Kind::E621, PostRef::Id(id)) => format!("{base}/posts/{id}.json"),
+        (Kind::Danbooru | Kind::E621, PostRef::Md5(md5)) => {
+            format!("{base}/posts.json?md5={}", encode(md5))
+        }
+        (Kind::Gelbooru, _) => format!(
+            "{base}/index.php?page=dapi&s=post&q=index&json=1&tags={}",
+            encode(&search)
+        ),
+        (Kind::Moebooru, _) => format!("{base}/post.json?tags={}", encode(&search)),
+    }
+}
+
+/// The post in `body`, the answer to [`post_url`]: an object, or a list
+/// or page of one.
+pub fn parse_post(kind: Kind, base: &str, body: &str) -> Result<Option<RemotePost>, String> {
+    let json: Value = serde_json::from_str(body).map_err(|e| format!("not JSON: {e}"))?;
+    // Danbooru and e621 answer a single post as an object.
+    let page = match kind {
+        Kind::Danbooru if json.is_object() => Value::Array(vec![json]),
+        Kind::E621 if json.get("post").is_some() => serde_json::json!({ "posts": [json["post"]] }),
+        _ => json,
+    };
+    Ok(parse_page(kind, base, &page.to_string())?
+        .into_iter()
+        .next())
+}
+
 /// A post on the other site.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemotePost {
@@ -301,7 +343,14 @@ pub fn parse_page(kind: Kind, base: &str, body: &str) -> Result<Vec<RemotePost>,
             }
             Kind::Gelbooru | Kind::Moebooru => RemotePost {
                 id,
-                file_url: text(&item["file_url"]),
+                // Safebooru leaves the URL out: it's under /images/.
+                file_url: text(&item["file_url"]).or_else(|| {
+                    let dir = item["directory"]
+                        .as_str()
+                        .map(str::to_owned)
+                        .or_else(|| item["directory"].as_i64().map(|d| d.to_string()))?;
+                    Some(format!("{base}/images/{dir}/{}", text(&item["image"])?))
+                }),
                 md5: text(&item["md5"]),
                 rating: rating(item["rating"].as_str().unwrap_or("e")),
                 tags: words(&item["tags"]),
@@ -518,6 +567,46 @@ mod tests {
             Rating::General
         );
         assert!(parse_page(Kind::Danbooru, "x", "<html>").is_err());
+    }
+
+    #[test]
+    fn single_posts() {
+        assert_eq!(
+            post_url(Kind::Danbooru, "https://d.example/", PostRef::Id(5)),
+            "https://d.example/posts/5.json"
+        );
+        assert_eq!(
+            post_url(Kind::Gelbooru, "https://g.example", PostRef::Md5("ab")),
+            "https://g.example/index.php?page=dapi&s=post&q=index&json=1&tags=md5%3Aab"
+        );
+        let post = parse_post(
+            Kind::Danbooru,
+            "https://d.example",
+            r#"{"id": 5, "rating": "g", "tag_string_general": "cat", "file_url": "https://d.example/a.png"}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(post.page_url, "https://d.example/posts/5");
+        let post = parse_post(
+            Kind::E621,
+            "https://e.example",
+            r#"{"post": {"id": 6, "rating": "s", "file": {"url": null, "md5": "m"}, "tags": {}}}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(post.id, 6);
+        let safebooru = r#"[{"id": 7, "directory": "4016", "image": "a.png", "rating": "general", "tags": "cat"}]"#;
+        let post = parse_post(Kind::Gelbooru, "https://s.example", safebooru)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            post.file_url.as_deref(),
+            Some("https://s.example/images/4016/a.png")
+        );
+        assert_eq!(
+            parse_post(Kind::Moebooru, "https://m.example", "[]").unwrap(),
+            None
+        );
     }
 
     #[test]

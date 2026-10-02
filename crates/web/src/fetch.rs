@@ -80,8 +80,88 @@ impl Fetcher {
         headers: &[(&str, &str)],
         limit: usize,
     ) -> Result<(String, Vec<u8>), String> {
+        self.read(url, headers, None, limit).await
+    }
+
+    /// [`Self::get`], but a POST of `body` (some APIs take JSON).
+    pub async fn post(
+        &self,
+        url: &Url,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+        limit: usize,
+    ) -> Result<(String, Vec<u8>), String> {
+        self.read(url, headers, Some(body), limit).await
+    }
+
+    /// Whether `url` answers a HEAD request with success.
+    pub async fn exists(&self, url: &Url, headers: &[(&str, &str)]) -> bool {
+        if check_url(url, self.allow_private).is_err() {
+            return false;
+        }
+        let mut request = self.client.head(url.clone());
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        request.send().await.is_ok_and(|r| r.status().is_success())
+    }
+
+    /// The cookies a response sets (`name=value`), for sites that hand
+    /// visitors a session first.
+    pub async fn set_cookies(
+        &self,
+        url: &Url,
+        headers: &[(&str, &str)],
+        body: Option<Vec<u8>>,
+    ) -> Result<Vec<String>, String> {
+        check_url(url, self.allow_private)?;
+        let mut request = match body {
+            Some(body) => self.client.post(url.clone()).body(body),
+            None => self.client.get(url.clone()),
+        };
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| short_reason(&e).to_owned())?;
+        Ok(response
+            .headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .filter_map(|v| v.split(';').next())
+            .map(|c| c.trim().to_owned())
+            .collect())
+    }
+
+    /// Where `url` leads after its redirects (a short link's target).
+    pub async fn final_url(&self, url: &Url, headers: &[(&str, &str)]) -> Result<Url, String> {
         check_url(url, self.allow_private)?;
         let mut request = self.client.get(url.clone());
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|e| short_reason(&e).to_owned())?;
+        Ok(response.url().clone())
+    }
+
+    async fn read(
+        &self,
+        url: &Url,
+        headers: &[(&str, &str)],
+        body: Option<Vec<u8>>,
+        limit: usize,
+    ) -> Result<(String, Vec<u8>), String> {
+        check_url(url, self.allow_private)?;
+        let mut request = match body {
+            Some(body) => self.client.post(url.clone()).body(body),
+            None => self.client.get(url.clone()),
+        };
         for (name, value) in headers {
             request = request.header(*name, *value);
         }

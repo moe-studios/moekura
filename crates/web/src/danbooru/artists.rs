@@ -332,7 +332,7 @@ mod tests {
         );
         assert_eq!(found.as_array().unwrap().len(), 1);
         assert_eq!(found[0]["other_names"][0], "nekoart");
-        assert_eq!(found[0]["urls"][0]["url"], "https://twitter.com/catart");
+        assert_eq!(found[0]["urls"][0]["url"], "https://x.com/catart");
         let id = found[0]["id"].as_i64().unwrap();
         let by_url = parse(
             &app.get(

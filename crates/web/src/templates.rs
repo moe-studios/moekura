@@ -68,6 +68,13 @@ impl Templates {
                     )
                 })
         });
+        // The site a link is on, if it's one we know: its icon's id and
+        // name.
+        env.add_function("site_of", |url: &str| {
+            moekura_core::sites::site_of(url).map_or(Value::UNDEFINED, |site| {
+                minijinja::context! { key => site.key, name => site.name }
+            })
+        });
         env.add_function("search_url", |query: &str| {
             Value::from_safe_string(search_url(query))
         });

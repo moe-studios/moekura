@@ -30,6 +30,15 @@ impl Job for RemoveSquareThumbnails {
     const KIND: &'static str = "media.remove_square_thumbnails";
 }
 
+/// Recompute every artist URL's normalized form, after the way URLs are
+/// compared changed; queued by the migration that changed it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NormalizeArtistUrls {}
+
+impl Job for NormalizeArtistUrls {
+    const KIND: &'static str = "artists.normalize_urls";
+}
+
 /// Bring existing posts in line with a newly approved tag alias (replace
 /// the antecedent) or implication (add the implied tags).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

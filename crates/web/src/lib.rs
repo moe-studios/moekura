@@ -230,6 +230,7 @@ impl AppState {
             config.server.api_requests_per_minute,
             config.server.api_burst,
         );
+        let sources = Arc::new(sources::Sources::new(false, config.sources.clone()));
         Ok(Self {
             config: Arc::new(config),
             db,
@@ -240,7 +241,7 @@ impl AppState {
             storage,
             media,
             fetcher: fetch::Fetcher::new(std::time::Duration::from_secs(120), false),
-            sources: Arc::new(sources::Sources::new(false)),
+            sources,
             work_dir,
             file_signer: files::FileSigner::new(file_key),
             oidc,

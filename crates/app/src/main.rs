@@ -1,6 +1,7 @@
 mod admin;
 mod bench_http;
 mod config;
+mod export;
 mod import;
 mod import_remote;
 mod tagger;
@@ -103,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
                 migrate(&db).await?;
             }
             let result = match command {
+                admin::AdminCommand::Export(args) => export::run(config, &db, args).await,
                 admin::AdminCommand::Import(args) => match check_media_tools(&config).await {
                     Ok(()) => import::run(config, &db, args).await,
                     Err(error) => Err(error),

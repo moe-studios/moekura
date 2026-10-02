@@ -18,6 +18,7 @@
 | `moekura admin tag-backlog [--all] [--limit N]` | queues posts the [tagger](tagger.md) hasn't seen (or, with `--all`, every post) |
 | `moekura admin send-test-mail ADDRESS` | sends a test message through the [`[mail]`](../configuration.md#mail) settings |
 | `moekura admin import DIR --uploader NAME …` | imports a folder of files; see [Bulk import](import.md) |
+| `moekura admin export DIR [--tags SEARCH] [--include-deleted]` | writes posts' files and sidecars to a folder; see [Exporting](import.md#exporting) |
 | `moekura admin seed --posts N [--tags T] [--seed S]` | fills a test database with synthetic posts for load testing; see [Scaling](../scaling.md) |
 | `moekura admin bench [--check] [--explain NAME]` | times a suite of searches against the database |
 | `moekura admin bench-http [--url URL] [--concurrency N] [--check-ms MS]` | times pages and API responses from a running server; see [Scaling](../scaling.md) |

@@ -106,6 +106,27 @@ pub async fn import_file(
     }
 }
 
+/// Makes the post with the file `parent_sha256` the parent of post
+/// `child`, as `uploader`. `None` when no post has that file (yet).
+pub async fn link_parent(
+    state: &AppState,
+    uploader: &User,
+    child: i64,
+    parent_sha256: &[u8; 32],
+) -> Result<Option<i64>, String> {
+    let Some(parent) = moekura_db::media::post_with_sha256(state.db.primary(), parent_sha256)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    let current = CurrentUser::for_user(uploader.clone(), None, &state.site.get());
+    crate::edit::set_parent(state, &current, child, Some(parent))
+        .await
+        .map_err(|e| UploadError::from(e).to_string())?;
+    Ok(Some(parent))
+}
+
 /// The post that already has the file at `path`, if any, without
 /// importing it.
 pub async fn existing_post(state: &AppState, path: &Path) -> Result<Option<i64>, String> {

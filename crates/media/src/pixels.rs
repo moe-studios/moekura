@@ -45,7 +45,7 @@ impl Media {
         } else {
             loaders_for(source_type)
         };
-        tool::run_with(
+        self.run(
             &self.config.tools.vipsthumbnail,
             args,
             self.timeout(),
@@ -56,7 +56,8 @@ impl Media {
         // vips' flatten takes the last band for alpha whether or not it
         // is one, so only grey + alpha and RGB + alpha go through it.
         let args: Vec<OsString> = vec!["-f".into(), "bands".into(), scaled.clone().into()];
-        let bands = tool::run(&self.config.tools.vipsheader, args, self.timeout())
+        let bands = self
+            .run_trusted(&self.config.tools.vipsheader, args, self.timeout())
             .await
             .map_err(MediaError::Tool)?;
         let has_alpha = matches!(String::from_utf8_lossy(&bands).trim(), "2" | "4");
@@ -72,7 +73,7 @@ impl Media {
         } else {
             vec!["copy".into(), scaled.into(), out.clone().into()]
         };
-        tool::run(&self.config.tools.vips, args, self.timeout())
+        self.run_trusted(&self.config.tools.vips, args, self.timeout())
             .await
             .map_err(corrupt_unless_missing)?;
         let data = tokio::fs::read(&out).await?;

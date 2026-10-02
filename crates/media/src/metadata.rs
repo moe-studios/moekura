@@ -15,7 +15,6 @@ use serde::Deserialize;
 
 use crate::kind::MediaType;
 use crate::probe::{corrupt_unless_missing, loaders_for};
-use crate::tool;
 use crate::{Media, MediaError};
 
 /// Most fields kept from one file.
@@ -85,25 +84,27 @@ impl Media {
         media_type: MediaType,
     ) -> Result<Metadata, MediaError> {
         let loaders = loaders_for(media_type);
-        let out = tool::run_with(
-            &self.config.tools.vipsheader,
-            [OsStr::new("-a"), path.as_os_str()],
-            self.timeout(),
-            loaders,
-        )
-        .await
-        .map_err(corrupt_unless_missing)?;
-        let text = String::from_utf8_lossy(&out);
-        let mut metadata = parse_vips_header(&text);
-        if text.lines().any(|line| line.starts_with("xmp-data:")) {
-            let xmp = tool::run_with(
+        let out = self
+            .run(
                 &self.config.tools.vipsheader,
-                [OsStr::new("-f"), OsStr::new("xmp-data"), path.as_os_str()],
+                [OsStr::new("-a"), path.as_os_str()],
                 self.timeout(),
                 loaders,
             )
             .await
             .map_err(corrupt_unless_missing)?;
+        let text = String::from_utf8_lossy(&out);
+        let mut metadata = parse_vips_header(&text);
+        if text.lines().any(|line| line.starts_with("xmp-data:")) {
+            let xmp = self
+                .run(
+                    &self.config.tools.vipsheader,
+                    [OsStr::new("-f"), OsStr::new("xmp-data"), path.as_os_str()],
+                    self.timeout(),
+                    loaders,
+                )
+                .await
+                .map_err(corrupt_unless_missing)?;
             let encoded = String::from_utf8_lossy(&xmp);
             if let Ok(xml) = base64::engine::general_purpose::STANDARD.decode(encoded.trim()) {
                 parse_xmp(&String::from_utf8_lossy(&xml), &mut metadata);
@@ -122,7 +123,8 @@ impl Media {
             OsStr::new("-show_format"),
             path.as_os_str(),
         ];
-        let out = tool::run(&self.config.tools.ffprobe, args, self.timeout())
+        let out = self
+            .run_trusted(&self.config.tools.ffprobe, args, self.timeout())
             .await
             .map_err(corrupt_unless_missing)?;
         let report: Report = serde_json::from_slice(&out)

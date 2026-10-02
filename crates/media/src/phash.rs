@@ -90,7 +90,7 @@ impl Media {
         } else {
             loaders_for(source_type)
         };
-        tool::run_with(
+        self.run(
             &self.config.tools.vipsthumbnail,
             args,
             self.timeout(),

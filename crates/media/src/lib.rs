@@ -10,10 +10,13 @@ mod render;
 pub mod tool;
 pub mod ugoira;
 
+use std::ffi::OsString;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 use moekura_core::config::MediaConfig;
 use tokio::io::AsyncReadExt;
+use tokio::sync::Semaphore;
 
 pub use crate::kind::{MediaType, SNIFF_LEN};
 pub use crate::pixels::RgbImage;
@@ -37,6 +40,9 @@ pub enum MediaError {
     TooLarge { width: u32, height: u32 },
     #[error("videos may be at most {max_secs} seconds long")]
     TooLong { max_secs: u64 },
+    /// Processing it needs more memory or CPU time than the site allows.
+    #[error("it's too demanding to process: {0}")]
+    OverLimit(ToolError),
     #[error(transparent)]
     Tool(ToolError),
     #[error("reading the file: {0}")]
@@ -53,11 +59,72 @@ impl MediaError {
 #[derive(Debug, Clone)]
 pub struct Media {
     config: MediaConfig,
+    /// Turns to run a tool; shared by every `Media` in the process.
+    permits: Arc<Semaphore>,
 }
+
+/// The process's tool permits, made with the first [`Media`]'s count.
+static PERMITS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 impl Media {
     pub fn new(config: MediaConfig) -> Self {
-        Self { config }
+        let count = match config.max_tool_processes {
+            0 => std::thread::available_parallelism().map_or(2, usize::from),
+            n => n as usize,
+        };
+        let permits = PERMITS
+            .get_or_init(|| Arc::new(Semaphore::new(count)))
+            .clone();
+        Self { config, permits }
+    }
+
+    /// Runs one of the media tools, `program`, waiting for a turn if
+    /// `max_tool_processes` are running. ffmpeg gets `ffmpeg_threads`;
+    /// ffmpeg and ffprobe are held to the configured memory and CPU
+    /// limits.
+    pub(crate) async fn run<I, S>(
+        &self,
+        program: &Path,
+        args: I,
+        timeout: std::time::Duration,
+        loaders: tool::Loaders,
+    ) -> Result<Vec<u8>, ToolError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let tools = &self.config.tools;
+        let mut args: Vec<OsString> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
+        let is_ffmpeg = program == tools.ffmpeg;
+        let limits = if is_ffmpeg || program == tools.ffprobe {
+            tool::Limits {
+                memory_mb: self.config.ffmpeg_memory_mb,
+                cpu_secs: self.config.ffmpeg_cpu_secs,
+            }
+        } else {
+            tool::Limits::NONE
+        };
+        if is_ffmpeg && self.config.ffmpeg_threads > 0 {
+            args = with_threads(args, self.config.ffmpeg_threads);
+        }
+        // Closed only if the process is shutting down.
+        let _turn = self.permits.acquire().await.ok();
+        tool::run_limited(program, args, timeout, loaders, limits).await
+    }
+
+    /// [`Self::run`] with only the trusted libvips loaders.
+    pub(crate) async fn run_trusted<I, S>(
+        &self,
+        program: &Path,
+        args: I,
+        timeout: std::time::Duration,
+    ) -> Result<Vec<u8>, ToolError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        self.run(program, args, timeout, tool::Loaders::Trusted)
+            .await
     }
 
     pub fn config(&self) -> &MediaConfig {
@@ -107,6 +174,25 @@ impl Media {
         tool::version(&tools.ffprobe, "-version").await?;
         Ok(versions)
     }
+}
+
+/// ffmpeg arguments with `threads` for the decoder, the filters and the
+/// encoder: `-threads` before the input and again before the output (the
+/// last argument, in every run here), and `-filter_threads`.
+fn with_threads(args: Vec<OsString>, threads: u32) -> Vec<OsString> {
+    let n = OsString::from(threads.to_string());
+    let Some((output, rest)) = args.split_last() else {
+        return args;
+    };
+    let mut with = vec![
+        OsString::from("-filter_threads"),
+        n.clone(),
+        OsString::from("-threads"),
+        n.clone(),
+    ];
+    with.extend(rest.iter().cloned());
+    with.extend([OsString::from("-threads"), n, output.clone()]);
+    with
 }
 
 /// Small media files generated with ffmpeg for tests, so the repository
@@ -186,6 +272,59 @@ pub(crate) mod tests {
             allowed_types: MediaType::ALL.iter().map(|t| t.name().to_owned()).collect(),
             ..MediaConfig::default()
         })
+    }
+
+    #[test]
+    fn ffmpeg_gets_threads_for_each_stage() {
+        let args: Vec<OsString> = ["-i", "in.mp4", "-an", "out.png"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        let with: Vec<String> = with_threads(args, 2)
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            with,
+            [
+                "-filter_threads",
+                "2",
+                "-threads",
+                "2",
+                "-i",
+                "in.mp4",
+                "-an",
+                "-threads",
+                "2",
+                "out.png"
+            ]
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn ffmpeg_over_its_memory_is_the_files_problem() {
+        let dir = fixtures::dir("limits");
+        let video = fixtures::video(&dir, "clip.mp4", "libx264");
+        // Too little for ffmpeg to even load its libraries.
+        let starved = Media {
+            config: MediaConfig {
+                ffmpeg_memory_mb: 64,
+                ..MediaConfig::default()
+            },
+            permits: Arc::new(Semaphore::new(1)),
+        };
+        let err = starved.probe(&video, MediaType::Mp4).await.unwrap_err();
+        assert!(matches!(err, MediaError::OverLimit(_)), "{err}");
+        assert!(!err.is_internal());
+        assert!(err.to_string().contains("64 MB"), "{err}");
+        // The defaults are plenty for ordinary files.
+        let poster = media()
+            .video_poster(&video, Some(2000), &dir)
+            .await
+            .unwrap();
+        assert!(poster.is_file());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[tokio::test]

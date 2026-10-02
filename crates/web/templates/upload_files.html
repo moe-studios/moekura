@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ t("upload-title", id=upload.id) }} · {{ site.name }}{% endblock %}
+{% block head %}{% if refresh %}<meta http-equiv="refresh" content="{{ refresh }}">{% endif %}{% endblock %}
+{% block content %}
+<h1>{{ t("upload-title", id=upload.id) }}</h1>
+{% include "upload_nav.html" %}
+{% if upload.source %}<p class="source">{{ t("source") }}: <a href="{{ upload.source }}" rel="noopener noreferrer nofollow">{{ upload.source }}</a></p>{% endif %}
+<p class="hint" role="status">{{ t("upload-summary", count=upload.count, posted=posted) }}{% if pending %} {{ t("upload-downloading", count=pending) }}{% endif %}</p>
+{% if files %}
+<ul class="post-grid upload-files">
+  {% for file in files %}<li>{% include "upload_file_card.html" %}</li>{% endfor %}
+</ul>
+{% else %}
+<p class="empty">{{ t("upload-no-files") }}</p>
+{% endif %}
+{% endblock %}

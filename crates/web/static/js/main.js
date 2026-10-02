@@ -1483,28 +1483,46 @@ function enableUpload(root = document) {
   const input = form?.querySelector('input[type="file"]');
   const zone = form?.querySelector("[data-upload-drop-zone]");
   const status = form?.querySelector("[data-upload-status]");
-  if (!form || !input || !zone || !status || typeof DataTransfer === "undefined") return;
+  if (!form || !input || !zone || !status) return;
+  const max = Number(input.dataset["max"] ?? "1") || 1;
+  let sending = false;
+  const send2 = (files) => {
+    if (sending || files.length === 0) return;
+    if (files.length > max) {
+      status.textContent = t("upload-too-many", "Choose at most {$max} files at once.", { max });
+      return;
+    }
+    if (files !== input.files) {
+      const transfer = new DataTransfer();
+      for (const file of files) transfer.items.add(file);
+      input.files = transfer.files;
+    }
+    status.textContent = files.length === 1 ? t("upload-sending-one", "Uploading {$name}\u2026", { name: files[0].name }) : t("upload-sending-many", "Uploading {$count} files\u2026", { count: files.length });
+    sending = true;
+    zone.classList.add("sending");
+    form.requestSubmit();
+  };
+  input.addEventListener("change", () => {
+    if (input.files) send2(input.files);
+  });
+  form.addEventListener("submit", () => {
+    sending = true;
+    for (const button of form.querySelectorAll("button[type=submit]")) button.disabled = true;
+  });
+  root.defaultView?.addEventListener("pageshow", () => {
+    sending = false;
+    zone.classList.remove("sending");
+    for (const button of form.querySelectorAll("button[type=submit]")) button.disabled = false;
+  });
+  if (typeof DataTransfer === "undefined") return;
   zone.classList.add("enhanced");
   const hint = form.querySelector("[data-upload-hint]");
   if (hint) hint.hidden = false;
-  const select = (files) => {
-    if (files.length !== 1) {
-      status.textContent = t("upload-one-file", "Choose one file at a time. Your current selection has not changed.");
-      return;
-    }
-    const transfer = new DataTransfer();
-    transfer.items.add(files[0]);
-    input.files = transfer.files;
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  };
-  input.addEventListener("change", () => {
-    status.textContent = input.files?.[0] ? t("upload-selected", "Selected: {$name}", { name: input.files[0].name }) : "";
-  });
   root.addEventListener("paste", (event) => {
     const files = event.clipboardData?.files;
     if (!files?.length) return;
     event.preventDefault();
-    select(files);
+    send2(files);
   });
   const hasFiles = (event) => event.dataTransfer?.types.includes("Files") ?? false;
   let depth = 0;
@@ -1528,7 +1546,7 @@ function enableUpload(root = document) {
     zone.classList.remove("dragging");
     if (!hasFiles(event)) return;
     event.preventDefault();
-    if (event.dataTransfer?.files.length) select(event.dataTransfer.files);
+    if (event.dataTransfer?.files.length) send2(event.dataTransfer.files);
   });
 }
 

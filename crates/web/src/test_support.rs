@@ -126,6 +126,23 @@ impl TestApp {
         file_field: &str,
         file: Option<(&str, &[u8])>,
     ) -> TestResponse {
+        let files: Vec<(&str, &str, &[u8])> = file
+            .map(|(name, bytes)| (file_field, name, bytes))
+            .into_iter()
+            .collect();
+        self.post_multipart_files(path, session, fields, &files)
+            .await
+    }
+
+    /// [`Self::post_multipart`] with any number of `(field, file name,
+    /// bytes)` files.
+    pub async fn post_multipart_files(
+        &self,
+        path: &str,
+        session: Option<&str>,
+        fields: &[(&str, String)],
+        files: &[(&str, &str, &[u8])],
+    ) -> TestResponse {
         const BOUNDARY: &str = "moekura-test-boundary";
         let mut body = Vec::new();
         for (name, value) in fields {
@@ -134,7 +151,7 @@ impl TestApp {
             );
             body.extend_from_slice(part.as_bytes());
         }
-        if let Some((file_name, bytes)) = file {
+        for (file_field, file_name, bytes) in files {
             let head = format!(
                 "--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"{file_field}\"; \
                  filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"

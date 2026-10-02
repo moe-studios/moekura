@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { admin, logIn, png } from "./helpers.ts";
+import { admin, logIn, png, uploadPost } from "./helpers.ts";
 
 test.describe.configure({ mode: "serial" });
 
@@ -12,13 +12,7 @@ const posts: string[] = [];
 let poolPath = "";
 
 async function upload(page: Page, tags: string): Promise<string> {
-  await page.goto("/upload");
-  await page.locator("#file").setInputFiles({ name: "page.png", mimeType: "image/png", buffer: png(48, 64) });
-  await page.locator("input[name=rating][value=g]").check();
-  await page.locator("#tags").fill(tags);
-  await page.getByRole("button", { name: "Upload" }).click();
-  await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
-  return new URL(page.url()).pathname;
+  return uploadPost(page, { name: "page.png", buffer: png(48, 64) }, tags);
 }
 
 test("register and upload three pages", async ({ page }) => {

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { logIn, png } from "./helpers.ts";
+import { logIn, png, uploadPost } from "./helpers.ts";
 
 test.describe.configure({ mode: "serial" });
 
@@ -15,13 +15,7 @@ test("draw a note, move it and change it", async ({ page }) => {
   await page.getByLabel("Repeat password").fill(member.password);
   await page.getByRole("button", { name: "Register" }).click();
   await expect(page.getByText("Your account is ready")).toBeVisible();
-  await page.goto("/upload");
-  await page.locator("#file").setInputFiles({ name: "page.png", mimeType: "image/png", buffer: png(400, 300) });
-  await page.locator("input[name=rating][value=g]").check();
-  await page.locator("#tags").fill("notes_test");
-  await page.getByRole("button", { name: "Upload" }).click();
-  await expect(page).toHaveURL(/\/posts\/\d+(\?check=1.*)?$/);
-  postPath = new URL(page.url()).pathname;
+  postPath = await uploadPost(page, { name: "page.png", buffer: png(400, 300) }, "notes_test");
 
   // Draw a box over the image.
   await page.getByRole("button", { name: "Edit notes" }).click();

@@ -1,9 +1,13 @@
 //! Uploading posts.
 //!
 //! The file is streamed to a temporary file while it is hashed and
-//! measured, then [`ingest`] identifies and probes it, stores the original
-//! under its content hash, and creates the post, its media record and the
-//! processing job in one transaction.
+//! measured, then [`prepare`] identifies and probes it and stores the
+//! original under its content hash, and [`create_post`] creates the post,
+//! its media record and the processing job in one transaction.
+//!
+//! People upload in two steps (see [`crate::uploads`]): files are staged
+//! first, then each is posted from its own form. `POST /upload` still
+//! takes a whole post in one form, for scripts, through [`ingest`].
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +18,6 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use md5::Md5;
-use minijinja::context;
 use moekura_core::jobs::ProcessMedia;
 use moekura_core::permissions::Permission;
 use moekura_core::post_edit::Metatag;
@@ -22,6 +25,7 @@ use moekura_core::posts::{DESCRIPTION_MAX_LEN, PostStatus, Rating, SOURCE_MAX_LE
 use moekura_core::uploads::{self, UploadLimits};
 use moekura_db::media::{self, InsertAssetError, NewAsset};
 use moekura_db::posts::{self, NewPost};
+use moekura_db::staged_uploads;
 use moekura_media::MediaError;
 use moekura_storage::Key;
 use sha2::{Digest, Sha256};
@@ -47,7 +51,7 @@ pub(crate) fn body_limit(max_upload_bytes: u64) -> DefaultBodyLimit {
 pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new().route(
         "/upload",
-        get(upload_form)
+        get(|| async { Redirect::permanent("/uploads/new") })
             .post(upload)
             .layer(body_limit(max_upload_bytes)),
     )
@@ -62,6 +66,8 @@ pub struct UploadFields {
     /// Whitespace-separated, as typed.
     pub tags: String,
     pub source: String,
+    /// The parent post's number, as typed (a `parent:` metatag wins).
+    pub parent: String,
     pub description: String,
     /// The artist's commentary, as given; when both are empty, the
     /// source's (if it has one) is used.
@@ -81,11 +87,22 @@ pub struct TempUpload {
     pub sha256: [u8; 32],
     pub md5: [u8; 16],
     pub size: u64,
+    /// The file's name as sent, or the link it came from.
+    name: String,
 }
 
 impl TempUpload {
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn set_name(&mut self, name: &str) {
+        // As much as the database keeps.
+        self.name = name.chars().take(SOURCE_MAX_LEN).collect();
     }
 }
 
@@ -135,6 +152,8 @@ pub struct Lookalikes {
     pub posts: Vec<i64>,
     /// The staged upload holding the file: confirming posts it.
     pub staged: i64,
+    /// The upload it's in.
+    pub upload: i64,
 }
 
 /// Most look-alikes an upload warns about.
@@ -201,95 +220,14 @@ fn max_bytes(state: &AppState) -> u64 {
     state.media.config().max_upload_mb * 1024 * 1024
 }
 
-async fn upload_form(page: Page) -> Result<Response, AppError> {
-    page.current.require(Permission::Upload)?;
-    let allowance = allowance(page.state(), &page.current).await?;
-    Ok(render_form(
-        &page,
-        &UploadFields::default(),
-        None,
-        StatusCode::OK,
-        Some(&allowance),
-    ))
-}
-
-/// The form again with a warning about the posts the file looks like,
-/// their thumbnails, and a button to upload it anyway.
-async fn similar_form(
-    page: &Page,
-    fields: &UploadFields,
-    found: &Lookalikes,
-) -> Result<Response, AppError> {
-    let db = page.state().db.primary();
-    let cards: Vec<minijinja::Value> = crate::posts::grid(page, db, &found.posts, None)
-        .await?
-        .into_iter()
-        .map(|(_, card)| card)
-        .collect();
-    let fields = UploadFields {
-        staged: Some(found.staged),
-        ..fields.clone()
-    };
-    Ok(page.render_with_status(
-        StatusCode::CONFLICT,
-        "upload.html",
-        form_context(page, &fields, None, None, Some(cards)),
-    ))
-}
-
+/// The upload form again, with what went wrong.
 fn render_form(
     page: &Page,
     fields: &UploadFields,
-    error: Option<&UploadError>,
+    error: &UploadError,
     status: StatusCode,
-    allowance: Option<&Allowance>,
 ) -> Response {
-    page.render_with_status(
-        status,
-        "upload.html",
-        form_context(page, fields, error, allowance, None),
-    )
-}
-
-fn form_context(
-    page: &Page,
-    fields: &UploadFields,
-    error: Option<&UploadError>,
-    allowance: Option<&Allowance>,
-    similar: Option<Vec<minijinja::Value>>,
-) -> minijinja::Value {
-    let ratings: Vec<_> = Rating::ALL
-        .iter()
-        .map(|r| context! { code => r.code(), label => r.label() })
-        .collect();
-    let (message, duplicate_of) = match error {
-        Some(UploadError::Duplicate(id)) => (None, Some(*id)),
-        Some(e) => (Some(e.to_string()), None),
-        None => (None, None),
-    };
-    context! {
-        ratings => ratings,
-        form => context! {
-            rating => fields.rating.map(Rating::code),
-            url => fields.url,
-            tags => fields.tags,
-            source => fields.source,
-            description => fields.description,
-            commentary_title => fields.commentary_title,
-            commentary_description => fields.commentary_description,
-            // A file sent before, waiting, so it needn't be sent again.
-            staged => fields.staged,
-        },
-        error => message,
-        duplicate_of => duplicate_of,
-        similar => similar,
-        max_mb => page.state().media.config().max_upload_mb,
-        allowance => allowance.map(|a| context! {
-            refusal => a.refusal,
-            pending_left => a.pending_left,
-            today_left => a.today_left,
-        }),
-    }
+    crate::uploads::new_form(page, &fields.url, Some(error), status, None)
 }
 
 async fn upload(
@@ -325,7 +263,11 @@ async fn upload(
             let query = crate::tag_warnings::check_query(&kept);
             Ok(Redirect::to(&format!("/posts/{post_id}?{query}")).into_response())
         }
-        Err(UploadError::Similar(found)) => similar_form(&page, &fields, &found).await,
+        // The file waits in an upload, where the look-alikes are shown
+        // beside its form.
+        Err(UploadError::Similar(found)) => {
+            Ok(Redirect::to(&format!("/uploads/{}", found.upload)).into_response())
+        }
         Err(error) => Ok(failed(&page, &fields, error)),
     }
 }
@@ -338,28 +280,43 @@ pub(crate) async fn fetch_url(
     state: &AppState,
     fields: &mut UploadFields,
 ) -> Result<TempUpload, UploadError> {
-    let url = url::Url::parse(&fields.url)
-        .map_err(|_| UploadError::Invalid("That isn't a valid link.".into()))?;
     let found = state.sources.lookup(&fields.url).await;
-    let (file_url, headers, page) = match found.as_deref() {
-        Some(info) if !info.files.is_empty() => {
-            let file = url::Url::parse(&info.files[0]).map_err(|_| {
-                UploadError::Invalid(format!("{} gave a file link that isn't valid.", info.site))
-            })?;
-            (file, info.header_pairs(), info.page_url.clone())
-        }
-        _ => (url, Vec::new(), fields.url.clone()),
+    let (file_url, page) = match found.as_deref() {
+        Some(info) if !info.files.is_empty() => (info.files[0].clone(), info.page_url.clone()),
+        _ => (fields.url.clone(), fields.url.clone()),
     };
+    let file = download(state, &file_url, found.as_deref()).await?;
+    if fields.source.is_empty() {
+        fields.source = page;
+    }
+    Ok(file)
+}
+
+/// Downloads `file_url`, one of the files of `info` if it came from a
+/// source's page. A Pixiv ugoira's zip lacks its frames' delays; they're
+/// added to it.
+pub(crate) async fn download(
+    state: &AppState,
+    file_url: &str,
+    info: Option<&crate::sources::SourceInfo>,
+) -> Result<TempUpload, UploadError> {
+    let url = url::Url::parse(file_url).map_err(|_| match info {
+        Some(info) => {
+            UploadError::Invalid(format!("{} gave a file link that isn't valid.", info.site))
+        }
+        None => UploadError::Invalid("That isn't a valid link.".into()),
+    })?;
+    let headers = info.map(|i| i.header_pairs()).unwrap_or_default();
     let writer = TempWriter::create(&state.work_dir).await?;
     let mut file = state
         .fetcher
-        .fetch_with(&file_url, &headers, writer, max_bytes(state))
+        .fetch_with(&url, &headers, writer, max_bytes(state))
         .await?;
-    // A Pixiv ugoira's zip lacks its frames' delays; keep them in it.
-    if let Some(frames) = found
-        .as_deref()
-        .and_then(|info| info.ugoira_frames.as_ref())
-    {
+    file.set_name(file_url);
+    let frames = info
+        .filter(|i| i.files.first().is_some_and(|f| f == file_url))
+        .and_then(|i| i.ugoira_frames.as_ref());
+    if let Some(frames) = frames {
         let frames: Vec<moekura_media::ugoira::Frame> = frames
             .iter()
             .map(|(file, delay_ms)| moekura_media::ugoira::Frame {
@@ -373,9 +330,6 @@ pub(crate) async fn fetch_url(
             .map_err(|e| UploadError::Internal(e.to_string()))?
             .map_err(|e| UploadError::Invalid(format!("The ugoira's zip is damaged ({e}).")))?;
         file.rehash().await?;
-    }
-    if fields.source.is_empty() {
-        fields.source = page;
     }
     Ok(file)
 }
@@ -426,20 +380,18 @@ fn failed(page: &Page, fields: &UploadFields, error: UploadError) -> Response {
         tracing::error!(error = %detail, "upload failed");
         let error =
             UploadError::Internal("Something went wrong on our side. Please try again.".into());
-        return render_form(
-            page,
-            fields,
-            Some(&error),
-            StatusCode::INTERNAL_SERVER_ERROR,
-            None,
-        );
+        return render_form(page, fields, &error, StatusCode::INTERNAL_SERVER_ERROR);
     }
-    let status = if matches!(error, UploadError::Limit(_)) {
-        StatusCode::TOO_MANY_REQUESTS
-    } else {
-        StatusCode::UNPROCESSABLE_ENTITY
-    };
-    render_form(page, fields, Some(&error), status, None)
+    render_form(page, fields, &error, error_status(&error))
+}
+
+/// The status a page about `error` has.
+pub(crate) fn error_status(error: &UploadError) -> StatusCode {
+    match error {
+        UploadError::Limit(_) => StatusCode::TOO_MANY_REQUESTS,
+        UploadError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        _ => StatusCode::UNPROCESSABLE_ENTITY,
+    }
 }
 
 /// Reads the form, streaming the file to disk. The fields read so far come
@@ -474,6 +426,7 @@ pub(crate) async fn receive(
             | "allow_similar"
             | "tags"
             | "source"
+            | "parent"
             | "description"
             | "commentary_title"
             | "commentary_description" => {
@@ -490,6 +443,7 @@ pub(crate) async fn receive(
                     "rating" => fields.rating = text.parse().ok(),
                     "tags" => fields.tags = text,
                     "source" => fields.source = text.trim().to_owned(),
+                    "parent" => fields.parent = text.trim().to_owned(),
                     "commentary_title" => fields.commentary_title = text.trim().to_owned(),
                     "commentary_description" => {
                         fields.commentary_description = text.trim().to_owned();
@@ -503,7 +457,7 @@ pub(crate) async fn receive(
     (fields, Ok(file))
 }
 
-fn multipart_error(state: &AppState, error: &MultipartError) -> UploadError {
+pub(crate) fn multipart_error(state: &AppState, error: &MultipartError) -> UploadError {
     if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
         too_large(state)
     } else {
@@ -526,7 +480,9 @@ pub(crate) async fn save_to_temp(
     mut field: Field<'_>,
 ) -> Result<TempUpload, UploadError> {
     let limit = max_bytes(state);
+    let name = field.file_name().unwrap_or_default().to_owned();
     let mut writer = TempWriter::create(&state.work_dir).await?;
+    writer.upload.set_name(&name);
     loop {
         let chunk = match field.chunk().await {
             Ok(Some(chunk)) => chunk,
@@ -582,6 +538,7 @@ impl TempWriter {
             sha256: [0; 32],
             md5: [0; 16],
             size: 0,
+            name: String::new(),
         };
         let file = tokio::fs::File::create(&upload.path)
             .await
@@ -641,7 +598,6 @@ pub struct Prepared {
     pub storage_key: String,
 }
 
-/// Checks the fields a post needs, before any work on the file.
 /// The rating, source and parent an upload gets: the fields, unless
 /// metatags in the tags say otherwise.
 struct Chosen {
@@ -650,10 +606,20 @@ struct Chosen {
     parent_id: Option<i64>,
 }
 
+/// Checks the fields a post needs, before any work on the file.
 fn check_fields(fields: &UploadFields, metatags: &[Metatag]) -> Result<Chosen, UploadError> {
     let mut rating = fields.rating;
     let mut source = fields.source.clone();
-    let mut parent_id = None;
+    let mut parent_id = match fields.parent.trim().trim_start_matches('#') {
+        "" => None,
+        number => Some(
+            number
+                .parse::<i64>()
+                .ok()
+                .filter(|&n| n > 0)
+                .ok_or_else(|| UploadError::Invalid("The parent must be a post number.".into()))?,
+        ),
+    };
     for metatag in metatags {
         match metatag {
             Metatag::Rating(r) => rating = Some(*r),
@@ -713,42 +679,55 @@ pub async fn ingest(
         && !fields.allow_similar
         && let Some(user) = &uploader.user
     {
-        let posts = lookalikes(state, uploader, file).await?;
+        let hash = phash(state, file).await;
+        let posts = lookalikes(state, uploader, hash, None).await?;
         if !posts.is_empty() {
-            let staged = stage(state, user.id, &prepared, &fields.source).await?;
-            return Err(UploadError::Similar(Lookalikes { posts, staged }));
+            let (upload, staged) =
+                stage(state, user.id, file, &prepared, hash, &fields.source).await?;
+            return Err(UploadError::Similar(Lookalikes {
+                posts,
+                staged,
+                upload,
+            }));
         }
     }
     create_post(state, uploader, &prepared, fields).await
 }
 
-/// Posts that look like `file` (by perceptual hash, within the distance
-/// the index always finds) which `uploader` may see and hasn't
-/// blacklisted, closest first. Files that can't be hashed have none.
-async fn lookalikes(
-    state: &AppState,
-    uploader: &CurrentUser,
-    file: &TempUpload,
-) -> Result<Vec<i64>, UploadError> {
-    if !uploader.can(Permission::ViewPosts) {
-        return Ok(Vec::new());
-    }
-    let hash = match crate::image_search::hash_file(state, file).await {
-        Ok(hash) => hash,
+/// The perceptual hash of `file`, as processing would make it, if it can
+/// be hashed.
+pub(crate) async fn phash(state: &AppState, file: &TempUpload) -> Option<u64> {
+    match crate::image_search::hash_file(state, file).await {
+        Ok(hash) => Some(hash),
         Err(error) => {
             tracing::debug!(
                 error = error.public_message(),
                 "upload not checked for similar posts"
             );
-            return Ok(Vec::new());
+            None
         }
+    }
+}
+
+/// Posts that look like a file with perceptual hash `hash` (within the
+/// distance the index always finds) which `uploader` may see and hasn't
+/// blacklisted, closest first, leaving out `except`. Files that can't be
+/// hashed have none.
+pub(crate) async fn lookalikes(
+    state: &AppState,
+    uploader: &CurrentUser,
+    hash: Option<u64>,
+    except: Option<i64>,
+) -> Result<Vec<i64>, UploadError> {
+    let Some(hash) = hash.filter(|_| uploader.can(Permission::ViewPosts)) else {
+        return Ok(Vec::new());
     };
     let db = state.db.primary();
     let found = media::similar(
         db,
         hash,
         media::SIMILAR_MAX_DISTANCE,
-        None,
+        except,
         (LOOKALIKES_SHOWN * 3) as i64,
     )
     .await?;
@@ -770,32 +749,29 @@ async fn lookalikes(
         .collect())
 }
 
-/// Keeps a prepared file for `uploader_id` to post later. Unused staged
+/// Keeps a prepared file for `uploader_id` to post later, as an upload of
+/// its own. Returns the upload's id and the staged file's. Unused staged
 /// uploads expire with their files.
 pub(crate) async fn stage(
     state: &AppState,
     uploader_id: i64,
+    file: &TempUpload,
     prepared: &Prepared,
+    hash: Option<u64>,
     source: &str,
-) -> Result<i64, UploadError> {
-    Ok(moekura_db::staged_uploads::create(
-        state.db.primary(),
-        moekura_db::staged_uploads::NewStaged {
-            uploader_id,
-            source,
-            sha256: &prepared.sha256,
-            md5: &prepared.md5,
-            media_type: &prepared.media_type,
-            width: prepared.width,
-            height: prepared.height,
-            duration_ms: prepared.duration_ms,
-            frames: prepared.frames,
-            has_audio: prepared.has_audio,
-            file_size: prepared.file_size,
-            storage_key: &prepared.storage_key,
-        },
-    )
-    .await?)
+) -> Result<(i64, i64), UploadError> {
+    let mut tx = state.db.primary().begin().await?;
+    let upload = staged_uploads::create_upload(&mut *tx, uploader_id, source).await?;
+    let slot = staged_uploads::Slot {
+        upload_id: upload,
+        uploader_id,
+        position: 0,
+        file_name: file.name(),
+        source,
+    };
+    let staged = staged_uploads::create(&mut *tx, slot, prepared.stored(hash)).await?;
+    tx.commit().await?;
+    Ok((upload, staged))
 }
 
 /// Posts staged upload `id`, which must be `uploader`'s and not posted
@@ -810,7 +786,7 @@ pub async fn post_staged(
     let gone =
         || UploadError::Invalid("The file you sent before has expired; send it again.".into());
     let user = uploader.user.as_ref().ok_or_else(gone)?;
-    let staged = moekura_db::staged_uploads::by_id(db, id)
+    let staged = staged_uploads::by_id(db, id)
         .await?
         .filter(|s| s.uploader_id == user.id)
         .ok_or_else(gone)?;
@@ -819,7 +795,7 @@ pub async fn post_staged(
     }
     let prepared = Prepared::from_staged(&staged).ok_or_else(gone)?;
     let post_id = create_post(state, uploader, &prepared, fields).await?;
-    moekura_db::staged_uploads::used(db, id, post_id).await?;
+    staged_uploads::used(db, id, post_id).await?;
     Ok(post_id)
 }
 
@@ -919,6 +895,7 @@ async fn strip_metadata(
         sha256: [0; 32],
         md5: [0; 16],
         size: 0,
+        name: file.name.clone(),
     };
     match state
         .media
@@ -935,20 +912,38 @@ async fn strip_metadata(
 }
 
 impl Prepared {
-    /// The file a staged upload keeps.
-    pub fn from_staged(staged: &moekura_db::staged_uploads::Staged) -> Option<Self> {
+    /// The file a staged upload keeps, once it's there.
+    pub fn from_staged(staged: &staged_uploads::Staged) -> Option<Self> {
         Some(Self {
-            sha256: staged.sha256.as_slice().try_into().ok()?,
-            md5: staged.md5.as_slice().try_into().ok()?,
-            media_type: staged.media_type.clone(),
-            width: staged.width,
-            height: staged.height,
+            sha256: staged.sha256.as_deref()?.try_into().ok()?,
+            md5: staged.md5.as_deref()?.try_into().ok()?,
+            media_type: staged.media_type.clone()?,
+            width: staged.width?,
+            height: staged.height?,
             duration_ms: staged.duration_ms,
-            frames: staged.frames,
-            has_audio: staged.has_audio,
-            file_size: staged.file_size,
-            storage_key: staged.storage_key.clone(),
+            frames: staged.frames?,
+            has_audio: staged.has_audio?,
+            file_size: staged.file_size?,
+            storage_key: staged.storage_key.clone()?,
         })
+    }
+
+    /// What a staged upload keeps of the file, with its perceptual hash.
+    pub fn stored(&self, phash: Option<u64>) -> staged_uploads::StoredFile<'_> {
+        staged_uploads::StoredFile {
+            sha256: &self.sha256,
+            md5: &self.md5,
+            media_type: &self.media_type,
+            width: self.width,
+            height: self.height,
+            duration_ms: self.duration_ms,
+            frames: self.frames,
+            has_audio: self.has_audio,
+            file_size: self.file_size,
+            storage_key: &self.storage_key,
+            // Stored as Postgres stores it: the same 64 bits, signed.
+            phash: phash.map(|h| h as i64),
+        }
     }
 }
 
@@ -1100,7 +1095,9 @@ mod tests {
 
     async fn app(pool: &PgPool) -> (TestApp, AppState) {
         let state = test_state(pool).await;
-        let routes = routes(max_bytes(&state)).merge(crate::posts::routes());
+        let routes = routes(max_bytes(&state))
+            .merge(crate::uploads::routes(max_bytes(&state)))
+            .merge(crate::posts::routes());
         (TestApp::new(state.clone(), routes), state)
     }
 
@@ -1250,25 +1247,24 @@ mod tests {
         let warned = app
             .post_multipart("/upload", Some(&alice), &tagged, Some(("b.png", &again)))
             .await;
-        assert_eq!(warned.status, StatusCode::CONFLICT, "{}", warned.body);
-        assert!(
-            warned.body.contains(&format!("href=\"/posts/{original}")),
-            "{}",
-            warned.body
+        // The file waits in an upload, whose page shows the look-alikes.
+        assert_eq!(warned.status, StatusCode::SEE_OTHER, "{}", warned.body);
+        let (upload, staged): (i64, i64) =
+            sqlx::query_as("SELECT upload_id, id FROM staged_uploads")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            warned.location.as_deref(),
+            Some(format!("/uploads/{upload}").as_str())
         );
-        assert!(warned.body.contains("Upload anyway"), "{}", warned.body);
-        assert!(warned.body.contains(">cat</textarea>"), "the fields stay");
-        let staged: i64 = sqlx::query_scalar("SELECT id FROM staged_uploads")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let shown = app.get(&format!("/uploads/{upload}"), Some(&alice)).await;
         assert!(
-            warned
-                .body
-                .contains(&format!("name=\"staged\" value=\"{staged}\"")),
+            shown.body.contains(&format!("href=\"/posts/{original}")),
             "{}",
-            warned.body
+            shown.body
         );
+        assert!(shown.body.contains("Post anyway"), "{}", shown.body);
         assert_eq!(
             sqlx::query_scalar::<_, i64>("SELECT count(*) FROM posts")
                 .fetch_one(&pool)
@@ -1568,7 +1564,6 @@ mod tests {
             "{}",
             response.body
         );
-        assert!(response.body.contains("a test pattern"), "fields are kept");
 
         let png = fixture::png(16, 16);
         let response = app
@@ -1621,11 +1616,6 @@ mod tests {
                 .contains("`order:score` may not start with `order:`"),
             "{}",
             response.body
-        );
-        assert!(
-            response
-                .body
-                .contains("Long_Hair order:score artist:someone")
         );
 
         form.last_mut().unwrap().1 = "Long_Hair artist:someone".to_owned();
@@ -1754,7 +1744,7 @@ mod tests {
             .await
         };
 
-        let form = app.get("/upload", Some(&member)).await;
+        let form = app.get("/uploads/new", Some(&member)).await;
         assert!(
             form.body
                 .contains("You can upload 1 more before some are approved"),
@@ -1770,7 +1760,7 @@ mod tests {
             refused.body
         );
         assert!(
-            app.get("/upload", Some(&member))
+            app.get("/uploads/new", Some(&member))
                 .await
                 .body
                 .contains("waiting for approval")
@@ -1793,8 +1783,14 @@ mod tests {
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn visitors_must_log_in_to_upload(pool: PgPool) {
         let (app, _) = app(&pool).await;
+        let response = app.get("/uploads/new", None).await;
+        assert_eq!(
+            response.location.as_deref(),
+            Some("/login?next=%2Fuploads%2Fnew")
+        );
+        // The old address leads to the form.
         let response = app.get("/upload", None).await;
-        assert_eq!(response.location.as_deref(), Some("/login?next=%2Fupload"));
+        assert_eq!(response.location.as_deref(), Some("/uploads/new"));
         let response = app
             .post_multipart("/upload", None, &fields("g"), None)
             .await;

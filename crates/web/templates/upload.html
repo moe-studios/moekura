@@ -3,6 +3,7 @@
 {% block content %}
 <section class="card medium">
   <h1>{{ t("nav-upload") }}</h1>
+  {% include "upload_nav.html" %}
   {% if site.has_rules %}<p class="hint">{{ t("upload-rules") }}</p>{% endif %}
   {% if allowance and allowance.refusal %}<p class="notice" role="status">{{ allowance.refusal }}</p>
   {% elif allowance and (allowance.pending_left is not none or allowance.today_left is not none) %}<p class="hint">{% if allowance.pending_left is not none and allowance.today_left is not none %}{{ t("upload-left-both", pending=allowance.pending_left, today=allowance.today_left) }}{% elif allowance.pending_left is not none %}{{ t("upload-left-pending", pending=allowance.pending_left) }}{% else %}{{ t("upload-left-today", today=allowance.today_left) }}{% endif %}</p>{% endif %}
@@ -11,65 +12,19 @@
   {% elif error %}
   <p class="form-error" role="alert">{{ error }}</p>
   {% endif %}
-  {% if similar is not none %}
-  <section class="notice upload-similar" role="alert" aria-labelledby="upload-similar-title">
-    <h2 id="upload-similar-title">{{ t("upload-similar-title", count=similar|length) }}</h2>
-    <p>{{ t("upload-similar-hint") }}</p>
-    <ul class="post-grid image-matches">
-      {% for card in similar %}<li>{% include "card.html" %}</li>{% endfor %}
-    </ul>
-  </section>
-  {% endif %}
-  <form method="post" action="/upload" enctype="multipart/form-data" data-upload>
-    {% if form.staged %}
-    <input type="hidden" name="staged" value="{{ form.staged }}">
-    <p class="hint">{{ t("upload-staged") }}</p>
-    {% endif %}
+  <form method="post" action="/uploads" enctype="multipart/form-data" data-upload>
     <div class="upload-drop-zone" data-upload-drop-zone>
-      <label for="file">{{ t("upload-file") }}</label>
-      <input id="file" name="file" type="file"
+      <label for="file">{{ t("upload-files") }}</label>
+      <input id="file" name="file" type="file" multiple data-max="{{ max_files }}"
              accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/jxl,video/mp4,video/webm,application/zip,.zip">
-      <p class="hint" data-upload-hint hidden>{{ t("upload-drop-hint") }}</p>
+      <p class="hint" data-upload-hint hidden>{{ t("upload-drop-hint", max=max_files) }}</p>
       <p class="hint" data-upload-status role="status" aria-live="polite"></p>
     </div>
     <label for="url">{{ t("upload-url") }}</label>
-    <input id="url" name="url" type="url" value="{{ form.url }}" placeholder="https://">
+    <input id="url" name="url" type="url" value="{{ url }}" placeholder="https://" maxlength="2048">
     <p class="hint">{{ t("upload-url-hint", mb=max_mb) }}</p>
-
-    <fieldset class="ratings">
-      <legend>{{ t("rating") }}</legend>
-      {% for rating in ratings %}
-      <label class="choice">
-        <input type="radio" name="rating" value="{{ rating.code }}" required{% if form.rating == rating.code %} checked{% endif %}>
-        {{ t("rating-" ~ rating.code) }}
-      </label>
-      {% endfor %}
-    </fieldset>
-
-    <label for="tags">{{ t("nav-tags") }}</label>
-    <textarea id="tags" name="tags" rows="3" autocapitalize="none" spellcheck="false" data-autocomplete="edit">{{ form.tags }}</textarea>
-    <p class="hint">{{ t("upload-tags-hint") }}</p>
-    <p class="artist-finder" data-artist-finder="url source" aria-live="polite" hidden></p>
-    <div class="related-tags" data-related-tags="tags"><a class="hint" href="/tags/related">{{ t("related-title") }}</a></div>
-
-    <label for="source">{{ t("source") }} <span class="optional">{{ t("optional") }}</span></label>
-    <input id="source" name="source" type="url" value="{{ form.source }}" placeholder="https://" maxlength="2048">
-
-    <label for="description">{{ t("description") }} <span class="optional">{{ t("optional") }}</span></label>
-    <textarea id="description" name="description" rows="4" maxlength="20000">{{ form.description }}</textarea>
-
-    <details class="edit"{% if form.commentary_title or form.commentary_description %} open{% endif %}>
-      <summary>{{ t("commentary") }} <span class="optional">{{ t("optional") }}</span></summary>
-      <div class="edit-fields">
-        <label for="commentary_title">{{ t("field-title") }}</label>
-        <input id="commentary_title" name="commentary_title" value="{{ form.commentary_title }}" maxlength="1000">
-        <label for="commentary_description">{{ t("description") }}</label>
-        <textarea id="commentary_description" name="commentary_description" rows="3">{{ form.commentary_description }}</textarea>
-        <p class="hint">{{ t("upload-commentary-hint") }}</p>
-      </div>
-    </details>
-
-    <button type="submit">{% if similar is not none %}{{ t("upload-anyway") }}{% else %}{{ t("nav-upload") }}{% endif %}</button>
+    <button type="submit">{{ t("upload-continue") }}</button>
   </form>
+  <p class="aside">{{ t("upload-next-step") }}</p>
 </section>
 {% endblock %}

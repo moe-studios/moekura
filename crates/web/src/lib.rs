@@ -79,6 +79,7 @@ mod themes;
 mod thumbnail_crop;
 mod two_factor;
 mod upload;
+mod uploads;
 mod user_feedbacks;
 mod user_moderation;
 mod users;
@@ -372,6 +373,7 @@ pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
         .merge(webhooks::routes())
         .merge(wiki::routes())
         .merge(upload::routes(max_upload_bytes))
+        .merge(uploads::routes(max_upload_bytes))
 }
 
 /// Wraps `routes` (the pages and API) in session handling and the global

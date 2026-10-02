@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}{% if upload.count > 1 %}{{ t("upload-file-title", number=file.number, count=upload.count) }} · {% endif %}{{ t("upload-title", id=upload.id) }} · {{ site.name }}{% endblock %}
+{% block head %}{% if refresh %}<meta http-equiv="refresh" content="{{ refresh }}">{% endif %}{% endblock %}
+{% block content %}
+<div class="upload-layout">
+  <section class="post-media upload-media">
+    {% if upload.count > 1 %}
+    <nav class="pool-nav current" aria-label="{{ t('upload-files-nav') }}">
+      <span class="pool-steps">{% if previous_url %}<a href="{{ previous_url }}" rel="prev">{{ t("post-pool-prev") }}</a>{% else %}<span aria-hidden="true">{{ t("post-pool-prev") }}</span>{% endif %}</span>
+      <span class="pool-name"><a href="{{ upload.url }}">{{ t("upload-file-title", number=file.number, count=upload.count) }}</a></span>
+      <span class="pool-steps">{% if next_url %}<a href="{{ next_url }}" rel="next">{{ t("post-pool-next") }}</a>{% else %}<span aria-hidden="true">{{ t("post-pool-next") }}</span>{% endif %}</span>
+    </nav>
+    {% endif %}
+    {% if file.status == "pending" %}
+    <p class="notice" role="status">{{ t("upload-file-downloading") }}</p>
+    {% elif file.status == "failed" %}
+    <p class="form-error" role="alert">{% if file.duplicate_of %}{{ t("upload-duplicate", id=file.duplicate_of) }}{% else %}{{ file.error }}{% endif %}</p>
+    {% elif file.preview == "image" %}
+    <a href="{{ file.original }}"><img src="{{ file.original }}" width="{{ file.width }}" height="{{ file.height }}" alt="{{ file.name }}"></a>
+    {% elif file.preview == "video" %}
+    <video src="{{ file.original }}" width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline></video>
+    {% else %}
+    <p class="notice">{{ t("upload-no-preview", type=file.media_type|upper) }}</p>
+    {% endif %}
+  </section>
+
+  <section class="upload-details">
+    <h1>{{ t("upload-title", id=upload.id) }}</h1>
+    {% include "upload_nav.html" %}
+    <dl class="upload-facts">
+      <dt>{{ t("upload-file") }}</dt><dd class="source" title="{{ file.full_name }}">{{ file.name or t("upload-unnamed") }}</dd>
+      {% if file.status == "ready" %}
+      <dt>{{ t("api-type") }}</dt><dd>{{ file.media_type|upper }}{% if file.duration %} · {{ file.duration }}{% endif %}{% if file.animated %} · {{ t("post-animated") }}{% endif %}</dd>
+      <dt>{{ t("upload-size") }}</dt><dd>{{ file.width }}×{{ file.height }} · {{ file.size }}</dd>
+      {% endif %}
+      {% if upload.source %}<dt>{{ t("upload-from") }}</dt><dd class="source"><a href="{{ upload.source }}" rel="noopener noreferrer nofollow">{{ upload.source }}</a></dd>{% endif %}
+    </dl>
+
+    {% if file.post_id %}
+    <p class="notice" role="status">{{ t("upload-file-was-posted", id=file.post_id) }}</p>
+    {% elif file.status == "ready" %}
+    {% if similar %}
+    <section class="notice upload-similar" role="alert" aria-labelledby="upload-similar-title">
+      <h2 id="upload-similar-title">{{ t("upload-similar-title", count=similar|length) }}</h2>
+      <p>{{ t("upload-similar-hint") }}</p>
+      <ul class="post-grid image-matches">
+        {% for card in similar %}<li>{% include "card.html" %}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if duplicate_of %}
+    <p class="form-error" role="alert">{{ t("upload-duplicate", id=duplicate_of) }}</p>
+    {% elif error %}
+    <p class="form-error" role="alert">{{ error }}</p>
+    {% endif %}
+    <form method="post" action="{{ file.url }}">
+      <label for="source">{{ t("source") }} <span class="optional">{{ t("optional") }}</span></label>
+      <input id="source" name="source" type="url" value="{{ form.source }}" placeholder="https://" maxlength="2048">
+
+      <fieldset class="ratings">
+        <legend>{{ t("rating") }}</legend>
+        {% for rating in ratings %}
+        <label class="choice">
+          <input type="radio" name="rating" value="{{ rating.code }}" required{% if form.rating == rating.code %} checked{% endif %}>
+          {{ t("rating-" ~ rating.code) }}
+        </label>
+        {% endfor %}
+      </fieldset>
+
+      <label for="tags">{{ t("nav-tags") }}</label>
+      <textarea id="tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="edit" autofocus>{{ form.tags }}</textarea>
+      <p class="hint">{{ t("upload-tags-hint") }}</p>
+      <p class="artist-finder" data-artist-finder="source" aria-live="polite" hidden></p>
+      <div class="related-tags" data-related-tags="tags"><a class="hint" href="/tags/related">{{ t("related-title") }}</a></div>
+
+      <label for="parent">{{ t("upload-parent") }} <span class="optional">{{ t("optional") }}</span></label>
+      <input id="parent" name="parent" value="{{ form.parent }}" inputmode="numeric" size="10" maxlength="20" placeholder="#">
+
+      <label for="description">{{ t("description") }} <span class="optional">{{ t("optional") }}</span></label>
+      <textarea id="description" name="description" rows="3" maxlength="20000">{{ form.description }}</textarea>
+
+      <details class="edit"{% if form.commentary_title or form.commentary_description %} open{% endif %}>
+        <summary>{{ t("commentary") }} <span class="optional">{{ t("optional") }}</span></summary>
+        <div class="edit-fields">
+          <label for="commentary_title">{{ t("field-title") }}</label>
+          <input id="commentary_title" name="commentary_title" value="{{ form.commentary_title }}" maxlength="1000">
+          <label for="commentary_description">{{ t("description") }}</label>
+          <textarea id="commentary_description" name="commentary_description" rows="3">{{ form.commentary_description }}</textarea>
+          <p class="hint">{{ t("upload-commentary-hint") }}</p>
+        </div>
+      </details>
+
+      <button type="submit">{% if similar %}{{ t("upload-post-anyway") }}{% else %}{{ t("upload-post") }}{% endif %}</button>
+    </form>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

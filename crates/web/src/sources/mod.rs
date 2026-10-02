@@ -197,6 +197,12 @@ impl Sources {
     pub async fn lookup(&self, url: &str) -> Option<Arc<SourceInfo>> {
         lookup(&self.fetcher, &self.cache, url).await
     }
+
+    /// Answers lookups of `url` with `info`, as if its page said so.
+    #[cfg(test)]
+    pub fn remember(&self, url: &str, info: SourceInfo) {
+        self.cache.put(url, Some(Arc::new(info)));
+    }
 }
 
 /// What `url`'s source says, if it's a page some strategy reads (cached).

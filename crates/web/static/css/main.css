@@ -547,7 +547,7 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .tag-warnings p, .tag-warnings ul { margin: 0; }
 .tag-warnings ul { padding-left: 20px; }
 .suggestions { margin-top: 20px; }
-.suggestions h3 { margin: 0 0 6px; font-size: 0.95rem; }
+.suggestions h2, .suggestions h3 { margin: 0 0 6px; font-size: 0.95rem; }
 .suggested-tags { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .suggestions p { margin: 6px 0 0; }
 form .suggestions button[type="submit"] { background: var(--border); color: var(--text); }

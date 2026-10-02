@@ -2,8 +2,8 @@
 
 The tagger suggests tags and a rating for new uploads with a machine
 learning model: one of SmilingWolf's WD taggers, trained on Danbooru and
-run on the CPU with ONNX Runtime. Suggestions appear under **Edit** on each
-post (see [Tags](../using/tags.md#suggestions-from-the-tagger)), and
+run on the CPU with ONNX Runtime. Suggestions appear on the post form while
+uploading and under **Edit** on each post (see [Tags](../using/tags.md#suggestions-from-the-tagger)), and
 `ai:tag` searches for posts where a tag is suggested but not applied. The
 tagger can also apply what it's surest of by itself.
 

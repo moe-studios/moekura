@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { withTag } from "./suggestions.ts";
+import { hasTag, withTag } from "./suggestions.ts";
 
 test("adds a tag at the end", () => {
   assert.equal(withTag("cat dog", "long_hair"), "cat dog long_hair ");
@@ -12,4 +12,11 @@ test("adds a tag at the end", () => {
 test("leaves tags already there alone", () => {
   assert.equal(withTag("cat dog", "cat"), "cat dog");
   assert.equal(withTag("cat\ndog ", "dog"), "cat\ndog ");
+});
+
+test("finds tags in a tags box", () => {
+  assert.ok(hasTag("cat dog", "dog"));
+  assert.ok(hasTag("Cat\nartist:someone ", "someone"));
+  assert.ok(!hasTag("cats", "cat"));
+  assert.ok(!hasTag("", "cat"));
 });

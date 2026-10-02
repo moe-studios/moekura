@@ -1,0 +1,19 @@
+{# The tagger's suggestions on a staged file's post form; also sent alone to scripts waiting for them. #}
+{% if suggestions %}
+<h2>{{ t("post-suggested") }}</h2>
+{% if suggestions.pending %}
+<p class="hint" data-suggestions-pending>{{ t("upload-suggested-pending") }} <button type="submit" name="refresh" value="1" class="secondary" data-suggestions-check>{{ t("upload-suggested-check") }}</button></p>
+{% else %}
+{% if suggestions.tags %}
+<ul class="suggested-tags">
+  {% for tag in suggestions.tags %}
+  <li><button type="submit" name="add" value="{{ tag.name }}" title="{{ t('post-suggested-add', tag=tag.name, percent=tag.confidence) }}"><span class="tag-{{ tag.category }}">{{ tag.name }}</span> <span class="confidence">{{ tag.confidence }}%</span></button></li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% if suggestions.rating %}
+<p class="suggested-rating">{{ t("post-suggested-rating") }} <button type="submit" name="suggested_rating" value="{{ suggestions.rating.code }}" title="{{ t('post-rate-it', rating=t('rating-' ~ suggestions.rating.code)) }}">{{ t("rating-" ~ suggestions.rating.code) }} <span class="confidence">{{ suggestions.rating.confidence }}%</span></button></p>
+{% endif %}
+<p class="hint" data-suggestions-hint>{{ t("upload-suggested-hint") }}</p>
+{% endif %}
+{% endif %}

@@ -770,6 +770,7 @@ pub(crate) async fn stage(
         source,
     };
     let staged = staged_uploads::create(&mut *tx, slot, prepared.stored(hash)).await?;
+    crate::suggestions::queue_staged(state, &mut tx, staged).await?;
     tx.commit().await?;
     Ok((upload, staged))
 }

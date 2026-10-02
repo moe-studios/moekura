@@ -51,6 +51,10 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
         .route("/uploads/new", get(new))
         .route("/uploads/{id}", get(show))
         .route("/uploads/{id}/assets/{file}", get(asset).post(post_asset))
+        .route(
+            "/uploads/{id}/assets/{file}/suggestions",
+            get(asset_suggestions),
+        )
 }
 
 /// The uploading user: uploads are kept for an account.
@@ -213,7 +217,10 @@ async fn stage_files(
         .await;
         match prepared {
             Ok((prepared, hash)) => {
-                staged_uploads::create(db, slot, prepared.stored(hash)).await?;
+                let mut tx = db.begin().await?;
+                let staged = staged_uploads::create(&mut *tx, slot, prepared.stored(hash)).await?;
+                crate::suggestions::queue_staged(state, &mut tx, staged).await?;
+                tx.commit().await?;
             }
             Err(error) => {
                 let (message, duplicate_of) = failure(&error);
@@ -295,7 +302,10 @@ async fn download_pending(state: AppState, upload_id: i64, info: Option<Arc<Sour
             .await;
             match fetched {
                 Ok((prepared, hash)) => {
-                    staged_uploads::stored(db, file.id, prepared.stored(hash)).await
+                    let mut tx = db.begin().await?;
+                    staged_uploads::stored(&mut *tx, file.id, prepared.stored(hash)).await?;
+                    crate::suggestions::queue_staged(&state, &mut tx, file.id).await?;
+                    tx.commit().await
                 }
                 Err(error) => {
                     let (message, duplicate_of) = failure(&error);
@@ -432,6 +442,13 @@ struct AssetFields {
     description: String,
     commentary_title: String,
     commentary_description: String,
+    /// A suggested tag clicked on (without scripts, which add it to the
+    /// tags box): added to the form, which is shown again.
+    add: String,
+    /// The suggested rating, clicked on likewise.
+    suggested_rating: String,
+    /// "Check again" for suggestions: the form is shown again.
+    refresh: String,
 }
 
 impl AssetFields {
@@ -504,6 +521,21 @@ async fn post_asset(
     let user = uploader(&page.current)?;
     let state = page.state();
     let (upload, files, index) = own_file(state, user, id, file_id).await?;
+    // A suggestion taken, or a check for them, without scripts: the form
+    // again, with the suggestion in it, rather than a post.
+    if !(fields.add.is_empty() && fields.suggested_rating.is_empty() && fields.refresh.is_empty()) {
+        let mut fields = fields;
+        let added = std::mem::take(&mut fields.add);
+        if !added.trim().is_empty() {
+            fields.tags = format!("{} {} ", fields.tags.trim_end(), added.trim())
+                .trim_start()
+                .to_owned();
+        }
+        if !fields.suggested_rating.is_empty() {
+            fields.rating = std::mem::take(&mut fields.suggested_rating);
+        }
+        return asset_page(&page, &upload, &files, index, &fields, None).await;
+    }
     let upload_fields = fields.upload_fields();
     let posted = if files[index].status != Status::Ready {
         Err(UploadError::Invalid("This file can't be posted.".into()))
@@ -533,6 +565,27 @@ async fn post_asset(
     }
 }
 
+/// The tagger's suggestions for a file, as the box on its post form
+/// holds them, for scripts waiting for them. Empty when there are none.
+async fn asset_suggestions(
+    page: Page,
+    Path((id, file_id)): Path<(i64, i64)>,
+) -> Result<Response, AppError> {
+    let user = uploader(&page.current)?;
+    let state = page.state();
+    let (_, files, index) = own_file(state, user, id, file_id).await?;
+    let file = &files[index];
+    let suggestions = if file.status == Status::Ready && file.post_id.is_none() {
+        crate::suggestions::for_upload_form(state, state.db.primary(), file.id, "", "").await?
+    } else {
+        None
+    };
+    Ok(page.render(
+        "upload_suggestions.html",
+        context! { suggestions => suggestions },
+    ))
+}
+
 /// The page of file `files[index]` of `upload`: the file, the posts it
 /// looks like, and the form making it a post.
 async fn asset_page(
@@ -557,6 +610,18 @@ async fn asset_page(
             .collect()
     } else {
         Vec::new()
+    };
+    let suggestions = if file.status == Status::Ready && file.post_id.is_none() {
+        crate::suggestions::for_upload_form(
+            state,
+            state.db.primary(),
+            file.id,
+            &fields.tags,
+            &fields.rating,
+        )
+        .await?
+    } else {
+        None
     };
     let link = |i: usize| {
         files
@@ -586,6 +651,11 @@ async fn asset_page(
             previous_url => index.checked_sub(1).and_then(link),
             next_url => link(index + 1),
             similar => similar,
+            suggestions => suggestions,
+            suggestions_url => url_value(&format!(
+                "/uploads/{}/assets/{}/suggestions",
+                upload.id, file.id
+            )),
             ratings => ratings,
             form => context! {
                 rating => fields.rating,

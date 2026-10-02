@@ -1,18 +1,21 @@
 //! The `ml.tag_post` job: running the model on a post's thumbnail and
-//! saving what it suggests.
+//! saving what it suggests; and `ml.tag_staged`, the same for a file
+//! waiting to be posted, for its post form.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use moekura_core::jobs::TagPost;
-use moekura_core::posts::PostStatus;
+use moekura_core::jobs::{TagPost, TagStaged};
+use moekura_core::posts::{PostStatus, Rating};
+use moekura_core::tagger::TaggerSettings;
 use moekura_core::tags::TagName;
 use moekura_db::media::{self, Variant};
+use moekura_db::staged_uploads::{self, Status};
 use moekura_db::tag_suggestions::{self, AccountError, NewResult};
 use moekura_jobs::{JobError, Registry};
-use moekura_media::{Media, MediaType};
+use moekura_media::{Media, MediaType, RgbImage};
 use moekura_storage::{Key, Storage};
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
 
 use crate::model::Predict;
 
@@ -31,9 +34,14 @@ pub struct TaggerJobs {
 
 impl TaggerJobs {
     pub fn register(self, registry: &mut Registry) {
+        let jobs = self.clone();
         registry.register(move |job: TagPost| {
-            let jobs = self.clone();
+            let jobs = jobs.clone();
             async move { jobs.tag(job.post_id).await }
+        });
+        registry.register(move |job: TagStaged| {
+            let jobs = self.clone();
+            async move { jobs.tag_staged(job.staged_id).await }
         });
     }
 
@@ -65,34 +73,16 @@ impl TaggerJobs {
             .parse()
             .map_err(|()| JobError::permanent(format!("unknown format `{}`", variant.format)))?;
 
-        let work = ScratchDir::create(&self.work_dir, post_id).await?;
+        let work = ScratchDir::create(&self.work_dir, &format!("tag-{post_id}")).await?;
         let file = work.path().join(format!("source.{}", variant.format));
         self.storage
             .download(&key, &file)
             .await
             .map_err(|e| JobError::retry(format!("downloading {}: {e}", variant.kind)))?;
-        let image = self
-            .media
-            .rgb_within(&file, variant_type, size, work.path())
-            .await
-            .map_err(|e| {
-                if e.is_internal() {
-                    JobError::retry(e)
-                } else {
-                    JobError::permanent(e)
-                }
-            })?;
+        let image = self.scale(&file, variant_type, work.path()).await?;
         drop(work);
 
         let settings = moekura_db::settings::load(&self.db).await?.tagger;
-        let categories = moekura_db::tags::categories(&self.db).await?;
-        let threshold = |category_id: i16| {
-            let name = categories
-                .iter()
-                .find(|c| c.id == category_id)
-                .map_or("general", |c| c.name.as_str());
-            settings.threshold(name)
-        };
         let tagger = if settings.auto_apply {
             let account = tag_suggestions::tagger_account(&self.db, &self.account)
                 .await
@@ -104,38 +94,9 @@ impl TaggerJobs {
         } else {
             None
         };
-
-        let model = self.model.clone();
-        let floor = settings.lowest_threshold();
-        let prediction = tokio::task::spawn_blocking(move || model.predict(&image, floor))
-            .await
-            .map_err(|e| JobError::retry(format!("the model crashed: {e}")))?
-            .map_err(JobError::retry)?;
-        let Some((rating, rating_confidence)) = prediction.rating else {
-            return Err(JobError::permanent("the model gave no rating"));
-        };
-
-        // The model's names, as this site writes them.
-        let names: Vec<(TagName, i16, f32)> = prediction
-            .tags
-            .into_iter()
-            .filter_map(|(name, category, score)| {
-                TagName::parse(&name)
-                    .ok()
-                    .map(|name| (name, category, score))
-            })
-            .collect();
-        let predicted: Vec<(&str, i16, f32)> = names
-            .iter()
-            .map(|(name, category, score)| (name.as_str(), *category, *score))
-            .collect();
+        let (rating, rating_confidence, names) = self.predict(image, &settings).await?;
         let mut tx = self.db.begin().await?;
-        let suggestions: Vec<(i32, f32)> = tag_suggestions::site_tags(&mut tx, &predicted)
-            .await?
-            .into_iter()
-            .filter(|(tag, confidence)| *confidence >= threshold(tag.category_id))
-            .map(|(tag, confidence)| (tag.id, confidence))
-            .collect();
+        let suggestions = site_suggestions(&mut tx, &names, &settings).await?;
 
         let saved = tag_suggestions::save(
             &mut tx,
@@ -173,6 +134,143 @@ impl TaggerJobs {
         }
         Ok(())
     }
+
+    /// Runs the model on staged upload `staged_id`'s file and saves its
+    /// suggestions for the post form, unless the file was posted (the
+    /// post gets its own) or is gone. Safe to repeat.
+    pub async fn tag_staged(&self, staged_id: i64) -> Result<(), JobError> {
+        let Some(staged) = staged_uploads::by_id(&self.db, staged_id).await? else {
+            return Ok(());
+        };
+        if staged.status != Status::Ready || staged.post_id.is_some() {
+            return Ok(());
+        }
+        let (Some(stored), Some(media_type)) = (&staged.storage_key, &staged.media_type) else {
+            return Ok(());
+        };
+        let key = Key::parse(stored)
+            .ok_or_else(|| JobError::permanent(format!("malformed storage key `{stored}`")))?;
+        let media_type: MediaType = media_type
+            .parse()
+            .map_err(|()| JobError::permanent(format!("unknown media type `{media_type}`")))?;
+
+        let work = ScratchDir::create(&self.work_dir, &format!("tag-staged-{staged_id}")).await?;
+        let file = work.path().join(format!("original.{}", key.extension()));
+        self.storage
+            .download(&key, &file)
+            .await
+            .map_err(|e| JobError::retry(format!("downloading the file: {e}")))?;
+        let duration = staged.duration_ms.and_then(|d| u32::try_from(d).ok());
+        let (still, still_type) = self
+            .media
+            .still(&file, media_type, duration, work.path())
+            .await
+            .map_err(media_error)?;
+        let image = self.scale(&still, still_type, work.path()).await?;
+        drop(work);
+
+        let settings = moekura_db::settings::load(&self.db).await?.tagger;
+        let (rating, rating_confidence, names) = self.predict(image, &settings).await?;
+        let mut tx = self.db.begin().await?;
+        let suggestions = site_suggestions(&mut tx, &names, &settings).await?;
+        let saved = tag_suggestions::save_staged(
+            &mut *tx,
+            staged_id,
+            self.model.model_name(),
+            rating,
+            rating_confidence,
+            &suggestions,
+        )
+        .await?;
+        tx.commit().await?;
+        if saved {
+            tracing::info!(
+                staged_id,
+                suggestions = suggestions.len(),
+                rating = rating.code(),
+                "staged upload tagged"
+            );
+        }
+        Ok(())
+    }
+
+    /// `file` scaled for the model.
+    async fn scale(
+        &self,
+        file: &Path,
+        media_type: MediaType,
+        work: &Path,
+    ) -> Result<RgbImage, JobError> {
+        self.media
+            .rgb_within(file, media_type, self.model.input_size(), work)
+            .await
+            .map_err(media_error)
+    }
+
+    /// The model's rating of `image`, with its confidence, and the tags it
+    /// finds at least as likely as the lowest threshold, named as this
+    /// site writes them, with their category and confidence.
+    async fn predict(
+        &self,
+        image: RgbImage,
+        settings: &TaggerSettings,
+    ) -> Result<(Rating, f32, Vec<(TagName, i16, f32)>), JobError> {
+        let model = self.model.clone();
+        let floor = settings.lowest_threshold();
+        let prediction = tokio::task::spawn_blocking(move || model.predict(&image, floor))
+            .await
+            .map_err(|e| JobError::retry(format!("the model crashed: {e}")))?
+            .map_err(JobError::retry)?;
+        let Some((rating, rating_confidence)) = prediction.rating else {
+            return Err(JobError::permanent("the model gave no rating"));
+        };
+        let names = prediction
+            .tags
+            .into_iter()
+            .filter_map(|(name, category, score)| {
+                TagName::parse(&name)
+                    .ok()
+                    .map(|name| (name, category, score))
+            })
+            .collect();
+        Ok((rating, rating_confidence, names))
+    }
+}
+
+/// The site's tags for what the model found, created if missing, with
+/// their confidence, keeping those over their category's threshold.
+async fn site_suggestions(
+    conn: &mut PgConnection,
+    names: &[(TagName, i16, f32)],
+    settings: &TaggerSettings,
+) -> Result<Vec<(i32, f32)>, JobError> {
+    let categories = moekura_db::tags::categories(&mut *conn).await?;
+    let threshold = |category_id: i16| {
+        let name = categories
+            .iter()
+            .find(|c| c.id == category_id)
+            .map_or("general", |c| c.name.as_str());
+        settings.threshold(name)
+    };
+    let predicted: Vec<(&str, i16, f32)> = names
+        .iter()
+        .map(|(name, category, score)| (name.as_str(), *category, *score))
+        .collect();
+    Ok(tag_suggestions::site_tags(conn, &predicted)
+        .await?
+        .into_iter()
+        .filter(|(tag, confidence)| *confidence >= threshold(tag.category_id))
+        .map(|(tag, confidence)| (tag.id, confidence))
+        .collect())
+}
+
+/// Media errors as job errors: ours are worth retrying, the file's aren't.
+fn media_error(error: moekura_media::MediaError) -> JobError {
+    if error.is_internal() {
+        JobError::retry(error)
+    } else {
+        JobError::permanent(error)
+    }
 }
 
 /// The smallest rendition at least `size` on its longest side, or else
@@ -191,8 +289,8 @@ fn pick_variant(variants: &[Variant], size: u32) -> Option<&Variant> {
 struct ScratchDir(PathBuf);
 
 impl ScratchDir {
-    async fn create(root: &Path, post_id: i64) -> Result<Self, JobError> {
-        let path = root.join(format!("job-tag-{post_id}-{}", std::process::id()));
+    async fn create(root: &Path, name: &str) -> Result<Self, JobError> {
+        let path = root.join(format!("job-{name}-{}", std::process::id()));
         let _ = tokio::fs::remove_dir_all(&path).await;
         tokio::fs::create_dir_all(&path)
             .await
@@ -420,6 +518,77 @@ pub(crate) mod tests {
             .unwrap();
         jobs.tag(post_id).await.unwrap();
         jobs.tag(post_id + 100).await.unwrap();
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn tags_staged_files_until_posted(pool: PgPool) {
+        let dir = scratch("staged");
+        let fixed = Arc::new(Fixed {
+            seen: Default::default(),
+        });
+        // The post's original, a 100×50 PNG, staged again.
+        let (jobs, post_id) = processed_post(&pool, &dir, fixed.clone()).await;
+        let asset = media::for_post(&pool, post_id).await.unwrap().unwrap();
+        let uploader: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles LIMIT 1 RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let upload = staged_uploads::create_upload(&pool, uploader, "")
+            .await
+            .unwrap();
+        let slot = staged_uploads::Slot {
+            upload_id: upload,
+            uploader_id: uploader,
+            position: 0,
+            file_name: "a.png",
+            source: "",
+        };
+        let staged = staged_uploads::create(
+            &pool,
+            slot,
+            staged_uploads::StoredFile {
+                sha256: &[1; 32],
+                md5: &[1; 16],
+                media_type: "png",
+                width: 100,
+                height: 50,
+                duration_ms: None,
+                frames: 1,
+                has_audio: false,
+                file_size: 1,
+                storage_key: &asset.storage_key,
+                phash: None,
+            },
+        )
+        .await
+        .unwrap();
+        jobs.tag_staged(staged).await.unwrap();
+
+        let result = tag_suggestions::staged_result(&pool, staged)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.rating, Rating::Sensitive);
+        let names: Vec<&str> = result.suggestions.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["1girl", "hatsune_miku", "solo"]);
+        assert_eq!(*fixed.seen.lock().unwrap(), [(64, 32)]);
+
+        // Once posted, the post is tagged instead.
+        sqlx::query("DELETE FROM staged_tagger_results")
+            .execute(&pool)
+            .await
+            .unwrap();
+        staged_uploads::used(&pool, staged, post_id).await.unwrap();
+        jobs.tag_staged(staged).await.unwrap();
+        assert!(
+            tag_suggestions::staged_result(&pool, staged)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        jobs.tag_staged(staged + 100).await.unwrap();
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

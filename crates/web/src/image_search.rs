@@ -9,7 +9,6 @@ use axum::routing::get;
 use minijinja::context;
 use moekura_core::permissions::Permission;
 use moekura_db::{media, posts};
-use moekura_media::MediaType;
 use serde::Deserialize;
 
 use crate::AppState;
@@ -87,28 +86,9 @@ pub(crate) async fn hash_file(state: &AppState, file: &TempUpload) -> Result<u64
         .map_err(|e| AppError::Internal(e.to_string()))?;
     let hashed = async {
         let probe = media.probe(file.path(), kind).await?;
-        let (source, source_type) = if kind == MediaType::Ugoira {
-            let frames = media.ugoira_frames(file.path()).await?;
-            let first = media
-                .ugoira_extract(file.path(), &frames[..1], &dir)
-                .await?
-                .remove(0);
-            let first_type = if first.extension().is_some_and(|e| e == "png") {
-                MediaType::Png
-            } else {
-                MediaType::Jpeg
-            };
-            (first, first_type)
-        } else if kind.is_video() {
-            (
-                media
-                    .video_poster(file.path(), probe.duration_ms, &dir)
-                    .await?,
-                MediaType::Png,
-            )
-        } else {
-            (file.path().to_owned(), kind)
-        };
+        let (source, source_type) = media
+            .still(file.path(), kind, probe.duration_ms, &dir)
+            .await?;
         media.perceptual_hash(&source, source_type, &dir).await
     }
     .await;
@@ -361,7 +341,7 @@ mod tests {
         std::fs::write(&path, &png).unwrap();
         let hash = state
             .media
-            .perceptual_hash(&path, MediaType::Png, &dir)
+            .perceptual_hash(&path, moekura_media::MediaType::Png, &dir)
             .await
             .unwrap();
         let asset = media::for_post(&pool, post).await.unwrap().unwrap();

@@ -22,19 +22,37 @@ function t(key, english, args = {}) {
 }
 
 // src/suggestions.ts
+var POLL_MS = 3e3;
+var POLL_FOR_MS = 5 * 60 * 1e3;
 function withTag(tags, tag) {
   const words = tags.split(/\s+/).filter((word) => word !== "");
   if (words.includes(tag)) return tags;
   const kept = tags.trimEnd();
   return kept === "" ? `${tag} ` : `${kept} ${tag} `;
 }
+function hasTag(tags, tag) {
+  return tags.split(/\s+/).some((word) => word.toLowerCase() === tag || word.toLowerCase().endsWith(`:${tag}`));
+}
 function enableSuggestions(root = document) {
   const box = root.querySelector("[data-suggestions]");
   const form = box?.closest("form");
   const field = form?.querySelector("textarea[name=tags]");
   if (!box || !form || !field) return;
-  const hint = box.querySelector("[data-suggestions-hint]");
-  if (hint) hint.textContent = t("suggestions-hint", "Clicking one adds it to the form; save to keep it.");
+  const upload = box.dataset["suggestions"] === "upload";
+  const prepare = () => {
+    const hint = box.querySelector("[data-suggestions-hint]");
+    if (hint && !upload) hint.textContent = t("suggestions-hint", "Clicking one adds it to the form; save to keep it.");
+    const rating = form.querySelector("input[name=rating]:checked")?.value;
+    for (const button of box.querySelectorAll("button[name]")) {
+      const taken = button.name === "add" && hasTag(field.value, button.value) || button.name === "suggested_rating" && button.value === rating;
+      if (taken) {
+        button.classList.add("chosen");
+        button.disabled = true;
+      }
+    }
+    for (const check of box.querySelectorAll("[data-suggestions-check]")) check.hidden = true;
+  };
+  prepare();
   box.addEventListener("click", (event) => {
     const button = event.target.closest("button[name]");
     if (!button) return;
@@ -49,6 +67,29 @@ function enableSuggestions(root = document) {
     button.classList.add("chosen");
     button.disabled = true;
   });
+  const url = box.dataset["suggestionsPoll"];
+  if (!url) return;
+  const started = Date.now();
+  const poll = async () => {
+    try {
+      const response = await fetch(url, { headers: { Accept: "text/html" } });
+      if (response.ok) {
+        const fetched = new DOMParser().parseFromString(await response.text(), "text/html").body;
+        if (!fetched.querySelector("[data-suggestions-pending]")) {
+          if (fetched.querySelector("button[name]")) {
+            box.replaceChildren(...Array.from(fetched.childNodes, (node) => root.importNode(node, true)));
+            prepare();
+          } else {
+            box.hidden = true;
+          }
+          return;
+        }
+      }
+    } catch {
+    }
+    if (Date.now() - started < POLL_FOR_MS) window.setTimeout(() => void poll(), POLL_MS);
+  };
+  window.setTimeout(() => void poll(), POLL_MS);
 }
 
 // src/artist-finder.ts
@@ -1203,7 +1244,7 @@ function withoutTag(tags, tag) {
   const words = tags.split(/\s+/).filter((word) => word !== "" && word.toLowerCase() !== tag);
   return words.length === 0 ? "" : `${words.join(" ")} `;
 }
-function hasTag(tags, tag) {
+function hasTag2(tags, tag) {
   return tags.split(/\s+/).some((word) => word.toLowerCase() === tag);
 }
 function sourceOf(field) {
@@ -1244,7 +1285,7 @@ function attach(panel, field) {
           button.type = "button";
           button.className = `tag tag-${tag.category}`;
           button.dataset["tag"] = tag.name;
-          button.setAttribute("aria-pressed", String(hasTag(field.value, tag.name)));
+          button.setAttribute("aria-pressed", String(hasTag2(field.value, tag.name)));
           button.textContent = tag.name;
           button.title = tag.from ? `${tag.from} \u2192 ${tag.name}` : t("related-posts", "{$count} posts", { count: tag.post_count });
           item.append(button);
@@ -1290,7 +1331,7 @@ function attach(panel, field) {
     const button = event.target.closest("button[data-tag]");
     const tag = button?.dataset["tag"];
     if (!button || !tag) return;
-    const present = hasTag(field.value, tag);
+    const present = hasTag2(field.value, tag);
     field.value = present ? withoutTag(field.value, tag) : withTag(field.value, tag);
     for (const other of list.querySelectorAll("button[data-tag]")) {
       if (other.dataset["tag"] === tag) other.setAttribute("aria-pressed", String(!present));

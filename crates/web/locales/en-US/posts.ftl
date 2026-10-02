@@ -131,6 +131,9 @@ upload-url = …or a link
 upload-url-hint = Images or videos up to { $mb } MB. A work's page on Pixiv, X, Bluesky, DeviantArt, Fanbox or Skeb works too: its files are downloaded, and the page becomes the source. With files, the link is their source.
 upload-tags-hint = Separate tags with spaces. Give a new tag a category with a prefix, like <code>artist:name</code>. <code>-tag</code> and metatags like <code>rating:s</code> or <code>pool:name</code> work too.
 commentary = Artist's commentary
+upload-suggested-pending = The tagger is looking at this file. Its suggestions show here when it's done; you can post without waiting for them.
+upload-suggested-check = Check again
+upload-suggested-hint = Clicking one adds it to the form.
 upload-commentary-hint = What the artist wrote with the work, as they wrote it. It's filled in from the source when the site is one Moekura can read (Pixiv, X, Bluesky, DeviantArt, Fanbox, Skeb, or a page with its image in its preview tags), and taken from there if left empty.
 
 posts-newest = Newest posts

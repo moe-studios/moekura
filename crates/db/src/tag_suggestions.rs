@@ -381,6 +381,80 @@ pub async fn for_post(db: impl PgExecutor<'_>, post_id: i64) -> sqlx::Result<Vec
     .await
 }
 
+/// What the tagger made of a staged upload's file.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StagedResult {
+    pub rating: Rating,
+    pub rating_confidence: f32,
+    /// Most confident first.
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// Saves what the tagger made of staged file `staged_id`, replacing what
+/// was there. Returns false, saving nothing, if the file is gone or was
+/// posted meanwhile.
+pub async fn save_staged(
+    db: impl PgExecutor<'_>,
+    staged_id: i64,
+    model: &str,
+    rating: Rating,
+    rating_confidence: f32,
+    suggestions: &[(i32, f32)],
+) -> sqlx::Result<bool> {
+    let (tag_ids, confidences): (Vec<i32>, Vec<f32>) = suggestions.iter().copied().unzip();
+    let saved = sqlx::query(
+        "INSERT INTO staged_tagger_results
+             (staged_id, model, rating, rating_confidence, tag_ids, confidences)
+         SELECT id, $2, $3, $4, $5, $6 FROM staged_uploads
+         WHERE id = $1 AND post_id IS NULL
+         ON CONFLICT (staged_id) DO UPDATE
+         SET model = excluded.model, rating = excluded.rating,
+             rating_confidence = excluded.rating_confidence, tag_ids = excluded.tag_ids,
+             confidences = excluded.confidences, tagged_at = now()",
+    )
+    .bind(staged_id)
+    .bind(model)
+    .bind(rating.code())
+    .bind(rating_confidence)
+    .bind(&tag_ids)
+    .bind(&confidences)
+    .execute(db)
+    .await?;
+    Ok(saved.rows_affected() == 1)
+}
+
+/// What the tagger made of staged file `staged_id`, if it has seen it.
+pub async fn staged_result(db: &PgPool, staged_id: i64) -> sqlx::Result<Option<StagedResult>> {
+    let Some((rating, rating_confidence)): Option<(String, f32)> = sqlx::query_as(
+        "SELECT rating, rating_confidence FROM staged_tagger_results WHERE staged_id = $1",
+    )
+    .bind(staged_id)
+    .fetch_optional(db)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let rating = rating
+        .parse()
+        .map_err(|()| sqlx::Error::Decode(format!("unknown rating `{rating}`").into()))?;
+    let suggestions = sqlx::query_as(
+        "SELECT t.id AS tag_id, t.name, t.category_id, t.post_count, s.confidence
+         FROM staged_tagger_results r,
+              unnest(r.tag_ids, r.confidences) AS s (tag_id, confidence)
+         JOIN tags t ON t.id = s.tag_id
+         WHERE r.staged_id = $1
+         ORDER BY s.confidence DESC, t.name",
+    )
+    .bind(staged_id)
+    .fetch_all(db)
+    .await?;
+    Ok(Some(StagedResult {
+        rating,
+        rating_confidence,
+        suggestions,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use moekura_core::posts::PostStatus;

@@ -91,6 +91,12 @@ model is: click one to add it to the tags box (or, without scripts, to add
 it and save), then save. Tags the post already has aren't suggested, nor
 tags below the confidence the site asks for in their category.
 
+They also show on an upload's post form once the model has looked at the
+file, usually within a minute: the form fills them in when they arrive
+(without scripts, **Check again** looks), and you can post before they
+do. Clicking one adds it to the form; tags already in the tags box aren't
+offered. The post is tagged again once made, as any upload is.
+
 The model is often right about what's in a picture and sometimes
 confidently wrong, so check before saving. Search for `ai:tag` to find
 posts where a tag is suggested but not yet applied, for tidying up many

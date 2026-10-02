@@ -23,6 +23,34 @@ impl Media {
         &self.config.variant_format
     }
 
+    /// A still image standing for `source`, for hashing or tagging: the
+    /// file itself, a video's poster frame or an ugoira's first frame,
+    /// extracted into `dir`.
+    pub async fn still(
+        &self,
+        source: &Path,
+        media_type: MediaType,
+        duration_ms: Option<u32>,
+        dir: &Path,
+    ) -> Result<(PathBuf, MediaType), MediaError> {
+        if media_type == MediaType::Ugoira {
+            let frames = self.ugoira_frames(source).await?;
+            let first = self
+                .ugoira_extract(source, frames.get(..1).unwrap_or_default(), dir)
+                .await?
+                .into_iter()
+                .next()
+                .ok_or_else(|| MediaError::Corrupt("the ugoira has no frames".into()))?;
+            let first_type = crate::ugoira::frame_type(&first);
+            Ok((first, first_type))
+        } else if media_type.is_video() {
+            let poster = self.video_poster(source, duration_ms, dir).await?;
+            Ok((poster, MediaType::Png))
+        } else {
+            Ok((source.to_owned(), media_type))
+        }
+    }
+
     /// Extracts a representative frame from a video as a PNG in `dir`.
     pub async fn video_poster(
         &self,

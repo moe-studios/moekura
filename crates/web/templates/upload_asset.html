@@ -91,6 +91,12 @@
       </details>
 
       <button type="submit">{% if similar %}{{ t("upload-post-anyway") }}{% else %}{{ t("upload-post") }}{% endif %}</button>
+      {# After Post, which Enter in a field must keep pressing. #}
+      {% if suggestions %}
+      <div class="suggestions" data-suggestions="upload"{% if suggestions.pending %} data-suggestions-poll="{{ suggestions_url }}"{% endif %}>
+        {% include "upload_suggestions.html" %}
+      </div>
+      {% endif %}
     </form>
     {% endif %}
   </section>

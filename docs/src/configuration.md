@@ -351,6 +351,9 @@ from; the files themselves are downloaded without them.
 | `allow_private_addresses` | `false` | let [webhooks](admin/webhooks.md) go to private, loopback and link-local addresses (a service on the same machine or network) |
 | `timeout_secs` | `10` | how long a delivery may take |
 
+[Discord webhooks](admin/webhooks.md#discord) are public addresses, so
+they work without `allow_private_addresses`.
+
 ## Search pages
 
 How many posts a search shows and how deep its numbered pages go is

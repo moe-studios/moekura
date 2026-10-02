@@ -9,9 +9,10 @@ use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
+use moekura_core::posts::Rating;
 use moekura_core::tokens::NewToken;
-use moekura_core::webhooks::Event;
-use moekura_db::webhooks::{self, Webhook};
+use moekura_core::webhooks::{Event, Format, discord};
+use moekura_db::webhooks::{self, Fields, Webhook};
 use serde::Deserialize;
 use serde_json::json;
 use time::format_description::well_known::Rfc3339;
@@ -69,6 +70,20 @@ async fn post_data(state: &AppState, id: i64) -> Option<serde_json::Value> {
             .map(|u| u.name),
         None => None,
     };
+    // Only what visitors may see, so a Discord channel never shows more.
+    let visitors = &state.site.get().settings.visitor_ratings;
+    let image = if post.status.as_str() != "deleted"
+        && !state.is_private()
+        && (visitors.is_empty() || visitors.contains(&post.rating))
+    {
+        crate::previews::any_post_image(state, db, post.id)
+            .await
+            .ok()
+            .flatten()
+            .map(|image| image.url)
+    } else {
+        None
+    };
     Some(json!({
         "post_id": post.id,
         "url": absolute_url(state, &format!("/posts/{}", post.id)),
@@ -76,7 +91,9 @@ async fn post_data(state: &AppState, id: i64) -> Option<serde_json::Value> {
         "rating": post.rating.code(),
         "source": post.source,
         "tags": tags,
+        "uploader_url": uploader.as_deref().map(|name| user_url(state, name)),
         "uploader": uploader,
+        "image_url": image,
         "created_at": post.created_at.format(&Rfc3339).unwrap_or_default(),
     }))
 }
@@ -100,6 +117,7 @@ pub(crate) async fn emit_comment(state: &AppState, id: i64) {
         "comment_id": comment.id,
         "post_id": comment.post_id,
         "url": absolute_url(state, &crate::comments::url(&comment)),
+        "author_url": comment.creator_name.as_deref().map(|name| user_url(state, name)),
         "author": comment.creator_name,
         "body": comment.body,
         "created_at": comment.created_at.format(&Rfc3339).unwrap_or_default(),
@@ -112,10 +130,16 @@ pub(crate) async fn emit_user(state: &AppState, user: &moekura_db::users::User) 
     let data = json!({
         "user_id": user.id,
         "name": user.name,
-        "url": absolute_url(state, &format!("/users/{}", url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>())),
+        "url": user_url(state, &user.name),
         "status": user.status.as_str(),
     });
     emit(state, Event::UserRegistered, data).await;
+}
+
+/// The absolute URL of user `name`'s page.
+fn user_url(state: &AppState, name: &str) -> String {
+    let name: String = url::form_urlencoded::byte_serialize(name.as_bytes()).collect();
+    absolute_url(state, &format!("/users/{name}"))
 }
 
 /// A new webhook secret.
@@ -167,6 +191,40 @@ fn hook_context(hook: &Webhook) -> Value {
         description => hook.description,
         events => hook.events,
         enabled => hook.is_enabled,
+        format => hook.format,
+    }
+}
+
+/// The format choices, with `chosen` (`auto`, or a format's name)
+/// selected.
+fn formats_context(chosen: &str) -> Vec<Value> {
+    std::iter::once("auto")
+        .chain(Format::ALL.iter().map(|f| f.as_str()))
+        .map(|name| context! { name => name, chosen => name == chosen })
+        .collect()
+}
+
+/// The rating choices for Discord images, with `chosen` ticked.
+fn ratings_context(chosen: &[String]) -> Vec<Value> {
+    Rating::ALL
+        .iter()
+        .map(|r| {
+            context! {
+                code => r.code(),
+                label => r.label(),
+                chosen => chosen.iter().any(|c| c == r.code()),
+            }
+        })
+        .collect()
+}
+
+/// The Discord settings part of the form.
+fn discord_context(format: &str, ratings: &[String], username: &str, avatar_url: &str) -> Value {
+    context! {
+        formats => formats_context(format),
+        ratings => ratings_context(ratings),
+        username => username,
+        avatar_url => avatar_url,
     }
 }
 
@@ -182,12 +240,20 @@ async fn render_index(
         StatusCode::OK
     };
     let chosen = form.events();
+    let format = form.format.as_deref().unwrap_or("auto");
+    // A new form shows images for the usual ratings.
+    let ratings = if form.url.is_empty() {
+        vec!["g".to_owned(), "s".to_owned()]
+    } else {
+        form.image_ratings()
+    };
     Ok(page.render_with_status(
         status,
         "admin_webhooks.html",
         context! {
             hooks => hooks.iter().map(hook_context).collect::<Vec<_>>(),
             form => context! { url => form.url, description => form.description, events => events_context(&chosen) },
+            discord => discord_context(format, &ratings, &form.username, &form.avatar_url),
             error => error,
         },
     ))
@@ -198,8 +264,10 @@ async fn index(page: Page) -> Result<Response, AppError> {
     render_index(&page, &HookForm::default(), None).await
 }
 
-/// The webhook form: url, description, one field per ticked event, and
-/// `enabled` when ticked.
+/// The webhook form: url, description, one field per ticked event,
+/// `enabled` when ticked, the format (`auto` to tell from the URL), and
+/// for Discord a name, an avatar and one `image-{rating}` field per
+/// rating whose images may show.
 #[derive(Debug, Default, Deserialize)]
 struct HookForm {
     #[serde(default)]
@@ -208,6 +276,12 @@ struct HookForm {
     description: String,
     #[serde(default)]
     enabled: Option<String>,
+    #[serde(default)]
+    format: Option<String>,
+    #[serde(default)]
+    username: String,
+    #[serde(default)]
+    avatar_url: String,
     #[serde(flatten)]
     rest: std::collections::HashMap<String, String>,
 }
@@ -220,9 +294,17 @@ impl HookForm {
             .filter(|name| self.rest.contains_key(name))
             .collect()
     }
+
+    fn image_ratings(&self) -> Vec<String> {
+        Rating::ALL
+            .iter()
+            .map(|r| r.code().to_owned())
+            .filter(|code| self.rest.contains_key(&format!("image-{code}")))
+            .collect()
+    }
 }
 
-fn check_form(state: &AppState, form: &HookForm) -> Result<(String, String, Vec<String>), String> {
+fn check_form(state: &AppState, form: &HookForm) -> Result<Fields, String> {
     let url = check_url(state, &form.url)?;
     let description = form.description.trim().to_owned();
     if description.chars().count() > 200 {
@@ -232,7 +314,38 @@ fn check_form(state: &AppState, form: &HookForm) -> Result<(String, String, Vec<
     if events.is_empty() {
         return Err("Choose at least one event.".into());
     }
-    Ok((url, description, events))
+    let format = match form.format.as_deref().unwrap_or("auto") {
+        "auto" => Format::detect(&url),
+        name => Format::parse(name).ok_or("Choose a format.")?,
+    };
+    let username = form.username.trim().to_owned();
+    if username.chars().count() > discord::USERNAME_LEN {
+        return Err(format!(
+            "The Discord name may be at most {} characters.",
+            discord::USERNAME_LEN
+        ));
+    }
+    // Discord refuses these names.
+    let lower = username.to_lowercase();
+    if lower.contains("discord") || lower.contains("clyde") {
+        return Err("Discord doesn't allow names with \"discord\" or \"clyde\" in them.".into());
+    }
+    let avatar_url = form.avatar_url.trim().to_owned();
+    if !avatar_url.is_empty()
+        && !url::Url::parse(&avatar_url)
+            .is_ok_and(|u| matches!(u.scheme(), "http" | "https") && avatar_url.len() <= 2048)
+    {
+        return Err("The avatar should be the URL of an image.".into());
+    }
+    Ok(Fields {
+        url,
+        description,
+        events,
+        format,
+        image_ratings: form.image_ratings(),
+        username,
+        avatar_url,
+    })
 }
 
 async fn create(
@@ -241,19 +354,17 @@ async fn create(
     Form(form): Form<HookForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ManageSettings)?;
-    let (url, description, events) = match check_form(page.state(), &form) {
+    let fields = match check_form(page.state(), &form) {
         Ok(checked) => checked,
         Err(message) => return render_index(&page, &form, Some(message)).await,
     };
-    let id = webhooks::create(
-        page.state().db.primary(),
-        &url,
-        &description,
-        &secret(),
-        &events,
-    )
-    .await?;
-    tracing::info!(id, url, "webhook added");
+    let id = webhooks::create(page.state().db.primary(), &fields, &secret()).await?;
+    tracing::info!(
+        id,
+        url = fields.url,
+        format = fields.format.as_str(),
+        "webhook added"
+    );
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to(&format!("/admin/webhooks/{id}")),
@@ -293,6 +404,7 @@ async fn render_show(
             hook => hook_context(hook),
             secret => hook.secret,
             events => events_context(&hook.events),
+            discord => discord_context(&hook.format, &hook.image_ratings, &hook.username, &hook.avatar_url),
             deliveries => rows,
             error => error,
         },
@@ -318,16 +430,14 @@ async fn update(
     Form(form): Form<HookForm>,
 ) -> Result<Response, AppError> {
     let hook = find(&page, id).await?;
-    let (url, description, events) = match check_form(page.state(), &form) {
+    let fields = match check_form(page.state(), &form) {
         Ok(checked) => checked,
         Err(message) => return render_show(&page, &hook, Some(message)).await,
     };
     webhooks::update(
         page.state().db.primary(),
         id,
-        &url,
-        &description,
-        &events,
+        &fields,
         form.enabled.is_some(),
     )
     .await?;
@@ -343,6 +453,7 @@ async fn test(page: Page, jar: CookieJar, Path(id): Path<i32>) -> Result<Respons
     let data = json!({
         "message": "A test from Moekura.",
         "site": absolute_url(page.state(), "/"),
+        "site_name": page.state().site.get().settings.site_name,
     });
     let mut tx = page.state().db.primary().begin().await?;
     webhooks::emit(&mut tx, Event::Ping, &data, Some(hook.id)).await?;
@@ -492,5 +603,95 @@ mod tests {
         );
         app.post(&format!("{url}/delete"), Some(&admin), &[]).await;
         assert!(webhooks::list(&pool).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn discord_webhooks(pool: PgPool) {
+        moekura_db::settings::set(&pool, "visitor_ratings", json!(["g", "s"]))
+            .await
+            .unwrap();
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(state, routes().merge(crate::upload::routes(max)));
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let member = session_for(&pool, "alice", SystemRole::Member).await;
+
+        let form = app.get("/admin/webhooks", Some(&admin)).await;
+        assert!(
+            form.body.contains(r#"name="image-g" checked"#),
+            "{}",
+            form.body
+        );
+        assert!(!form.body.contains(r#"name="image-e" checked"#));
+        let refused = app
+            .post_form(
+                "/admin/webhooks",
+                Some(&admin),
+                &[],
+                "url=https%3A%2F%2Fdiscord.com%2Fapi%2Fwebhooks%2F1%2Ftok&post.created=on&username=Discord+bot",
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        // Told from the URL; images for general and questionable posts.
+        let made = app
+            .post_form(
+                "/admin/webhooks",
+                Some(&admin),
+                &[],
+                "url=https%3A%2F%2Fdiscord.com%2Fapi%2Fwebhooks%2F1%2Ftok&post.created=on&format=auto&username=Booru&image-g=on&image-q=on",
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
+        let url = made.location.unwrap();
+        let hook = &webhooks::list(&pool).await.unwrap()[0];
+        assert_eq!(
+            (hook.format.as_str(), hook.username.as_str()),
+            ("discord", "Booru")
+        );
+        assert_eq!(hook.image_ratings, ["g", "q"]);
+        let page = app.get(&url, Some(&admin)).await;
+        assert!(!page.body.contains("whsec_"), "the secret isn't used");
+        assert!(page.body.contains(r#"<option value="discord" selected>"#));
+
+        // Images only for ratings visitors see.
+        for rating in ["g", "q"] {
+            app.post_multipart(
+                "/upload",
+                Some(&member),
+                &[("rating", rating.to_owned()), ("tags", "cat".to_owned())],
+                Some((
+                    "a.png",
+                    &fixture::png(if rating == "q" { 24 } else { 20 }, 20),
+                )),
+            )
+            .await;
+        }
+        let payloads: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT payload FROM webhook_deliveries ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(payloads.len(), 2);
+        assert!(payloads[0]["image_url"].is_string(), "{}", payloads[0]);
+        assert_eq!(payloads[1]["image_url"], json!(null));
+        assert!(
+            payloads[0]["uploader_url"]
+                .as_str()
+                .unwrap()
+                .ends_with("/users/alice")
+        );
+
+        // Choosing by hand.
+        app.post_form(
+            &url,
+            Some(&admin),
+            &[],
+            "url=https%3A%2F%2Fdiscord.com%2Fapi%2Fwebhooks%2F1%2Ftok&post.created=on&format=moekura&enabled=on",
+        )
+        .await;
+        let hook = &webhooks::list(&pool).await.unwrap()[0];
+        assert_eq!(hook.format, "moekura");
+        assert!(hook.image_ratings.is_empty());
     }
 }

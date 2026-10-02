@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use moekura_core::jobs::{DeliverWebhook, PruneWebhookDeliveries};
-use moekura_core::webhooks::{Event, signature};
+use moekura_core::webhooks::{Event, Format, discord, signature};
 use moekura_db::webhooks;
 use sqlx::PgPool;
 use time::OffsetDateTime;
@@ -17,6 +17,10 @@ const KEEP_DAYS: i32 = 30;
 
 /// How much of a response is kept.
 const RESPONSE_KEPT: usize = 1000;
+
+/// The longest `Retry-After` honoured, in seconds; longer waits are cut
+/// to this.
+const MAX_RETRY_AFTER: f64 = 3600.0;
 
 #[derive(Clone)]
 pub struct WebhookJobs {
@@ -54,9 +58,9 @@ impl WebhookJobs {
             .every::<PruneWebhookDeliveries>(Duration::from_secs(24 * 60 * 60));
     }
 
-    /// Sends delivery `id`. Failures the receiver might recover from
-    /// (network errors, 5xx, 408, 429) are retried with backoff; others
-    /// are recorded and given up.
+    /// Sends delivery `id`, in its webhook's format. Failures the receiver
+    /// might recover from (network errors, 5xx, 408, 429) are retried with
+    /// backoff, or when a 429 says; others are recorded and given up.
     pub async fn deliver(&self, id: i64) -> Result<(), JobError> {
         let Some(delivery) = webhooks::delivery(&self.db, id).await? else {
             return Ok(());
@@ -90,32 +94,71 @@ impl WebhookJobs {
             return Ok(());
         }
 
-        let body = serde_json::to_vec(&serde_json::json!({
-            "id": delivery.id,
-            "event": delivery.event,
-            "created_at": delivery.created_at.format(&Rfc3339).unwrap_or_default(),
-            "data": delivery.payload,
-        }))
-        .map_err(JobError::permanent)?;
-        let timestamp = OffsetDateTime::now_utc().unix_timestamp();
-        let sent = self
-            .client
-            .post(url)
+        let created_at = delivery.created_at.format(&Rfc3339).unwrap_or_default();
+        let format = Format::parse(&hook.format).unwrap_or(Format::Moekura);
+        let request = match format {
+            Format::Moekura => {
+                let body = serde_json::to_vec(&serde_json::json!({
+                    "id": delivery.id,
+                    "event": delivery.event,
+                    "created_at": created_at,
+                    "data": delivery.payload,
+                }))
+                .map_err(JobError::permanent)?;
+                let timestamp = OffsetDateTime::now_utc().unix_timestamp();
+                self.client
+                    .post(url)
+                    .header("x-moekura-event", &delivery.event)
+                    .header("x-moekura-delivery", delivery.id.to_string())
+                    .header("x-moekura-timestamp", timestamp.to_string())
+                    .header(
+                        "x-moekura-signature",
+                        format!("sha256={}", signature(&hook.secret, timestamp, &body)),
+                    )
+                    .body(body)
+            }
+            // The URL's token is the secret; Discord has no use for ours.
+            Format::Discord => {
+                let options = discord::Options {
+                    username: &hook.username,
+                    avatar_url: &hook.avatar_url,
+                    image_ratings: &hook.image_ratings,
+                };
+                let message =
+                    discord::message(&delivery.event, &delivery.payload, &created_at, &options);
+                let body = serde_json::to_vec(&message).map_err(JobError::permanent)?;
+                self.client.post(discord::wait_url(&url)).body(body)
+            }
+        };
+        let sent = request
             .header("content-type", "application/json")
-            .header("x-moekura-event", &delivery.event)
-            .header("x-moekura-delivery", delivery.id.to_string())
-            .header("x-moekura-timestamp", timestamp.to_string())
-            .header(
-                "x-moekura-signature",
-                format!("sha256={}", signature(&hook.secret, timestamp, &body)),
-            )
-            .body(body)
             .send()
             .await;
         match sent {
             Ok(response) => {
                 let status = response.status();
+                let retry_after = response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.trim().parse::<f64>().ok());
                 let mut text = response.text().await.unwrap_or_default();
+                if format == Format::Discord && status.is_success() {
+                    let message: Option<serde_json::Value> = serde_json::from_str(&text).ok();
+                    if let Some(id) = message.as_ref().and_then(|m| m["id"].as_str()) {
+                        text = format!("message {id}");
+                    }
+                }
+                // Discord says how long to wait in the body, to the
+                // millisecond; others in the header.
+                let retry_after = (status.as_u16() == 429)
+                    .then(|| {
+                        serde_json::from_str::<serde_json::Value>(&text)
+                            .ok()
+                            .and_then(|body| body["retry_after"].as_f64())
+                            .or(retry_after)
+                    })
+                    .flatten();
                 if text.len() > RESPONSE_KEPT {
                     let mut end = RESPONSE_KEPT;
                     while !text.is_char_boundary(end) {
@@ -128,6 +171,12 @@ impl WebhookJobs {
                 let retry = status.is_server_error() || matches!(status.as_u16(), 408 | 429);
                 if status.is_success() || !retry {
                     Ok(())
+                } else if let Some(wait) = retry_after.filter(|w| w.is_finite()) {
+                    let wait = Duration::from_secs_f64(wait.clamp(1.0, MAX_RETRY_AFTER));
+                    Err(JobError::RetryIn(
+                        format!("the webhook answered {status}; waiting {wait:?}"),
+                        wait,
+                    ))
                 } else {
                     Err(JobError::Retry(format!("the webhook answered {status}")))
                 }
@@ -151,6 +200,16 @@ mod tests {
 
     /// Answers one request with `status`, returning what was sent.
     async fn receiver(status: u16) -> (String, tokio::task::JoinHandle<String>) {
+        replying(status, "", "ok").await
+    }
+
+    /// Answers one request with `status`, extra `headers` (each ending in
+    /// CRLF) and `body`, returning what was sent.
+    async fn replying(
+        status: u16,
+        headers: &'static str,
+        body: &'static str,
+    ) -> (String, tokio::task::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/hook", listener.local_addr().unwrap());
         let task = tokio::spawn(async move {
@@ -178,8 +237,10 @@ mod tests {
                     break;
                 }
             }
-            let reply =
-                format!("HTTP/1.1 {status} X\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok");
+            let reply = format!(
+                "HTTP/1.1 {status} X\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
             socket.write_all(reply.as_bytes()).await.unwrap();
             String::from_utf8_lossy(&received).to_string()
         });
@@ -187,14 +248,17 @@ mod tests {
     }
 
     async fn delivery_to(pool: &PgPool, url: &str) -> i64 {
-        let hook = webhooks::create(pool, url, "", "topsecret", &["post.created".to_owned()])
-            .await
-            .unwrap();
+        let fields = webhooks::Fields::new(url, &[Event::PostCreated]);
+        delivery_with(pool, &fields).await
+    }
+
+    async fn delivery_with(pool: &PgPool, fields: &webhooks::Fields) -> i64 {
+        let hook = webhooks::create(pool, fields, "topsecret").await.unwrap();
         let mut conn = pool.acquire().await.unwrap();
         webhooks::emit(
             &mut conn,
             Event::PostCreated,
-            &json!({ "post_id": 7 }),
+            &json!({ "post_id": 7, "rating": "g", "tags": ["cat"] }),
             Some(hook),
         )
         .await
@@ -263,6 +327,72 @@ mod tests {
         assert_eq!(
             refused.response.as_deref(),
             Some("the address isn't on the public internet")
+        );
+    }
+
+    /// A webhook in Discord's format, to `url`.
+    fn discord_hook(url: &str) -> webhooks::Fields {
+        webhooks::Fields {
+            format: Format::Discord,
+            username: "Booru".into(),
+            ..webhooks::Fields::new(url, &[Event::PostCreated])
+        }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn delivers_discord_messages(pool: PgPool) {
+        let jobs = WebhookJobs::new(pool.clone(), Duration::from_secs(5), true);
+        let (url, request) = replying(200, "", r#"{"id":"5550001","type":0}"#).await;
+        let id = delivery_with(&pool, &discord_hook(&url)).await;
+        jobs.deliver(id).await.unwrap();
+        let request = request.await.unwrap();
+        let (head, body) = request.split_once("\r\n\r\n").unwrap();
+        assert!(head.starts_with("POST /hook?wait=true "), "{head}");
+        assert!(!head.to_lowercase().contains("x-moekura"), "{head}");
+        let sent: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(sent["embeds"][0]["title"], json!("Post #7 uploaded"));
+        assert_eq!(sent["username"], json!("Booru"));
+        assert_eq!(sent["allowed_mentions"], json!({ "parse": [] }));
+        let done = webhooks::delivery(&pool, id).await.unwrap().unwrap();
+        assert_eq!(
+            (done.status.as_str(), done.response.as_deref()),
+            ("delivered", Some("message 5550001"))
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn waits_as_long_as_rate_limits_say(pool: PgPool) {
+        let jobs = WebhookJobs::new(pool.clone(), Duration::from_secs(5), true);
+        let (url, _) = replying(
+            429,
+            "retry-after: 3\r\n",
+            r#"{"message":"You are being rate limited.","retry_after":2.5,"global":false}"#,
+        )
+        .await;
+        let id = delivery_with(&pool, &discord_hook(&url)).await;
+        match jobs.deliver(id).await {
+            Err(JobError::RetryIn(_, wait)) => assert_eq!(wait, Duration::from_millis(2500)),
+            other => panic!("{other:?}"),
+        }
+
+        let (url, _) = replying(429, "retry-after: 7\r\n", "slow down").await;
+        let id = delivery_to(&pool, &url).await;
+        match jobs.deliver(id).await {
+            Err(JobError::RetryIn(_, wait)) => assert_eq!(wait, Duration::from_secs(7)),
+            other => panic!("{other:?}"),
+        }
+
+        // Without a wait, the usual backoff; other 4xx give up.
+        let (url, _) = receiver(429).await;
+        let id = delivery_with(&pool, &discord_hook(&url)).await;
+        assert!(matches!(jobs.deliver(id).await, Err(JobError::Retry(_))));
+        let (url, _) = replying(400, "", r#"{"message":"Cannot send an empty message"}"#).await;
+        let id = delivery_with(&pool, &discord_hook(&url)).await;
+        jobs.deliver(id).await.unwrap();
+        let failed = webhooks::delivery(&pool, id).await.unwrap().unwrap();
+        assert_eq!(
+            (failed.status.as_str(), failed.response_status),
+            ("failed", Some(400))
         );
     }
 }

@@ -41,6 +41,9 @@ pub enum JobError {
     /// Might work later (a timeout, a database hiccup): retried with backoff.
     #[error("{0}")]
     Retry(String),
+    /// Might work after the given wait (a receiver's `Retry-After`).
+    #[error("{0}")]
+    RetryIn(String, Duration),
     /// Will never work (bad input): marked dead immediately.
     #[error("{0}")]
     Permanent(String),
@@ -265,7 +268,7 @@ impl Worker {
         let elapsed = started.elapsed();
         let result = match &outcome {
             Ok(Ok(())) => "done",
-            Ok(Err(JobError::Retry(_))) => "retry",
+            Ok(Err(JobError::Retry(_) | JobError::RetryIn(..))) => "retry",
             Ok(Err(JobError::Permanent(_))) => "failed",
             Err(_) => "panicked",
         };
@@ -285,6 +288,10 @@ impl Worker {
                 tracing::warn!(?elapsed, error, "job failed");
                 self.record_failure(&job, &error, false).await;
             }
+            Ok(Err(JobError::RetryIn(error, wait))) => {
+                tracing::warn!(?elapsed, error, ?wait, "job failed; asked to wait");
+                self.record_failure_in(&job, &error, wait).await;
+            }
             Ok(Err(JobError::Permanent(error))) => {
                 tracing::error!(?elapsed, error, "job failed permanently");
                 self.record_failure(&job, &error, true).await;
@@ -302,6 +309,13 @@ impl Worker {
         if let Err(db_error) =
             jobs::fail(&self.db, job.id, &self.id, error, retry_in, permanent).await
         {
+            tracing::warn!(%db_error, "could not record job failure; it will be retried after its lock expires");
+        }
+    }
+
+    /// Like a failure to retry, but after `wait` rather than the backoff.
+    async fn record_failure_in(&self, job: &ClaimedJob, error: &str, wait: Duration) {
+        if let Err(db_error) = jobs::fail(&self.db, job.id, &self.id, error, wait, false).await {
             tracing::warn!(%db_error, "could not record job failure; it will be retried after its lock expires");
         }
     }

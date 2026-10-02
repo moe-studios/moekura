@@ -1,0 +1,17 @@
+    <label for="hook-format">{{ t("webhook-format") }}</label>
+    <select id="hook-format" name="format">
+      {% for f in discord.formats %}<option value="{{ f.name }}"{% if f.chosen %} selected{% endif %}>{{ t("webhook-format-" ~ f.name) }}</option>{% endfor %}
+    </select>
+    <fieldset class="permissions">
+      <legend>{{ t("webhook-discord") }}</legend>
+      <p class="hint">{{ t("webhook-discord-hint") }}</p>
+      <label for="hook-username">{{ t("webhook-username") }} <span class="optional">{{ t("optional") }}</span></label>
+      <input id="hook-username" name="username" value="{{ discord.username }}" maxlength="80">
+      <label for="hook-avatar">{{ t("webhook-avatar") }} <span class="optional">{{ t("optional") }}</span></label>
+      <input id="hook-avatar" name="avatar_url" type="url" value="{{ discord.avatar_url }}" maxlength="2048">
+    </fieldset>
+    <fieldset class="permissions">
+      <legend>{{ t("webhook-images") }}</legend>
+      <p class="hint">{{ t("webhook-images-hint") }}</p>
+      {% for r in discord.ratings %}<label class="choice"><input type="checkbox" name="image-{{ r.code }}"{% if r.chosen %} checked{% endif %}> {{ r.label }}</label>{% endfor %}
+    </fieldset>

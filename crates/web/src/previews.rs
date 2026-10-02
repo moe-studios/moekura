@@ -131,6 +131,15 @@ pub(crate) async fn post_image(
     if !shows_image(state, rating) {
         return Ok(None);
     }
+    any_post_image(state, db, id).await
+}
+
+/// The image a preview of post `id` would show, whatever its rating.
+pub(crate) async fn any_post_image(
+    state: &AppState,
+    db: &sqlx::PgPool,
+    id: i64,
+) -> Result<Option<Image>, AppError> {
     let Some(asset) = media::for_post(db, id).await? else {
         return Ok(None);
     };

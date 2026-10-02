@@ -11,7 +11,7 @@
   <tbody>
     {% for h in hooks %}
     <tr>
-      <td><a href="/admin/webhooks/{{ h.id }}">{{ h.url }}</a>{% if h.description %}<div class="hint">{{ h.description }}</div>{% endif %}</td>
+      <td><a href="/admin/webhooks/{{ h.id }}">{{ h.url }}</a>{% if h.format == "discord" %} <span class="hint">({{ t("webhook-format-discord") }})</span>{% endif %}{% if h.description %}<div class="hint">{{ h.description }}</div>{% endif %}</td>
       <td>{{ h.events|join(", ") }}</td>
       <td>{% if h.enabled %}{{ t("on") }}{% else %}<span class="hint">{{ t("off") }}</span>{% endif %}</td>
     </tr>
@@ -34,6 +34,7 @@
       <legend>{{ t("webhooks-send") }}</legend>
       {% for e in form.events %}<label class="choice"><input type="checkbox" name="{{ e.name }}"{% if e.chosen %} checked{% endif %}> {{ t("webhook-event-" ~ e.name|replace(".", "_")) }} <code>{{ e.name }}</code></label>{% endfor %}
     </fieldset>
+{% include "admin_webhook_format.html" %}
     <input type="hidden" name="enabled" value="on">
     <button type="submit">{{ t("webhooks-add-button") }}</button>
   </form>

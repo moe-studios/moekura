@@ -1,7 +1,7 @@
 //! Outgoing webhooks and their deliveries.
 
 use moekura_core::jobs::DeliverWebhook;
-use moekura_core::webhooks::Event;
+use moekura_core::webhooks::{Event, Format};
 use serde_json::Value;
 use sqlx::{PgConnection, PgExecutor};
 use time::OffsetDateTime;
@@ -16,6 +16,37 @@ pub struct Webhook {
     pub is_enabled: bool,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
+    pub format: String,
+    pub image_ratings: Vec<String>,
+    pub username: String,
+    pub avatar_url: String,
+}
+
+/// What an admin sets on a webhook.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fields {
+    pub url: String,
+    pub description: String,
+    pub events: Vec<String>,
+    pub format: Format,
+    pub image_ratings: Vec<String>,
+    pub username: String,
+    pub avatar_url: String,
+}
+
+impl Fields {
+    /// A webhook to `url` for `events`, in the format its URL suggests.
+    pub fn new(url: &str, events: &[Event]) -> Self {
+        Self {
+            url: url.to_owned(),
+            description: String::new(),
+            events: events.iter().map(|e| e.as_str().to_owned()).collect(),
+            format: Format::detect(url),
+            image_ratings: vec!["g".into(), "s".into()],
+            username: String::new(),
+            avatar_url: String::new(),
+        }
+    }
 }
 
 pub async fn list(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<Webhook>> {
@@ -31,20 +62,20 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i32) -> sqlx::Result<Option<Webh
         .await
 }
 
-pub async fn create(
-    db: impl PgExecutor<'_>,
-    url: &str,
-    description: &str,
-    secret: &str,
-    events: &[String],
-) -> sqlx::Result<i32> {
+pub async fn create(db: impl PgExecutor<'_>, fields: &Fields, secret: &str) -> sqlx::Result<i32> {
     sqlx::query_scalar(
-        "INSERT INTO webhooks (url, description, secret, events) VALUES ($1, $2, $3, $4) RETURNING id",
+        "INSERT INTO webhooks (url, description, secret, events, format, image_ratings,
+                               username, avatar_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id",
     )
-    .bind(url)
-    .bind(description)
+    .bind(&fields.url)
+    .bind(&fields.description)
     .bind(secret)
-    .bind(events)
+    .bind(&fields.events)
+    .bind(fields.format.as_str())
+    .bind(&fields.image_ratings)
+    .bind(&fields.username)
+    .bind(&fields.avatar_url)
     .fetch_one(db)
     .await
 }
@@ -52,21 +83,24 @@ pub async fn create(
 pub async fn update(
     db: impl PgExecutor<'_>,
     id: i32,
-    url: &str,
-    description: &str,
-    events: &[String],
+    fields: &Fields,
     is_enabled: bool,
 ) -> sqlx::Result<bool> {
     let result = sqlx::query(
         "UPDATE webhooks SET url = $2, description = $3, events = $4, is_enabled = $5,
-                             updated_at = now()
+                             format = $6, image_ratings = $7, username = $8,
+                             avatar_url = $9, updated_at = now()
          WHERE id = $1",
     )
     .bind(id)
-    .bind(url)
-    .bind(description)
-    .bind(events)
+    .bind(&fields.url)
+    .bind(&fields.description)
+    .bind(&fields.events)
     .bind(is_enabled)
+    .bind(fields.format.as_str())
+    .bind(&fields.image_ratings)
+    .bind(&fields.username)
+    .bind(&fields.avatar_url)
     .execute(db)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -196,22 +230,20 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn emits_to_subscribers(pool: PgPool) {
-        let events = |e: &[Event]| e.iter().map(|e| e.as_str().to_owned()).collect::<Vec<_>>();
         let posts = create(
             &pool,
-            "https://a.example/hook",
-            "",
+            &Fields::new("https://a.example/hook", &[Event::PostCreated]),
             "s1",
-            &events(&[Event::PostCreated]),
         )
         .await
         .unwrap();
         let comments = create(
             &pool,
-            "https://b.example/hook",
-            "",
+            &Fields::new(
+                "https://discord.com/api/webhooks/1/t",
+                &[Event::CommentCreated],
+            ),
             "s2",
-            &events(&[Event::CommentCreated]),
         )
         .await
         .unwrap();
@@ -236,9 +268,12 @@ mod tests {
 
         // Disabled webhooks get nothing, except a test aimed at them.
         let hook = by_id(&pool, comments).await.unwrap().unwrap();
-        update(&pool, comments, &hook.url, "", &hook.events, false)
-            .await
-            .unwrap();
+        assert_eq!(
+            (hook.format.as_str(), hook.image_ratings.as_slice()),
+            ("discord", ["g".to_owned(), "s".to_owned()].as_slice())
+        );
+        let fields = Fields::new(&hook.url, &[Event::CommentCreated]);
+        update(&pool, comments, &fields, false).await.unwrap();
         assert!(
             emit(&mut conn, Event::CommentCreated, &json!({}), None)
                 .await

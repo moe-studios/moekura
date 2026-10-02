@@ -4,12 +4,14 @@
 {% include "admin_nav.html" %}
 <p class="back"><a href="/admin/webhooks">« {{ t("admin-nav-webhooks") }}</a></p>
 <h1>{{ hook.url }}</h1>
+{% if hook.format != "discord" %}
 <section class="card medium">
   <h2>{{ t("webhook-secret") }}</h2>
   <p><code class="token">{{ secret }}</code></p>
   <p class="hint">{{ t("webhook-secret-hint") }}</p>
   <form class="inline" method="post" action="/admin/webhooks/{{ hook.id }}/secret"><button type="submit" class="secondary">{{ t("webhook-new-secret") }}</button></form>
 </section>
+{% endif %}
 <section class="card medium">
   <h2>{{ t("nav-settings") }}</h2>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
@@ -22,6 +24,7 @@
       <legend>{{ t("webhooks-send") }}</legend>
       {% for e in events %}<label class="choice"><input type="checkbox" name="{{ e.name }}"{% if e.chosen %} checked{% endif %}> {{ t("webhook-event-" ~ e.name|replace(".", "_")) }} <code>{{ e.name }}</code></label>{% endfor %}
     </fieldset>
+{% include "admin_webhook_format.html" %}
     <label class="choice"><input type="checkbox" name="enabled"{% if hook.enabled %} checked{% endif %}> {{ t("on-capital") }}</label>
     <button type="submit">{{ t("common-save") }}</button>
   </form>

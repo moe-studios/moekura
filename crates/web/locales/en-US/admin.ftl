@@ -61,7 +61,7 @@ news-state-deleted = deleted
 news-until = until { $day }
 news-none = No news yet.
 
-webhooks-hint = Webhooks tell other services (a Discord bot, a mirror, your own scripts) about events here, as signed JSON POSTs.
+webhooks-hint = Webhooks tell other services (a Discord channel, a mirror, your own scripts) about events here, as signed JSON POSTs or as Discord messages.
 webhooks-table = Admin webhooks table
 webhooks-events = Events
 webhooks-none = No webhooks yet.
@@ -75,6 +75,16 @@ webhook-event-post_flagged = A post is flagged
 webhook-event-comment_created = A comment is posted
 webhook-event-user_registered = Someone registers
 webhook-event-ping = A test
+webhook-format = Format
+webhook-format-auto = Tell from the URL
+webhook-format-moekura = Moekura JSON, signed
+webhook-format-discord = Discord
+webhook-discord = Discord
+webhook-discord-hint = For Discord webhooks only: the name and avatar the messages show, instead of the webhook's own.
+webhook-username = Name
+webhook-avatar = Avatar URL
+webhook-images = Images in Discord messages
+webhook-images-hint = Posts of these ratings show their image, if visitors who aren't logged in may see them too.
 
 overview-pending = Pending
 overview-flagged = Flagged

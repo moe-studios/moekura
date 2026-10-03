@@ -5,6 +5,152 @@ versioning](https://semver.org/); before 1.0, a minor release (0.2) may
 change configuration or behaviour, and says so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
+## [0.5.0] - 2026-10-02
+
+Moekura now works like Danbooru in most of the ways people notice:
+uploading in two steps from a link or a bookmarklet, sources read from
+every site Danbooru knows, artist entries and commentary, tag history,
+a forum, messages and notifications, and much fuller moderation. Pages
+can be translated and themed, and operators get metrics, tracing, stats
+and a server that fits in 1 GB. Read the upgrading notes below: some tag
+names change, the APIs are now rate limited, and overridden templates
+need checking.
+
+### Uploading
+
+- Uploads come in two steps, as on Danbooru: send up to 20 files, a zip
+  archive or a link (paste or drop it anywhere on `/uploads/new`), then
+  post each file from its own page, which shows what the source says
+  (artist, tags, commentary), similar posts and related tags. Links to
+  a work of several files fetch them all. `/uploads` lists your files.
+- A "Post to …" bookmarklet (`/uploads/bookmarklet`) that keeps the page
+  you were on as the referer.
+- Warnings before posting: a resized sample instead of the original,
+  bad links, files that look AI-generated, and pixel-identical or
+  similar images already on the site.
+- The tagger's suggestions show while uploading.
+- Optional automatic tags from the file (`lowres`, `animated`,
+  `wide_image` and so on; off by default), and refusing new uploaders'
+  files the tagger flags with tags the site blocks
+  (`tagger.new_uploader_blocked`).
+- Pixiv ugoira, replacing a post's file, file metadata shown on each
+  post, and optionally stripping metadata from originals
+  (`media.strip_metadata`).
+
+### Sources and artists
+
+- Links from every site Danbooru supports are recognised, given
+  canonical URLs and icons, and read for the artist, tags and
+  commentary. Members-only works can be read with `[sources.logins]`.
+- Artist entries with other names, URLs and history, found from a
+  post's source.
+- Artist commentary: the original title and description, with
+  translations and history.
+
+### Searching
+
+- Groups with parentheses and `or`: `(cat or dog) -rating:e`.
+- New terms: `child:`, `is:`, `has:`, `exif:`, `pixiv:`, `embedded:`,
+  `commentary:`, `pixelhash:`, ordering by votes, comments, md5 and
+  custom orders, and including deleted posts.
+- Search by image with a file, a link or a post (`/iqdb_queries`).
+- The blacklist applies inside the search, so pages stay full.
+- "Did you mean" suggestions for searches that find nothing.
+- Popular, most viewed, top searches and missed searches pages.
+
+### Posts and tagging
+
+- Tag history, sitewide recent changes for wiki, pools and notes, and
+  wiki pages with other names.
+- Metatags in the tag box (`rating:`, `parent:`, `pool:`, `newpool:`
+  and others), related tags while tagging, copying tags from a parent
+  or child, and warnings about incomplete tagging.
+- Post locks, and undoing a user's edits in bulk.
+- Danbooru-style thumbnails with coloured borders for status and
+  family; the post's info now sits to the left of the picture, and the
+  search bar above the grid.
+
+### Community
+
+- A forum, private messages, mentions and notifications.
+- Feedback on users, name changes, invites from the web, and profile
+  pictures, banners and bios.
+- Comments that don't bump and pinned comments.
+- Likely spam from new accounts is held for review.
+- Site news shown at the top of every page.
+
+### Moderation
+
+- A moderation page per user with their IP history and staff notes,
+  full network bans, blocked email domains and an optional captcha at
+  sign-up (`[auth.captcha]`).
+- Disapproving pending posts, appeals of deletions, standard reasons,
+  and a searchable approval queue with bulk actions. Deleting a post
+  needs a reason.
+- Deleting all uploads of a user and purging deleted posts in bulk.
+- Roles can be created, re-ranked and deleted; staff can only grant
+  permissions they hold.
+- Paged and rate-limited flag and report queues, and a moderation log
+  filtered by user and date that records what changed.
+
+### Users and site
+
+- Colour themes, with a neutral default. Users get safe mode, a time
+  zone, large thumbnails, blurring blacklisted posts, custom CSS and
+  more settings.
+- Pages are translated with Fluent; add or reword languages with
+  `paths.locales_override`. See [Translations](docs/src/admin/translations.md).
+- A site description, logo, rules page and footer links; tag
+  categories managed from the admin panel; robots.txt and a sitemap;
+  `/stats`, and activity reports for staff.
+
+### Integrations and API
+
+- Discord webhooks, with their format detected from the URL.
+- `/api/v1` and the Danbooru API share a rate limit (300 requests a
+  minute, bursts of 60) and send `X-RateLimit-*` headers.
+- CORS for configured origins (`[server.cors]`).
+- Danbooru apps get uploads by `upload_id`, explore pages, similar
+  images, wiki and pool versions and name changes instead of empty
+  answers.
+- `moekura admin export` writes posts with sidecar metadata.
+
+### Operations
+
+- Prometheus metrics (`telemetry.metrics_bind`) and OTLP tracing.
+- Runs on a 1 GB server (`e2e/compose.1gb.yml`; see
+  [Hardware](docs/src/install/hardware.md)); `moekura serve` gives
+  memory back after bursts.
+- Limits on ffmpeg's CPU, memory and threads, and on media tools run
+  at once.
+- Images are also published for every commit on main (`edge` and
+  `git-<sha>`), and the build version shows in the footer.
+
+### Upgrading
+
+- `newpool:`, `commentary:`, `exif:`, `embedded:`, `pixiv:` and
+  `pixiv_id:` are now search terms, so tags starting with them are
+  renamed to `newpool_…` and so on (or `…_(tag)` if that's taken).
+- The APIs are now limited to 300 requests a minute per client. Raise
+  `server.api_requests_per_minute` (0 turns it off) if your scripts or
+  apps need more.
+- Most templates changed (translations and the new layout). If you use
+  `paths.templates_override`, compare your copies with the new ones.
+- New permissions (`lock_posts`, `undo_edits`, `replace_posts`,
+  `send_messages`, `give_feedback`, `invite_users`) go to the built-in
+  roles that should have them. Roles you made get none; add them on the
+  Roles page.
+- If you set `media.allowed_types`, add `ugoira` to accept Pixiv
+  ugoira.
+- ffmpeg runs are limited to 2 GB of memory by default
+  (`media.ffmpeg_memory_mb`); larger files are refused.
+- Square thumbnails are gone; a one-off job deletes their files.
+  Others run once after the upgrade too: artist URLs are normalised
+  (twitter.com becomes x.com) and existing files get pixel hashes.
+- The spam filter is on for public sites; tune it under Admin →
+  Settings → Spam.
+- Deleting a post through the API now needs a `reason`.
+
 ## [0.4.0] - 2026-09-26
 
 Posts gain comments, notes and pools, contributors get tools for

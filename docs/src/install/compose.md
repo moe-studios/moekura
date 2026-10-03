@@ -37,7 +37,7 @@ MOEKURA_BUILD_VERSION="git-$(git rev-parse --short=7 HEAD)" \
 
 Images are published to `ghcr.io/moe-studios/moekura` for AMD64 and ARM64:
 
-- `0.4.0` (for example): a release; `latest` tracks stable releases.
+- `0.5.0` (for example): a release; `latest` tracks stable releases.
 - `edge`: the latest published main branch commit.
 - `git-<hash>`: a specific commit, using either its seven-character or full hash.
 

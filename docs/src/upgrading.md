@@ -26,6 +26,50 @@ behaviour, and its changelog says what to do.
 Migrations only move forward. To go back to an older version, restore the
 backup you took.
 
+## Within 1.x
+
+Upgrading from any 1.x release to any later 1.x release never needs more
+than the steps above, whichever releases are skipped: configuration,
+scripts and apps that worked keep working, as [Stability](stability.md)
+describes. A minor release may deprecate something; the old name keeps
+working, and the log says what to change, so that the next major release
+needs no work. Anything that needs more is saved for 2.0, whose changelog
+will list what to do.
+
+Overridden templates and translations (`paths.templates_override`,
+`paths.locales_override`) aren't covered: compare them with the new
+release's before upgrading.
+
+## Supported releases
+
+After 1.0, the latest minor release gets bug and security fixes as patch
+releases. Bug fixes aren't backported to older minor releases; security
+fixes are, for a while, as [SECURITY.md](https://github.com/moe-studios/moekura/blob/main/SECURITY.md#supported-versions)
+says. Every upgrade test in CI starts from the previous release, so
+upgrading one release at a time is the best-tested path, but skipping
+releases works too.
+
+## Requirements
+
+Moekura is tested with the versions in the container image and the
+compose files. The oldest versions supported:
+
+| | Oldest supported | Tested in CI |
+|---|---|---|
+| PostgreSQL | 16 | 18 |
+| Valkey (optional) | Valkey 7.2, or Redis 6.2 | Valkey 8 |
+| libvips | 8.15 | 8.16 (Debian 13) and 8.18 (the image) |
+| ffmpeg | 7.0 | 7.1 (Debian 13) and 9.0 (the image) |
+| glibc, for the release binaries | 2.39 | Ubuntu 24.04 |
+| Rust, to build from source | 1.94 | 1.94 and the latest stable |
+
+Raising one of these happens only in a minor release, never in a patch
+release, and is announced in the changelog of the minor release before.
+A PostgreSQL version stays supported at least until its maintainers stop
+supporting it. The container image always ships what it needs, so this
+matters only for sites run [without containers](install/bare-metal.md)
+or with their own database.
+
 ## With Docker Compose
 
 Point the `app` service at a release instead of building it:

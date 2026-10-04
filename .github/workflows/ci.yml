@@ -168,7 +168,15 @@ jobs:
           curl -fsS http://localhost:8080/readyz
           printf '%s\n' "$E2E_ADMIN_PASSWORD" | docker compose -f deploy/compose.tiny.yml exec -T app \
             moekura admin create-user "$E2E_ADMIN_NAME" --role admin
-          echo "app memory after start: $(deploy/smoke/rss.sh) MB"
+      - name: Memory is small at idle
+        # docs/src/install/hardware.md: about 40 MB right after start.
+        run: |
+          rss=$(deploy/smoke/rss.sh)
+          echo "app memory after start: $rss MB"
+          if [ "$rss" -ge 64 ]; then
+            echo "::error::moekura serve uses $rss MB right after start, over 64 MB"
+            exit 1
+          fi
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -186,20 +194,27 @@ jobs:
           pipx install gallery-dl==1.32.13
           e2e/clients/gallery-dl.sh
       - name: Memory stays small
-        # docs/design.md: one `moekura serve` stays under about 150 MB
-        # when idle. After the tests above, and after a burst of requests
-        # (which also checks every page answers 200 OK).
+        # docs/src/install/hardware.md: one `moekura serve` never uses
+        # more than 150 MB, through the tests above and a burst of
+        # requests (which also checks every page answers 200 OK).
         run: |
           echo "app memory after the tests: $(deploy/smoke/rss.sh) MB"
           docker compose -f deploy/compose.tiny.yml exec -T app \
             moekura admin bench-http --runs 500 --concurrency 32
-          rss=$(deploy/smoke/rss.sh)
-          echo "app memory after a burst of requests: $rss MB"
-          if [ "$rss" -ge 150 ]; then
-            echo "::error::moekura serve uses $rss MB, over 150 MB"
-            exit 1
-          fi
+          echo "app memory after a burst of requests: $(deploy/smoke/rss.sh) MB"
+          deploy/smoke/check-peak.sh
           docker stats --no-stream
+      - name: Pages stay fast with 200,000 posts
+        # docs/src/install/hardware.md: on the 1 GB stack, every page and
+        # API response's p95 stays under 100 ms with 200,000 posts. About
+        # three minutes, so only on main.
+        if: github.event_name == 'push'
+        run: |
+          app="docker compose -f deploy/compose.tiny.yml exec -T app moekura"
+          $app admin seed --posts 200000 --force
+          $app admin bench-http --runs 100 --check-ms 100
+          $app admin bench-http --runs 500 --concurrency 32
+          deploy/smoke/check-peak.sh
       - name: Nothing ran out of memory
         run: |
           for service in app db; do

@@ -1,0 +1,27 @@
+# The tiny stack with its files in S3 (SeaweedFS), for the backup test.
+#
+#   docker compose -f deploy/compose.tiny.yml -f e2e/upgrade/compose.s3.yml up -d
+
+services:
+  app:
+    environment:
+      MOEKURA_STORAGE__BACKEND: s3
+      MOEKURA_STORAGE__S3__BUCKET: moekura
+      MOEKURA_STORAGE__S3__ENDPOINT: http://s3:8333
+      MOEKURA_STORAGE__S3__PATH_STYLE: "true"
+      MOEKURA_STORAGE__S3__ACCESS_KEY_ID: test
+      MOEKURA_STORAGE__S3__SECRET_ACCESS_KEY: test
+    depends_on:
+      s3:
+        condition: service_started
+
+  s3:
+    image: docker.io/chrislusf/seaweedfs:4.47
+    command: server -s3 -dir=/data -ip.bind=0.0.0.0
+    ports:
+      - "8333:8333"
+    volumes:
+      - s3:/data
+
+volumes:
+  s3:

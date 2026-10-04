@@ -1,0 +1,98 @@
+name: Upgrades and backups
+
+# A site running the previous release upgrades to this build and keeps its
+# data. See e2e/upgrade/.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - crates/db/migrations/**
+      - e2e/upgrade/**
+      - .github/workflows/upgrade.yml
+  workflow_dispatch:
+
+env:
+  E2E_ADMIN_NAME: boss
+  E2E_ADMIN_PASSWORD: e2e admin password
+  COMPOSE: docker compose -f deploy/compose.tiny.yml
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The release tags, to find the previous release.
+          fetch-depth: 0
+      - name: The previous release
+        run: |
+          # The newest stable release before this commit.
+          previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' HEAD^)
+          echo "PREVIOUS=${previous#v}" >> "$GITHUB_ENV"
+          echo "upgrading from $previous"
+      - name: Version embedded in the binary
+        run: echo "MOEKURA_BUILD_VERSION=git-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: moekura:ci
+          build-args: MOEKURA_BUILD_VERSION=${{ env.MOEKURA_BUILD_VERSION }}
+          cache-from: type=gha,scope=ci
+
+      - name: Start the previous release
+        run: |
+          echo "POSTGRES_PASSWORD=e2e" > deploy/.env
+          docker pull "ghcr.io/moe-studios/moekura:$PREVIOUS"
+          docker tag "ghcr.io/moe-studios/moekura:$PREVIOUS" moekura-app
+          $COMPOSE up -d --no-build --wait
+          for i in $(seq 60); do curl -fsS http://localhost:8080/readyz && break; sleep 2; done
+      - name: Seed it
+        run: e2e/upgrade/seed.sh
+        env:
+          MOEKURA: ${{ env.COMPOSE }} exec -T app moekura
+          STATE: ${{ runner.temp }}/seed.env
+      - name: Upgrade to this build
+        run: |
+          $COMPOSE stop app
+          docker tag moekura:ci moekura-app
+          $COMPOSE up -d --no-build --wait --force-recreate app
+          for i in $(seq 60); do curl -fsS http://localhost:8080/readyz && break; sleep 2; done
+          curl -fsS http://localhost:8080/ | grep -q "$MOEKURA_BUILD_VERSION"
+      - name: The seeded data is intact
+        run: e2e/upgrade/check.sh
+        env:
+          STATE: ${{ runner.temp }}/seed.env
+      - name: Jobs queued by migrations finish
+        run: e2e/upgrade/jobs.sh
+        env:
+          PSQL: ${{ env.COMPOSE }} exec -T db psql -U moekura -d moekura
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: End-to-end tests on the upgraded site
+        working-directory: e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test
+
+      - name: Server logs
+        if: failure()
+        run: $COMPOSE logs app
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: upgrade-playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+      - name: Stop the stack
+        if: always()
+        run: $COMPOSE down -v

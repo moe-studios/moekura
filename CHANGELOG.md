@@ -9,6 +9,40 @@ change configuration or behaviour, and said so here. See
 
 ## [Unreleased]
 
+Getting ready for 1.0: what 1.0 promises, how things get renamed after
+it, and CI that checks upgrades, backups and performance.
+
+### Stability
+
+- [Stability](docs/src/stability.md) says what 1.0 promises not to break
+  (the API, the Danbooru API as the tested apps use it, configuration,
+  commands, search syntax, webhooks, feeds, metrics and image tags) and
+  what isn't a contract (the database schema, overridden templates and
+  translations, pages' HTML, logs).
+- After a rename, old config keys (and their `MOEKURA_*` variables) and
+  old command-line flags keep working, with a warning naming the new
+  ones; deprecated API operations are marked in the OpenAPI description
+  and answer with a `Deprecation` header.
+- A support policy: which releases get security fixes after 1.0, and the
+  oldest supported PostgreSQL, Valkey, libvips, ffmpeg, glibc and Rust
+  (see [Upgrading](docs/src/upgrading.md#requirements)).
+- From 1.0, releases are also tagged with their major version alone
+  (`ghcr.io/moe-studios/moekura:1`).
+- `/api/v1` users and `/me` have `role_key`: the built-in role's key
+  (`member`, `moderator`, …), which doesn't change when an admin renames
+  the role, or `null` for a role the site made.
+
+### Operations
+
+- CI upgrades a site seeded on the previous release to each new build
+  and checks its data, backs it up and restores it as
+  [Backups](docs/src/admin/backups.md) says (local storage and S3), and
+  checks memory at idle and at peak and every page's speed with 200,000
+  posts on the 1 GB stack. The backups page now covers restoring, and
+  copying files with compose.
+- X posts are read through an FxEmbed API (`sources.x.fxembed_api_url`),
+  with a logged-in account as the fallback.
+
 ### Upgrading
 
 Names were made consistent before the 1.0 freeze. If you use these, update

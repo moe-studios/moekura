@@ -35,9 +35,8 @@ status() {
 
 # The seeded API key still works.
 expect "API key" "$(api /me | jq -r .name)" "$admin"
-# Roles go by their (default) display names.
-for user in ursula:Moderator junko:Janitor alice:Member; do
-  expect "role of ${user%%:*}" "$(api "/users/${user%%:*}" | jq -r .role)" "${user#*:}"
+for user in ursula:moderator junko:janitor alice:member; do
+  expect "role of ${user%%:*}" "$(api "/users/${user%%:*}" | jq -r .role_key)" "${user#*:}"
 done
 
 # Searches, through the alias and the implication.

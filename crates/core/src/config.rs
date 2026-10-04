@@ -375,13 +375,13 @@ pub struct XSourceConfig {
     /// The API of an FxEmbed instance (fxtwitter, fixupx or your own),
     /// which reads posts, age-restricted ones too, without an account
     /// here. Empty: don't use one.
-    pub fxembed_api: String,
+    pub fxembed_api_url: String,
 }
 
 impl Default for XSourceConfig {
     fn default() -> Self {
         Self {
-            fxembed_api: "https://api.fixupx.com".into(),
+            fxembed_api_url: "https://api.fixupx.com".into(),
         }
     }
 }
@@ -978,12 +978,12 @@ impl Config {
                 message: "must be an http:// or https:// URL".into(),
             });
         }
-        let fxembed_api = self.sources.x.fxembed_api.trim();
-        if !fxembed_api.is_empty()
-            && !Url::parse(fxembed_api).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+        let fxembed_api_url = self.sources.x.fxembed_api_url.trim();
+        if !fxembed_api_url.is_empty()
+            && !Url::parse(fxembed_api_url).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
         {
             problems.push(ConfigProblem {
-                key: "sources.x.fxembed_api",
+                key: "sources.x.fxembed_api_url",
                 message: "must be an http:// or https:// URL, or empty".into(),
             });
         }
@@ -1302,15 +1302,15 @@ mod tests {
     #[test]
     fn x_reads_through_fxembed_unless_turned_off() {
         assert_eq!(
-            Config::default().sources.x.fxembed_api,
+            Config::default().sources.x.fxembed_api_url,
             "https://api.fixupx.com"
         );
         let mut config = valid();
-        config.sources.x.fxembed_api = String::new();
+        config.sources.x.fxembed_api_url = String::new();
         assert!(config.validate().is_ok());
-        config.sources.x.fxembed_api = "fixupx.com".into();
+        config.sources.x.fxembed_api_url = "fixupx.com".into();
         let problems = config.validate().unwrap_err();
-        assert_eq!(problems[0].key, "sources.x.fxembed_api");
+        assert_eq!(problems[0].key, "sources.x.fxembed_api_url");
     }
 
     #[test]

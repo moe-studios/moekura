@@ -365,7 +365,7 @@ async fn from_embed(http: &Http<'_>, target: &Target) -> Result<Post, String> {
 
 pub(super) async fn fetch(http: &Http<'_>, target: &Target) -> Result<SourceInfo, String> {
     let mut failed = Vec::new();
-    let api = http.logins.x.fxembed_api.trim().trim_end_matches('/');
+    let api = http.logins.x.fxembed_api_url.trim().trim_end_matches('/');
     if !api.is_empty() {
         match from_fxembed(http, api, target).await {
             Ok(post) => return Ok(post.into_info(target)),

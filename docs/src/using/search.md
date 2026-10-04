@@ -58,8 +58,8 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `rating:` | `rating:e,q` | rating `g`eneral, `s`ensitive, `q`uestionable or `e`xplicit (letters or names, comma-separated) |
 | `score:` | `score:>=10` | score |
 | `favcount:` | `favcount:>5` | number of favourites |
-| `commentcount:` | `commentcount:>0` | number of comments |
-| `notecount:` | `notecount:>0` | number of notes |
+| `commentcount:`, `comment_count:` | `commentcount:>0` | number of comments |
+| `notecount:`, `note_count:` | `notecount:>0` | number of notes |
 | `note:` | `note:good_morning` | notes contain these words (underscores for spaces) |
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
@@ -168,7 +168,7 @@ none.
 | `order:rank` | hot posts: from the last two days with a positive score, highest score first, discounted by age (the **Hot** link) |
 | `order:upvotes`, `order:downvotes` (and `_asc`) | most / fewest up or down votes |
 | `order:comment_bumped`, `order:comment_bumped_asc` | like `order:comment`, leaving out comments posted with **Don't bump the post** |
-| `order:comment_count`, `order:note_count` (and `_asc`) | most / fewest comments or notes |
+| `order:comment_count`, `order:note_count` (and `_asc`; `commentcount` and `notecount` work too) | most / fewest comments or notes |
 | `order:custom` | in the order of the search's `id:` list: `id:3,1,2 order:custom` |
 | `order:md5`, `order:md5_asc` | by the file's MD5, for a stable order that isn't upload order |
 | `order:random` | shuffled |

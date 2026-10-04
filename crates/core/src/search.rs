@@ -59,6 +59,7 @@ pub const METATAGS: &[&str] = &[
     "ordfav",
     "similar",
     "commentcount",
+    "comment_count",
     "pool",
     "ordpool",
     "search",
@@ -66,6 +67,7 @@ pub const METATAGS: &[&str] = &[
     "ordfavgroup",
     "note",
     "notecount",
+    "note_count",
     "ai",
     "child",
     "is",
@@ -582,9 +584,15 @@ impl Order {
         ("comment_count", Order::CommentCountDesc),
         ("comment_count_desc", Order::CommentCountDesc),
         ("comment_count_asc", Order::CommentCountAsc),
+        ("commentcount", Order::CommentCountDesc),
+        ("commentcount_desc", Order::CommentCountDesc),
+        ("commentcount_asc", Order::CommentCountAsc),
         ("note_count", Order::NoteCountDesc),
         ("note_count_desc", Order::NoteCountDesc),
         ("note_count_asc", Order::NoteCountAsc),
+        ("notecount", Order::NoteCountDesc),
+        ("notecount_desc", Order::NoteCountDesc),
+        ("notecount_asc", Order::NoteCountAsc),
         ("custom", Order::Custom),
         ("md5", Order::Md5Desc),
         ("md5_desc", Order::Md5Desc),
@@ -1162,7 +1170,10 @@ impl Query {
                     _ => Filter::Downvote(value),
                 }
             }
-            "notecount" => Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
+            // Both spellings, as `order:` takes both.
+            "notecount" | "note_count" => {
+                Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?)
+            }
             "favgroup" => Filter::FavGroup(match value {
                 "" => return Err(invalid("expected a favorite group name or id, any or none")),
                 "any" => PoolFilter::Any,
@@ -1226,7 +1237,7 @@ impl Query {
             "id" => Filter::Id(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "score" => Filter::Score(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "favcount" => Filter::FavCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
-            "commentcount" => {
+            "commentcount" | "comment_count" => {
                 Filter::CommentCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?)
             }
             "width" => Filter::Width(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
@@ -2011,6 +2022,10 @@ mod tests {
         assert_eq!(parse("has:pools"), parse("pool:any"));
         assert_eq!(parse("has:notes"), parse("notecount:>0"));
         assert_eq!(parse("has:comments"), parse("commentcount:>0"));
+        assert_eq!(parse("comment_count:>0"), parse("commentcount:>0"));
+        assert_eq!(parse("note_count:2"), parse("notecount:2"));
+        assert_eq!(parse("order:notecount_asc"), parse("order:note_count_asc"));
+        assert_eq!(parse("order:commentcount"), parse("order:comment_count"));
         assert_eq!(filter("has:source"), Filter::Source(SourceFilter::Any));
         assert_eq!(
             parse("-has:source child:none").to_string(),

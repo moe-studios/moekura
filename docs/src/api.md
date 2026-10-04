@@ -98,7 +98,7 @@ Search, 100 posts at a time:
 curl "https://booru.example.com/api/v1/posts?tags=cat+-dog&limit=100"
 ```
 
-The response has `posts`, a `count`, and `next`: pass it back as `page` for
+The response has `posts`, a `count`, and `next_page`: pass it back as `page` for
 the next page, until it's absent.
 
 Upload a file:

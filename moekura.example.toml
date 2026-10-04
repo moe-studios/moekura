@@ -205,6 +205,9 @@ ffprobe = "ffprobe"
 # the same relative path, e.g. <templates_override>/base.html. Unset by default.
 # templates_override = "/etc/moekura/templates"
 # static_override = "/etc/moekura/static"
+# A directory per language (de/*.ftl) adding languages or replacing
+# built-in messages; see "Translations" in the documentation.
+# locales_override = "/etc/moekura/locales"
 
 [tagger]
 # Suggest tags for new uploads with a machine learning model, run by
@@ -268,7 +271,7 @@ service_name = "moekura"
 # An FxEmbed instance's API (fxtwitter, fixupx or your own), which reads
 # posts on X, age-restricted ones too, without an account. Empty: don't
 # use one.
-fxembed_api = "https://api.fixupx.com"
+fxembed_api_url = "https://api.fixupx.com"
 
 [webhooks]
 # Let webhooks go to private, loopback and link-local addresses, e.g. a

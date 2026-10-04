@@ -66,7 +66,7 @@ all to servers. Moekura reads posts on X:
 
    ```toml
    [sources.x]
-   fxembed_api = "https://api.fxtwitter.com"
+   fxembed_api_url = "https://api.fxtwitter.com"
    ```
 
    Set it to `""` to not use one;

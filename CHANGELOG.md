@@ -7,6 +7,31 @@ releases list what they deprecate. Before 1.0, a minor release (0.2) could
 change configuration or behaviour, and said so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
+## [Unreleased]
+
+### Upgrading
+
+Names were made consistent before the 1.0 freeze. If you use these, update
+them:
+
+- `/api/v1`: search results' `next` and `previous` are now `next_page` and
+  `previous_page`, as in the other lists; tags' `deprecated` is
+  `is_deprecated` (also when changing a tag); users' `uploads` and
+  `favorites` counts are `upload_count` and `favorite_count`; `/me`'s
+  `uploads` is `upload_limits`; creating a saved search answers
+  `201 Created`.
+- Webhooks: `comment.created` sends the comment's `creator` and
+  `creator_url`, as the API does, instead of `author` and `author_url`.
+- The moderation log's action names: `pool.undelete` is `pool.restore`,
+  `ip.ban` and `ip.unban` are `network.ban` and `network.unban`,
+  `tags.mass_update` is `tag.mass_update`, `posts.delete_uploads` is
+  `user.delete_uploads`, `posts.purge_batch` is `post.purge_batch`,
+  `post_versions.undo` is `user.undo_edits` and `forum_post.unhide` is
+  `forum_post.restore`. Existing entries are renamed when you upgrade.
+- `comment_count:` and `note_count:` work beside `commentcount:` and
+  `notecount:`, and `order:commentcount` and `order:notecount` beside
+  `order:comment_count` and `order:note_count`.
+
 ## [0.5.0] - 2026-10-02
 
 Moekura now works like Danbooru in most of the ways people notice:

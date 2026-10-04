@@ -117,8 +117,8 @@ pub(crate) async fn emit_comment(state: &AppState, id: i64) {
         "comment_id": comment.id,
         "post_id": comment.post_id,
         "url": absolute_url(state, &crate::comments::url(&comment)),
-        "author_url": comment.creator_name.as_deref().map(|name| user_url(state, name)),
-        "author": comment.creator_name,
+        "creator_url": comment.creator_name.as_deref().map(|name| user_url(state, name)),
+        "creator": comment.creator_name,
         "body": comment.body,
         "created_at": comment.created_at.format(&Rfc3339).unwrap_or_default(),
     });

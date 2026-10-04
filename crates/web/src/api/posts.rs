@@ -250,8 +250,8 @@ pub struct SearchParams {
     /// rating:g order:score`).
     #[serde(default)]
     tags: String,
-    /// A page number, or a cursor from a previous response's `next` or
-    /// `previous`. Cursors keep working however deep the results go;
+    /// A page number, or a cursor from a previous response's `next_page`
+    /// or `previous_page`. Cursors keep working however deep the results go;
     /// numbered pages stop at the site's limit.
     #[serde(default)]
     page: String,
@@ -266,9 +266,9 @@ pub struct PostPage {
     pub posts: Vec<ApiPost>,
     pub count: ApiCount,
     /// `page` for the next page; absent on the last one.
-    pub next: Option<String>,
+    pub next_page: Option<String>,
     /// `page` for the previous page; absent on the first one.
-    pub previous: Option<String>,
+    pub previous_page: Option<String>,
 }
 
 /// How many posts match. Large counts are estimated.
@@ -380,8 +380,8 @@ pub(crate) async fn search(
     Ok(Json(PostPage {
         posts: load(&state, db, found).await?,
         count: count.into(),
-        next,
-        previous,
+        next_page: next,
+        previous_page: previous,
     }))
 }
 
@@ -867,8 +867,8 @@ mod tests {
             .collect();
         assert_eq!(shown, [ids[2], ids[1]]);
         assert_eq!(first["count"], json!({"value": 3, "accuracy": "exact"}));
-        assert_eq!(first["previous"], json!(null));
-        let next = first["next"].as_str().unwrap();
+        assert_eq!(first["previous_page"], json!(null));
+        let next = first["next_page"].as_str().unwrap();
         assert_eq!(next, format!("b{}", ids[1]));
 
         let second = json(
@@ -877,8 +877,8 @@ mod tests {
                 .body,
         );
         assert_eq!(second["posts"][0]["id"], json!(ids[0]));
-        assert_eq!(second["next"], json!(null));
-        assert_eq!(second["previous"], json!(format!("a{}", ids[0])));
+        assert_eq!(second["next_page"], json!(null));
+        assert_eq!(second["previous_page"], json!(format!("a{}", ids[0])));
 
         // Numbered pages for orders without cursors.
         let by_score = json(
@@ -886,7 +886,7 @@ mod tests {
                 .await
                 .body,
         );
-        assert_eq!(by_score["next"], json!("2"));
+        assert_eq!(by_score["next_page"], json!("2"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
@@ -906,14 +906,14 @@ mod tests {
 
         let first = json(&app.get("/api/v1/posts?tags=order:score", None).await.body);
         assert_eq!(first["posts"].as_array().unwrap().len(), 2);
-        assert_eq!(first["next"], json!("2"));
+        assert_eq!(first["next_page"], json!("2"));
         // The deepest numbered page has no next one.
         let second = json(
             &app.get("/api/v1/posts?tags=order:score&page=2", None)
                 .await
                 .body,
         );
-        assert_eq!(second["next"], json!(null));
+        assert_eq!(second["next_page"], json!(null));
         let deeper = app.get("/api/v1/posts?tags=order:score&page=3", None).await;
         assert_eq!(deeper.status, StatusCode::BAD_REQUEST, "{}", deeper.body);
 

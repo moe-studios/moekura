@@ -22,8 +22,8 @@ pub struct ApiUser {
     pub status: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
-    pub uploads: i64,
-    pub favorites: i64,
+    pub upload_count: i64,
+    pub favorite_count: i64,
     /// What they wrote about themselves, in markup; empty for nothing.
     pub bio: String,
     /// Their profile picture: square, at most 400 pixels a side.
@@ -66,8 +66,8 @@ pub(crate) async fn show(
         avatar_url: url(profile.avatar_key),
         banner_url: url(profile.banner_key),
         bio: profile.bio,
-        uploads: posts::count_by_uploader(db, user.id).await?,
-        favorites: favorites::count_by_user(db, user.id).await?,
+        upload_count: posts::count_by_uploader(db, user.id).await?,
+        favorite_count: favorites::count_by_user(db, user.id).await?,
         name: user.name,
         role,
         status: user.status.as_str().to_owned(),
@@ -86,7 +86,7 @@ pub struct ApiMe {
     pub settings: ApiSettings,
     /// Set while banned.
     pub ban: Option<ApiActiveBan>,
-    pub uploads: ApiUploadAllowance,
+    pub upload_limits: ApiUploadAllowance,
 }
 
 /// How many more posts the account may upload now.
@@ -163,7 +163,7 @@ pub(crate) async fn me(
             safe_mode: settings.safe_mode,
             time_zone: settings.time_zone.clone(),
         },
-        uploads: {
+        upload_limits: {
             let allowance = crate::upload::allowance(&state, &current).await?;
             ApiUploadAllowance {
                 refused: allowance.refusal,
@@ -197,7 +197,7 @@ mod tests {
         let user = json(&app.get("/api/v1/users/ALICE", None).await.body);
         assert_eq!(user["name"], json!("alice"));
         assert_eq!(user["role"], json!("Member"));
-        assert_eq!(user["uploads"], json!(1));
+        assert_eq!(user["upload_count"], json!(1));
 
         let me = json(&app.get("/api/v1/me", Some(&alice)).await.body);
         assert_eq!(me["name"], json!("alice"));

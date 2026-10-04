@@ -198,7 +198,7 @@ fn comment_embed(data: &Value) -> Map<String, Value> {
         .map(Value::to_string)
         .unwrap_or_default();
     let mut embed = base_embed(&format!("Comment on post #{post}"), data);
-    author(&mut embed, data, "author", "author_url");
+    author(&mut embed, data, "creator", "creator_url");
     if let Some(body) = str_of(data, "body") {
         embed.insert("description".into(), json!(cut(body, DESCRIPTION_LEN)));
     }
@@ -396,8 +396,8 @@ mod tests {
             "comment_id": 3,
             "post_id": 12,
             "url": "https://booru.example/posts/12#comment-3",
-            "author": "bob",
-            "author_url": "https://booru.example/users/bob",
+            "creator": "bob",
+            "creator_url": "https://booru.example/users/bob",
             "body": body,
         });
         let options = Options {

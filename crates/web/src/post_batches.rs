@@ -608,7 +608,7 @@ mod tests {
             ]
         );
         let logged: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM mod_actions WHERE action = 'posts.purge_batch'",
+            "SELECT count(*) FROM mod_actions WHERE action = 'post.purge_batch'",
         )
         .fetch_one(&pool)
         .await

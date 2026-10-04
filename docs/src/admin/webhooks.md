@@ -36,7 +36,7 @@ Post events carry `post_id`, `url`, `status`, `rating`, `source`,
 sample of the image (or a video's poster), only for ratings visitors who
 aren't logged in may see and never for deleted posts; deletions and
 flags add a `reason`. Comments carry `comment_id`, `post_id`, `url`,
-`author`, `author_url`, `body` and `created_at`; registrations
+`creator`, `creator_url`, `body` and `created_at`; registrations
 `user_id`, `name`, `url` and `status`.
 
 with these headers:

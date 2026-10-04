@@ -22,7 +22,7 @@ pub struct ApiTag {
     pub category: String,
     pub post_count: i32,
     /// Deprecated tags can't be added to posts.
-    pub deprecated: bool,
+    pub is_deprecated: bool,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }
@@ -34,7 +34,7 @@ impl ApiTag {
             id: tag.id,
             name: tag.name,
             post_count: tag.post_count,
-            deprecated: tag.is_deprecated,
+            is_deprecated: tag.is_deprecated,
             created_at: tag.created_at,
         }
     }
@@ -339,7 +339,7 @@ pub struct TagChanges {
     /// The category's name (`general`, `artist`, …).
     category: Option<String>,
     /// Deprecated tags can't be added to posts.
-    deprecated: Option<bool>,
+    is_deprecated: Option<bool>,
 }
 
 /// Edit a tag.
@@ -378,7 +378,7 @@ pub(crate) async fn update(
             .map(|c| c.id)
             .ok_or_else(|| AppError::Unprocessable(format!("There is no category `{name}`")))?,
     };
-    let deprecated = changes.deprecated.unwrap_or(tag.is_deprecated);
+    let deprecated = changes.is_deprecated.unwrap_or(tag.is_deprecated);
     crate::tags::update(&state, &current, &tag, category, deprecated).await?;
     let tag = tags::by_id(db, tag.id).await?.ok_or(AppError::NotFound)?;
     Ok(Json(ApiTag::new(tag, &categories)))
@@ -538,7 +538,7 @@ mod tests {
         let admin = session_for(&pool, "root", SystemRole::Admin).await;
         upload(&app, &alice, &fixture::png(20, 20), "someone").await;
 
-        let change = json!({"category": "artist", "deprecated": false});
+        let change = json!({"category": "artist", "is_deprecated": false});
         let refused = app
             .json(
                 "PATCH",

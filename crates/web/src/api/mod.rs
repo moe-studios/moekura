@@ -20,8 +20,11 @@ mod wiki;
 use std::sync::Arc;
 
 use axum::Router;
-use axum::http::StatusCode;
+use axum::extract::{MatchedPath, Request};
 use axum::http::header::CONTENT_TYPE;
+use axum::http::{HeaderValue, Method, StatusCode};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::get;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::openapi::{OpenApi as Spec, RefOr, SecurityRequirement};
@@ -179,6 +182,85 @@ fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
         .routes(routes!(moderation::log))
 }
 
+/// An operation kept working for old clients after being replaced. It's
+/// marked `deprecated` in the OpenAPI description, and its responses carry
+/// a `Deprecation` header (RFC 9745). It's removed in the next major
+/// release; see docs/src/stability.md.
+///
+/// A deprecated field is marked with `#[schema(deprecated)]` instead, and
+/// keeps being sent.
+pub(crate) struct Deprecated {
+    pub method: Method,
+    /// As in the OpenAPI description: `/posts/{id}`.
+    pub path: &'static str,
+    /// When it was deprecated, as Unix time.
+    pub since: i64,
+    /// What to use instead, for its description.
+    pub instead: &'static str,
+}
+
+/// Deprecated operations, oldest first.
+const DEPRECATED: &[Deprecated] = &[];
+
+/// Marks deprecated operations in the description. Panics on one that
+/// doesn't exist, so a typo fails the tests.
+fn mark_deprecated(mut spec: Spec, deprecated: &[Deprecated]) -> Spec {
+    for entry in deprecated {
+        let operation = spec
+            .paths
+            .paths
+            .get_mut(entry.path)
+            .and_then(|item| match entry.method {
+                Method::GET => item.get.as_mut(),
+                Method::PUT => item.put.as_mut(),
+                Method::POST => item.post.as_mut(),
+                Method::DELETE => item.delete.as_mut(),
+                Method::PATCH => item.patch.as_mut(),
+                _ => None,
+            });
+        let Some(operation) = operation else {
+            panic!(
+                "deprecated {} {} isn't an operation",
+                entry.method, entry.path
+            );
+        };
+        operation.deprecated = Some(utoipa::openapi::Deprecated::True);
+        let note = format!(
+            "**Deprecated:** use {} instead. This keeps working until the next major release.",
+            entry.instead
+        );
+        operation.description = Some(match operation.description.take() {
+            Some(description) => format!("{note}\n\n{description}"),
+            None => note,
+        });
+    }
+    spec
+}
+
+/// Adds `Deprecation` to responses from deprecated operations.
+async fn deprecation_header(
+    deprecated: &'static [Deprecated],
+    request: Request,
+    next: Next,
+) -> Response {
+    let since = request
+        .extensions()
+        .get::<MatchedPath>()
+        .and_then(|matched| matched.as_str().strip_prefix(BASE))
+        .and_then(|path| {
+            deprecated
+                .iter()
+                .find(|d| d.path == path && d.method == request.method())
+        })
+        .map(|d| d.since);
+    let mut response = next.run(request).await;
+    if let Some(since) = since {
+        let value = HeaderValue::from_str(&format!("@{since}")).expect("digits");
+        response.headers_mut().insert("deprecation", value);
+    }
+    response
+}
+
 /// Gives every response a description, which OpenAPI requires: the
 /// status's reason phrase where the handler didn't say more.
 fn complete(mut spec: Spec) -> Spec {
@@ -211,12 +293,21 @@ fn complete(mut spec: Spec) -> Spec {
 
 /// The API's OpenAPI description.
 pub fn openapi() -> Spec {
-    complete(api_router(0).into_openapi())
+    mark_deprecated(complete(api_router(0).into_openapi()), DEPRECATED)
 }
 
 pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
-    let (router, spec) = api_router(max_upload_bytes).split_for_parts();
-    let spec = complete(spec);
+    routes_with(max_upload_bytes, DEPRECATED)
+}
+
+fn routes_with(max_upload_bytes: u64, deprecated: &'static [Deprecated]) -> Router<AppState> {
+    let (mut router, spec) = api_router(max_upload_bytes).split_for_parts();
+    let spec = mark_deprecated(complete(spec), deprecated);
+    if !deprecated.is_empty() {
+        router = router.route_layer(middleware::from_fn(move |request, next| {
+            deprecation_header(deprecated, request, next)
+        }));
+    }
     let json: Arc<str> = spec
         .to_pretty_json()
         .expect("the OpenAPI description serializes")
@@ -297,6 +388,37 @@ mod tests {
         // OpenAPI requires every response to be described.
         let created = &spec["paths"]["/posts"]["post"]["responses"]["201"];
         assert_eq!(created["description"], "Created");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn deprecated_operations_are_marked(pool: PgPool) {
+        const DEPRECATED: &[super::Deprecated] = &[super::Deprecated {
+            method: axum::http::Method::GET,
+            path: "/me",
+            since: 1_790_000_000,
+            instead: "`GET /users/{name}`",
+        }];
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes_with(1024, DEPRECATED),
+        );
+        let response = app.get("/api/v1/me", None).await;
+        assert_eq!(response.headers.get("deprecation").unwrap(), "@1790000000");
+        let other = app.get("/api/v1/tags", None).await;
+        assert!(other.headers.get("deprecation").is_none());
+
+        let spec: serde_json::Value =
+            serde_json::from_str(&app.get("/api/v1/openapi.json", None).await.body).unwrap();
+        let operation = &spec["paths"]["/me"]["get"];
+        assert_eq!(operation["deprecated"], true);
+        assert!(
+            operation["description"]
+                .as_str()
+                .unwrap()
+                .starts_with("**Deprecated:** use `GET /users/{name}` instead."),
+            "{operation}"
+        );
+        assert!(spec["paths"]["/tags"]["get"]["deprecated"].is_null());
     }
 
     /// What OpenAPI linters check that the annotations could get wrong.

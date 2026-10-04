@@ -65,6 +65,7 @@ pub struct TestResponse {
     pub set_cookie: Vec<String>,
     pub location: Option<String>,
     pub retry_after: Option<u64>,
+    pub headers: axum::http::HeaderMap,
 }
 
 impl TestResponse {
@@ -279,6 +280,7 @@ impl TestApp {
             .headers()
             .get("retry-after")
             .and_then(|v| v.to_str().ok()?.parse().ok());
+        let headers = response.headers().clone();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         TestResponse {
             status,
@@ -286,6 +288,7 @@ impl TestApp {
             set_cookie,
             location,
             retry_after,
+            headers,
         }
     }
 }

@@ -1,6 +1,7 @@
 mod admin;
 mod bench_http;
 mod config;
+mod deprecated;
 mod export;
 mod import;
 mod import_remote;
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use moekura_core::config::{Config, DatabaseConfig};
 use moekura_db::Db;
 use moekura_db::site_cache::SiteCache;
@@ -74,13 +75,24 @@ enum Command {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     moekura_storage::install_crypto_provider();
-    let cli = Cli::parse();
+    let cli = parse_args();
     // Needs no configuration.
     if let Command::Openapi = cli.command {
         println!("{}", moekura_web::api::openapi().to_pretty_json()?);
         return Ok(());
     }
-    let config = config::load(cli.config.as_deref())?;
+    let (config, notices) = config::load(cli.config.as_deref())?;
+    // Logged once logging is set up; commands without it print them.
+    let warn_deprecated = || {
+        for notice in &notices {
+            tracing::warn!("{notice}");
+        }
+    };
+    if matches!(cli.command, Command::CheckConfig | Command::Admin { .. }) {
+        for notice in &notices {
+            eprintln!("warning: {notice}");
+        }
+    }
 
     match cli.command {
         Command::Openapi => unreachable!("handled before loading the configuration"),
@@ -95,6 +107,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Migrate => {
             let telemetry = telemetry::init(&config.telemetry, "migrate")?;
+            warn_deprecated();
             let result = async {
                 let db = connect(&config.database).await?;
                 migrate(&db).await?;
@@ -130,23 +143,43 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Serve => {
             let telemetry = telemetry::init(&config.telemetry, "serve")?;
+            warn_deprecated();
             let result = serve(config).await;
             telemetry.shutdown().await;
             result
         }
         Command::Worker => {
             let telemetry = telemetry::init(&config.telemetry, "worker")?;
+            warn_deprecated();
             let result = worker(config).await;
             telemetry.shutdown().await;
             result
         }
         Command::Tagger(args) => {
             let telemetry = telemetry::init(&config.telemetry, "tagger")?;
+            warn_deprecated();
             let result = tagger::run(config, args).await;
             telemetry.shutdown().await;
             result
         }
     }
+}
+
+/// The command line, with deprecated spellings rewritten (and warned
+/// about) first.
+fn parse_args() -> Cli {
+    let args: Option<Vec<String>> = std::env::args_os()
+        .map(|arg| arg.into_string().ok())
+        .collect();
+    // Old names are plain ASCII; leave anything else to clap.
+    let Some(args) = args else {
+        return Cli::parse();
+    };
+    let (args, warnings) = deprecated::rewrite_args(&Cli::command(), deprecated::CLI_NAMES, args);
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+    Cli::parse_from(args)
 }
 
 async fn serve(config: Config) -> anyhow::Result<()> {
@@ -415,4 +448,39 @@ async fn shutdown_signal() {
         () = terminate => {}
     }
     tracing::info!("shutdown signal received, finishing in-flight work");
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::CommandFactory;
+
+    use super::*;
+
+    /// Each old spelling leads to a flag or subcommand that exists, and no
+    /// longer exists itself.
+    #[test]
+    fn renamed_cli_names_point_at_current_ones() {
+        let root = Cli::command();
+        for rename in deprecated::CLI_NAMES {
+            let mut words: Vec<&str> = rename.old.split(' ').collect();
+            let old = words.pop().expect("not empty");
+            let mut command = &root;
+            for word in words {
+                command = command
+                    .find_subcommand(word)
+                    .unwrap_or_else(|| panic!("{}: no subcommand {word}", rename.old));
+            }
+            let exists = |name: &str| match name.strip_prefix("--") {
+                Some(long) => command.get_arguments().any(|a| a.get_long() == Some(long)),
+                None => command.find_subcommand(name).is_some(),
+            };
+            assert!(
+                exists(rename.new),
+                "{}: {} is missing",
+                rename.old,
+                rename.new
+            );
+            assert!(!exists(old), "{} still exists", rename.old);
+        }
+    }
 }

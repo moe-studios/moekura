@@ -3,12 +3,15 @@
 Releases are tagged `vX.Y.Z` and listed, with what changed, in
 [CHANGELOG.md](https://github.com/moe-studios/moekura/blob/main/CHANGELOG.md).
 Each comes as a container image for amd64 and arm64
-(`ghcr.io/moe-studios/moekura:X.Y.Z`, also tagged `X.Y` and `latest`) and as
-Linux binaries on the release page.
+(`ghcr.io/moe-studios/moekura:X.Y.Z`, also tagged `X.Y`, `X` from 1.0 on,
+and `latest`) and as Linux binaries on the release page.
 
-Before 1.0, a minor release (0.1 → 0.2) may change configuration or
-behaviour; its changelog says what to do. Patch releases (0.1.0 → 0.1.1)
-only fix things.
+From 1.0 on, versions follow [semantic versioning](https://semver.org/):
+a patch release (1.0.0 → 1.0.1) only fixes things, a minor release
+(1.0 → 1.1) adds things without breaking existing sites, and only a major
+release (2.0) may remove or change what [Stability](stability.md) lists.
+Before 1.0, a minor release (0.4 → 0.5) could change configuration or
+behaviour, and its changelog says what to do.
 
 ## Steps
 

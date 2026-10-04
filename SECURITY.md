@@ -13,7 +13,9 @@ is published with credit to you, unless you'd rather not be named.
 ## Supported versions
 
 Moekura is before 1.0, so only the latest release gets security fixes.
-See [Upgrading](docs/src/upgrading.md) for how to move to it.
+See [Upgrading](docs/src/upgrading.md) for how to move to it, and
+[Stability](docs/src/stability.md) for what upgrading within a major
+version keeps working.
 
 ## Scope
 

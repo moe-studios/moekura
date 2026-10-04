@@ -1,8 +1,10 @@
 # Changelog
 
 Notable changes in each release. Moekura follows [semantic
-versioning](https://semver.org/); before 1.0, a minor release (0.2) may
-change configuration or behaviour, and says so here. See
+versioning](https://semver.org/): from 1.0 on, only a major release (2.0)
+may break what [Stability](docs/src/stability.md) lists, and minor
+releases list what they deprecate. Before 1.0, a minor release (0.2) could
+change configuration or behaviour, and said so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
 ## [0.5.0] - 2026-10-02

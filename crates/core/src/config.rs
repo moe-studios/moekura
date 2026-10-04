@@ -363,6 +363,27 @@ pub struct SourcesConfig {
     /// members, by domain: `[sources.logins."gelbooru.com"]`. Requests to
     /// that domain and its subdomains carry them.
     pub logins: BTreeMap<String, SiteLogin>,
+    /// How posts on X are read.
+    pub x: XSourceConfig,
+}
+
+/// How posts on X are read: through an FxEmbed instance's API, then, if
+/// `[sources.logins."x.com"]` has a login, from X as that account.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct XSourceConfig {
+    /// The API of an FxEmbed instance (fxtwitter, fixupx or your own),
+    /// which reads posts, age-restricted ones too, without an account
+    /// here. Empty: don't use one.
+    pub fxembed_api: String,
+}
+
+impl Default for XSourceConfig {
+    fn default() -> Self {
+        Self {
+            fxembed_api: "https://api.fixupx.com".into(),
+        }
+    }
 }
 
 /// What requests to a site carry to be logged in.
@@ -957,6 +978,15 @@ impl Config {
                 message: "must be an http:// or https:// URL".into(),
             });
         }
+        let fxembed_api = self.sources.x.fxembed_api.trim();
+        if !fxembed_api.is_empty()
+            && !Url::parse(fxembed_api).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+        {
+            problems.push(ConfigProblem {
+                key: "sources.x.fxembed_api",
+                message: "must be an http:// or https:// URL, or empty".into(),
+            });
+        }
         if (1..MIN_FFMPEG_MEMORY_MB).contains(&self.media.ffmpeg_memory_mb) {
             problems.push(ConfigProblem {
                 key: "media.ffmpeg_memory_mb",
@@ -1267,6 +1297,20 @@ mod tests {
         assert_eq!(login.query["api_key"], "k");
         assert!(config.sources.login_for("pawoo.net").is_some());
         assert!(config.sources.login_for("notgelbooru.com").is_none());
+    }
+
+    #[test]
+    fn x_reads_through_fxembed_unless_turned_off() {
+        assert_eq!(
+            Config::default().sources.x.fxembed_api,
+            "https://api.fixupx.com"
+        );
+        let mut config = valid();
+        config.sources.x.fxembed_api = String::new();
+        assert!(config.validate().is_ok());
+        config.sources.x.fxembed_api = "fixupx.com".into();
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "sources.x.fxembed_api");
     }
 
     #[test]

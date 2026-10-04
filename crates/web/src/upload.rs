@@ -302,6 +302,7 @@ pub(crate) async fn fetch_url(
         .sources
         .lookup_from(&fields.url, &fields.referer)
         .await;
+    check_found(&fields.url, found.as_deref())?;
     let file_url = match found.as_deref() {
         Some(info) if !info.files.is_empty() => info.files[0].clone(),
         _ => fields.url.clone(),
@@ -311,6 +312,15 @@ pub(crate) async fn fetch_url(
         fields.source = file_source(&file_url, found.as_deref(), &fields.url);
     }
     Ok(file)
+}
+
+/// Refuses a link to a page its source strategy couldn't read (`found`
+/// is what it said), when downloading the page itself would be no use.
+pub(crate) fn check_found(url: &str, found: Option<&SourceInfo>) -> Result<(), UploadError> {
+    match crate::sources::unread_message(url) {
+        Some(message) if found.is_none() => Err(UploadError::Invalid(message.into())),
+        _ => Ok(()),
+    }
 }
 
 /// The source of a file downloaded from `file_url`, found through link

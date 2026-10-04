@@ -259,6 +259,16 @@ service_name = "moekura"
 # query = { user_id = "…", api_key = "…" }
 # [sources.logins."baraag.net"]
 # headers = { Authorization = "Bearer …" }
+# Posts on X are also read as this account when the FxEmbed API below
+# can't give them; it needs the auth_token and ct0 cookies.
+# [sources.logins."x.com"]
+# cookie = "auth_token=…; ct0=…"
+
+[sources.x]
+# An FxEmbed instance's API (fxtwitter, fixupx or your own), which reads
+# posts on X, age-restricted ones too, without an account. Empty: don't
+# use one.
+fxembed_api = "https://api.fixupx.com"
 
 [webhooks]
 # Let webhooks go to private, loopback and link-local addresses, e.g. a

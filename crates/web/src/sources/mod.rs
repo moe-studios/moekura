@@ -407,6 +407,16 @@ fn site(url: &Url) -> Option<Strategy> {
         .or_else(|| skeb::target(url).map(Strategy::Skeb))
 }
 
+/// What to tell an uploader whose link couldn't be read, when it's a
+/// page that would be no use downloaded as it is (a post on X).
+pub(crate) fn unread_message(url: &str) -> Option<&'static str> {
+    let url = Url::parse(url.trim()).ok()?;
+    match site(&url)? {
+        Strategy::Twitter(_) => Some(twitter::UNREAD),
+        _ => None,
+    }
+}
+
 /// Whether `url` looks like a file rather than a page.
 fn is_file_url(url: &Url) -> bool {
     let path = url.path().to_ascii_lowercase();
@@ -507,6 +517,12 @@ impl Sources {
     #[cfg(test)]
     pub fn remember(&self, url: &str, info: SourceInfo) {
         self.cache.put(url, Some(Arc::new(info)));
+    }
+
+    /// Answers lookups of `url` with nothing, as if its page couldn't be read.
+    #[cfg(test)]
+    pub fn remember_unread(&self, url: &str) {
+        self.cache.put(url, None);
     }
 }
 

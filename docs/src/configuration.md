@@ -331,6 +331,7 @@ traces everything beneath it.
 | Key | Default | Meaning |
 |---|---|---|
 | `logins` | none | logins for [sites](using/sources.md#logins) that show some works only to members, by domain |
+| `x.fxembed_api` | `"https://api.fixupx.com"` | the API of an [FxEmbed](https://github.com/FxEmbed/FxEmbed) instance that [posts on X](using/sources.md#x) are read through; empty to not use one |
 
 Each `[sources.logins."<domain>"]` covers the domain and its subdomains
 and can set any of:

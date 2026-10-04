@@ -292,7 +292,11 @@ async fn create(
         // A link sent with files says where they're from.
         stage_files(&state, user.id, &sent.url, &files).await?
     } else if is_web_link(&sent.url) {
-        stage_link(&state, user.id, sent.link(), room).await?
+        let info = state.sources.lookup_from(&sent.url, &sent.referer).await;
+        if let Err(error) = upload::check_found(&sent.url, info.as_deref()) {
+            return Ok(refuse(sent.link(), error));
+        }
+        stage_link(&state, user.id, sent.link(), info, room).await?
     } else if sent.url.is_empty() {
         let error = UploadError::Invalid("Choose files to upload, or paste a link.".into());
         return Ok(refuse(sent.link(), error));
@@ -440,18 +444,19 @@ fn failure(error: &UploadError) -> (String, Option<i64>) {
 }
 
 /// Makes an upload of the files at `link` (at most `room`): a work's files
-/// when a source strategy reads its page (or the page it was found on,
-/// for a bare file), else the link itself. Each file's source is its
-/// [canonical one](upload::file_source). They're downloaded in the
-/// background; this waits a little for them. Returns the upload's id.
+/// when a source strategy read its page (or the page it was found on,
+/// for a bare file) and said `info`, else the link itself. Each file's
+/// source is its [canonical one](upload::file_source). They're
+/// downloaded in the background; this waits a little for them. Returns
+/// the upload's id.
 async fn stage_link(
     state: &AppState,
     uploader_id: i64,
     link: Link<'_>,
+    info: Option<Arc<SourceInfo>>,
     room: usize,
 ) -> Result<i64, AppError> {
     let url = link.url;
-    let info = state.sources.lookup_from(url, link.referer).await;
     let (files, source) = match info.as_deref() {
         Some(info) if !info.files.is_empty() => (
             info.files
@@ -2620,5 +2625,23 @@ mod tests {
             "{}",
             given_up.body
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn unread_x_posts_say_why(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let post = "https://x.com/artist/status/1";
+        state.sources.remember_unread(post);
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let sent = app
+            .post_multipart("/uploads", Some(&alice), &[("url", post.to_owned())], None)
+            .await;
+        assert_eq!(sent.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(sent.body.contains("age-restricted"), "{}", sent.body);
+        let uploads: i64 = sqlx::query_scalar("SELECT count(*) FROM uploads")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(uploads, 0);
     }
 }

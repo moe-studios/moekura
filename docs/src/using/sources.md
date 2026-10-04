@@ -54,6 +54,40 @@ headers = { Authorization = "Bearer …" }
 Use an account made for this: anyone with access to the configuration
 can act as it.
 
+## X
+
+X shows age-restricted posts only to logged-in accounts, and little at
+all to servers. Moekura reads posts on X:
+
+1. through the API of an [FxEmbed](https://github.com/FxEmbed/FxEmbed)
+   instance, which needs no account here and sees age-restricted posts
+   too. It's `https://api.fixupx.com` unless `[sources.x]` names another
+   (such as `https://api.fxtwitter.com`, or your own):
+
+   ```toml
+   [sources.x]
+   fxembed_api = "https://api.fxtwitter.com"
+   ```
+
+   Set it to `""` to not use one;
+2. then, if that fails and there's a login for `x.com`, from X itself as
+   that account. It needs the `auth_token` and `ct0` cookies, and the
+   account must be allowed to see sensitive media (in X's settings):
+
+   ```toml
+   [sources.logins."x.com"]
+   cookie = "auth_token=…; ct0=…"
+   ```
+
+   X changes how its API is asked from time to time, which can break this,
+   and suspends accounts it finds reading it automatically;
+3. last, through the API X's own embedded posts use, which only sees
+   public posts that aren't age-restricted.
+
+When none of them gives the post, the upload is refused, saying it may not
+exist, may be hidden or may be age-restricted; the server's log says what
+each answered.
+
 ## Every site
 
 ### Boorus
@@ -156,7 +190,7 @@ can act as it.
 | Tumblr | an API key reads more: `query = { api_key = "…" }` for api.tumblr.com |
 | Vk |  |
 | Weibo | read as a visitor |
-| X |  |
+| X | read through an FxEmbed instance; see [X](#x) |
 | Xfolio | needs the `xfolio_session` cookie |
 | Xiaohongshu | needs the `webId`, `web_session` and `gid` cookies |
 | Yachiyo's Room |  |

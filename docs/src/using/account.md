@@ -221,7 +221,8 @@ runs at most 20 saved searches. Only you see your saved searches.
 Favorite groups are your own named lists of posts, in the order you
 choose: make one under **Your favorite groups** (linked from your
 profile) or from a post page, add posts from their pages, and reorder
-them by dragging on the group's edit page. A group is public (listed on
+them by dragging on the group's edit page. As with pools, only posts you
+can see go in, and not deleted ones. A group is public (listed on
 your profile, and anyone can open it) unless you untick *Public*.
 `favgroup:name` searches one of your groups, `favgroup:7` any public
 group by number, and `ordfavgroup:name` shows a group in its own order.

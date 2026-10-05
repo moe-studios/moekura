@@ -609,17 +609,32 @@ pub(crate) async fn preview(page: &Page, tags: &str, limit: u32) -> Result<Vec<V
 }
 
 /// Grid cards for posts `ids` (their ids and contexts, in order), leaving
-/// out posts the viewer's blacklist hides, or blurring them if they chose
-/// that. `post_query` is added to the post links, as for [`card_context`].
+/// out posts the viewer may not see and those their blacklist hides, or
+/// blurring those if they chose that. `post_query` is added to the post
+/// links, as for [`card_context`].
 pub(crate) async fn grid(
     page: &Page,
     db: &sqlx::PgPool,
     ids: &[i64],
     post_query: Option<&str>,
 ) -> Result<Vec<(i64, Value)>, AppError> {
+    grid_for(page, db, ids, post_query, &visibility(&page.current)).await
+}
+
+/// [`grid`] for the posts `visible` allows, for pages that show the
+/// viewer more than they browse with (purging ignores their safe mode).
+pub(crate) async fn grid_for(
+    page: &Page,
+    db: &sqlx::PgPool,
+    ids: &[i64],
+    post_query: Option<&str>,
+    visible: &Visibility,
+) -> Result<Vec<(i64, Value)>, AppError> {
     let state = page.state();
     let thumbs = Thumbs::for_viewer(state, &page.current);
-    let cards = posts::cards(db, ids, thumbs.kinds()).await?;
+    // Whoever passed the ids, a thumbnail leads to the files.
+    let ids = posts::visible_ids(db, ids, visible).await?;
+    let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
     let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
     let blur = crate::blacklist::blurs(&page.current);
     Ok(cards

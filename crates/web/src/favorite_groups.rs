@@ -117,13 +117,7 @@ pub(crate) fn save_error(error: SaveError) -> AppError {
         SaveError::NameTaken => {
             AppError::Unprocessable("You already have a group with that name.".into())
         }
-        SaveError::MissingPosts(ids) => AppError::Unprocessable(format!(
-            "These posts don't exist: {}.",
-            ids.iter()
-                .map(|id| format!("#{id}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+        SaveError::MissingPosts(ids) => crate::pools::missing_posts(&ids),
         SaveError::Db(e) => e.into(),
     }
 }
@@ -266,6 +260,17 @@ fn form_contents(form: &GroupForm) -> Result<Contents, AppError> {
     contents(&form.name, form.public.is_some(), post_ids)
 }
 
+/// Refuses posts a save adds to a group that `current` may not add, as
+/// [`append`] does (see [`crate::pools::check_added`]).
+pub(crate) async fn check_added(
+    db: &sqlx::PgPool,
+    current: &CurrentUser,
+    before: &[i64],
+    after: &[i64],
+) -> Result<(), AppError> {
+    crate::pools::check_added(db, current, before, after, "favorite groups").await
+}
+
 async fn refused(
     page: &Page,
     group: Option<&Group>,
@@ -299,6 +304,9 @@ async fn create(
     };
     if favorite_groups::count_for_user(db, user).await? >= MAX_GROUPS {
         let error = AppError::Unprocessable(format!("You can have at most {MAX_GROUPS} groups."));
+        return refused(&page, None, &form, error).await;
+    }
+    if let Err(error) = check_added(db, &page.current, &[], &contents.post_ids).await {
         return refused(&page, None, &form, error).await;
     }
     match favorite_groups::create(db, user, &contents).await {
@@ -340,6 +348,10 @@ async fn edit(
         Ok(contents) => contents,
         Err(error) => return refused(&page, Some(&group), &form, error).await,
     };
+    let before = favorite_groups::post_ids(db, id).await?;
+    if let Err(error) = check_added(db, &page.current, &before, &contents.post_ids).await {
+        return refused(&page, Some(&group), &form, error).await;
+    }
     match favorite_groups::save(db, id, &contents).await {
         Ok(()) => Ok((flash::set(jar, Flash::Saved), Redirect::to(&group_url(id))).into_response()),
         Err(error) => refused(&page, Some(&group), &form, save_error(error)).await,
@@ -578,5 +590,95 @@ mod tests {
         assert_eq!(favorite_groups::post_ids(&pool, id).await.unwrap(), [a, b]);
         app.post(&format!("{url}/delete"), Some(&alice), &[]).await;
         assert!(favorite_groups::by_id(&pool, id).await.unwrap().is_none());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn posts_owners_cant_see_stay_out(pool: PgPool) {
+        let a = post(&pool).await;
+        let tag: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('bad_artist') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('bad_artist', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let banned = post(&pool).await;
+        let deleted = post(&pool).await;
+        sqlx::query("UPDATE posts SET tag_ids = $1 WHERE id = $2")
+            .bind(vec![tag])
+            .bind(banned)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(deleted)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = TestApp::new(
+            test_state(&pool).await,
+            routes().merge(crate::posts::routes()),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+
+        for hidden in [banned, deleted, deleted + 1000] {
+            let refused = app
+                .post_form(
+                    "/favorite_groups",
+                    Some(&alice),
+                    &[],
+                    &format!("name=Best&public=1&posts={a}+{hidden}"),
+                )
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(
+                refused
+                    .body
+                    .contains(&format!("These posts don&#x27;t exist: #{hidden}.")),
+                "{}",
+                refused.body
+            );
+            assert!(refused.body.contains(&format!("href=\"/posts/{a}\"")));
+            assert!(!refused.body.contains(&format!("href=\"/posts/{hidden}\"")));
+        }
+
+        // One already in a group (since banned) stays there, out of sight.
+        let id = favorite_groups::create(
+            &pool,
+            moekura_db::users::by_name(&pool, "alice")
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            &Contents {
+                name: "Best".into(),
+                is_public: true,
+                post_ids: vec![banned, a],
+            },
+        )
+        .await
+        .unwrap();
+        let url = group_url(id);
+        assert!(
+            !app.get(&url, None)
+                .await
+                .body
+                .contains(&format!("href=\"/posts/{banned}\""))
+        );
+        let saved = app
+            .post_form(
+                &format!("{url}/edit"),
+                Some(&alice),
+                &[],
+                &format!("name=Best&public=1&posts={a}+{banned}"),
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        assert_eq!(
+            favorite_groups::post_ids(&pool, id).await.unwrap(),
+            [a, banned]
+        );
     }
 }

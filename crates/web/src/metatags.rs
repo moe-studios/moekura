@@ -193,6 +193,9 @@ pub(crate) async fn apply(
                 }
             }
             Effect::NewPool(name) => {
+                crate::pools::check_added(db, current, &[], &[post_id], "pools")
+                    .await
+                    .map_err(from_app)?;
                 let contents = Contents {
                     name: name.clone(),
                     description: String::new(),

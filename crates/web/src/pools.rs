@@ -1,5 +1,7 @@
 //! Pools: ordered collections of posts, with history.
 
+use std::collections::HashSet;
+
 use axum::extract::{Path, Query};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -151,15 +153,81 @@ pub(crate) fn save_error(error: SaveError) -> AppError {
         SaveError::NameTaken => {
             AppError::Unprocessable("Another pool already has that name.".into())
         }
-        SaveError::MissingPosts(ids) => AppError::Unprocessable(format!(
-            "These posts don't exist: {}.",
-            ids.iter()
-                .map(|id| format!("#{id}"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        )),
+        SaveError::MissingPosts(ids) => missing_posts(&ids),
         SaveError::Db(e) => e.into(),
     }
+}
+
+/// Posts that can't go in a pool or group because there's no such post.
+pub(crate) fn missing_posts(ids: &[i64]) -> AppError {
+    AppError::Unprocessable(format!("These posts don't exist: {}.", post_list(ids)))
+}
+
+fn post_list(ids: &[i64]) -> String {
+    ids.iter()
+        .map(|id| format!("#{id}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Which of posts `ids` `current` may add to a pool or favorite group, as
+/// [`append`] allows: those they can see that aren't deleted.
+pub(crate) async fn addable(
+    db: &sqlx::PgPool,
+    current: &CurrentUser,
+    ids: &[i64],
+) -> Result<HashSet<i64>, AppError> {
+    let mut visible = visibility(current);
+    visible.statuses.retain(|s| *s != PostStatus::Deleted);
+    Ok(posts::visible_ids(db, ids, &visible)
+        .await?
+        .into_iter()
+        .collect())
+}
+
+/// Refuses posts in `after` but not in `before` that `current` may not
+/// add to `what` ("pools" or "favorite groups"; see [`addable`]). Those
+/// they can't see read as missing, like ids with no post, so the refusal
+/// tells nothing about them. Posts already there stay, whatever became of
+/// them since.
+pub(crate) async fn check_added(
+    db: &sqlx::PgPool,
+    current: &CurrentUser,
+    before: &[i64],
+    after: &[i64],
+    what: &str,
+) -> Result<(), AppError> {
+    let before: HashSet<i64> = before.iter().copied().collect();
+    let added: Vec<i64> = after
+        .iter()
+        .copied()
+        .filter(|id| !before.contains(id))
+        .collect();
+    if added.is_empty() {
+        return Ok(());
+    }
+    let allowed = addable(db, current, &added).await?;
+    let refused: Vec<i64> = added
+        .into_iter()
+        .filter(|id| !allowed.contains(id))
+        .collect();
+    if refused.is_empty() {
+        return Ok(());
+    }
+    // Those they see anyway are deleted.
+    let seen: HashSet<i64> = posts::visible_ids(db, &refused, &visibility(current))
+        .await?
+        .into_iter()
+        .collect();
+    let (deleted, missing): (Vec<i64>, Vec<i64>) =
+        refused.into_iter().partition(|id| seen.contains(id));
+    if !missing.is_empty() {
+        return Err(missing_posts(&missing));
+    }
+    Err(AppError::Unprocessable(format!(
+        "Deleted posts can't be added to {what}: {}.",
+        post_list(&deleted)
+    )))
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -494,7 +562,11 @@ async fn create(
         Ok(contents) => contents,
         Err(error) => return refused(&page, None, &form, 0, error).await,
     };
-    match pools::create(page.state().db.primary(), &contents, Some(user.id)).await {
+    let db = page.state().db.primary();
+    if let Err(error) = check_added(db, &page.current, &[], &contents.post_ids, "pools").await {
+        return refused(&page, None, &form, 0, error).await;
+    }
+    match pools::create(db, &contents, Some(user.id)).await {
         Ok(id) => {
             tracing::info!(pool = id, name = contents.name, "pool created");
             Ok((flash::set(jar, Flash::Saved), Redirect::to(&pool_url(id))).into_response())
@@ -537,6 +609,10 @@ async fn edit(
         Ok(contents) => contents,
         Err(error) => return refused(&page, Some(&pool), &form, base, error).await,
     };
+    let before = pools::post_ids(db, id).await?;
+    if let Err(error) = check_added(db, &page.current, &before, &contents.post_ids, "pools").await {
+        return refused(&page, Some(&pool), &form, base, error).await;
+    }
     match pools::save(db, id, &contents, Some(user.id), Some(base)).await {
         Ok(_) => Ok((flash::set(jar, Flash::Saved), Redirect::to(&pool_url(id))).into_response()),
         // Keep their changes, and let them save over the newer version
@@ -601,17 +677,18 @@ async fn revert(
     let old = pools::version(db, id, version)
         .await?
         .ok_or(AppError::NotFound)?;
+    // Posts purged since are gone for good, and those out of the pool now
+    // come back only if they could be added again.
+    let now: HashSet<i64> = pools::post_ids(db, id).await?.into_iter().collect();
+    let allowed = addable(db, &page.current, &old.post_ids).await?;
     let contents = Contents {
         is_deleted: pool.is_deleted,
-        // Posts purged since are gone for good.
-        post_ids: {
-            let existing = posts::by_ids(db, &old.post_ids).await?;
-            old.post_ids
-                .iter()
-                .copied()
-                .filter(|id| existing.iter().any(|p| p.id == *id))
-                .collect()
-        },
+        post_ids: old
+            .post_ids
+            .iter()
+            .copied()
+            .filter(|id| now.contains(id) || allowed.contains(id))
+            .collect(),
         ..old.contents()
     };
     pools::save(db, id, &contents, Some(user.id), None)
@@ -825,7 +902,7 @@ mod tests {
         let app = app(&pool).await;
         let a = post(&pool, "active").await;
         let b = post(&pool, "active").await;
-        let hidden = post(&pool, "pending").await;
+        let hidden = post(&pool, "active").await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
 
         assert_eq!(
@@ -861,12 +938,18 @@ mod tests {
         assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.body);
         let url = created.location.unwrap();
         let id: i32 = url.rsplit('/').next().unwrap().parse().unwrap();
+        // Deleted since it was added.
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(hidden)
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let shown = app.get(&url, None).await;
         assert_eq!(shown.status, StatusCode::OK);
         assert!(shown.body.contains("<h1>My Comic</h1>"), "{}", shown.body);
         assert!(shown.body.contains("Part <strong>one</strong>"));
-        // In order, without the pending post.
+        // In order, without the deleted post.
         let (first, second) = (
             shown
                 .body
@@ -894,20 +977,28 @@ mod tests {
             .await;
         assert!(taken.body.contains("Another pool already has that name."));
 
-        // Edits check the version they started from.
+        // Edits check the version they started from. The deleted post
+        // stays in the list, without a thumbnail.
         let edit = format!("/pools/{id}/edit");
-        assert!(
-            app.get(&edit, Some(&alice))
-                .await
-                .body
-                .contains(&format!("{b} {hidden} {a}"))
-        );
+        let form = app.get(&edit, Some(&alice)).await.body;
+        assert!(form.contains(&format!("{b} {hidden} {a}")), "{form}");
+        assert!(form.contains(&format!("href=\"/posts/{a}\"")), "{form}");
+        assert!(!form.contains(&format!("href=\"/posts/{hidden}\"")));
+        let renamed = app
+            .post_form(
+                &edit,
+                Some(&alice),
+                &[],
+                &format!("base=1&name=My+Comic+2&category=series&posts={b}+{hidden}+{a}"),
+            )
+            .await;
+        assert_eq!(renamed.status, StatusCode::SEE_OTHER, "{}", renamed.body);
         let saved = app
             .post_form(
                 &edit,
                 Some(&alice),
                 &[],
-                &format!("base=1&name=My+Comic&category=series&posts={a}+{b}"),
+                &format!("base=2&name=My+Comic&category=series&posts={a}+{b}"),
             )
             .await;
         assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
@@ -916,26 +1007,28 @@ mod tests {
                 &edit,
                 Some(&alice),
                 &[],
-                &format!("base=1&name=Other&category=series&posts={a}"),
+                &format!("base=2&name=Other&category=series&posts={a}"),
             )
             .await;
         assert_eq!(stale.status, StatusCode::CONFLICT);
-        assert!(stale.body.contains("name=\"base\" value=\"2\""));
+        assert!(stale.body.contains("name=\"base\" value=\"3\""));
 
         let history = app.get(&format!("/pools/{id}/history"), None).await;
-        assert!(history.body.contains("Version 2"), "{}", history.body);
+        assert!(history.body.contains("Version 3"), "{}", history.body);
         assert!(
             history
                 .body
                 .contains(&format!("−<a href=\"/posts/{hidden}\">"))
         );
+        // Restoring the first version doesn't bring back the deleted post,
+        // which can't be added again.
         assert_eq!(
             app.post(&format!("/pools/{id}/revert/1"), Some(&alice), &[])
                 .await
                 .status,
             StatusCode::SEE_OTHER
         );
-        assert_eq!(pools::post_ids(&pool, id).await.unwrap(), [b, hidden, a]);
+        assert_eq!(pools::post_ids(&pool, id).await.unwrap(), [b, a]);
 
         let list = app.get("/pools?name=my", None).await;
         assert!(
@@ -949,6 +1042,146 @@ mod tests {
                 .body
                 .contains("No pools found.")
         );
+    }
+
+    /// A post by a banned artist, hidden from members and visitors (from
+    /// apps made after it).
+    async fn banned_post(pool: &PgPool) -> i64 {
+        let tag: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('bad_artist') RETURNING id")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('bad_artist', true)")
+            .execute(pool)
+            .await
+            .unwrap();
+        let id = post(pool, "active").await;
+        sqlx::query("UPDATE posts SET tag_ids = $1 WHERE id = $2")
+            .bind(vec![tag])
+            .bind(id)
+            .execute(pool)
+            .await
+            .unwrap();
+        id
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn posts_editors_cant_see_stay_out(pool: PgPool) {
+        let a = post(&pool, "active").await;
+        let banned = banned_post(&pool).await;
+        let pending = post(&pool, "pending").await;
+        let deleted = post(&pool, "deleted").await;
+        let missing = deleted + 1000;
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+
+        // Refused like posts that don't exist, and the form shown again
+        // has no thumbnail of them.
+        for hidden in [banned, pending, deleted, missing] {
+            let refused = app
+                .post_form(
+                    "/pools",
+                    Some(&alice),
+                    &[],
+                    &format!("name=Comic&category=series&posts={a}+{hidden}"),
+                )
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(
+                refused
+                    .body
+                    .contains(&format!("These posts don&#x27;t exist: #{hidden}.")),
+                "{}",
+                refused.body
+            );
+            assert!(refused.body.contains(&format!("href=\"/posts/{a}\"")));
+            assert!(!refused.body.contains(&format!("href=\"/posts/{hidden}\"")));
+        }
+        // Staff see deleted posts, which still can't be added.
+        let staff = app
+            .post_form(
+                "/pools",
+                Some(&jan),
+                &[],
+                &format!("name=Comic&category=series&posts={a}+{deleted}"),
+            )
+            .await;
+        assert!(
+            staff.body.contains(&format!(
+                "Deleted posts can&#x27;t be added to pools: #{deleted}."
+            )),
+            "{}",
+            staff.body
+        );
+        let created = app
+            .post_form(
+                "/pools",
+                Some(&jan),
+                &[],
+                &format!("name=Comic&category=series&posts={banned}+{a}+{pending}"),
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.body);
+        let id: i32 = created
+            .location
+            .unwrap()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+
+        // Visitors don't see the banned artist's post anywhere.
+        let links_to = |body: &str, post: i64| {
+            body.contains(&format!("/posts/{post}\"")) || body.contains(&format!("/posts/{post}?"))
+        };
+        for path in [
+            format!("/pools/{id}"),
+            format!("/pools/{id}/read"),
+            format!("/pools/{id}/read/1"),
+            format!("/posts/{a}?pool={id}"),
+        ] {
+            let page = app.get(&path, None).await;
+            assert_eq!(page.status, StatusCode::OK, "{path}");
+            assert!(!links_to(&page.body, banned), "{path}: {}", page.body);
+        }
+        assert!(links_to(
+            &app.get(&format!("/pools/{id}/read/1"), None).await.body,
+            a
+        ));
+        assert!(
+            app.get(&format!("/pools/{id}/read"), None)
+                .await
+                .body
+                .contains("1 page")
+        );
+        assert!(
+            app.get(&format!("/pools/{id}"), Some(&jan))
+                .await
+                .body
+                .contains(&format!("href=\"/posts/{banned}?pool={id}\""))
+        );
+
+        // Members editing the pool keep what's there.
+        let edit = format!("/pools/{id}/edit");
+        let form = app.get(&edit, Some(&alice)).await.body;
+        assert!(
+            !form.contains(&format!("href=\"/posts/{banned}\"")),
+            "{form}"
+        );
+        assert!(!form.contains(&format!("href=\"/posts/{pending}\"")));
+        let saved = app
+            .post_form(
+                &edit,
+                Some(&alice),
+                &[],
+                &format!("base=1&name=Comic&category=series&posts={a}+{banned}"),
+            )
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        assert_eq!(pools::post_ids(&pool, id).await.unwrap(), [a, banned]);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

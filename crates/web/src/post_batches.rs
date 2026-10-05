@@ -145,14 +145,9 @@ pub(crate) fn purge_search(text: &str) -> Result<SearchQuery, AppError> {
     SearchQuery::parse(&format!("{text} status:deleted")).map_err(invalid)
 }
 
-/// The deleted posts search `query` finds, as a purge sees them: all of
-/// them, whatever the purger's own rating and display settings.
-async fn purge_plan(
-    state: &AppState,
-    current: &CurrentUser,
-    query: &SearchQuery,
-    per_page: u32,
-) -> Result<Plan, AppError> {
+/// What a purge sees: deleted posts of every rating, whatever the
+/// purger's own rating and display settings.
+fn purge_visibility(current: &CurrentUser) -> Result<Visibility, AppError> {
     let visibility = Visibility {
         ratings: Vec::new(),
         ..crate::posts::visibility(current)
@@ -160,6 +155,18 @@ async fn purge_plan(
     if !visibility.statuses.contains(&PostStatus::Deleted) {
         return Err(AppError::Forbidden);
     }
+    Ok(visibility)
+}
+
+/// The deleted posts search `query` finds, as a purge sees them (see
+/// [`purge_visibility`]).
+async fn purge_plan(
+    state: &AppState,
+    current: &CurrentUser,
+    query: &SearchQuery,
+    per_page: u32,
+) -> Result<Plan, AppError> {
+    let visibility = purge_visibility(current)?;
     let config = moekura_core::config::SearchConfig {
         per_page,
         ..state.search_config()
@@ -338,7 +345,8 @@ async fn purge_preview(page: &Page, search: &SearchQuery) -> Result<Value, AppEr
         .ids(db, PageRef::Number(1))
         .await
         .map_err(search_error)?;
-    let cards: Vec<Value> = crate::posts::grid(page, db, &ids, None)
+    let visibility = purge_visibility(&page.current)?;
+    let cards: Vec<Value> = crate::posts::grid_for(page, db, &ids, None, &visibility)
         .await?
         .into_iter()
         .map(|(id, card)| context! { id => id, card => card })

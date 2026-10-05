@@ -15,7 +15,7 @@ use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, ErrorBody};
 use crate::favorite_groups::{
-    MAX_GROUPS, append, contents, own_group, post_ids_error, save_error, visible_group,
+    MAX_GROUPS, append, check_added, contents, own_group, post_ids_error, save_error, visible_group,
 };
 use crate::posts::visibility;
 
@@ -145,7 +145,8 @@ pub struct GroupInput {
     name: Option<String>,
     /// Public (the default) or private.
     is_public: Option<bool>,
-    /// All of its posts, in order.
+    /// All of its posts, in order. Posts added must be ones you can see
+    /// that aren't deleted; those already in the group may stay.
     post_ids: Option<Vec<i64>>,
 }
 
@@ -178,6 +179,7 @@ pub(crate) async fn create(
             "You can have at most {MAX_GROUPS} groups."
         )));
     }
+    check_added(db, &current, &[], &contents.post_ids).await?;
     let id = favorite_groups::create(db, user.id, &contents)
         .await
         .map_err(save_error)?;
@@ -210,15 +212,17 @@ pub(crate) async fn update(
 ) -> Result<Json<ApiFavoriteGroupWithPosts>, AppError> {
     let db = state.db.primary();
     let group = own_group(db, &current, id).await?;
+    let before = favorite_groups::post_ids(db, id).await?;
     let post_ids = match input.post_ids {
         Some(ids) => unique_post_ids(ids).map_err(post_ids_error)?,
-        None => favorite_groups::post_ids(db, id).await?,
+        None => before.clone(),
     };
     let contents = contents(
         input.name.as_deref().unwrap_or(&group.name),
         input.is_public.unwrap_or(group.is_public),
         post_ids,
     )?;
+    check_added(db, &current, &before, &contents.post_ids).await?;
     favorite_groups::save(db, id, &contents)
         .await
         .map_err(save_error)?;

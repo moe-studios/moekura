@@ -95,7 +95,10 @@ search is in the other site's syntax. Posts are imported newest first:
   here are left out.
 - The source is the post's own source, or its page on the other site.
 - Files already here (by MD5, or the same file) aren't downloaded again;
-  parents and children are linked as both arrive.
+  parents and children are linked as both arrive. A file whose metadata
+  was [removed](../using/posts.md#removing-metadata-from-originals) here
+  has another MD5, so it's downloaded again, then recognised as the
+  same post.
 - `--notes` and `--pools` also bring notes and pools from Danbooru-style
   sites. Pools are matched by name.
 

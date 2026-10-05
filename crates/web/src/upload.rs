@@ -1735,7 +1735,7 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
-    async fn metadata_is_kept_unless_asked_and_required_refuses(pool: PgPool) {
+    async fn metadata_goes_unless_turned_off_and_required_refuses(pool: PgPool) {
         use moekura_core::config::StripMetadata;
         let png = fixture::png_with_text(64, 48, "my home address");
         let (app, state) = app(&pool).await;
@@ -1744,7 +1744,18 @@ mod tests {
             .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", &png)))
             .await;
         let (_, bytes) = stored(&state, &pool, post_id(posted.location)).await;
-        assert_eq!(bytes, png, "kept byte for byte by default");
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains("my home address"),
+            "removed by default"
+        );
+
+        let (app, state) = stripping_app(&pool, StripMetadata::Off).await;
+        let png = fixture::png_with_text(48, 32, "my home address");
+        let posted = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("b.png", &png)))
+            .await;
+        let (_, bytes) = stored(&state, &pool, post_id(posted.location)).await;
+        assert_eq!(bytes, png, "kept byte for byte when turned off");
 
         let (app, _) = stripping_app(&pool, StripMetadata::Require).await;
         let refused = app

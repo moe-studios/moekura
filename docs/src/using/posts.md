@@ -211,16 +211,16 @@ post's page, lists it by group, with names like exiftool's: `EXIF:Make`,
 
 Where a photo was taken and whose camera took it stay private: GPS and
 other location fields, serial numbers and owners' names are never read
-into it. Thumbnails and samples never carry metadata. By default the
-original file itself is kept as it was uploaded, so **Download original**
-still has whatever it contained; sites can remove it from originals too,
-below.
+into it. Thumbnails and samples never carry metadata. By default it's
+also taken out of JPEG, PNG and WebP originals, below; files of other
+types are kept as they were uploaded, so **Download original** still
+has whatever they contained.
 
 ### Removing metadata from originals
 
 With `strip_metadata` in [`[media]`](../configuration.md#media) set to
-`"strip"` or `"require"`, metadata is taken out of uploaded originals
-before they're stored:
+`"strip"` (the default) or `"require"`, metadata is taken out of
+uploaded originals before they're stored:
 
 | Type | What's removed | What stays |
 |---|---|---|
@@ -233,7 +233,8 @@ for byte, so it looks exactly the same and loses no quality. A picture
 that's turned by its EXIF orientation keeps the orientation, in an EXIF
 block holding nothing else. Other types (GIF, AVIF, JPEG XL, videos,
 ugoira) aren't changed by `"strip"`, and are refused by `"require"` with
-a message saying so.
+a message saying so. `"off"` keeps every original exactly as uploaded,
+metadata and all.
 
 Removing metadata changes the file's bytes, so its SHA-256 and MD5 are
 those of the stored, cleaned file, as is its storage name. Duplicates are

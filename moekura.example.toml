@@ -177,10 +177,11 @@ sample_size = 1600
 variant_format = "webp"
 tool_timeout_secs = 120
 # Remove identifying metadata (EXIF and GPS, XMP, IPTC, comments) from the
-# originals too, not only from thumbnails: "off" keeps originals exactly as
-# uploaded; "strip" cleans JPEG, PNG and WebP and keeps other types as
-# they are; "require" also refuses the other types.
-strip_metadata = "off"
+# originals too, not only from thumbnails: "strip" cleans JPEG, PNG and
+# WebP and keeps other types (GIF, AVIF, JPEG XL, videos, ugoira) as they
+# are; "require" also refuses the other types; "off" keeps originals
+# exactly as uploaded, metadata and all.
+strip_metadata = "strip"
 # Media tool processes at once in this process (uploads and jobs); 0: one
 # per CPU core.
 max_tool_processes = 0

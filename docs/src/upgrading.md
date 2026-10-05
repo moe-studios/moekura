@@ -90,3 +90,21 @@ docker compose -f deploy/compose.tiny.yml up -d
 The Linux binaries are built on Ubuntu 24.04 and need glibc 2.39 or newer
 (Debian 13, Ubuntu 24.04, Fedora 40 and later), plus the
 [media tools](install/bare-metal.md).
+
+## Changed defaults
+
+Defaults that changed after 0.5. Sites that set these keys keep what they
+set; sites that relied on the old default behave differently after
+upgrading.
+
+### Metadata is removed from originals
+
+[`media.strip_metadata`](configuration.md#media) is now `"strip"` (it was
+`"off"`). EXIF (with GPS positions and camera serial numbers), XMP, IPTC
+and comments are taken out of new JPEG, PNG and WebP originals before
+they're stored, so **Download original** no longer hands them to
+everyone, and the post's SHA-256 and MD5 are those of the cleaned file.
+Files of other types (GIF, AVIF, JPEG XL, videos, ugoira) still keep
+their metadata, and posts uploaded before the upgrade keep their
+originals as they are. To keep originals exactly as uploaded, set
+`strip_metadata = "off"`. See [File metadata](using/posts.md#file-metadata).

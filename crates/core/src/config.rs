@@ -673,7 +673,9 @@ pub struct MediaConfig {
     /// Kill media tools that run longer than this.
     pub tool_timeout_secs: u64,
     /// Whether identifying metadata (EXIF, GPS, XMP, IPTC, comments) is
-    /// removed from uploaded originals, not just from thumbnails.
+    /// removed from uploaded originals, not just from thumbnails. On by
+    /// default: anyone can download an original, and the metadata page
+    /// hiding GPS and serial numbers would otherwise suggest they're gone.
     pub strip_metadata: StripMetadata,
     /// Media tool processes running at once in this process, for uploads
     /// and jobs together; more wait their turn. 0: one per CPU core.
@@ -722,7 +724,7 @@ impl Default for MediaConfig {
             sample_size: 1600,
             variant_format: "webp".to_owned(),
             tool_timeout_secs: 120,
-            strip_metadata: StripMetadata::Off,
+            strip_metadata: StripMetadata::Strip,
             max_tool_processes: 0,
             ffmpeg_threads: 2,
             ffmpeg_memory_mb: 2048,
@@ -738,10 +740,10 @@ impl Default for MediaConfig {
 #[serde(rename_all = "lowercase")]
 pub enum StripMetadata {
     /// Originals are kept exactly as uploaded.
-    #[default]
     Off,
     /// Removed from the types that support it (JPEG, PNG, WebP); others
     /// are kept as uploaded.
+    #[default]
     Strip,
     /// Removed, and files of other types refused.
     Require,
@@ -1442,6 +1444,15 @@ mod tests {
                 "telemetry.metrics_bind"
             ]
         );
+    }
+
+    #[test]
+    fn originals_lose_their_metadata_unless_turned_off() {
+        assert_eq!(Config::default().media.strip_metadata, StripMetadata::Strip);
+        let unset: Config = toml::from_str("[media]\nmax_upload_mb = 50\n").unwrap();
+        assert_eq!(unset.media.strip_metadata, StripMetadata::Strip);
+        let off: Config = toml::from_str("[media]\nstrip_metadata = \"off\"\n").unwrap();
+        assert_eq!(off.media.strip_metadata, StripMetadata::Off);
     }
 
     #[test]

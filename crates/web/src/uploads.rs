@@ -1945,7 +1945,16 @@ mod tests {
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn the_post_form_warns_about_the_file(pool: PgPool) {
-        let (app, _) = app(&pool).await;
+        // Originals kept as uploaded, so a file differing from a post only
+        // in its metadata isn't that post.
+        let mut config = crate::test_support::test_config();
+        config.media.strip_metadata = moekura_core::config::StripMetadata::Off;
+        let state = crate::test_support::test_state_with(&pool, config).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let routes = routes(max)
+            .merge(upload::routes(max))
+            .merge(crate::posts::routes());
+        let app = TestApp::new(state, routes);
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
         let posted = app
             .post_multipart(

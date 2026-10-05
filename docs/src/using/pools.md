@@ -17,10 +17,12 @@ save it, even those you can't see, and everyone sees only the posts in
 it they may see (on its page, in the reader and through the APIs).
 
 Every change is kept: **History** shows who added, removed or reordered
-posts, and any version can be restored (posts taken out since come back
-only if they could be added again). If someone else saves the pool
-while you're editing it, you're told instead of overwriting their
-change. Staff who can delete posts can also delete and restore pools.
+posts (linking the first 100 posts a change added or removed, and
+counting the rest), and any version can be restored (posts taken out
+since come back only if they could be added again). If someone else
+saves the pool while you're editing it, you're told instead of
+overwriting their change. Staff who can delete posts can also delete
+and restore pools.
 **Recent changes** on the pool list (`/pool_versions`) shows the changes
 to every pool, newest first, and can be filtered by user.
 

@@ -34,6 +34,10 @@ const POSTS_PER_PAGE: i64 = 40;
 /// Posts per page of the scrolling reader.
 const READ_CHUNK: i64 = 20;
 
+/// Most added or removed posts a change in a pool's history links to;
+/// the rest are counted, so a page of big changes stays small.
+const LISTED_CHANGES: usize = 100;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/pools", get(index).post(create))
@@ -640,6 +644,8 @@ async fn history(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> 
             // Neither has duplicates, so nothing added or removed means
             // the same posts.
             let same_posts = added.is_empty() && removed.is_empty();
+            let (added, more_added) = listed_changes(added);
+            let (removed, more_removed) = listed_changes(removed);
             context! {
                 version => v.version,
                 date => crate::dates::day(v.created_at),
@@ -649,7 +655,9 @@ async fn history(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> 
                 description_changed => previous.is_some_and(|p| p.description != v.description),
                 deleted => previous.is_some_and(|p| p.is_deleted != v.is_deleted).then_some(v.is_deleted),
                 added => added,
+                more_added => more_added,
                 removed => removed,
+                more_removed => more_removed,
                 reordered => previous.is_some_and(|p| p.post_ids != v.post_ids && same_posts),
                 current => i == 0,
                 can_revert => can_revert && i > 0,
@@ -660,6 +668,14 @@ async fn history(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> 
         "pool_history.html",
         context! { pool => summary_context(&pool), versions => rows },
     ))
+}
+
+/// The first [`LISTED_CHANGES`] of a change's added or removed posts, and
+/// how many more there are.
+pub(crate) fn listed_changes(mut ids: Vec<i64>) -> (Vec<i64>, usize) {
+    let more = ids.len().saturating_sub(LISTED_CHANGES);
+    ids.truncate(LISTED_CHANGES);
+    (ids, more)
 }
 
 /// Saves an earlier version's name, description, category and posts as a
@@ -1345,5 +1361,52 @@ mod tests {
             app.get(&format!("/pools/{id}/read/4"), None).await.status,
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn history_counts_big_changes(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            routes().merge(crate::recent_changes::routes()),
+        );
+        let posts: Vec<i64> = sqlx::query_scalar(
+            "INSERT INTO posts (rating) SELECT 'g' FROM generate_series(1, 101) RETURNING id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let contents = |post_ids: Vec<i64>| Contents {
+            name: "Big".into(),
+            description: String::new(),
+            category: "collection".into(),
+            is_deleted: false,
+            post_ids,
+        };
+        let id = pools::create(&pool, &contents(Vec::new()), None)
+            .await
+            .unwrap();
+        pools::save(&pool, id, &contents(posts), None, None)
+            .await
+            .unwrap();
+        pools::save(&pool, id, &contents(Vec::new()), None, None)
+            .await
+            .unwrap();
+        for path in [format!("/pools/{id}/history"), "/pool_versions".to_owned()] {
+            let page = app.get(&path, None).await;
+            assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+            // The first 100 posts of a change are linked, the rest counted.
+            assert_eq!(
+                page.body.matches("+<a href=\"/posts/").count(),
+                100,
+                "{path}"
+            );
+            assert_eq!(
+                page.body.matches("−<a href=\"/posts/").count(),
+                100,
+                "{path}"
+            );
+            assert!(page.body.contains("+1 more"), "{}", page.body);
+            assert!(page.body.contains("−1 more"), "{}", page.body);
+        }
     }
 }

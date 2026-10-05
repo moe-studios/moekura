@@ -8,6 +8,7 @@ pool-collection = Collection
 pool-history-all = <a href="/pool_versions">All pool changes</a>, with a filter by user.
 pool-history-name = name: { $name }
 pool-history-kind = kind: { $kind }
+pool-history-more = { $count } more
 
 pool-kind-series = series
 pool-kind-collection = collection

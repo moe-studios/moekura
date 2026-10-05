@@ -127,9 +127,10 @@ source again, after you change it or when the site has changed.
   post's commentary if the fields are left empty.
 
 The same happens with files sent with such a link, which becomes their
-source, and for uploads through the APIs (which download only the
-work's first file). When a site can't be reached or has
-changed, the link is downloaded as it is, without extras.
+source (if it's a web link, `http` or `https`), and for uploads through
+the APIs (which download only the work's first file). When a site can't
+be reached or has changed, the link is downloaded as it is, without
+extras.
 
 Links must lead to the public internet: nothing is fetched from
 loopback, private, link-local or other special-purpose addresses (for

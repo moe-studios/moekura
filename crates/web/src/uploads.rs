@@ -292,8 +292,14 @@ async fn create(
         return Ok(refuse(sent.link(), error));
     }
     let id = if !files.is_empty() {
-        // A link sent with files says where they're from.
-        stage_files(&state, &page.current, user.id, &sent.url, &files).await?
+        // A link sent with files says where they're from, if it's a web
+        // page.
+        let source = if is_web_link(&sent.url) {
+            &sent.url
+        } else {
+            ""
+        };
+        stage_files(&state, &page.current, user.id, source, &files).await?
     } else if is_web_link(&sent.url) {
         let info = state.sources.lookup_from(&sent.url, &sent.referer).await;
         if let Err(error) = upload::check_found(&sent.url, info.as_deref()) {
@@ -746,6 +752,8 @@ fn upload_context(upload: &Upload, files: &[Staged]) -> Value {
         id => upload.id,
         url => url_value(&format!("/uploads/{}", upload.id)),
         source => upload.source,
+        // Only a web page is linked to.
+        source_link => is_web_link(&upload.source),
         count => files.len(),
         date => crate::dates::day(upload.created_at),
     }
@@ -1028,10 +1036,16 @@ async fn source_data(state: &AppState, info: &SourceInfo) -> Result<Value, AppEr
         .collect();
     Ok(context! {
         site => info.site,
-        page_url => url_value(&info.page_url),
+        // Only web pages are linked to.
+        page_url => is_web_link(&info.page_url).then(|| url_value(&info.page_url)),
         artist_name => info.artist_name,
         artist_account => info.artist_account,
-        profiles => info.profile_urls.iter().map(|u| url_value(u)).collect::<Vec<_>>(),
+        profiles => info
+            .profile_urls
+            .iter()
+            .filter(|u| is_web_link(u))
+            .map(|u| url_value(u))
+            .collect::<Vec<_>>(),
         artists => artists.iter().map(|a| context! {
             name => a.name,
             url => url_value(&format!("/artists/{}", a.id)),
@@ -2832,6 +2846,91 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(uploads, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn only_web_pages_are_sources(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let script = "javascript:alert(1)";
+        let sent = app
+            .post_multipart_files(
+                "/uploads",
+                Some(&alice),
+                &[("url", script.to_owned())],
+                &[
+                    ("file", "a.png", &fixture::png(40, 30)),
+                    ("file", "b.png", &fixture::png(44, 30)),
+                ],
+            )
+            .await;
+        assert_eq!(sent.status, StatusCode::SEE_OTHER, "{}", sent.body);
+        let upload = upload_in(sent.location.as_deref());
+        let saved = staged_uploads::upload_by_id(&pool, upload)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.source, "");
+        assert!(
+            files_of(&pool, upload)
+                .await
+                .iter()
+                .all(|f| f.source.is_empty())
+        );
+
+        // One kept from before is shown, but not as a link.
+        let old = staged_uploads::create_upload(&pool, saved.uploader_id, script, "")
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for position in 0..2 {
+            let slot = Slot {
+                upload_id: old,
+                uploader_id: saved.uploader_id,
+                position,
+                file_name: "x.svg",
+                source: "",
+            };
+            ids.push(
+                staged_uploads::create_failed(&pool, slot, "Not an image.", None)
+                    .await
+                    .unwrap(),
+            );
+        }
+        for path in [
+            format!("/uploads/{old}"),
+            format!("/uploads/{old}/assets/{}", ids[0]),
+        ] {
+            let page = app.get(&path, Some(&alice)).await;
+            assert_eq!(page.status, StatusCode::OK, "{path}");
+            assert!(page.body.contains(script), "{}", page.body);
+            assert!(!page.body.contains("href=\"javascript"), "{}", page.body);
+        }
+
+        // Nor are a source's page and profiles that aren't web pages.
+        let work = "https://example.com/work/1";
+        state.sources.remember(
+            work,
+            SourceInfo {
+                site: "Example",
+                page_url: script.to_owned(),
+                artist_name: Some("someone".to_owned()),
+                profile_urls: vec![script.to_owned(), "https://example.com/someone".to_owned()],
+                ..SourceInfo::default()
+            },
+        );
+        let query: String = url::form_urlencoded::byte_serialize(work.as_bytes()).collect();
+        let panel = app
+            .get(&format!("/uploads/source-data?url={query}"), Some(&alice))
+            .await
+            .body;
+        assert!(panel.contains(">Example</dd>"), "{panel}");
+        assert!(
+            panel.contains("someone\" rel=\"noopener noreferrer nofollow\""),
+            "{panel}"
+        );
+        assert!(!panel.contains("href=\"javascript"), "{panel}");
+        assert!(!panel.contains(">javascript:alert(1)</a>"), "{panel}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -6,14 +6,16 @@
 //! Because the check happens when connecting, a name can't pass
 //! validation and then resolve elsewhere. IP-literal hosts skip DNS, so
 //! callers check them with [`is_public`] for the first request and every
-//! redirect.
+//! redirect. Only a few names are looked up at once, so names that are
+//! slow to answer can't take over tokio's blocking threads.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::sync::Arc;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::redirect;
+use tokio::sync::Semaphore;
 
 /// Whether `ip` is an ordinary address on the public internet.
 pub fn is_public(ip: IpAddr) -> bool {
@@ -76,18 +78,44 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
     )
 }
 
-/// DNS that only returns public addresses.
+type BoxError = Box<dyn std::error::Error + Send + Sync>;
+
+/// How many names may be looked up at once, by every client together.
+/// Each lookup holds a thread of tokio's blocking pool until the system
+/// resolver answers, however long a slow name server makes it take, and
+/// that pool also reads files, hashes passwords and opens database
+/// connections.
+const MAX_LOOKUPS: usize = 32;
+/// How long a request waits for a name to be looked up.
+const LOOKUP_WAIT: Duration = Duration::from_secs(5);
+
+static LOOKUPS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(MAX_LOOKUPS)));
+
+/// DNS that only returns public addresses, looking up at most
+/// [`MAX_LOOKUPS`] names at once.
 pub struct PublicResolver {
     pub allow_private: bool,
+    slots: Arc<Semaphore>,
+}
+
+impl PublicResolver {
+    pub fn new(allow_private: bool) -> Self {
+        Self {
+            allow_private,
+            slots: Arc::clone(&LOOKUPS),
+        }
+    }
 }
 
 impl Resolve for PublicResolver {
     fn resolve(&self, name: Name) -> Resolving {
         let allow_private = self.allow_private;
+        let slots = Arc::clone(&self.slots);
         Box::pin(async move {
             let host = name.as_str().to_owned();
-            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+            let addrs: Vec<SocketAddr> = lookup(&slots, &host, LOOKUP_WAIT, system_lookup)
                 .await?
+                .into_iter()
                 .filter(|addr| allow_private || is_public(addr.ip()))
                 .collect();
             if addrs.is_empty() {
@@ -95,6 +123,37 @@ impl Resolve for PublicResolver {
             }
             Ok(Box::new(addrs.into_iter()) as Addrs)
         })
+    }
+}
+
+/// `host`'s addresses from the system resolver (getaddrinfo), which
+/// blocks.
+fn system_lookup(host: &str) -> std::io::Result<Vec<SocketAddr>> {
+    Ok((host, 0).to_socket_addrs()?.collect())
+}
+
+/// Runs `resolve` for `host` on tokio's blocking pool, waiting at most
+/// `wait` for it. It holds one of `slots` until it returns, also after
+/// the wait ends, since a blocking call can't be cancelled. With no slot
+/// free, the lookup is refused at once rather than queued, so a burst
+/// leaves no backlog behind.
+async fn lookup(
+    slots: &Arc<Semaphore>,
+    host: &str,
+    wait: Duration,
+    resolve: fn(&str) -> std::io::Result<Vec<SocketAddr>>,
+) -> Result<Vec<SocketAddr>, BoxError> {
+    let slot = Arc::clone(slots)
+        .try_acquire_owned()
+        .map_err(|_| format!("{host} not looked up: too many lookups under way"))?;
+    let name = host.to_owned();
+    let answer = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        resolve(&name)
+    });
+    match tokio::time::timeout(wait, answer).await {
+        Ok(answer) => Ok(answer??),
+        Err(_) => Err(format!("looking up {host} took too long").into()),
     }
 }
 
@@ -110,7 +169,7 @@ pub fn client(
 ) -> reqwest::Client {
     moekura_storage::install_crypto_provider();
     reqwest::Client::builder()
-        .dns_resolver(Arc::new(PublicResolver { allow_private }))
+        .dns_resolver(Arc::new(PublicResolver::new(allow_private)))
         .redirect(redirects)
         .referer(false)
         // A proxy would do the resolving and connecting for us.
@@ -129,5 +188,58 @@ pub fn host_allowed(host: url::Host<&str>, allow_private: bool) -> bool {
         url::Host::Domain(_) => true,
         url::Host::Ipv4(v4) => allow_private || is_public(IpAddr::V4(v4)),
         url::Host::Ipv6(v6) => allow_private || is_public(IpAddr::V6(v6)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ANSWER: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)), 0);
+
+    fn slow(_: &str) -> std::io::Result<Vec<SocketAddr>> {
+        std::thread::sleep(Duration::from_millis(300));
+        Ok(vec![ANSWER])
+    }
+
+    #[tokio::test]
+    async fn bounds_lookups() {
+        let slots = Arc::new(Semaphore::new(1));
+        // The caller stops waiting, but the lookup keeps its slot.
+        let err = lookup(&slots, "slow.example", Duration::from_millis(20), slow)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("took too long"), "{err}");
+        assert_eq!(slots.available_permits(), 0);
+        // With none free, the next is refused rather than queued.
+        let err = lookup(&slots, "next.example", Duration::from_secs(5), slow)
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("too many"), "{err}");
+        // The slot comes back once the lookup returns.
+        for _ in 0..100 {
+            if slots.available_permits() == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(slots.available_permits(), 1);
+        let found = lookup(&slots, "fast.example", Duration::from_secs(5), |_| {
+            Ok(vec![ANSWER])
+        })
+        .await
+        .unwrap();
+        assert_eq!(found, [ANSWER]);
+        assert_eq!(slots.available_permits(), 1);
+    }
+
+    #[tokio::test]
+    async fn resolves_only_public_addresses() {
+        let local = || "localhost".parse::<Name>().unwrap();
+        let refused = PublicResolver::new(false).resolve(local()).await;
+        let err = refused.err().expect("localhost is refused");
+        assert!(err.to_string().contains("public address"), "{err}");
+        let allowed = PublicResolver::new(true).resolve(local()).await;
+        assert!(allowed.is_ok_and(|mut addrs| addrs.next().is_some()));
     }
 }

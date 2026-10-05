@@ -439,6 +439,8 @@ pub(crate) async fn make_request(
         return Err(invalid("The reason is too long.".into()));
     }
     let commands = bulk::parse(&script).map_err(|e| invalid(format!("In the script, {e}.")))?;
+    // Each lands in the queue and opens a forum topic.
+    state.rate_limits.check_request(user.id).await?;
     // Stored as the parser reads it, one command a line.
     let normalized: Vec<String> = commands.iter().map(bulk::Command::line).collect();
     let id = requests::create(
@@ -781,6 +783,69 @@ mod tests {
             "{}",
             list.body
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn requests_are_rate_limited(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let bulk = |n: usize| format!("title=R{n}&script=alias+a{n}+-%3E+b{n}");
+        let alias = |n: usize| format!("antecedent=c{n}&consequent=d{n}");
+        let made = async || -> (i64, i64) {
+            sqlx::query_as(
+                "SELECT (SELECT count(*) FROM bulk_update_requests),
+                        (SELECT count(*) FROM tag_relations)",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // Bulk update and single requests count together.
+        let mut statuses = Vec::new();
+        for n in 0..3 {
+            let made = app
+                .post_form("/tags/requests", Some(&alice), &[], &bulk(n))
+                .await;
+            statuses.push(made.status);
+            let made = app
+                .post_form("/tags/aliases", Some(&alice), &[], &alias(n))
+                .await;
+            statuses.push(made.status);
+        }
+        assert_eq!(
+            statuses,
+            [
+                StatusCode::SEE_OTHER,
+                StatusCode::SEE_OTHER,
+                StatusCode::SEE_OTHER,
+                StatusCode::SEE_OTHER,
+                StatusCode::SEE_OTHER,
+                StatusCode::TOO_MANY_REQUESTS,
+            ]
+        );
+        assert_eq!(
+            app.post_form("/tags/requests", Some(&alice), &[], &bulk(9))
+                .await
+                .status,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(made().await, (3, 2));
+        // Not anyone else's, nor tag managers' own, which apply at once.
+        assert_eq!(
+            app.post_form("/tags/requests", Some(&bob), &[], &bulk(5))
+                .await
+                .status,
+            StatusCode::SEE_OTHER
+        );
+        for n in 10..17 {
+            let made = app
+                .post_form("/tags/aliases", Some(&admin), &[], &alias(n))
+                .await;
+            assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
+        }
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

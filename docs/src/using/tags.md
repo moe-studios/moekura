@@ -153,6 +153,10 @@ end it. Once approved, they're applied to existing posts in the
 background, and to every edit after. Each post's history shows which
 changes came from an alias or implication.
 
+Requests waiting for a decision, these and [bulk update
+requests](#bulk-update-requests) alike, are rate limited: a few at once,
+then one a minute.
+
 ### Voting and discussion
 
 Each request has its own page (click its status or score in the list):

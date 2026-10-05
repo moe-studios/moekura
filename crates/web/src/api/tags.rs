@@ -401,7 +401,8 @@ pub struct NewRelation {
 ///
 /// Needs `edit_posts`. Requests wait for someone with `manage_tags`,
 /// whose own requests take effect at once; either way the relation is then
-/// applied to existing posts in the background.
+/// applied to existing posts in the background. Requests that wait are
+/// rate limited: a few at once, then one a minute.
 #[utoipa::path(
     post,
     path = "/tag-relations",
@@ -411,6 +412,7 @@ pub struct NewRelation {
     responses(
         (status = 201, body = ApiRelation),
         (status = 422, body = ErrorBody, description = "The tags aren't valid, or the relation would conflict with others"),
+        (status = 429, body = ErrorBody, description = "Too many requests lately"),
     ),
 )]
 pub(crate) async fn request(

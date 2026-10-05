@@ -223,6 +223,11 @@ pub(crate) async fn request_relation(
             "The reason may be at most {REASON_MAX_LEN} characters."
         )));
     }
+    // Requests that wait land in the queue and open a forum topic each;
+    // tag managers' take effect at once, as their approvals do.
+    if !current.can(Permission::ManageTags) {
+        state.rate_limits.check_request(user.id).await?;
+    }
 
     let db = state.db.primary();
     let request = NewRequest {

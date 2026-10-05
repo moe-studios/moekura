@@ -138,6 +138,42 @@ async fn send_reset(
     queue(conn, email, format!("Reset your password on {site}"), body).await
 }
 
+/// Tells `owner` that someone tried to use their address for another
+/// account, by signing up or changing an address. Those forms answer as
+/// they would for a free address, so they can't be used to find out who
+/// has an account here; the owner hears about it instead.
+pub(crate) async fn send_address_in_use(
+    conn: &mut PgConnection,
+    state: &AppState,
+    owner: &User,
+) -> sqlx::Result<()> {
+    let Some(email) = owner.email.as_deref() else {
+        return Ok(());
+    };
+    if owner.status == UserStatus::Deactivated {
+        return Ok(());
+    }
+    let site = state.site.get().settings.site_name.clone();
+    let url = link(state, "/forgot-password");
+    let body = format!(
+        "Hi {name},\n\n\
+         Someone tried to use this address for another account on {site}, by signing up \
+         or by changing an account's address. It stays with your account, and nothing changed.\n\n\
+         If that was you: you already have an account here, {name}. If you've forgotten its \
+         password, you can choose a new one at\n\n\
+         {url}\n\n\
+         Otherwise you can ignore this message.\n",
+        name = owner.name,
+    );
+    queue(
+        conn,
+        email,
+        format!("Someone tried to use your address on {site}"),
+        body,
+    )
+    .await
+}
+
 /// After an account's address is confirmed: an account waiting for that
 /// moves on, to approval if the site wants it.
 async fn finish_signup(
@@ -461,6 +497,11 @@ struct EmailChange {
 
 /// With mail, the new address only replaces the old one once confirmed
 /// through a link sent to it; without, it's changed straight away.
+///
+/// With mail, an address another account has gets the same answer as a
+/// free one (its owner is told instead), so the form can't be used to find
+/// out who has an account. Without mail there's nobody to tell, and the
+/// address would change at once, so it's refused as taken.
 async fn change_email(
     page: Page,
     jar: CookieJar,
@@ -515,13 +556,16 @@ async fn change_email(
     if unchanged && (user.email_verified_at.is_some() || !mail_enabled(state)) {
         return saved(Flash::Saved);
     }
-    if !unchanged && users::by_email(db, email).await?.is_some() {
-        return failed("That address is already in use.".into());
-    }
     if mail_enabled(state) {
         state.rate_limits.check_mail(info.ip, email).await?;
         let mut tx = db.begin().await?;
-        send_verification(&mut tx, state, &user, email).await?;
+        match users::by_email(&mut *tx, email).await? {
+            Some(owner) if owner.id != user.id => {
+                send_address_in_use(&mut tx, state, &owner).await?;
+                tracing::info!(user_id = user.id, "asked for an address in use");
+            }
+            _ => send_verification(&mut tx, state, &user, email).await?,
+        }
         tx.commit().await?;
         return saved(Flash::CheckEmail);
     }
@@ -1004,6 +1048,117 @@ mod tests {
             .await;
         let user = users::by_id(&pool, alice.id).await.unwrap().unwrap();
         assert_eq!(user.email, None);
+    }
+
+    /// Everything `response` tells the browser, but the session token.
+    fn answer(response: &crate::test_support::TestResponse) -> String {
+        format!(
+            "{} {:?} {} {:?}",
+            response.status,
+            response.location,
+            response.session_cookie().is_some(),
+            response
+                .set_cookie
+                .iter()
+                .filter(|c| c.starts_with("moekura_flash="))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn taken_addresses_get_the_same_answer(pool: PgPool) {
+        let (bob, _) = member(&pool, "bob", "bob@example.com").await;
+        let app = app(&pool, true).await;
+
+        // Signing up: the owner hears of it, not the person signing up.
+        let free = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &signup("carol", "carol@example.com"),
+            )
+            .await;
+        let (to, subject, body) = last_mail(&pool).await.unwrap();
+        assert_eq!(to, "carol@example.com");
+        assert!(subject.contains("Confirm"), "{subject}");
+        let link = token(&body);
+        let taken = app
+            .post_form("/register", None, &[], &signup("dave", "BOB@example.com"))
+            .await;
+        assert_eq!(answer(&free), answer(&taken));
+        assert_eq!(free.status, StatusCode::SEE_OTHER, "{}", free.body);
+        let (to, subject, body) = last_mail(&pool).await.unwrap();
+        assert_eq!(to, "bob@example.com");
+        assert!(subject.contains("tried to use your address"), "{subject}");
+        assert!(body.contains("Hi bob"), "{body}");
+        assert!(!body.contains("token="), "{body}");
+        // Neither new account has an address yet; carol's comes with the link.
+        let carol = users::by_name(&pool, "carol").await.unwrap().unwrap();
+        let dave = users::by_name(&pool, "dave").await.unwrap().unwrap();
+        assert_eq!(
+            (carol.email.as_deref(), dave.email.as_deref()),
+            (None, None)
+        );
+        app.get(&format!("/verify-email?token={link}"), None).await;
+        let carol = users::by_id(&pool, carol.id).await.unwrap().unwrap();
+        assert_eq!(carol.email.as_deref(), Some("carol@example.com"));
+        assert!(carol.email_verified_at.is_some());
+        let bob = users::by_id(&pool, bob.id).await.unwrap().unwrap();
+        assert_eq!(bob.email.as_deref(), Some("bob@example.com"));
+
+        // Where accounts wait for their address to be confirmed.
+        settings::set(&pool, "email_verification", json!(true))
+            .await
+            .unwrap();
+        let app = super::tests::app(&pool, true).await;
+        let free = app
+            .post_form("/register", None, &[], &signup("erin", "erin@example.com"))
+            .await;
+        let taken = app
+            .post_form("/register", None, &[], &signup("frank", "bob@example.com"))
+            .await;
+        assert_eq!(answer(&free), answer(&taken));
+        assert_eq!(last_mail(&pool).await.unwrap().0, "bob@example.com");
+        for name in ["erin", "frank"] {
+            let login = form(&[("name", name), ("password", "correct horse")]);
+            let refused = app.post_form("/login", None, &[], &login).await;
+            assert!(
+                refused.body.contains("Confirm your email address first"),
+                "{}",
+                refused.body
+            );
+        }
+
+        // Changing an address.
+        let (alice, session) = member(&pool, "alice", "alice@example.com").await;
+        let change = |email: &str| form(&[("email", email), ("password", "correct horse")]);
+        let sent = mail_count(&pool).await;
+        let free = app
+            .post_form(
+                "/settings/account/email",
+                Some(&session),
+                &[],
+                &change("new@example.com"),
+            )
+            .await;
+        assert_eq!(last_mail(&pool).await.unwrap().0, "new@example.com");
+        let taken = app
+            .post_form(
+                "/settings/account/email",
+                Some(&session),
+                &[],
+                &change("Bob@Example.com"),
+            )
+            .await;
+        assert_eq!(answer(&free), answer(&taken));
+        assert_eq!(free.location.as_deref(), Some("/settings/account"));
+        assert_eq!(mail_count(&pool).await, sent + 2);
+        let (to, subject, _) = last_mail(&pool).await.unwrap();
+        assert_eq!(to, "bob@example.com");
+        assert!(subject.contains("tried to use your address"), "{subject}");
+        let alice = users::by_id(&pool, alice.id).await.unwrap().unwrap();
+        assert_eq!(alice.email.as_deref(), Some("alice@example.com"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

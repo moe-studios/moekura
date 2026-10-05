@@ -37,6 +37,7 @@ register-title = Create an account
 register-approval = New accounts are reviewed by the staff before they can log in.
 register-name-hint = Letters, digits, underscores, dots and hyphens.
 register-email-hint = We'll send you a link to confirm it before you can log in.
+register-email-confirm-hint = We'll send you a link to confirm it; it becomes your account's address once you follow it.
 register-repeat = Repeat password
 register-invite = Invite code
 register-rules = By registering, you agree to follow the site's <a href="/rules">rules</a>.

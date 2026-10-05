@@ -87,6 +87,13 @@ forgotten password from the login page, and confirm their address under
 **Settings → Your email address and password**. Without it, those pages
 don't appear, and people who forget their password need an admin.
 
+With mail, an address given when signing up or changing it becomes the
+account's once the link sent to it is followed. An address another
+account already has gets the same answer as a free one, and that account
+is emailed instead, so these forms can't be used to find out who has an
+account. Without mail, there's nobody to tell and the address is the
+account's at once, so a taken one is refused.
+
 To make new accounts confirm their address before they can log in, tick
 **New accounts must confirm their email address** under **Admin →
 Settings**, or:

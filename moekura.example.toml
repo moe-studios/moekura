@@ -114,9 +114,10 @@ run_in_serve = true
 lock_timeout_secs = 300
 
 [mail]
-# Outgoing mail, for email verification and password resets. Leave host
-# empty to turn mail off, along with the features that need it. Test it
-# with `moekura admin send-test-mail you@example.com`.
+# Outgoing mail, for email verification and password resets, and to warn
+# users about wrong two-factor codes and about someone trying to use their
+# address. Leave host empty to turn mail off, along with the features that
+# need it. Test it with `moekura admin send-test-mail you@example.com`.
 host = ""               # e.g. "smtp.example.com"
 # "starttls" (upgrade a plain connection; required), "tls" (TLS from the
 # start) or "none" (only for a relay on the same machine or network).

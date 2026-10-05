@@ -11,8 +11,8 @@ use moekura_core::accounts::{NAME_MAX_LEN, NAME_MIN_LEN};
 use moekura_core::permissions::SystemRole;
 use moekura_core::settings::RegistrationMode;
 use moekura_db::accounts::{self, AuthError, CreateError, NewAccount};
-use moekura_db::users::UserStatus;
 use moekura_db::{invites, user_ips};
+use moekura_db::users::{self, UserStatus};
 use serde::Deserialize;
 
 use crate::AppState;
@@ -127,6 +127,7 @@ fn render_register(
             needs_invite => mode == RegistrationMode::Invite,
             needs_approval => mode == RegistrationMode::Approval,
             email_required => crate::email::verification_required(page.state()),
+            mail_enabled => crate::email::mail_enabled(page.state()),
             captcha => crate::captcha::for_sign_up(page.state()).map(|c| c.widget()),
         },
     )
@@ -217,9 +218,26 @@ async fn register(
         RegistrationMode::Approval => UserStatus::Pending,
         _ => UserStatus::Active,
     };
+    let mailing = !email.is_empty() && crate::email::mail_enabled(&state);
+    if mailing {
+        state.rate_limits.check_mail(info.ip, email).await?;
+    }
 
     // One transaction, so a failed signup doesn't use up the invite.
     let mut tx = state.db.primary().begin().await?;
+    // With mail, an address another account has gets the same answer as a
+    // free one, and its owner is told instead, so signing up can't be used
+    // to find out who has an account. The new account goes without it.
+    // Without mail nobody could be told, and the address is the account's
+    // at once, so a taken one is refused as before.
+    let taken = match mailing {
+        true => users::by_email(&mut *tx, email).await?,
+        false => None,
+    };
+    // An address waiting to be confirmed for an account that can't log in
+    // until then is kept on it; otherwise, with mail, it becomes the
+    // account's once the link sent to it is followed, as when changing it.
+    let keep_email = !mailing || (verify && taken.is_none());
     let invite = match mode {
         RegistrationMode::Invite => match invites::redeem(&mut *tx, &form.invite).await? {
             Some(id) => Some(id),
@@ -235,7 +253,7 @@ async fn register(
     let account = NewAccount {
         name: form.name.trim(),
         password: &form.password,
-        email: Some(form.email.as_str()),
+        email: keep_email.then_some(email),
         role_id: member.id,
         status,
     };
@@ -261,8 +279,11 @@ async fn register(
     if let Some(invite) = invite {
         invites::record_use(&mut *tx, invite, user.id).await?;
     }
-    if let (UserStatus::Unverified, Some(email)) = (status, user.email.clone()) {
-        crate::email::send_verification(&mut tx, &state, &user, &email).await?;
+    if mailing {
+        match &taken {
+            Some(owner) => crate::email::send_address_in_use(&mut tx, &state, owner).await?,
+            None => crate::email::send_verification(&mut tx, &state, &user, email).await?,
+        }
     }
     tx.commit().await?;
     tracing::info!(user_id = user.id, name = %user.name, ?status, "account registered");
@@ -562,6 +583,50 @@ mod tests {
             reserved.body.contains("The name is reserved."),
             "{}",
             reserved.body
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn without_mail_a_taken_address_is_refused(pool: PgPool) {
+        // Nobody could be told of it, and the address is the account's at
+        // once, so this is the only way to say so.
+        let app = app(&pool).await;
+        let with_email = |name: &str, email: &str| {
+            form(&[
+                ("name", name),
+                ("email", email),
+                ("password", "correct horse"),
+                ("password_confirm", "correct horse"),
+            ])
+        };
+        let first = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &with_email("alice", "a@example.com"),
+            )
+            .await;
+        assert_eq!(first.status, StatusCode::SEE_OTHER);
+        let user = users::by_name(&pool, "alice").await.unwrap().unwrap();
+        assert_eq!(user.email.as_deref(), Some("a@example.com"));
+        let taken = app
+            .post_form("/register", None, &[], &with_email("bob", "A@example.com"))
+            .await;
+        assert_eq!(taken.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(taken.body.contains("already in use"), "{}", taken.body);
+        let name_addr = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &with_email("bob", "Bob <bob@example.com>"),
+            )
+            .await;
+        assert!(
+            name_addr.body.contains("not a valid email address"),
+            "{}",
+            name_addr.body
         );
     }
 

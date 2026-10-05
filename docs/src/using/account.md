@@ -118,7 +118,13 @@ An address is written plainly, as `name@example.com`, without a name
 in front or angle brackets.
 
 On sites that send mail, a new address only replaces the old one once
-you follow the link sent to it.
+you follow the link sent to it; so does the address given when signing
+up, unless the site has new accounts confirm theirs before they can log
+in. Asking for an address another account already has gets the same
+answer as any other, and that account is emailed about it instead, so
+nobody can use these forms to find out who has an account here. On
+sites without mail, the address changes straight away, so a taken one is
+refused.
 
 **Forgot your password?** on the login page emails you a link to choose
 a new one. The link works for an hour, and only while that's still your

@@ -173,7 +173,9 @@ stops caching until it's back, and logs a warning; nothing fails.
 
 ## `[mail]`
 
-Outgoing mail over SMTP, for email verification and password resets.
+Outgoing mail over SMTP, for email verification and password resets, and
+to warn users about wrong two-factor codes and about someone trying to
+use their address.
 Messages are sent by the job workers, so a slow mail server doesn't hold
 up the site, and failed sends are retried.
 

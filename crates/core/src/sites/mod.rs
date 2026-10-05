@@ -333,6 +333,39 @@ pub(crate) mod testing {
 mod tests {
     use super::*;
 
+    /// No parser cuts a name or path inside a character: every link in
+    /// the sites' code, with a character of 2, 3 or 4 bytes put in at each
+    /// place after the host, still parses.
+    #[test]
+    fn characters_anywhere() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/sites");
+        let mut urls: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let code = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            for (at, _) in code.match_indices("\"http") {
+                let rest = &code[at + 1..];
+                urls.push(rest[..rest.find('"').unwrap_or(rest.len())].to_owned());
+            }
+        }
+        urls.sort_unstable();
+        urls.dedup();
+        assert!(urls.len() > 500, "{}", urls.len());
+        for url in &urls {
+            // Hosts are ASCII by the time parsers see them.
+            let host = url.find("//").map_or(0, |at| at + 2);
+            let path_start = url[host..]
+                .find(['/', '?', '#'])
+                .map_or(url.len(), |end| host + end);
+            let starts = url.char_indices().map(|(at, _)| at).chain([url.len()]);
+            for (n, at) in starts.filter(|&at| at >= path_start).enumerate() {
+                let mut changed = url.clone();
+                changed.insert(at, ['é', '猫', '😀'][n % 3]);
+                let parsed = std::panic::catch_unwind(|| parse(&changed));
+                assert!(parsed.is_ok(), "{changed}");
+            }
+        }
+    }
+
     #[test]
     fn unknown_and_odd_links() {
         assert_eq!(parse("https://example.com/a"), None);

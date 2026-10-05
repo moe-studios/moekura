@@ -5,12 +5,15 @@
 //! `/favorite_groups/{id}.json`, `/saved_searches.json` and
 //! `/saved_searches/{id}.json`.
 
+use std::collections::HashSet;
+
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use moekura_core::permissions::Permission;
+use moekura_core::pools::MAX_POSTS;
 use moekura_db::comments::{self, Comment, Filter};
 use moekura_db::favorite_groups::{self, Group};
 use moekura_db::pools::{self, Pool};
@@ -341,7 +344,7 @@ async fn pool_json(
         pool.id,
         &visibility(current),
         0,
-        i64::MAX,
+        MAX_POSTS as i64,
     )
     .await?;
     Ok(DanbooruPool {
@@ -380,13 +383,18 @@ async fn list_pools(
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
     let db = state.reader(&current);
+    let limit = i64::from(params.list.limit(1000));
+    let offset = (page_number(&params.list) - 1) * limit;
+    // Each pool once, and no more than a page needs.
+    let mut seen = HashSet::new();
     let ids: Vec<i32> = params
         .id
         .split([' ', ','])
         .filter_map(|s| s.trim().parse().ok())
+        .filter(|id| seen.insert(*id))
+        .skip(offset as usize)
+        .take(limit as usize)
         .collect();
-    let limit = i64::from(params.list.limit(1000));
-    let offset = (page_number(&params.list) - 1) * limit;
     let found: Vec<Pool> = if ids.is_empty() {
         let contains = params.name_contains.trim();
         let name = if contains.is_empty() {
@@ -403,7 +411,7 @@ async fn list_pools(
         pools::list(db, &filter, offset, limit).await?
     } else {
         let mut found = Vec::new();
-        for id in ids.into_iter().skip(offset as usize).take(limit as usize) {
+        for id in ids {
             if let Some(pool) = pools::by_id(db, id).await?.filter(|p| !p.is_deleted) {
                 found.push(pool);
             }
@@ -449,7 +457,7 @@ async fn group_json(
         group.id,
         &visibility(current),
         0,
-        i64::MAX,
+        MAX_POSTS as i64,
     )
     .await?;
     Ok(DanbooruGroup {
@@ -750,6 +758,13 @@ mod tests {
         );
         assert_eq!(listed[0]["post_ids"], json!([b, a]));
         assert_eq!(listed[0]["category"], json!("series"));
+        // Each pool once, however often it's asked for.
+        let listed = parse(
+            &app.get(&format!("/pools.json?search[id]={id},{id}+{id}"), None)
+                .await
+                .body,
+        );
+        assert_eq!(listed.as_array().map(Vec::len), Some(1), "{listed}");
         assert_eq!(
             parse(&app.get(&format!("/pools/{id}.json"), None).await.body)["name"],
             json!("My_Comic")

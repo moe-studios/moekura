@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use moekura_core::markup;
 use moekura_core::permissions::Permission;
-use moekura_core::pools::{Category, unique_post_ids};
+use moekura_core::pools::{Category, MAX_POSTS, unique_post_ids};
 use moekura_db::pools::{self, Pool, Version};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -142,7 +142,7 @@ async fn with_posts(
         pool.id,
         &visibility(current),
         0,
-        i64::MAX,
+        MAX_POSTS as i64,
     )
     .await?;
     Ok(ApiPoolWithPosts {

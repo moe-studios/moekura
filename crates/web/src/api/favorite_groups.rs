@@ -4,7 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use moekura_core::permissions::Permission;
-use moekura_core::pools::unique_post_ids;
+use moekura_core::pools::{MAX_POSTS, unique_post_ids};
 use moekura_db::favorite_groups::{self, Group};
 use moekura_db::users;
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ async fn with_posts(
         group.id,
         &visibility(current),
         0,
-        i64::MAX,
+        MAX_POSTS as i64,
     )
     .await?;
     Ok(ApiFavoriteGroupWithPosts {

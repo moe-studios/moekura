@@ -71,7 +71,7 @@ engine, then log in with your name and your API key.
 | `/explore/posts/searches.json`, `/explore/posts/missed_searches.json` | `[query, count]` pairs: the searches that most often found posts, and those that most often found nothing, by `date` and `scale` like the posts |
 | `/comments.json`, `/comments/{id}.json` | listed newest first, by `search[post_id]`, `search[creator_id]` or `search[creator_name]`; `page` takes `b<id>`, and numbers as far as the newest 20,000 comments; post with `comment[post_id]` and `comment[body]` (and `captcha`, a solved captcha's token, from accounts new enough to be asked for one), and change or delete your own |
 | `/comments/{id}/votes.json`, `/comment_votes.json` | only your own votes are listed |
-| `/pools.json`, `/pools/{id}.json` | by `search[name_matches]`, `search[name_contains]`, `search[id]` or `search[category]`; `post_ids` lists the posts you can see |
+| `/pools.json`, `/pools/{id}.json` | by `search[name_matches]`, `search[name_contains]`, `search[id]` (each pool once) or `search[category]`; `post_ids` lists the posts you can see |
 | `/favorite_groups.json`, `/favorite_groups/{id}.json` | by `search[creator_id]` or `search[creator_name]`, otherwise yours |
 | `/notes.json`, `/notes/{id}.json`, `/note_versions.json` | notes by `search[post_id]` (one or more posts); versions by `search[post_id]` or `search[note_id]`; read-only |
 | `POST /uploads.json`, `/uploads.json`, `/uploads/{id}.json` | the first step of an upload: a file as `upload[files][0]`, or a link as `upload[source]` (its first file); an upload media asset and its media asset share one id, the upload has its own. Your uploads are listed newest first |

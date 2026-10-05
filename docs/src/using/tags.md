@@ -47,6 +47,9 @@ save with the reason. Metatags in the box win over the form's own
 rating, source and parent fields. They also work in tag scripts and the
 APIs' tag fields; in a mass edit, only `-tag` and `rating:` do.
 
+A post can have at most 1000 tags, and a tag box at most 4000 words and
+256 KiB, with tags, `-tag`s and metatags together.
+
 ## Warnings after saving
 
 After an upload or an edit, the post page lists what may be missing,

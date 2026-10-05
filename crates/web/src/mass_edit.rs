@@ -1,6 +1,8 @@
 //! Mass tag edits: adding and removing tags on every post matching a
 //! search, in the background, with a preview first.
 
+use std::collections::HashSet;
+
 use axum::Router;
 use axum::extract::Form;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -39,11 +41,12 @@ pub fn routes() -> Router<AppState> {
 /// Tag names typed as words, checked.
 pub(crate) fn tag_list(text: &str) -> Result<Vec<String>, AppError> {
     let mut names: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
     for word in text.split_whitespace() {
         let name = TagName::parse(word)
             .map_err(|e| AppError::Unprocessable(format!("“{word}”: the tag {e}.")))?
             .into_string();
-        if !names.contains(&name) {
+        if seen.insert(name.clone()) {
             names.push(name);
         }
     }
@@ -71,6 +74,7 @@ struct Changes {
 fn changes(text: &str) -> Result<Changes, AppError> {
     let mut add = Vec::new();
     let mut remove = Vec::new();
+    let mut seen = (HashSet::new(), HashSet::new());
     let mut rating = None;
     for word in text.split_whitespace() {
         let parsed = post_edit::parse(word, &[], &[]);
@@ -85,12 +89,12 @@ fn changes(text: &str) -> Result<Changes, AppError> {
                 )));
             }
             None => {
-                let (list, name) = match word.strip_prefix('-') {
-                    Some(rest) if !parsed.removed.is_empty() => (&mut remove, rest),
-                    _ => (&mut add, word),
+                let (list, seen, name) = match word.strip_prefix('-') {
+                    Some(rest) if !parsed.removed.is_empty() => (&mut remove, &mut seen.1, rest),
+                    _ => (&mut add, &mut seen.0, word),
                 };
                 for name in tag_list(name)? {
-                    if !list.contains(&name) {
+                    if seen.insert(name.clone()) {
                         list.push(name);
                     }
                 }
@@ -117,8 +121,9 @@ pub(crate) fn check(query: &str, add: &str, remove: &str) -> Result<Checked, App
         mut remove,
         rating,
     } = changes(add)?;
+    let mut removed: HashSet<String> = remove.iter().cloned().collect();
     for name in tag_list(&remove_text(removing))? {
-        if !remove.contains(&name) {
+        if removed.insert(name.clone()) {
             remove.push(name);
         }
     }
@@ -127,7 +132,7 @@ pub(crate) fn check(query: &str, add: &str, remove: &str) -> Result<Checked, App
             "Give tags to add or remove, or a rating.".into(),
         ));
     }
-    if let Some(both) = add.iter().find(|t| remove.contains(t)) {
+    if let Some(both) = add.iter().find(|t| removed.contains(*t)) {
         return Err(AppError::Unprocessable(format!(
             "“{both}” is both added and removed."
         )));
@@ -350,6 +355,14 @@ mod tests {
         assert_eq!(checked.remove, ["cute", "old"]);
         assert_eq!(checked.rating, Some(moekura_core::posts::Rating::Explicit));
         assert!(super::check("cat", "rating:q", "").is_ok());
+        // Long lists keep the first of each tag, in order.
+        let many: String = (0..40_000).map(|i| format!("t{} ", i % 20_000)).collect();
+        let checked = super::check("cat", &many, &many.replace('t', "-r")).unwrap();
+        assert_eq!((checked.add.len(), checked.remove.len()), (20_000, 20_000));
+        assert_eq!(
+            (&checked.add[1], &checked.remove[1]),
+            (&"t1".to_owned(), &"r1".to_owned())
+        );
         for (add, error) in [
             ("pool:3", "can't be used in a mass edit"),
             ("rating:x", "isn't a rating"),

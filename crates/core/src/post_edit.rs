@@ -3,6 +3,7 @@
 //! metatags that change more than tags: `rating:e`, `parent:123`,
 //! `pool:name`, `fav`, … ([`Metatag`]).
 
+use std::collections::HashSet;
 use std::fmt;
 
 use crate::posts::Rating;
@@ -160,10 +161,12 @@ fn metatag(word: &str) -> Option<Result<Metatag, &'static str>> {
 /// even if they look like metatags (the box's tags as it was shown, which
 /// may predate a metatag).
 pub fn parse(input: &str, categories: &[&str], tags: &[&str]) -> EditInput {
+    let shown: HashSet<&str> = tags.iter().copied().collect();
+    let mut removed: HashSet<TagName> = HashSet::new();
     let mut out = EditInput::default();
     let mut plain = Vec::new();
     for word in input.split_whitespace() {
-        if tags.contains(&word) {
+        if shown.contains(word) {
             plain.push(word);
             continue;
         }
@@ -176,7 +179,7 @@ pub fn parse(input: &str, categories: &[&str], tags: &[&str]) -> EditInput {
             None => match word.strip_prefix('-').filter(|rest| !rest.is_empty()) {
                 Some(rest) => match TagName::parse(rest) {
                     Ok(name) => {
-                        if !out.removed.contains(&name) {
+                        if removed.insert(name.clone()) {
                             out.removed.push(name);
                         }
                     }
@@ -192,7 +195,7 @@ pub fn parse(input: &str, categories: &[&str], tags: &[&str]) -> EditInput {
     let (tags, invalid) = parse_input(&plain.join(" "), categories);
     out.tags = tags
         .into_iter()
-        .filter(|t| !out.removed.contains(&t.name))
+        .filter(|t| !removed.contains(&t.name))
         .collect();
     out.invalid.extend(invalid);
     out
@@ -288,5 +291,22 @@ mod tests {
         let kept = parse("fav cat", &[], &["fav"]);
         assert!(kept.metatags.is_empty());
         assert_eq!(kept.tags.len(), 2);
+    }
+
+    #[test]
+    fn long_boxes() {
+        let shown: Vec<String> = (0..10_000).map(|i| format!("fav_{i}")).collect();
+        let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
+        let input: String = (0..20_000)
+            .map(|i| format!("t{i} -r{i} {} artist:t{i} -t{} ", shown[i % 10_000], i * 2))
+            .collect();
+        let parsed = parse(&input, &["artist"], &shown);
+        // Every odd `t`, and each shown word once.
+        assert_eq!(parsed.tags.len(), 10_000 + 10_000);
+        assert_eq!(parsed.tags[0].name.as_str(), "fav_0");
+        assert_eq!(parsed.tags[1].name.as_str(), "t1");
+        assert_eq!(parsed.tags[1].category.as_deref(), Some("artist"));
+        assert_eq!(parsed.removed.len(), 20_000 + 20_000);
+        assert!(parsed.invalid.is_empty() && parsed.metatags.is_empty());
     }
 }

@@ -51,9 +51,10 @@ pub fn other_names<'a>(
             return Err(OtherNamesError::TooLong(name));
         }
         out.push(name);
-    }
-    if out.len() > MAX_OTHER_NAMES {
-        return Err(OtherNamesError::TooMany);
+        // As soon as there are too many, so a long list stays quick.
+        if out.len() > MAX_OTHER_NAMES {
+            return Err(OtherNamesError::TooMany);
+        }
     }
     Ok(out)
 }
@@ -79,6 +80,13 @@ mod tests {
         );
         let many: String = (0..=MAX_OTHER_NAMES).map(|i| format!("n{i} ")).collect();
         assert_eq!(parse_other_names(&many), Err(OtherNamesError::TooMany));
+        // However long the list, and repeats don't count.
+        let huge: String = (0..200_000).map(|i| format!("n{i} ")).collect();
+        assert_eq!(parse_other_names(&huge), Err(OtherNamesError::TooMany));
+        let repeated: String = (0..200_000)
+            .map(|i| format!("n{} ", i % MAX_OTHER_NAMES))
+            .collect();
+        assert_eq!(parse_other_names(&repeated).unwrap().len(), MAX_OTHER_NAMES);
         let long = "a".repeat(OTHER_NAME_MAX_LEN + 1);
         assert!(matches!(
             parse_other_names(&long),

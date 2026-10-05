@@ -36,7 +36,7 @@ impl ArtistUrl {
     /// (by their [`normalize_url`] form, the first staying).
     pub fn parse_list(input: &str) -> Result<Vec<Self>, UrlError> {
         let mut out: Vec<Self> = Vec::new();
-        let mut seen: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for word in input.split_whitespace() {
             let (raw, is_active) = match word.strip_prefix('-') {
                 Some(rest) => (rest, false),
@@ -59,10 +59,9 @@ impl ArtistUrl {
                 .filter(|u| matches!(u.scheme(), "http" | "https") && u.has_host())
                 .ok_or_else(|| UrlError::NotWeb(raw.to_owned()))?;
             let normalized = normalize_url(url.as_str()).unwrap_or_default();
-            if seen.contains(&normalized) {
+            if !seen.insert(normalized) {
                 continue;
             }
-            seen.push(normalized);
             // A profile on a site we know is kept in its canonical form.
             out.push(Self {
                 url: crate::sites::canonical_artist_url(url.as_str()),
@@ -221,5 +220,24 @@ mod tests {
             ArtistUrl::parse_list("javascript:alert(1)"),
             Err(UrlError::NotWeb(_))
         ));
+    }
+
+    #[test]
+    fn long_url_lists() {
+        let urls = |n: usize, m: usize| -> String {
+            (0..n)
+                .map(|i| format!("https://a.example/{} ", i % m))
+                .collect()
+        };
+        assert_eq!(
+            ArtistUrl::parse_list(&urls(50_000, MAX_URLS))
+                .unwrap()
+                .len(),
+            MAX_URLS
+        );
+        assert_eq!(
+            ArtistUrl::parse_list(&urls(50_000, 50_000)),
+            Err(UrlError::TooMany)
+        );
     }
 }

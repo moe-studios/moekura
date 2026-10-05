@@ -1,5 +1,7 @@
 //! The tag list, tag editing, and turning a tag input box into tags.
 
+use std::collections::HashSet;
+
 use axum::extract::{Path, Query, State};
 use axum::http::header::CACHE_CONTROL;
 use axum::response::{IntoResponse, Redirect, Response};
@@ -64,11 +66,25 @@ pub enum TagFieldError {
     Db(#[from] sqlx::Error),
 }
 
+/// Most words, and bytes, a tag input box may hold: a post's full tags
+/// with removals and metatags besides, and no more, so a huge form is
+/// refused before it's read.
+const FIELD_MAX_WORDS: usize = 4 * POST_MAX_TAGS;
+const FIELD_MAX_BYTES: usize = 256 * 1024;
+
+fn check_size(input: &str) -> Result<(), TagFieldError> {
+    if input.len() > FIELD_MAX_BYTES || input.split_whitespace().nth(FIELD_MAX_WORDS).is_some() {
+        return Err(too_many());
+    }
+    Ok(())
+}
+
 /// Parses a tag input box: whitespace-separated names, optionally with a
 /// category prefix, and metatags (moekura_core::post_edit); `-tag` only
 /// leaves `tag` out. Rejects invalid names and metatags, too many tags
 /// and deprecated tags.
 pub async fn parse_field(db: &PgPool, input: &str) -> Result<ParsedTags, TagFieldError> {
+    check_size(input)?;
     let categories = tags::categories(db).await?;
     let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
     let parsed = post_edit::parse(input, &names, &[]);
@@ -93,6 +109,8 @@ pub struct TagEdit {
 /// off. Only tags added in the form are checked, so a tag deprecated
 /// since it was added doesn't block other edits.
 pub async fn parse_edit(db: &PgPool, old: &str, new: &str) -> Result<TagEdit, TagFieldError> {
+    check_size(old)?;
+    check_size(new)?;
     let categories = tags::categories(db).await?;
     let names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
     // The form's own tags stay tags, even ones spelled like a metatag
@@ -107,21 +125,24 @@ pub async fn parse_edit(db: &PgPool, old: &str, new: &str) -> Result<TagEdit, Ta
         bad_metatags,
     } = post_edit::parse(new, &names, &shown);
     reject_invalid(&invalid, &bad_metatags)?;
+    let kept: HashSet<&TagName> = after.iter().map(|a| &a.name).collect();
+    let mut seen = HashSet::new();
     let removed = before
         .iter()
-        .filter(|b| !after.iter().any(|a| a.name == b.name))
+        .filter(|b| !kept.contains(&b.name))
         .map(|b| b.name.to_string())
         .chain(taken_off.into_iter().map(TagName::into_string))
-        .fold(Vec::new(), |mut all: Vec<String>, name| {
-            if !all.contains(&name) {
-                all.push(name);
-            }
-            all
-        });
-    let added = after
-        .into_iter()
-        .filter(|a| !before.iter().any(|b| b.name == a.name))
+        .filter(|name| seen.insert(name.clone()))
         .collect();
+    let had: HashSet<&TagName> = before.iter().map(|b| &b.name).collect();
+    let added: Vec<TagInput> = after
+        .into_iter()
+        .filter(|a| !had.contains(&a.name))
+        .collect();
+    // The post would have them all, so they needn't be looked up.
+    if added.len() > POST_MAX_TAGS {
+        return Err(too_many());
+    }
     Ok(TagEdit {
         added: checked(db, &categories, added, metatags).await?,
         removed,
@@ -539,6 +560,41 @@ mod tests {
             parse_edit(&pool, "keep", "keep old").await,
             Err(TagFieldError::Invalid(m)) if m.contains("deprecated")
         ));
+    }
+
+    fn refused<T>(result: Result<T, TagFieldError>) -> bool {
+        matches!(result, Err(TagFieldError::Invalid(m)) if m == "A post can have at most 1000 tags.")
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn huge_boxes_are_refused(pool: PgPool) {
+        let words = |n: usize| {
+            (0..n)
+                .map(|i| format!("t{i}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let long = "x".repeat(FIELD_MAX_BYTES + 1);
+        for huge in [words(FIELD_MAX_WORDS + 1), long, words(200_000)] {
+            assert!(refused(parse_field(&pool, &huge).await));
+            assert!(refused(parse_edit(&pool, &huge, "cat").await));
+            assert!(refused(parse_edit(&pool, "cat", &huge).await));
+        }
+        // Within the limits, repeats and removals don't count towards the
+        // post's tags.
+        let twice = format!("{} {}", words(POST_MAX_TAGS), words(POST_MAX_TAGS));
+        assert_eq!(
+            parse_field(&pool, &twice).await.unwrap().tags.len(),
+            POST_MAX_TAGS
+        );
+        let edit = parse_edit(&pool, &words(POST_MAX_TAGS), &format!("{twice} -t0 new"))
+            .await
+            .unwrap();
+        assert_eq!(edit.removed, ["t0"]);
+        assert_eq!(edit.added.wanted().len(), 1);
+        // More new tags than a post can have aren't looked up.
+        let more: String = (0..=POST_MAX_TAGS).map(|i| format!("n{i} ")).collect();
+        assert!(refused(parse_edit(&pool, "cat", &more).await));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

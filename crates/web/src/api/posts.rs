@@ -689,14 +689,14 @@ pub(crate) async fn update(
         }
         Some(all) => all.join(" "),
         None => {
-            let removed: Vec<String> = changes
+            let removed: std::collections::HashSet<String> = changes
                 .remove_tags
                 .iter()
                 .map(|t| moekura_core::tags::normalize(t))
                 .collect();
             names
                 .iter()
-                .filter(|name| !removed.contains(name))
+                .filter(|name| !removed.contains(*name))
                 .chain(changes.add_tags.iter())
                 .map(String::as_str)
                 .collect::<Vec<_>>()

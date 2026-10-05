@@ -275,6 +275,11 @@ impl Media {
         let mut files = self.ugoira_extract(path, &frames, dir).await?;
         let first = files.first().cloned().ok_or_else(|| corrupt("no frames"))?;
         let first_type = frame_type(&first);
+        // Uploading checked only the first frame; every one is checked
+        // before any is decoded.
+        for file in &files {
+            self.probe_frame(file).await?;
+        }
         // ffmpeg reads PNG only; libvips reads every JPEG (and checks the
         // frame is one).
         for file in &mut files {
@@ -486,6 +491,63 @@ pub(crate) mod tests {
         let err = extract_within(&path, &found, &out, 500, 10_000).unwrap_err();
         assert!(matches!(err, MediaError::Corrupt(_)), "{err}");
         assert!(!err.is_internal());
+    }
+
+    #[tokio::test]
+    async fn checks_every_frame_before_decoding() {
+        let dir = fixtures::dir("ugoira-checked");
+        let small = std::fs::read(fixtures::image(&dir, "small.png", 32, 24)).unwrap();
+        let large = std::fs::read(fixtures::image(&dir, "large.png", 64, 48)).unwrap();
+        let gif = std::fs::read(fixtures::animation(&dir, "a.gif", 2)).unwrap();
+        let media = Media::new(moekura_core::config::MediaConfig {
+            max_pixels: 1000,
+            ..moekura_core::config::MediaConfig::default()
+        });
+        let render = |zip: PathBuf| {
+            let (media, work) = (media.clone(), dir.join(zip.file_stem().unwrap()));
+            async move {
+                std::fs::create_dir_all(&work).unwrap();
+                media.ugoira_video(&zip, &work).await
+            }
+        };
+
+        // Uploading looks at the first frame only.
+        let path = deflated(
+            &dir,
+            "large.zip",
+            &[("000000.png", &small), ("000001.png", &large)],
+        );
+        media.probe(&path, MediaType::Ugoira).await.unwrap();
+        let err = render(path).await.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                MediaError::TooLarge {
+                    width: 64,
+                    height: 48
+                }
+            ),
+            "{err}"
+        );
+
+        let path = deflated(
+            &dir,
+            "disguised.zip",
+            &[("000000.png", &small), ("000001.png", &gif)],
+        );
+        media.probe(&path, MediaType::Ugoira).await.unwrap();
+        let err = render(path).await.unwrap_err();
+        assert!(
+            matches!(&err, MediaError::Corrupt(m) if m.contains("what its name says")),
+            "{err}"
+        );
+
+        let path = deflated(
+            &dir,
+            "fine.zip",
+            &[("000000.png", &small), ("000001.png", &small)],
+        );
+        render(path).await.unwrap();
     }
 
     #[test]

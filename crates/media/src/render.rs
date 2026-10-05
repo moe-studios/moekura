@@ -4,8 +4,8 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::kind::MediaType;
-use crate::probe::loaders_for;
-use crate::tool::{self, Loaders};
+use crate::probe::{corrupt_unless_missing, loaders_for};
+use crate::tool::Loaders;
 use crate::{Media, MediaError};
 
 /// A generated file.
@@ -42,6 +42,7 @@ impl Media {
                 .next()
                 .ok_or_else(|| MediaError::Corrupt("the ugoira has no frames".into()))?;
             let first_type = crate::ugoira::frame_type(&first);
+            self.probe_frame(&first).await?;
             Ok((first, first_type))
         } else if media_type.is_video() {
             let poster = self.video_poster(source, duration_ms, dir).await?;
@@ -193,13 +194,6 @@ impl Media {
             height: header("height").await?,
             size: tokio::fs::metadata(path).await?.len(),
         })
-    }
-}
-
-fn corrupt_unless_missing(error: tool::ToolError) -> MediaError {
-    match error {
-        tool::ToolError::Failed { stderr, .. } => MediaError::Corrupt(stderr),
-        other => MediaError::Tool(other),
     }
 }
 

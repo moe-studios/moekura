@@ -85,8 +85,8 @@ impl Media {
 
     /// Runs one of the media tools, `program`, waiting for a turn if
     /// `max_tool_processes` are running. ffmpeg gets `ffmpeg_threads`;
-    /// ffmpeg and ffprobe are held to the configured memory and CPU
-    /// limits.
+    /// ffmpeg and ffprobe, and the libvips tools, are held to their
+    /// configured memory and CPU limits.
     pub(crate) async fn run<I, S>(
         &self,
         program: &Path,
@@ -105,6 +105,14 @@ impl Media {
             tool::Limits {
                 memory_mb: self.config.ffmpeg_memory_mb,
                 cpu_secs: self.config.ffmpeg_cpu_secs,
+            }
+        } else if program == tools.vips
+            || program == tools.vipsheader
+            || program == tools.vipsthumbnail
+        {
+            tool::Limits {
+                memory_mb: self.config.vips_memory_mb,
+                cpu_secs: self.config.vips_cpu_secs,
             }
         } else {
             tool::Limits::NONE
@@ -349,6 +357,36 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert!(poster.is_file());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn vips_over_its_memory_is_the_files_problem() {
+        let dir = fixtures::dir("vips-limits");
+        let image = fixtures::image(&dir, "a.png", 64, 48);
+        // Too little for libvips to even load its libraries.
+        let starved = Media {
+            config: MediaConfig {
+                vips_memory_mb: 64,
+                ..MediaConfig::default()
+            },
+            permits: Arc::new(Semaphore::new(1)),
+        };
+        let err = starved.probe(&image, MediaType::Png).await.unwrap_err();
+        assert!(matches!(err, MediaError::OverLimit(_)), "{err}");
+        assert!(!err.is_internal());
+        let err = starved
+            .fit_within(&image, MediaType::Png, 32, &dir.join("t.webp"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MediaError::OverLimit(_)), "{err}");
+        // The defaults are plenty for ordinary files.
+        let thumb = media()
+            .fit_within(&image, MediaType::Png, 32, &dir.join("t.webp"))
+            .await
+            .unwrap();
+        assert_eq!((thumb.width, thumb.height), (32, 24));
         std::fs::remove_dir_all(dir).unwrap();
     }
 

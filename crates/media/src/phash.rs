@@ -11,8 +11,8 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use crate::kind::MediaType;
-use crate::probe::loaders_for;
-use crate::tool::{self, Loaders};
+use crate::probe::{corrupt_unless_missing, loaders_for};
+use crate::tool::Loaders;
 use crate::{Media, MediaError};
 
 const SIDE: usize = 32;
@@ -97,10 +97,7 @@ impl Media {
             loaders,
         )
         .await
-        .map_err(|e| match e {
-            tool::ToolError::Failed { stderr, .. } => MediaError::Corrupt(stderr),
-            other => MediaError::Tool(other),
-        })?;
+        .map_err(corrupt_unless_missing)?;
         let data = tokio::fs::read(&out).await?;
         let pixels: [u8; SIDE * SIDE] = parse_pgm(&data)
             .and_then(|p| p.try_into().ok())

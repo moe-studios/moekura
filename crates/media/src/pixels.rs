@@ -4,8 +4,8 @@ use std::ffi::OsString;
 use std::path::Path;
 
 use crate::kind::MediaType;
-use crate::probe::loaders_for;
-use crate::tool::{self, Loaders};
+use crate::probe::{corrupt_unless_missing, loaders_for};
+use crate::tool::Loaders;
 use crate::{Media, MediaError};
 
 /// An 8-bit RGB image, row-major.
@@ -92,13 +92,6 @@ impl Media {
                 pixels: image.pixels.iter().flat_map(|&v| [v, v, v]).collect(),
             },
         })
-    }
-}
-
-fn corrupt_unless_missing(error: tool::ToolError) -> MediaError {
-    match error {
-        tool::ToolError::Failed { stderr, .. } => MediaError::Corrupt(stderr),
-        other => MediaError::Tool(other),
     }
 }
 

@@ -723,6 +723,13 @@ pub struct MediaConfig {
     /// threads together. 0: no limit (`tool_timeout_secs` and
     /// `ffmpeg_threads` still bound it). Linux only.
     pub ffmpeg_cpu_secs: u64,
+    /// Memory (address space) each libvips run (`vips`, `vipsheader`,
+    /// `vipsthumbnail`) may use, in MB. Decoding the largest images
+    /// `max_pixels` allows takes a few GB. 0: no limit. Linux only.
+    pub vips_memory_mb: u64,
+    /// CPU time each libvips run may use, in seconds. 0: no limit
+    /// (`tool_timeout_secs` still bounds it). Linux only.
+    pub vips_cpu_secs: u64,
     /// Scratch space for uploads and processing. Defaults to the system
     /// temporary directory.
     pub work_dir: Option<PathBuf>,
@@ -732,6 +739,10 @@ pub struct MediaConfig {
 /// The least `media.ffmpeg_memory_mb` ffmpeg starts with (its libraries
 /// alone take a few hundred MB of address space).
 pub const MIN_FFMPEG_MEMORY_MB: u64 = 512;
+
+/// The least `media.vips_memory_mb` libvips starts with, its libraries
+/// and plugins included.
+pub const MIN_VIPS_MEMORY_MB: u64 = 512;
 
 impl MediaConfig {
     /// `work_dir`, or a directory under the system temp dir.
@@ -762,6 +773,8 @@ impl Default for MediaConfig {
             ffmpeg_threads: 2,
             ffmpeg_memory_mb: 2048,
             ffmpeg_cpu_secs: 0,
+            vips_memory_mb: 4096,
+            vips_cpu_secs: 0,
             work_dir: None,
             tools: MediaTools::default(),
         }
@@ -1027,6 +1040,14 @@ impl Config {
                 key: "media.ffmpeg_memory_mb",
                 message: format!(
                     "must be 0 (no limit) or at least {MIN_FFMPEG_MEMORY_MB}: ffmpeg needs that much to start"
+                ),
+            });
+        }
+        if (1..MIN_VIPS_MEMORY_MB).contains(&self.media.vips_memory_mb) {
+            problems.push(ConfigProblem {
+                key: "media.vips_memory_mb",
+                message: format!(
+                    "must be 0 (no limit) or at least {MIN_VIPS_MEMORY_MB}: libvips needs that much to start"
                 ),
             });
         }
@@ -1546,6 +1567,16 @@ mod tests {
                 "server.connections.send_timeout_secs"
             ]
         );
+    }
+
+    #[test]
+    fn vips_memory_is_off_or_enough_to_start() {
+        let mut config = valid();
+        config.media.vips_memory_mb = 0;
+        config.validate().unwrap();
+        config.media.vips_memory_mb = 100;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "media.vips_memory_mb");
     }
 
     #[test]

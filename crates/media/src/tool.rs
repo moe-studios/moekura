@@ -83,7 +83,8 @@ impl Limits {
 }
 
 /// What programs print when an allocation fails (`ENOMEM`, threads
-/// whose stacks couldn't be mapped, libraries that couldn't be loaded).
+/// whose stacks couldn't be mapped, libraries that couldn't be loaded,
+/// GLib's and libjpeg's own messages).
 const OUT_OF_MEMORY: &[&str] = &[
     "Cannot allocate memory",
     "out of memory",
@@ -91,7 +92,19 @@ const OUT_OF_MEMORY: &[&str] = &[
     "pthread_create() failed",
     "failed to map segment",
     "bad_alloc",
+    "failed to allocate",
+    "Insufficient memory",
 ];
+
+/// Whether `stderr` says an allocation failed. Optional plugins that
+/// couldn't be loaded (`dlopen`, which a distribution's libvips tries at
+/// start) don't count: the run goes on without them.
+fn out_of_memory(stderr: &str) -> bool {
+    stderr
+        .lines()
+        .filter(|line| !line.starts_with("dlopen:"))
+        .any(|line| OUT_OF_MEMORY.iter().any(|s| line.contains(s)))
+}
 
 /// Whether a failed run was stopped for using too much CPU time: killed
 /// by SIGXCPU, or (ffmpeg) quitting on it.
@@ -198,7 +211,7 @@ where
     // output missing; it only prints errors, so look whatever the status.
     if limited && limits.memory_mb > 0 {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if OUT_OF_MEMORY.iter().any(|s| stderr.contains(s)) {
+        if out_of_memory(&stderr) {
             return Err(ToolError::OutOfMemory {
                 program: name,
                 limit_mb: limits.memory_mb,
@@ -366,6 +379,22 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(err, ToolError::Missing(_)), "{err}");
+    }
+
+    #[test]
+    fn tells_failed_allocations_from_plugins_left_out() {
+        assert!(out_of_memory("VipsJpeg: Insufficient memory (case 4)\n"));
+        assert!(out_of_memory(
+            "vips_tracked: out of memory -- size == 137MB"
+        ));
+        assert!(out_of_memory(
+            "vips: error while loading shared libraries: libgomp.so.1: \
+             failed to map segment from shared object"
+        ));
+        assert!(!out_of_memory(
+            "dlopen: libaom.so.3: failed to map segment from shared object\n\
+             VipsForeignLoad: \"x.png\" is not a known file format"
+        ));
     }
 
     #[tokio::test]

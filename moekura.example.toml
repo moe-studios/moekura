@@ -202,6 +202,10 @@ ffmpeg_threads = 2
 # 0 for no limit. Linux only. Files needing more are refused.
 ffmpeg_memory_mb = 2048
 ffmpeg_cpu_secs = 0
+# The same for each vips, vipsheader and vipsthumbnail run. The largest
+# pictures max_pixels allows take about 4 GB to decode.
+vips_memory_mb = 4096
+vips_cpu_secs = 0
 # Scratch space for uploads and processing; the system temp dir by default.
 # work_dir = "/var/tmp/moekura"
 

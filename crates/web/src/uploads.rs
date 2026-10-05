@@ -3141,7 +3141,16 @@ mod tests {
         }
 
         let (first, _) = tokio::sync::oneshot::channel();
-        download_pending(state.clone(), current, upload, None, first).await;
+        download_pending(
+            state.clone(),
+            current,
+            upload,
+            uploader_id,
+            None,
+            u64::MAX,
+            first,
+        )
+        .await;
         for file in files {
             let file = staged_uploads::by_id(&pool, file).await.unwrap().unwrap();
             assert_eq!((file.status, file.storage_key), (Status::Failed, None));
@@ -3390,7 +3399,8 @@ mod tests {
 
         let state = local_state(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
-        let alice = current_user(&state, &alice).await.user.unwrap().id;
+        let current = current_user(&state, &alice).await;
+        let alice = current.user.as_ref().unwrap().id;
         let work = format!("http://{addr}/work");
         let upload = staged_uploads::create_upload(&pool, alice, &work, "")
             .await
@@ -3417,7 +3427,7 @@ mod tests {
             .unwrap();
 
         let (first, _) = tokio::sync::oneshot::channel();
-        download_pending(state.clone(), upload, alice, None, budget, first).await;
+        download_pending(state.clone(), current, upload, alice, None, budget, first).await;
         let files = files_of(&pool, upload).await;
         assert_eq!(asked_first.load(Ordering::Relaxed), 0);
         assert_eq!(
@@ -3451,7 +3461,8 @@ mod tests {
 
         let state = local_state(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
-        let alice = current_user(&state, &alice).await.user.unwrap().id;
+        let current = current_user(&state, &alice).await;
+        let alice = current.user.as_ref().unwrap().id;
         let (work, file) = (
             format!("http://{addr}/work"),
             format!("http://{addr}/1.png"),
@@ -3484,6 +3495,7 @@ mod tests {
         let (first, _) = tokio::sync::oneshot::channel();
         let downloading = tokio::spawn(download_pending(
             state.clone(),
+            current.clone(),
             upload,
             alice,
             None,
@@ -3546,7 +3558,8 @@ mod tests {
         let mut state = crate::test_support::test_state_with(&pool, config).await;
         state.fetcher = crate::fetch::Fetcher::new(Duration::from_secs(10), true);
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
-        let alice = current_user(&state, &alice).await.user.unwrap().id;
+        let current = current_user(&state, &alice).await;
+        let alice = current.user.as_ref().unwrap().id;
         let files = [
             format!("http://{addr}/endless"),
             format!("http://{addr}/1.png"),
@@ -3556,7 +3569,16 @@ mod tests {
         // The first fails once past the limit, having taken up the budget
         // all the same.
         let (first, _) = tokio::sync::oneshot::channel();
-        download_pending(state.clone(), upload, alice, None, 512 * 1024, first).await;
+        download_pending(
+            state.clone(),
+            current,
+            upload,
+            alice,
+            None,
+            512 * 1024,
+            first,
+        )
+        .await;
         let files = files_of(&pool, upload).await;
         assert_eq!(
             files.iter().map(|f| f.status).collect::<Vec<_>>(),
@@ -3611,16 +3633,26 @@ mod tests {
             .unwrap();
         let user = async |name: &str| {
             let session = session_for(&pool, name, SystemRole::Member).await;
-            current_user(&state, &session).await.user.unwrap().id
+            let current = current_user(&state, &session).await;
+            let id = current.user.as_ref().unwrap().id;
+            (current, id)
         };
-        let (alice, bob) = (user("alice").await, user("bob").await);
+        let ((alice_current, alice), (bob_current, bob)) = (user("alice").await, user("bob").await);
         // Alice sends more slow links than the whole site has turns.
         let mut alices = Vec::new();
         let mut downloads = Vec::new();
         for _ in 0..=MAX_DOWNLOADS {
             let upload = pending_upload(&pool, alice, &[format!("http://{addr}/slow.png")]).await;
             let (first, _) = tokio::sync::oneshot::channel();
-            let downloading = download_pending(state.clone(), upload, alice, None, u64::MAX, first);
+            let downloading = download_pending(
+                state.clone(),
+                alice_current.clone(),
+                upload,
+                alice,
+                None,
+                u64::MAX,
+                first,
+            );
             downloads.push(tokio::spawn(downloading));
             alices.push(upload);
         }
@@ -3636,7 +3668,7 @@ mod tests {
         let (first, _) = tokio::sync::oneshot::channel();
         tokio::time::timeout(
             Duration::from_secs(5),
-            download_pending(state.clone(), bobs, bob, None, u64::MAX, first),
+            download_pending(state.clone(), bob_current, bobs, bob, None, u64::MAX, first),
         )
         .await
         .expect("Bob's download waited for Alice's");

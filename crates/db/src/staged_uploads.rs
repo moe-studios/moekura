@@ -586,7 +586,7 @@ mod tests {
         let second = create_pending(&pool, slot(1), "https://example.com/2.png")
             .await
             .unwrap();
-        assert!(started(&pool, first).await.unwrap());
+        assert!(claim(&pool, first).await.unwrap());
         assert!(stored(&pool, first, file("original/a.png")).await.unwrap());
         let hour = std::time::Duration::from_secs(3600);
         assert_eq!(
@@ -615,7 +615,7 @@ mod tests {
         assert_eq!(files[0].storage_key.as_deref(), Some("original/a.png"));
         // Neither can change once settled.
         failed(&pool, first, "late", None).await.unwrap();
-        assert!(!started(&pool, second).await.unwrap());
+        assert!(!claim(&pool, second).await.unwrap());
         assert!(!stored(&pool, second, file("original/b.png")).await.unwrap());
         assert_eq!(
             by_id(&pool, second).await.unwrap().unwrap().storage_key,

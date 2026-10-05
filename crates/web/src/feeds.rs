@@ -376,15 +376,7 @@ async fn comments_feed(
         Err(message) => return Ok(refused(message)),
     };
     let db = state.reader(&current);
-    let found = comments::list(
-        db,
-        &seen,
-        &Filter::default(),
-        None,
-        0,
-        i64::from(ENTRIES),
-    )
-    .await?;
+    let found = comments::list(db, &seen, &Filter::default(), None, 0, i64::from(ENTRIES)).await?;
     let entries: Vec<Entry> = found
         .into_iter()
         .map(|c| Entry {

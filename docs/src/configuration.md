@@ -259,7 +259,7 @@ See [File storage](admin/storage.md).
 | `ffmpeg_cpu_secs` | `0` | CPU time each `ffmpeg` or `ffprobe` run may use, all threads together; `0` for no limit (Linux only) |
 | `vips_memory_mb` | `4096` | memory each `vips`, `vipsheader` or `vipsthumbnail` run may use; `0` for no limit, otherwise at least `512` (Linux only) |
 | `vips_cpu_secs` | `0` | CPU time each `vips`, `vipsheader` or `vipsthumbnail` run may use; `0` for no limit (Linux only) |
-| `work_dir` | system temp dir | scratch space for uploads and processing |
+| `work_dir` | system temp dir | scratch space for uploads and processing; an upload's scratch files left behind for more than a day (by a restart, say) are removed at startup and every hour, so several processes can share it |
 
 ### Limits on media tools
 

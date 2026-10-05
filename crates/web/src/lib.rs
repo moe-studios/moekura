@@ -81,7 +81,7 @@ mod test_support;
 mod themes;
 mod two_factor;
 mod upload;
-mod uploads;
+pub mod uploads;
 mod user_feedbacks;
 mod user_moderation;
 mod users;

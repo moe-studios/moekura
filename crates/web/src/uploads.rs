@@ -6,6 +6,7 @@
 //! gallery) downloads them in the background, and the upload's page
 //! shows how far that got. `/uploads` lists the user's files.
 
+use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,6 +45,8 @@ const WAIT_FOR_DOWNLOADS: Duration = Duration::from_secs(8);
 /// A file still waiting this long after its download started was
 /// abandoned (the server restarted meanwhile).
 const ABANDONED_AFTER: Duration = Duration::from_secs(10 * 60);
+/// Scratch files this old were left behind (see [`sweep_work_dir`]).
+const STALE_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
 /// Files on a page of `/uploads`.
 const PAGE_SIZE: i64 = 48;
 /// How often the page of an upload still downloading reloads.
@@ -348,40 +351,41 @@ async fn unpack_archives(
             out.push(file);
             continue;
         }
-        let dir = state.work_dir.join(format!(
+        let dir = UnpackDir(state.work_dir.join(format!(
             "unpacked-{}",
             &hex::encode(moekura_core::tokens::NewToken::generate().hash)[..24]
-        ));
-        tokio::fs::create_dir_all(&dir)
+        )));
+        tokio::fs::create_dir_all(&dir.0)
             .await
             .map_err(|e| UploadError::Internal(format!("unpacking: {e}")))?;
         let limits = Limits {
             max_files: MAX_LINK_FILES,
             max_total_bytes: max_bytes.saturating_mul(MAX_FILES as u64),
         };
-        let (path, into) = (file.path().to_owned(), dir.clone());
-        let unpacked = tokio::task::spawn_blocking(move || archive::unpack(&path, &into, limits))
-            .await
-            .map_err(|e| UploadError::Internal(e.to_string()));
-        let adopted = async {
-            for entry in unpacked?.map_err(refused)? {
-                let name = format!("{}/{}", file.name(), entry.name);
-                let size = tokio::fs::metadata(&entry.path)
-                    .await
-                    .map_err(|e| UploadError::Internal(format!("unpacking: {e}")))?
-                    .len();
-                if size > max_bytes {
-                    return Err(UploadError::Invalid(format!(
-                        "{name} is larger than {max_mb} MB."
-                    )));
-                }
-                out.push(TempUpload::adopt(&state.work_dir, &entry.path, &name).await?);
+        // Unpacking goes on when the request ends early (the connection
+        // closed, the time ran out), so the directory goes with it, and
+        // is removed with the task's result if nobody takes that.
+        let path = file.path().to_owned();
+        let (unpacked, dir) = tokio::task::spawn_blocking(move || {
+            let unpacked = archive::unpack(&path, &dir.0, limits);
+            (unpacked, dir)
+        })
+        .await
+        .map_err(|e| UploadError::Internal(e.to_string()))?;
+        for entry in unpacked.map_err(refused)? {
+            let name = format!("{}/{}", file.name(), entry.name);
+            let size = tokio::fs::metadata(&entry.path)
+                .await
+                .map_err(|e| UploadError::Internal(format!("unpacking: {e}")))?
+                .len();
+            if size > max_bytes {
+                return Err(UploadError::Invalid(format!(
+                    "{name} is larger than {max_mb} MB."
+                )));
             }
-            Ok(())
+            out.push(TempUpload::adopt(&state.work_dir, &entry.path, &name).await?);
         }
-        .await;
-        let _ = tokio::fs::remove_dir_all(&dir).await;
-        adopted?;
+        drop(dir);
         if out.len() > MAX_LINK_FILES {
             return Err(UploadError::Invalid(format!(
                 "Upload at most {MAX_LINK_FILES} files at once, archives' files included."
@@ -389,6 +393,63 @@ async fn unpack_archives(
         }
     }
     Ok(out)
+}
+
+/// The directory an archive is unpacked into, removed when dropped.
+struct UnpackDir(PathBuf);
+
+impl Drop for UnpackDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// What the work directory's scratch files for uploads (`upload-…`),
+/// unpacked archives (`unpacked-…`), image searches (`search-…`) and
+/// profile pictures (`avatar-…`, `banner-…`) start with.
+const SCRATCH_PREFIXES: [&str; 5] = ["upload-", "unpacked-", "search-", "avatar-", "banner-"];
+
+/// Removes scratch files left in the work directory by requests that
+/// never finished (the server stopped meanwhile). Only those older than
+/// [`STALE_AFTER`] go: other processes may share the directory, and
+/// younger ones may be in use. Runs at startup and every hour.
+pub async fn sweep_work_dir(state: &AppState) {
+    let dir = state.work_dir.clone();
+    match tokio::task::spawn_blocking(move || sweep(&dir, STALE_AFTER)).await {
+        Ok(0) => {}
+        Ok(removed) => tracing::info!(removed, "removed stale upload scratch files"),
+        Err(error) => tracing::warn!(%error, "could not sweep the work directory"),
+    }
+}
+
+/// Removes the scratch files in `dir` unchanged for longer than `max_age`,
+/// returning how many.
+fn sweep(dir: &FsPath, max_age: Duration) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let scratch = name
+            .to_str()
+            .is_some_and(|name| SCRATCH_PREFIXES.iter().any(|p| name.starts_with(p)));
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|changed| changed.elapsed().is_ok_and(|age| age > max_age));
+        if !(scratch && stale) {
+            continue;
+        }
+        let path = entry.path();
+        let gone = if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            std::fs::remove_dir_all(&path)
+        } else {
+            std::fs::remove_file(&path)
+        };
+        removed += usize::from(gone.is_ok());
+    }
+    removed
 }
 
 /// Makes an upload of files sent from `source` by `current`, storing each.
@@ -2804,5 +2865,90 @@ mod tests {
                 sent.body
             );
         }
+    }
+
+    #[test]
+    fn sweeps_only_stale_scratch_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "moekura-sweep-{}-{}",
+            std::process::id(),
+            crate::shared::tests::fresh()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = std::time::SystemTime::now() - 2 * STALE_AFTER;
+        let make = |name: &str, age: Option<std::time::SystemTime>| {
+            let path = dir.join(name);
+            if name.ends_with('/') {
+                std::fs::create_dir_all(path.join("inner")).unwrap();
+                std::fs::write(path.join("inner/archive-000"), b"x").unwrap();
+            } else {
+                std::fs::write(&path, b"x").unwrap();
+            }
+            if let Some(age) = age {
+                std::fs::File::open(&path)
+                    .unwrap()
+                    .set_modified(age)
+                    .unwrap();
+            }
+        };
+        make("upload-old", Some(old));
+        make("search-old/", Some(old));
+        make("unpacked-old/", Some(old));
+        make("avatar-old.webp", Some(old));
+        make("upload-new", None);
+        make("unpacked-new/", None);
+        // Others' (a worker's, say) are left alone, however old.
+        make("job-media-1-2/", Some(old));
+        make("stored-1", Some(old));
+        assert_eq!(sweep(&dir, STALE_AFTER), 4);
+        let mut left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            ["job-media-1-2", "stored-1", "unpacked-new", "upload-new"]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn unpacking_cleans_up_after_a_dropped_request(pool: PgPool) {
+        let state = test_state(&pool).await;
+        // Large enough that unpacking it takes a while.
+        let zeros = vec![0; 32 * 1024 * 1024];
+        let archive = zip_of(&[("a.bin", &zeros), ("b.bin", &zeros)]);
+        let mut writer = upload::TempWriter::create(&state.work_dir).await.unwrap();
+        writer.write(&archive).await.unwrap();
+        let file = writer.finish().await.unwrap();
+        let unpacking_dirs = || {
+            std::fs::read_dir(&state.work_dir)
+                .unwrap()
+                .filter(|e| {
+                    e.as_ref()
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("unpacked-")
+                })
+                .count()
+        };
+        // The request ends (the connection closed) while it's unpacking.
+        tokio::select! {
+            _ = unpack_archives(&state, vec![file]) => panic!("unpacked before it was dropped"),
+            () = async {
+                while unpacking_dirs() == 0 {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            } => {}
+        }
+        for _ in 0..200 {
+            if unpacking_dirs() == 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!("the unpacked files were left behind");
     }
 }

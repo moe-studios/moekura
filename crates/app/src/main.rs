@@ -398,8 +398,8 @@ async fn wait_for_workers(mut workers: tokio::task::JoinHandle<()>, shutdown: &C
 }
 
 /// Deletes expired sessions, unfinished logins, old view and search
-/// counts and old read notifications, and forgets idle rate-limit
-/// counters.
+/// counts, old read notifications and scratch files left by requests,
+/// and forgets idle rate-limit counters.
 async fn hourly_maintenance(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {
@@ -418,6 +418,7 @@ async fn hourly_maintenance(state: AppState) {
         }
         moekura_web::explore::prune(&state).await;
         moekura_web::notifications::prune(&state).await;
+        moekura_web::uploads::sweep_work_dir(&state).await;
     }
 }
 

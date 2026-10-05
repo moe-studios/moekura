@@ -277,6 +277,8 @@ mod tests {
             "151.101.1.69",
             "2606:4700::1111",
             "2a00:1450:4001::200e",
+            "2001:4860:4860::8888",
+            "2620:fe::fe",
         ] {
             assert!(is_public(ip(public)), "{public}");
         }
@@ -307,6 +309,26 @@ mod tests {
             "2002:7f00:1::",
             "2001:0::1",
             "::127.0.0.1",
+            // Site-local, deprecated but maybe still routed inside.
+            "fec0::1",
+            // Local-use NAT64: the translator's own IPv4 networks.
+            "64:ff9b:1::a00:1",
+            "64:ff9b:1::808:808",
+            // Discard-only.
+            "100::1",
+            // Benchmarking, ORCHID and the rest of 2001::/23.
+            "2001:2::1",
+            "2001:10::1",
+            "2001:20::1",
+            "2001:1ff::1",
+            // Documentation.
+            "3fff::1",
+            "3fff:fff::1",
+            // SRv6 segment ids.
+            "5f00::1",
+            // Not global unicast (outside 2000::/3).
+            "4000::1",
+            "e000::1",
         ] {
             assert!(!is_public(ip(private)), "{private}");
         }

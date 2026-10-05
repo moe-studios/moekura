@@ -130,6 +130,12 @@ source, and for uploads through the APIs (which download only the
 work's first file). When a site can't be reached or has
 changed, the link is downloaded as it is, without extras.
 
+Links must lead to the public internet: nothing is fetched from
+loopback, private, link-local or other special-purpose addresses (for
+IPv6, anything outside global unicast `2000::/3` or in its reserved
+blocks), whether the link names one, its name resolves to one or a
+redirect leads there.
+
 ### The bookmarklet
 
 **Bookmarklet** (`/uploads/bookmarklet`) has a **Post to …** link to drag

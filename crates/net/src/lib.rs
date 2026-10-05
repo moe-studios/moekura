@@ -57,15 +57,23 @@ fn is_public_v6(ip: Ipv6Addr) -> bool {
         [0x2002, high, low, ..] => return is_public_v4(embedded(high, low)),
         _ => {}
     }
-    !(ip.is_unspecified()
-        || ip.is_loopback()
-        || ip.is_multicast()
-        || ip.is_unique_local()
-        || ip.is_unicast_link_local()
-        // Documentation (2001:db8::/32) and Teredo (2001::/32).
-        || (segments[0] == 0x2001 && (segments[1] == 0x0db8 || segments[1] == 0))
-        // Deprecated IPv4-compatible addresses (::a.b.c.d).
-        || segments[..6] == [0; 6])
+    // Only global unicast (2000::/3) can be public. Denying the rest by
+    // default also leaves out loopback, unique-local, link-local,
+    // multicast, site-local (fec0::/10), local-use NAT64 (64:ff9b:1::/48,
+    // which a site's own translator may point at its private IPv4),
+    // discard (100::/64), IPv4-compatible (::a.b.c.d) and SRv6 (5f00::/16)
+    // addresses, and whatever is assigned later.
+    if segments[0] & 0xe000 != 0x2000 {
+        return false;
+    }
+    !(
+        // IETF protocol assignments (2001::/23): Teredo, benchmarking,
+        // ORCHID and a few anycast services, none of them websites.
+        (segments[0] == 0x2001 && segments[1] < 0x0200)
+        // Documentation (2001:db8::/32 and 3fff::/20).
+        || (segments[0] == 0x2001 && segments[1] == 0x0db8)
+        || (segments[0] == 0x3fff && segments[1] < 0x1000)
+    )
 }
 
 /// DNS that only returns public addresses.

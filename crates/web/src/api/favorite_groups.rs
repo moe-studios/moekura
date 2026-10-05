@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use moekura_core::permissions::Permission;
+use moekura_core::pools::unique_post_ids;
 use moekura_db::favorite_groups::{self, Group};
 use moekura_db::users;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,9 @@ use utoipa::{IntoParams, ToSchema};
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, ErrorBody};
-use crate::favorite_groups::{MAX_GROUPS, append, contents, own_group, save_error, visible_group};
+use crate::favorite_groups::{
+    MAX_GROUPS, append, contents, own_group, post_ids_error, save_error, visible_group,
+};
 use crate::posts::visibility;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -146,16 +149,6 @@ pub struct GroupInput {
     post_ids: Option<Vec<i64>>,
 }
 
-fn dedup(ids: Vec<i64>) -> Vec<i64> {
-    let mut seen = Vec::with_capacity(ids.len());
-    for id in ids {
-        if !seen.contains(&id) {
-            seen.push(id);
-        }
-    }
-    seen
-}
-
 /// Create a favorite group.
 ///
 /// Needs `favorite`; at most 100 each.
@@ -178,7 +171,7 @@ pub(crate) async fn create(
     let contents = contents(
         input.name.as_deref().unwrap_or_default(),
         input.is_public.unwrap_or(true),
-        dedup(input.post_ids.unwrap_or_default()),
+        unique_post_ids(input.post_ids.unwrap_or_default()).map_err(post_ids_error)?,
     )?;
     if favorite_groups::count_for_user(db, user.id).await? >= MAX_GROUPS {
         return Err(AppError::Unprocessable(format!(
@@ -218,7 +211,7 @@ pub(crate) async fn update(
     let db = state.db.primary();
     let group = own_group(db, &current, id).await?;
     let post_ids = match input.post_ids {
-        Some(ids) => dedup(ids),
+        Some(ids) => unique_post_ids(ids).map_err(post_ids_error)?,
         None => favorite_groups::post_ids(db, id).await?,
     };
     let contents = contents(

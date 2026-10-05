@@ -7,7 +7,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
-use moekura_core::pools::{self as pool_names, MAX_POSTS, PoolName};
+use moekura_core::pools::{self as pool_names, MAX_POSTS, PoolName, PostIdsError};
 use moekura_core::posts::PostStatus;
 use moekura_db::favorite_groups::{self, Contents, Group, SaveError};
 use moekura_db::{posts, users};
@@ -253,9 +253,16 @@ struct GroupForm {
     posts: String,
 }
 
+/// A list of post ids refused, as the visitor is told.
+pub(crate) fn post_ids_error(error: PostIdsError) -> AppError {
+    AppError::Unprocessable(match error {
+        PostIdsError::NotAnId(word) => format!("“{word}” isn't a post number."),
+        PostIdsError::TooMany => format!("A group can have at most {MAX_POSTS} posts."),
+    })
+}
+
 fn form_contents(form: &GroupForm) -> Result<Contents, AppError> {
-    let post_ids = pool_names::parse_post_ids(&form.posts)
-        .map_err(|word| AppError::Unprocessable(format!("“{word}” isn't a post number.")))?;
+    let post_ids = pool_names::parse_post_ids(&form.posts).map_err(post_ids_error)?;
     contents(&form.name, form.public.is_some(), post_ids)
 }
 

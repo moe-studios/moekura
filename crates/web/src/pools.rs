@@ -9,7 +9,7 @@ use minijinja::{Value, context};
 use moekura_core::markup;
 use moekura_core::moderation::ActionKind;
 use moekura_core::permissions::Permission;
-use moekura_core::pools::{self as pool_names, Category, MAX_POSTS, PoolName};
+use moekura_core::pools::{self as pool_names, Category, MAX_POSTS, PoolName, PostIdsError};
 use moekura_core::posts::PostStatus;
 use moekura_core::search::PoolRef;
 use moekura_db::mod_actions::{self, NewAction};
@@ -434,10 +434,17 @@ struct PoolForm {
     base: Option<i32>,
 }
 
+/// A list of post ids refused, as the visitor is told.
+pub(crate) fn post_ids_error(error: PostIdsError) -> AppError {
+    AppError::Unprocessable(match error {
+        PostIdsError::NotAnId(word) => format!("“{word}” isn't a post number."),
+        PostIdsError::TooMany => format!("A pool can have at most {MAX_POSTS} posts."),
+    })
+}
+
 /// Checks the form into what's saved.
 fn form_contents(form: &PoolForm, is_deleted: bool) -> Result<Contents, AppError> {
-    let post_ids = pool_names::parse_post_ids(&form.posts)
-        .map_err(|word| AppError::Unprocessable(format!("“{word}” isn't a post number.")))?;
+    let post_ids = pool_names::parse_post_ids(&form.posts).map_err(post_ids_error)?;
     contents(
         &PoolInput {
             name: &form.name,

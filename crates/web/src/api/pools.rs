@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use moekura_core::markup;
 use moekura_core::permissions::Permission;
-use moekura_core::pools::Category;
+use moekura_core::pools::{Category, unique_post_ids};
 use moekura_db::pools::{self, Pool, Version};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -14,7 +14,9 @@ use utoipa::{IntoParams, ToSchema};
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, ErrorBody};
-use crate::pools::{PoolInput, append, contents, save_error, set_deleted, visible_pool};
+use crate::pools::{
+    PoolInput, append, contents, post_ids_error, save_error, set_deleted, visible_pool,
+};
 use crate::posts::visibility;
 use crate::tags::{MAX_PAGE, PAGE_SIZE};
 
@@ -184,16 +186,6 @@ pub struct NewPool {
     post_ids: Vec<i64>,
 }
 
-fn dedup(ids: Vec<i64>) -> Vec<i64> {
-    let mut seen = Vec::with_capacity(ids.len());
-    for id in ids {
-        if !seen.contains(&id) {
-            seen.push(id);
-        }
-    }
-    seen
-}
-
 /// Create a pool.
 ///
 /// Needs `edit_pools`.
@@ -220,7 +212,7 @@ pub(crate) async fn create(
             name: &new.name,
             description: &new.description,
             category: new.category.as_deref().unwrap_or("series"),
-            post_ids: dedup(new.post_ids),
+            post_ids: unique_post_ids(new.post_ids).map_err(post_ids_error)?,
         },
         false,
     )?;
@@ -276,12 +268,16 @@ pub(crate) async fn update(
     let db = state.db.primary();
     let pool = visible_pool(db, &current, id).await?;
     let now = pools::contents(db, id).await?.ok_or(AppError::NotFound)?;
+    let post_ids = match changes.post_ids {
+        Some(ids) => unique_post_ids(ids).map_err(post_ids_error)?,
+        None => now.post_ids,
+    };
     let contents = contents(
         &PoolInput {
             name: changes.name.as_deref().unwrap_or(&now.name),
             description: changes.description.as_deref().unwrap_or(&now.description),
             category: changes.category.as_deref().unwrap_or(&now.category),
-            post_ids: dedup(changes.post_ids.unwrap_or(now.post_ids)),
+            post_ids,
         },
         pool.is_deleted,
     )?;
@@ -453,6 +449,22 @@ mod tests {
         assert_eq!(body["name"], json!("My_Comic"));
         assert_eq!(body["category"], json!("series"));
         assert_eq!(body["post_ids"], json!([b, a]));
+
+        // Too many is refused before anything is looked up.
+        let many: Vec<i64> = (1..=10_001).chain(1..=10_001).collect();
+        let refused = app
+            .json(
+                "PUT",
+                &format!("/api/v1/pools/{id}"),
+                Some(&alice),
+                Some(json!({ "post_ids": many })),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            json(&refused.body)["error"]["message"],
+            json!("A pool can have at most 10000 posts.")
+        );
 
         let stale = app
             .json(

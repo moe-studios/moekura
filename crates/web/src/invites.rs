@@ -257,18 +257,27 @@ async fn create(page: Page, Form(form): Form<InviteForm>) -> Result<Response, Ap
     let state = page.state();
     let creator = user_id(&page.current)?;
     let manager = page.current.can(Permission::ManageUsers);
+    let quota = state.site.get().settings.invite_quota;
+    let used_up = format!(
+        "You've made as many invites as you can for now ({quota} every {INVITE_QUOTA_DAYS} days)."
+    );
     if remaining(state, &page.current).await? == Some(0) {
-        let message = format!(
-            "You've made as many invites as you can for now ({} every {INVITE_QUOTA_DAYS} days).",
-            state.site.get().settings.invite_quota
-        );
-        return render(&page, 1, &form, None, Some(message)).await;
+        return render(&page, 1, &form, None, Some(used_up)).await;
     }
     let invite = match checked(&form, manager, creator) {
         Ok(invite) => invite,
         Err(message) => return render(&page, 1, &form, None, Some(message)).await,
     };
-    let code = invites::create(state.db.primary(), invite).await?;
+    let db = state.db.primary();
+    let code = if manager {
+        invites::create(db, invite).await?
+    } else {
+        // Counted again as it's made, against requests sent together.
+        match invites::create_within_quota(db, invite, i64::from(quota), INVITE_QUOTA_DAYS).await? {
+            Some(code) => code,
+            None => return render(&page, 1, &form, None, Some(used_up)).await,
+        }
+    };
     tracing::info!(user = creator, "invite created");
     render(&page, 1, &InviteForm::default(), Some(&code), None).await
 }
@@ -421,5 +430,57 @@ mod tests {
                 .body
                 .contains("revoked")
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_quota_holds_against_requests_sent_together(pool: PgPool) {
+        moekura_db::settings::set(&pool, "invite_quota", json!(2))
+            .await
+            .unwrap();
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let moderator = session_for(&pool, "moderator", SystemRole::Moderator).await;
+        let made = app
+            .post_form("/invites", Some(&moderator), &[], "expires_days=1")
+            .await;
+        assert_eq!(made.status, StatusCode::OK);
+        // Another request is making the last invite the quota allows,
+        // holding the moderator's row, when this one comes.
+        let mut other = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM users WHERE name = 'moderator' FOR UPDATE")
+            .execute(&mut *other)
+            .await
+            .unwrap();
+        let request = app.post_form("/invites", Some(&moderator), &[], "expires_days=1");
+        let finish_other = async {
+            for _ in 0..300 {
+                let waiting: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                                    WHERE datname = current_database() AND wait_event_type = 'Lock')",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            sqlx::query(
+                "INSERT INTO invites (code_hash, created_by, max_uses)
+                 SELECT sha256('other'), id, 1 FROM users WHERE name = 'moderator'",
+            )
+            .execute(&mut *other)
+            .await
+            .unwrap();
+            other.commit().await.unwrap();
+        };
+        let (refused, ()) = tokio::join!(request, finish_other);
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("as many invites as you can"));
+        let invites: i64 = sqlx::query_scalar("SELECT count(*) FROM invites")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(invites, 2);
     }
 }

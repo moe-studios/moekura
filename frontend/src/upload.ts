@@ -75,9 +75,12 @@ export function enableUpload(root: Document = document): void {
         root.defaultView?.location.replace(response.url);
         return;
       }
-      // The form again, saying what went wrong.
+      // The form again, saying what went wrong, with the box to tick
+      // when a work's many files are to be downloaded.
       const page = new DOMParser().parseFromString(await response.text(), "text/html");
       const message = page.querySelector(".form-error")?.textContent?.trim();
+      const confirm = page.querySelector("[data-upload-confirm]");
+      if (confirm && !form.querySelector("[data-upload-confirm]")) error?.before(root.importNode(confirm, true));
       if (error) {
         error.textContent = message || t("upload-failed", "The upload failed. Please try again.");
         error.hidden = false;

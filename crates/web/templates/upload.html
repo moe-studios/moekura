@@ -23,6 +23,7 @@
     <label for="url">{{ t("upload-url") }}</label>
     <input id="url" name="url" type="url" value="{{ url }}" placeholder="https://" maxlength="2048">
     {% if referer %}<input type="hidden" name="ref" value="{{ referer }}">{% endif %}
+    {% if many_files %}<label class="choice" data-upload-confirm><input type="checkbox" name="all_files" value="1" checked> {{ t("upload-all-files", count=many_files, max=max_link_files) }}</label>{% endif %}
     <p class="hint">{{ t("upload-url-hint", mb=max_mb) }} <a href="/uploads/bookmarklet#supported-sites">{{ t("upload-supported-sites") }}</a></p>
     <p class="form-error" data-upload-error role="alert" hidden></p>
     <button type="submit">{{ t("upload-continue") }}</button>

@@ -1617,6 +1617,8 @@ function enableUpload(root = document) {
       }
       const page = new DOMParser().parseFromString(await response.text(), "text/html");
       const message = page.querySelector(".form-error")?.textContent?.trim();
+      const confirm = page.querySelector("[data-upload-confirm]");
+      if (confirm && !form.querySelector("[data-upload-confirm]")) error?.before(root.importNode(confirm, true));
       if (error) {
         error.textContent = message || t("upload-failed", "The upload failed. Please try again.");
         error.hidden = false;

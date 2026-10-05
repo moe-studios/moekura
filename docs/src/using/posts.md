@@ -55,8 +55,9 @@ downloading, ready or failed, posted or not, of one file type, or from a
 source (its start; `*` matches anything). Users who can ban (moderators)
 can list anyone's (**Uploader**, blank for everyone's) and look at their
 files, but only the uploader can post them. Files not posted within a day
-are removed, and you can have at most 250 waiting to be posted. Without
-scripts, choose the files and press **Upload**.
+are removed, and you can have at most 250 waiting to be posted (files
+that failed in the last hour count too). Without scripts, choose the
+files and press **Upload**.
 
 A **zip** of pictures is unpacked into its files, in the order people
 sort their names (`2.jpg` before `10.jpg`): at most 100, each within the
@@ -100,12 +101,16 @@ Give it the file itself, or a work's page on one of the
 boorus, Misskey and some ninety more.
 
 Moekura asks the site for the work's best (original) files and downloads
-them, every page of a work of several (up to 100). The upload's page
+them, every page of a work of several, each file once. A work of more
+than 20 files asks first: tick **Download all N files** and upload it
+again to take them all (up to 100). Together they may come to 20 times
+the upload size limit; files past that fail. The upload's page
 shows as soon as the first is ready (with scripts, the post form
 follows the moment it is). Each post's source is
 the file's own link when that names its work (Pixiv's
 `i.pximg.net/…_p3.png`, so the post says which of the work's images it
-is), else the work's page. They download in the background: the
+is), else the work's page. They download in the background, a few
+at a time for the whole site (the rest wait their turn): the
 upload's page follows them, and a file that can't be downloaded says
 why. Any other
 page whose preview tags (OpenGraph) name an image works the same way.

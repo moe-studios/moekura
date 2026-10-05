@@ -143,6 +143,7 @@ upload-drop-hint = Choose files, drop them onto this form, or paste them from yo
 upload-url = …or a link
 upload-url-hint = Images or videos up to { $mb } MB. A work's page on Pixiv, X, Bluesky, DeviantArt, another booru or the many other sites Danbooru supports works too: its files are downloaded, and the page becomes the source. With files, the link is their source. Pasting a link anywhere on this page uploads it.
 upload-supported-sites = See here for a list of supported sites.
+upload-all-files = Download all { $count } files (at most { $max })
 upload-bookmarklet-hint = The <a href="/uploads/bookmarklet">bookmarklet</a> uploads the page you're on in one click.
 bookmarklet-title = Bookmarklet
 bookmarklet-intro = A bookmarklet is a bookmark that does something on the page you're looking at. This one uploads it here: the work's files are found and downloaded, and you go straight to tagging them.

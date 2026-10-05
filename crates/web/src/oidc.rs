@@ -300,6 +300,19 @@ fn provider(state: &AppState) -> Result<&Oidc, AppError> {
     state.oidc.as_deref().ok_or(AppError::NotFound)
 }
 
+/// Refuses a network banned from logging in and signing up. Each step
+/// here is a GET, which a ban on changes lets through.
+fn refuse_banned_network(state: &AppState, info: &RequestInfo) -> Result<(), AppError> {
+    let site = state.site.get();
+    if let Some(ban) = info.ip.and_then(|ip| site.network_ban(ip)) {
+        return Err(AppError::Blocked(format!(
+            "Your network is banned from making changes: {}",
+            ban.reason
+        )));
+    }
+    Ok(())
+}
+
 fn failed(error: OidcError) -> AppError {
     tracing::warn!(%error, "single sign-on failed");
     AppError::BadRequest("Logging in through the provider didn't work. Please try again.".into())
@@ -359,12 +372,14 @@ async fn start(
     State(state): State<AppState>,
     page: Page,
     jar: CookieJar,
+    info: RequestInfo,
     Query(query): Query<StartQuery>,
 ) -> Result<Response, AppError> {
     let next = crate::account::safe_next(query.next.as_deref());
     if page.current.is_logged_in() {
         return Ok(Redirect::to(next).into_response());
     }
+    refuse_banned_network(&state, &info)?;
     redirect_to_provider(&state, jar, Some(next), None).await
 }
 
@@ -386,6 +401,8 @@ async fn callback(
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, AppError> {
     let oidc = provider(&state)?;
+    // Also for logins started before the ban.
+    refuse_banned_network(&state, &info)?;
     let db = state.db.primary();
     let expired = || AppError::BadRequest("This login has expired. Please start again.".into());
     // Only in the browser that started it: otherwise anyone could send
@@ -1186,6 +1203,48 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(pending, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn banned_networks_cant_sign_up_or_log_in(pool: PgPool) {
+        let fake = provider().await;
+        let state = test_state_with(&pool, config(&fake)).await;
+        let peer = "198.51.100.23:4000".parse().unwrap();
+        let app = TestApp::with_peer(state.clone(), test_routes(), peer);
+        // Someone from the network signed up before the ban, and two more
+        // logins were under way when it came.
+        let start = app.get("/login/oidc", None).await;
+        let at = at_provider(&fake, &start, claims(&fake, "u1"));
+        assert!(
+            back(&app, &start, &at, None)
+                .await
+                .session_cookie()
+                .is_some()
+        );
+        let returning = app.get("/login/oidc", None).await;
+        let newcomer = app.get("/login/oidc", None).await;
+        let mut conn = pool.acquire().await.unwrap();
+        let network = "198.51.100.0/24".parse().unwrap();
+        moekura_db::bans::ban_network(&mut conn, network, "abuse", None, false, None)
+            .await
+            .unwrap();
+        state.site.reload(&pool).await.unwrap();
+
+        let refused = app.get("/login/oidc", None).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
+        assert!(refused.location.is_none());
+        assert!(refused.body.contains("abuse"), "{}", refused.body);
+        for (start, sub) in [(&returning, "u1"), (&newcomer, "u2")] {
+            let at = at_provider(&fake, start, claims(&fake, sub));
+            let done = back(&app, start, &at, None).await;
+            assert_eq!(done.status, StatusCode::FORBIDDEN, "{sub}");
+            assert!(done.session_cookie().is_none(), "{sub}");
+        }
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1, "nobody signed up");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

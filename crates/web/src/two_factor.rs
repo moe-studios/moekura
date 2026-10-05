@@ -122,7 +122,12 @@ fn lock_after(failed: i32) -> Option<Duration> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Checked {
     Right,
-    Wrong,
+    /// The `failed`th wrong code in a row; codes from the app are now
+    /// `locked` until then if that's too many.
+    Wrong {
+        failed: i32,
+        locked: Option<OffsetDateTime>,
+    },
     /// Codes from the app aren't accepted until then, after too many wrong
     /// ones; this wasn't a recovery code.
     Locked(OffsetDateTime),
@@ -130,11 +135,22 @@ enum Checked {
 
 /// Whether `input` is `user`'s current code or one of their recovery
 /// codes, using it up either way. A right one starts counting wrong ones
-/// afresh.
+/// afresh; a wrong one is counted, and locks codes from the app after
+/// too many.
 async fn check_code(state: &AppState, user_id: i64, input: &str) -> Result<Checked, AppError> {
-    let db = state.db.primary();
-    let Some(totp) = two_factor::get(db, user_id).await?.filter(|t| t.enabled) else {
-        return Ok(Checked::Wrong);
+    // One code at a time per user, from reading the lock to recording the
+    // result: otherwise codes sent together as a lock ran out would each
+    // be checked before any of them locked it again.
+    let mut tx = state.db.primary().begin().await?;
+    two_factor::begin_check(&mut tx, user_id).await?;
+    let Some(totp) = two_factor::get(&mut *tx, user_id)
+        .await?
+        .filter(|t| t.enabled)
+    else {
+        return Ok(Checked::Wrong {
+            failed: 0,
+            locked: None,
+        });
     };
     let now = OffsetDateTime::now_utc();
     let locked = totp.locked_until.filter(|until| *until > now);
@@ -143,18 +159,34 @@ async fn check_code(state: &AppState, user_id: i64, input: &str) -> Result<Check
             .secret
             .verify(input, now.unix_timestamp(), totp.last_step)
     {
-        if !two_factor::use_step(db, user_id, step).await? {
-            return Ok(Checked::Wrong);
+        if two_factor::use_step(&mut *tx, user_id, step).await? {
+            two_factor::clear_failures(&mut *tx, user_id).await?;
+            tx.commit().await?;
+            return Ok(Checked::Right);
         }
-        two_factor::clear_failures(db, user_id).await?;
-        return Ok(Checked::Right);
-    }
-    if two_factor::use_recovery_code(db, user_id, &totp::hash_recovery_code(input)).await? {
+    } else if two_factor::use_recovery_code(&mut *tx, user_id, &totp::hash_recovery_code(input))
+        .await?
+    {
+        two_factor::clear_failures(&mut *tx, user_id).await?;
+        tx.commit().await?;
         tracing::info!(user_id, "logged in with a recovery code");
-        two_factor::clear_failures(db, user_id).await?;
         return Ok(Checked::Right);
+    } else if let Some(until) = locked {
+        // Not counted: codes from the app aren't checked meanwhile.
+        return Ok(Checked::Locked(until));
     }
-    Ok(locked.map_or(Checked::Wrong, Checked::Locked))
+    // Counted across logins: starting over with the password doesn't
+    // start the count over.
+    let failed = two_factor::record_failure(&mut *tx, user_id).await?;
+    let locked = match lock_after(failed) {
+        Some(wait) => {
+            two_factor::lock(&mut *tx, user_id, wait).await?;
+            Some(now + wait)
+        }
+        None => None,
+    };
+    tx.commit().await?;
+    Ok(Checked::Wrong { failed, locked })
 }
 
 /// "Codes from your app work again in …", for a lock lasting until
@@ -254,18 +286,13 @@ async fn code(
                 StatusCode::TOO_MANY_REQUESTS,
             ));
         }
-        Checked::Wrong => {
-            // Counted across logins: starting over with the password
-            // doesn't start the count over.
-            let failed = two_factor::record_failure(db, user.id).await?;
+        Checked::Wrong { failed, locked } => {
             tracing::info!(user_id = user.id, failed, "wrong two-factor code");
             if failed == ALERT_AFTER {
                 alert(&state, &user, failed).await;
             }
-            if let Some(wait) = lock_after(failed) {
-                two_factor::lock(db, user.id, wait).await?;
-                tracing::warn!(user_id = user.id, failed, ?wait, "two-factor codes locked");
-                let until = OffsetDateTime::now_utc() + wait;
+            if let Some(until) = locked {
+                tracing::warn!(user_id = user.id, failed, %until, "two-factor codes locked");
                 return Ok(render_code(
                     &page,
                     Some(&locked_message(until)),
@@ -842,6 +869,48 @@ mod tests {
         let cookie = challenge(&log_in(&app).await);
         let again = enter(&app, &cookie, &key.code_at(now())).await;
         assert_eq!(again.status, StatusCode::SEE_OTHER, "{}", again.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn codes_sent_together_are_checked_one_at_a_time(pool: PgPool) {
+        let app = app(&pool).await;
+        let (alice, _) = member(&pool, "alice", "alice@example.com").await;
+        two_factor::begin(&pool, alice.id, &Secret::generate())
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        two_factor::enable(&mut conn, alice.id, 0, &[])
+            .await
+            .unwrap();
+        // A lock that has just run out.
+        sqlx::query(
+            "UPDATE user_totp SET failed_codes = $2, locked_until = now() - interval '1 second'
+             WHERE user_id = $1",
+        )
+        .bind(alice.id)
+        .bind(MAX_FAILED_CODES)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let cookie = challenge(&log_in(&app).await);
+
+        // Only the first of a burst is checked: it locks codes again, and
+        // the others find them locked.
+        let tries = (0..MAX_ATTEMPTS).map(|_| enter(&app, &cookie, "000000"));
+        for answer in futures_util::future::join_all(tries).await {
+            assert_eq!(
+                answer.status,
+                StatusCode::TOO_MANY_REQUESTS,
+                "{}",
+                answer.body
+            );
+        }
+        let totp = two_factor::get(&pool, alice.id).await.unwrap().unwrap();
+        assert_eq!(totp.failed_codes, MAX_FAILED_CODES + 1);
+        assert!(
+            totp.locked_until
+                .is_some_and(|t| t > OffsetDateTime::now_utc())
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

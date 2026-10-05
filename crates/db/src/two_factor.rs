@@ -128,6 +128,17 @@ pub async fn use_recovery_code(
     Ok(updated.rows_affected() == 1)
 }
 
+/// Starts checking a code typed at login by `user_id`, in a transaction:
+/// holds their row until it ends, so codes sent together are checked one
+/// after the other, each against the count and lock the one before left.
+pub async fn begin_check(conn: &mut PgConnection, user_id: i64) -> sqlx::Result<()> {
+    sqlx::query("SELECT 1 FROM user_totp WHERE user_id = $1 FOR UPDATE")
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 /// Counts a wrong code at login; returns how many there have been in a
 /// row.
 pub async fn record_failure(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<i32> {

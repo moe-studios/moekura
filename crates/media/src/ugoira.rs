@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -128,8 +128,23 @@ pub fn frames(path: &Path) -> Result<Vec<Frame>, MediaError> {
 
 /// Unpacks `frames` of the zip at `path` into `dir`; returns their paths.
 pub fn extract(path: &Path, frames: &[Frame], dir: &Path) -> Result<Vec<PathBuf>, MediaError> {
+    extract_within(path, frames, dir, MAX_FRAME_BYTES, MAX_TOTAL_BYTES)
+}
+
+/// [`extract`], refusing a frame that unpacks to more than `max_frame`
+/// bytes, or frames that unpack to more than `max_total` together. The
+/// sizes the zip states (which [`frames`] checks) aren't trusted: what
+/// comes out is counted too.
+fn extract_within(
+    path: &Path,
+    frames: &[Frame],
+    dir: &Path,
+    max_frame: u64,
+    max_total: u64,
+) -> Result<Vec<PathBuf>, MediaError> {
     let mut archive = zip::ZipArchive::new(File::open(path)?).map_err(corrupt)?;
     let mut out = Vec::with_capacity(frames.len());
+    let mut written = 0u64;
     for (n, frame) in frames.iter().enumerate() {
         let mut entry = archive.by_name(&frame.file).map_err(corrupt)?;
         let extension = Path::new(&frame.file)
@@ -139,7 +154,24 @@ pub fn extract(path: &Path, frames: &[Frame], dir: &Path) -> Result<Vec<PathBuf>
             .to_ascii_lowercase();
         let target = dir.join(format!("frame{n:05}.{extension}"));
         let mut file = File::create(&target)?;
-        std::io::copy(&mut entry.by_ref().take(MAX_FRAME_BYTES), &mut file)?;
+        let cap = max_frame.min(max_total - written);
+        let copied = std::io::copy(&mut entry.by_ref().take(cap + 1), &mut file).map_err(|e| {
+            match e.kind() {
+                // The frame's data, not our disk: a bad deflate stream or
+                // checksum.
+                ErrorKind::InvalidData | ErrorKind::InvalidInput | ErrorKind::UnexpectedEof => {
+                    corrupt(format!("`{}`: {e}", frame.file))
+                }
+                _ => MediaError::Io(e),
+            }
+        })?;
+        if copied > max_frame {
+            return Err(corrupt(format!("`{}` is too large", frame.file)));
+        }
+        if copied > cap {
+            return Err(corrupt("the frames are too large"));
+        }
+        written += copied;
         out.push(target);
     }
     Ok(out)
@@ -366,6 +398,84 @@ pub(crate) mod tests {
         writer.write_all(b"hi").unwrap();
         writer.finish().unwrap();
         assert!(matches!(frames(&path), Err(MediaError::Corrupt(_))));
+    }
+
+    /// A zip of `entries`, deflated.
+    fn deflated(dir: &Path, name: &str, entries: &[(&str, &[u8])]) -> PathBuf {
+        let path = dir.join(name);
+        let mut writer = zip::ZipWriter::new(File::create(&path).unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        for (name, data) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(data).unwrap();
+        }
+        writer.finish().unwrap();
+        path
+    }
+
+    /// Sets the unpacked size every entry of the zip at `path` states, in
+    /// its local and central headers, to `size`.
+    fn understate(path: &Path, size: u32) {
+        let mut bytes = std::fs::read(path).unwrap();
+        for at in 0..bytes.len().saturating_sub(4) {
+            let field = match &bytes[at..at + 4] {
+                b"PK\x03\x04" => at + 22,
+                b"PK\x01\x02" => at + 24,
+                _ => continue,
+            };
+            bytes[field..field + 4].copy_from_slice(&size.to_le_bytes());
+        }
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn counts_what_frames_really_unpack_to() {
+        let dir = fixtures::dir("ugoira-bomb");
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        // Small in the zip, far larger unpacked.
+        let zeros = [0u8; 600];
+        let path = deflated(
+            &dir,
+            "bomb.zip",
+            &[
+                ("000000.png", &zeros),
+                ("000001.png", &zeros),
+                ("000002.png", &zeros),
+            ],
+        );
+        let found = frames(&path).unwrap();
+        let err = extract_within(&path, &found, &out, 500, 10_000).unwrap_err();
+        assert!(
+            matches!(&err, MediaError::Corrupt(m) if m.contains("`000000.png` is too large")),
+            "{err}"
+        );
+        // Each is small enough, but not all of them together.
+        let err = extract_within(&path, &found, &out, 1000, 1000).unwrap_err();
+        assert!(
+            matches!(&err, MediaError::Corrupt(m) if m.contains("the frames are too large")),
+            "{err}"
+        );
+        // No more than the limit and a byte was written.
+        let written: u64 = std::fs::read_dir(&out)
+            .unwrap()
+            .map(|f| f.unwrap().metadata().unwrap().len())
+            .sum();
+        assert!(written <= 1001, "{written}");
+        assert_eq!(
+            extract_within(&path, &found, &out, 600, 1800)
+                .unwrap()
+                .len(),
+            3
+        );
+
+        // Stating smaller sizes than the frames unpack to doesn't help.
+        understate(&path, 100);
+        let found = frames(&path).unwrap();
+        let err = extract_within(&path, &found, &out, 500, 10_000).unwrap_err();
+        assert!(matches!(err, MediaError::Corrupt(_)), "{err}");
+        assert!(!err.is_internal());
     }
 
     #[test]

@@ -93,9 +93,12 @@ struct FavoriteParams {
     list: ListParams,
 }
 
-/// How far numbered pages of everyone's favorites (no user or post asked
-/// for) go: each page walks the favorites before it.
+/// How far numbered pages go when no user is asked for (only a user's
+/// favorites are read in order from an index): each page walks the
+/// favorites before it.
 const MAX_ALL_ROWS: i64 = 20_000;
+/// The most posts `search[post_id]` can ask about at once.
+const MAX_POST_IDS: usize = 100;
 
 /// Favorites of posts the requester can see, newest first; by default the
 /// requester's.
@@ -110,13 +113,18 @@ async fn favorites(
         Err(_) => current.user.as_ref().map(|u| u.id),
     };
     let post_ids = ids(&params.post_id);
+    if post_ids.len() > MAX_POST_IDS {
+        return Err(AppError::BadRequest(format!(
+            "`search[post_id]` takes at most {MAX_POST_IDS} posts"
+        )));
+    }
     let limit = i64::from(params.list.limit(1000));
     let page: i64 = params.list.page.trim().parse().unwrap_or(1).clamp(1, 1000);
     let offset = (page - 1) * limit;
-    if user_id.is_none() && post_ids.is_empty() && offset + limit > MAX_ALL_ROWS {
+    if user_id.is_none() && offset + limit > MAX_ALL_ROWS {
         return Err(AppError::BadRequest(format!(
-            "Everyone's favorites are listed only as far as the newest {MAX_ALL_ROWS}; \
-             give `search[user_id]` or `search[post_id]` to go further"
+            "Without `search[user_id]`, favorites are listed only as far as the newest \
+             {MAX_ALL_ROWS}"
         )));
     }
     let visibility = crate::posts::visibility(&current);
@@ -447,9 +455,24 @@ mod tests {
         // Members see every rating, but not banned artists' posts.
         assert_eq!(listed(&of_alice, Some(&alice)).await, [posts[1], posts[0]]);
 
-        // Everyone's favorites stop short of deep pages.
+        // Everyone's favorites stop short of deep pages, those of some posts
+        // too, and only so many posts are asked about at once.
         let deep = app.get("/favorites.json?limit=1000&page=21", None).await;
         assert_eq!(deep.status, StatusCode::BAD_REQUEST, "{}", deep.body);
+        let of_posts = format!("/favorites.json?search[post_id]={}", posts[0]);
+        assert_eq!(listed(&of_posts, None).await, [posts[0]]);
+        let deep = app
+            .get(&format!("{of_posts}&limit=1000&page=21"), None)
+            .await;
+        assert_eq!(deep.status, StatusCode::BAD_REQUEST, "{}", deep.body);
+        let many = (1..=101).map(|id| id.to_string()).collect::<Vec<_>>();
+        let many = app
+            .get(
+                &format!("/favorites.json?search[post_id]={}", many.join(",")),
+                None,
+            )
+            .await;
+        assert_eq!(many.status, StatusCode::BAD_REQUEST, "{}", many.body);
         let mine_deep = app
             .get("/favorites.json?limit=1000&page=21", Some(&alice))
             .await;

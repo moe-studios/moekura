@@ -109,6 +109,9 @@ fn score_range(value: &str) -> Result<(i32, i32), AppError> {
     })
 }
 
+/// How far numbered pages go: each page walks the suggestions before it.
+const MAX_ROWS: i64 = 20_000;
+
 async fn list(
     State(state): State<AppState>,
     current: CurrentUser,
@@ -147,13 +150,14 @@ async fn list(
         .parse::<u32>()
         .unwrap_or(1)
         .clamp(1, 1000);
-    let found = tag_suggestions::list(
-        db,
-        &filter,
-        i64::from(page - 1) * i64::from(limit),
-        i64::from(limit),
-    )
-    .await?;
+    let (offset, limit) = (i64::from(page - 1) * i64::from(limit), i64::from(limit));
+    if offset + limit > MAX_ROWS {
+        return Err(AppError::BadRequest(format!(
+            "Numbered pages go only as far as the first {MAX_ROWS} suggestions; \
+             narrow the search, e.g. by `search[post_id]`"
+        )));
+    }
+    let found = tag_suggestions::list(db, &filter, offset, limit).await?;
     json(
         found.into_iter().map(AiTag::from).collect::<Vec<_>>(),
         &params.list.only,
@@ -162,6 +166,7 @@ async fn list(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::StatusCode;
     use moekura_core::permissions::SystemRole;
     use moekura_core::posts::Rating;
     use moekura_db::tag_suggestions::NewResult;
@@ -254,6 +259,10 @@ mod tests {
             get(&format!("?search[post_id]={}", post_id + 1)).await,
             serde_json::json!([])
         );
+        // Numbered pages stop short of deep ones.
+        assert_eq!(get("?limit=1000&page=20").await, serde_json::json!([]));
+        let deep = app.get("/ai_tags.json?limit=1000&page=21", None).await;
+        assert_eq!(deep.status, StatusCode::BAD_REQUEST, "{}", deep.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

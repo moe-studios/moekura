@@ -115,7 +115,9 @@ you out everywhere else, and reset links already emailed stop working.
 revokes those too: do that if you think someone else got in.
 
 An address is written plainly, as `name@example.com`, without a name
-in front or angle brackets.
+in front or angle brackets. Mail isn't sent to one saved in another
+form before that was required: it shows as not confirmed until you
+replace it with a plain one.
 
 On sites that send mail, a new address only replaces the old one once
 you follow the link sent to it; so does the address given when signing

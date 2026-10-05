@@ -310,7 +310,7 @@ The optional [tagger](admin/tagger.md), which suggests tags for new uploads.
 | `runtime` | `ORT_DYLIB_PATH`, or the system's | the ONNX Runtime library, `libonnxruntime.so` |
 | `threads` | `0` | threads one image uses; `0` means one per core |
 | `workers` | `1` | posts tagged at once |
-| `account` | `"tagger"` | who automatically applied tags are credited to; created without a password on first use |
+| `account` | `"tagger"` | who automatically applied tags are credited to; created without a password when `moekura tagger` starts, and nobody can sign up with the name |
 
 ## `[telemetry]`
 

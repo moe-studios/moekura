@@ -87,7 +87,7 @@ impl TaggerJobs {
             let account = tag_suggestions::tagger_account(&self.db, &self.account)
                 .await
                 .map_err(|e| match e {
-                    AccountError::HasPassword(_) => JobError::permanent(e),
+                    AccountError::Taken(_) => JobError::permanent(e),
                     AccountError::Db(e) => e.into(),
                 })?;
             Some(account)

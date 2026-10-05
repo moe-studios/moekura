@@ -458,7 +458,10 @@ async fn create_account(state: &AppState, claims: &Claims) -> Result<User, AppEr
         .ok_or_else(|| AppError::Internal("the Member role is missing".into()))?;
     let mut tx = state.db.primary().begin().await?;
     let mut created = None;
-    for name in name_candidates(claims) {
+    let names = name_candidates(claims)
+        .into_iter()
+        .filter(|n| !state.config.tagger.reserves(n));
+    for name in names {
         let new = NewUser {
             name: &name,
             email: None,
@@ -882,6 +885,20 @@ mod tests {
             .post(&format!("/settings/oidc/unlink/{id}"), Some(&bob), &[])
             .await;
         assert_eq!(kept.status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn nobody_signs_up_as_the_tagger(pool: PgPool) {
+        let fake = provider().await;
+        let app = app(&pool, &fake).await;
+        let start = app.get("/login/oidc", None).await;
+        let mut claims = claims(&fake, "u1");
+        claims["preferred_username"] = json!("Tagger");
+        let state = at_provider(&fake, &start, claims);
+        let done = back(&app, &state, None).await;
+        assert!(done.session_cookie().is_some(), "{}", done.body);
+        assert!(users::by_name(&pool, "tagger").await.unwrap().is_none());
+        assert!(users::by_name(&pool, "alice").await.unwrap().is_some());
     }
 
     #[test]

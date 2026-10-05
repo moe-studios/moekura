@@ -470,9 +470,10 @@ pub struct TaggerConfig {
     /// Posts tagged at once. Each runs the whole model, so one is usually
     /// best: raise `threads` instead.
     pub workers: usize,
-    /// The account tags applied automatically are credited to. Created on
-    /// first use, without a password; an existing account that has one
-    /// isn't used.
+    /// The account tags applied automatically are credited to. Created
+    /// when `moekura tagger` starts, without a password, and nobody can
+    /// sign up with the name; an existing account that someone can log
+    /// in to (or that has an address) isn't used.
     pub account: String,
 }
 
@@ -525,6 +526,12 @@ impl TaggerConfig {
             tags_url: Url::parse(preset.tags_url).ok()?,
             tags_sha256: preset.tags_sha256.to_owned(),
         })
+    }
+
+    /// Whether `name` is the tagger's, which nobody may sign up or rename
+    /// themselves as (names are compared ignoring case, as accounts are).
+    pub fn reserves(&self, name: &str) -> bool {
+        name.trim().eq_ignore_ascii_case(&self.account)
     }
 }
 
@@ -1601,6 +1608,14 @@ mod tests {
         assert_eq!(problems[0].key, "server.cors.allow_credentials");
         config.server.cors.allow_credentials = false;
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn reserves_the_taggers_name() {
+        let tagger = TaggerConfig::default();
+        assert!(tagger.reserves("tagger"));
+        assert!(tagger.reserves("Tagger "));
+        assert!(!tagger.reserves("tagger_2"));
     }
 
     #[test]

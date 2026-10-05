@@ -207,6 +207,13 @@ async fn register(
             ..Default::default()
         });
     }
+    // The tagger's, even before it has made its account.
+    if state.config.tagger.reserves(&form.name) {
+        return invalid(RegisterErrors {
+            name: Some("That name is taken.".into()),
+            ..Default::default()
+        });
+    }
 
     let site = state.site.get();
     let member = site
@@ -629,6 +636,17 @@ mod tests {
             "{}",
             name_addr.body
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn nobody_signs_up_as_the_tagger(pool: PgPool) {
+        let app = app(&pool).await;
+        let response = app
+            .post_form("/register", None, &[], &signup("Tagger"))
+            .await;
+        assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(response.body.contains("That name is taken."));
+        assert!(users::by_name(&pool, "tagger").await.unwrap().is_none());
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

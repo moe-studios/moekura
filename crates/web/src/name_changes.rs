@@ -54,6 +54,11 @@ async fn rename(
     if name.as_str() == user.name {
         return Err(AppError::Unprocessable("That's the name already.".into()));
     }
+    // The tagger's, even before it has made its account.
+    if state.config.tagger.reserves(name.as_str()) && !user.name.eq_ignore_ascii_case(name.as_str())
+    {
+        return Err(AppError::Unprocessable(format!("“{name}” is taken.")));
+    }
     match name_changes::rename(state.db.primary(), user.id, name.as_str(), changer).await {
         Ok(()) => Ok(name.as_str().to_owned()),
         Err(RenameError::Taken) => Err(AppError::Unprocessable(format!("“{name}” is taken."))),
@@ -213,6 +218,12 @@ mod tests {
             .await;
         assert_eq!(taken.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(taken.body.contains("is taken"), "{}", taken.body);
+        // So is the tagger's, before it has an account.
+        let tagger = app
+            .post_form("/settings/name", Some(&member), &[], "name=TAGGER")
+            .await;
+        assert_eq!(tagger.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(tagger.body.contains("is taken"), "{}", tagger.body);
         let bad = app
             .post_form("/settings/name", Some(&member), &[], "name=a+b")
             .await;

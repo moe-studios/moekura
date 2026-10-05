@@ -250,7 +250,8 @@ threads = 0
 # Posts tagged at once.
 workers = 1
 # Tags applied automatically (a site setting) are credited to this account,
-# created without a password on first use.
+# created without a password when `moekura tagger` starts. Nobody can sign
+# up with the name; an account someone made with it first isn't used.
 account = "tagger"
 
 [telemetry]

@@ -69,9 +69,12 @@ moekura admin tag-backlog --limit 1000
   percent sure (95% by default), and optionally **the rating** too. These
   edits are made by the account `tagger.account` (`tagger` by default),
   so they show in each post's history like anyone's and can be reverted.
-  The account is created on first use without a password, so nobody can
-  log in as it; if the name belongs to an account that has one, the
-  tagger refuses to use it.
+  The account is created without a password when `moekura tagger`
+  starts, so nobody can log in as it, and nobody can sign up or rename
+  themselves to the name meanwhile. If an account someone made already
+  has the name (it has a password, an email address, a login through
+  single sign-on, a session or an API key), the tagger refuses to use it:
+  set `tagger.account` to another name.
 - **Refusing uploads by new uploaders** when the tagger finds a tag (or
   `rating:e` and the like) with at least a given confidence: one per
   line, `ai-generated 50`, as Danbooru's `new_uploader_blocked_ai_tags`.

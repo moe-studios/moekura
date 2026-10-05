@@ -64,6 +64,13 @@ pub async fn run(config: Config, args: TaggerArgs) -> anyhow::Result<()> {
     if config.database.auto_migrate {
         crate::migrate(&db).await?;
     }
+    // Made now rather than when first needed, so the name is the
+    // tagger's before anyone else can sign up with it.
+    if let Err(error) =
+        moekura_db::tag_suggestions::tagger_account(db.primary(), &tagger.account).await
+    {
+        tracing::warn!(%error, "the tagger's account isn't usable, so it can't apply tags itself");
+    }
     let work_dir = config.media.work_dir_or_default();
     std::fs::create_dir_all(&work_dir)
         .with_context(|| format!("could not create {}", work_dir.display()))?;

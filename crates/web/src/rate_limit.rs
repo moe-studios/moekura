@@ -41,11 +41,20 @@ const LOGIN_BY_IP: Limit = Limit {
     burst: 20,
     period: Duration::from_secs(6),
 };
-// Tight per account: guessing one account's password from many IPs.
-const LOGIN_BY_NAME: Limit = Limit {
-    name: "login_name",
+// Tight per account and network: guessing one account's password. Kept
+// apart per network, so someone guessing can't lock the owner out.
+const LOGIN_BY_NAME_AND_NET: Limit = Limit {
+    name: "login_name_net",
     burst: 5,
     period: Duration::from_secs(30),
+};
+// Looser per account, from any network: guessing it from many at once.
+// One more every 12 seconds is more than two networks get at the tight
+// limit, so locking the owner out takes at least three working together.
+const LOGIN_BY_NAME: Limit = Limit {
+    name: "login_name",
+    burst: 30,
+    period: Duration::from_secs(12),
 };
 const REGISTER_BY_IP: Limit = Limit {
     name: "register_ip",
@@ -183,6 +192,7 @@ fn quota(limit: Limit) -> Quota {
 
 pub struct RateLimits {
     login_by_ip: DefaultKeyedRateLimiter<IpAddr>,
+    login_by_name_and_net: DefaultKeyedRateLimiter<String>,
     login_by_name: DefaultKeyedRateLimiter<String>,
     register_by_ip: DefaultKeyedRateLimiter<IpAddr>,
     mail_by_ip: DefaultKeyedRateLimiter<IpAddr>,
@@ -213,6 +223,7 @@ impl RateLimits {
     pub fn new(valkey: Option<Valkey>) -> Self {
         Self {
             login_by_ip: RateLimiter::keyed(quota(LOGIN_BY_IP)),
+            login_by_name_and_net: RateLimiter::keyed(quota(LOGIN_BY_NAME_AND_NET)),
             login_by_name: RateLimiter::keyed(quota(LOGIN_BY_NAME)),
             register_by_ip: RateLimiter::keyed(quota(REGISTER_BY_IP)),
             mail_by_ip: RateLimiter::keyed(quota(MAIL_BY_IP)),
@@ -285,14 +296,32 @@ impl RateLimits {
         })
     }
 
-    /// Counts a login attempt. `ip` is `None` only when the connection
-    /// address is unknown (in-process tests).
+    /// Counts a login attempt for account `name`: from the client's
+    /// network, for the account from that network, and for the account
+    /// from anywhere. Every attempt counts, before the password is
+    /// checked, so that attempts sent all at once can't slip past. `ip` is
+    /// `None` only when the connection address is unknown (in-process
+    /// tests).
     pub async fn check_login(&self, ip: Option<IpAddr>, name: &str) -> Result<(), AppError> {
-        if let Some(net) = ip.map(ip_bucket) {
+        let net = ip.map(ip_bucket);
+        if let Some(net) = net {
             self.check(LOGIN_BY_IP, &self.login_by_ip, &net, &net.to_string())
                 .await?;
         }
-        let name = digest(&name.to_lowercase());
+        let name = fold(name);
+        // A network's text has no spaces, so this can't be another pair's.
+        let from_net = digest(&format!(
+            "{} {name}",
+            net.map(|n| n.to_string()).unwrap_or_default()
+        ));
+        self.check(
+            LOGIN_BY_NAME_AND_NET,
+            &self.login_by_name_and_net,
+            &from_net,
+            &from_net,
+        )
+        .await?;
+        let name = digest(&name);
         self.check(LOGIN_BY_NAME, &self.login_by_name, &name, &name)
             .await
     }
@@ -321,7 +350,7 @@ impl RateLimits {
             self.check(MAIL_BY_IP, &self.mail_by_ip, &net, &net.to_string())
                 .await?;
         }
-        let address = digest(&address.to_lowercase());
+        let address = digest(&fold(address));
         self.check(MAIL_BY_ADDRESS, &self.mail_by_address, &address, &address)
             .await
     }
@@ -434,6 +463,7 @@ impl RateLimits {
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
         self.login_by_ip.retain_recent();
+        self.login_by_name_and_net.retain_recent();
         self.login_by_name.retain_recent();
         self.register_by_ip.retain_recent();
         self.mail_by_ip.retain_recent();
@@ -493,6 +523,15 @@ pub(crate) fn ip_bucket(ip: IpAddr) -> IpAddr {
 /// address), so a long one costs no more memory than a short one.
 fn digest(text: &str) -> String {
     hex::encode(&Sha256::digest(text.as_bytes())[..16])
+}
+
+/// A name or email address as one counter, however it's written: lower
+/// case, with only its ASCII left. The database finds accounts ignoring
+/// case by its own rules (`citext`), which can take `İ` for `i`; dropping
+/// what isn't ASCII after lowering keeps every spelling it would take for
+/// the same account on one counter, rather than each getting its own.
+fn fold(text: &str) -> String {
+    text.to_lowercase().chars().filter(char::is_ascii).collect()
 }
 
 /// Who a limit counts: an account, or else an address (by
@@ -584,26 +623,96 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn limits_attempts_per_account_across_ips() {
+    async fn limits_attempts_per_account_and_network() {
+        use crate::shared::tests::{unique, unique_ip};
+
         for limits in backends().await {
             // A name no other run has used, since Valkey keeps counts.
-            let name = crate::shared::tests::unique("alice");
-            for i in 0..5 {
-                limits.check_login(ip(i), &name).await.unwrap();
+            let name = unique("alice");
+            let guesser = Some(unique_ip());
+            for _ in 0..5 {
+                limits.check_login(guesser, &name).await.unwrap();
             }
             let err = limits
-                .check_login(ip(99), &name.to_uppercase())
+                .check_login(guesser, &name.to_uppercase())
                 .await
                 .unwrap_err();
             assert!(
                 matches!(err, AppError::TooManyRequests { retry_after_secs } if retry_after_secs >= 1)
             );
-            // Other accounts are unaffected.
+            // The owner, on another network, isn't locked out, and the
+            // guesser's other accounts are unaffected.
+            limits.check_login(Some(unique_ip()), &name).await.unwrap();
+            limits.check_login(guesser, &unique("bob")).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn limits_attempts_per_account_across_networks() {
+        use crate::shared::tests::{unique, unique_ip};
+
+        for limits in backends().await {
+            let name = unique("alice");
+            for _ in 0..6 {
+                let network = Some(unique_ip());
+                for _ in 0..5 {
+                    limits.check_login(network, &name).await.unwrap();
+                }
+            }
+            let err = limits
+                .check_login(Some(unique_ip()), &name)
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AppError::TooManyRequests { .. }), "{err:?}");
             limits
-                .check_login(ip(99), &crate::shared::tests::unique("bob"))
+                .check_login(Some(unique_ip()), &unique("bob"))
                 .await
                 .unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn spellings_of_one_name_share_counters() {
+        use crate::shared::tests::{unique, unique_ip};
+
+        for limits in backends().await {
+            let name = unique("alice");
+            let from = Some(unique_ip());
+            // Postgres can take a dotted capital I for an i.
+            let spellings = [
+                name.clone(),
+                name.to_uppercase(),
+                name.replace('i', "İ"),
+                name.replace('a', "A"),
+                name.replacen('e', "E", 1),
+            ];
+            for spelling in &spellings {
+                limits.check_login(from, spelling).await.unwrap();
+            }
+            let other = name.replace('l', "L").replace('i', "İ");
+            assert!(limits.check_login(from, &other).await.is_err());
+
+            let address = format!("{name}@example.com");
+            for spelling in [
+                address.clone(),
+                address.replace('i', "İ"),
+                address.to_uppercase(),
+            ] {
+                limits
+                    .check_mail(Some(unique_ip()), &spelling)
+                    .await
+                    .unwrap();
+            }
+            let again = address.replace('e', "E");
+            assert!(limits.check_mail(Some(unique_ip()), &again).await.is_err());
+        }
+    }
+
+    #[test]
+    fn folding_keeps_one_spelling() {
+        assert_eq!(fold("ALİCE"), "alice");
+        assert_eq!(fold("\u{212A}ate"), "kate");
+        assert_eq!(fold("Josè@Example.com"), "jos@example.com");
     }
 
     #[tokio::test]

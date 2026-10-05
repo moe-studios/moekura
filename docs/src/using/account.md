@@ -117,6 +117,12 @@ you follow the link sent to it, and **Forgot your password?** on the
 login page emails you a link to choose a new one. The link works for an
 hour, and using it logs you out everywhere.
 
+Logging in is limited, against password guessing: five tries at an
+account from one network (an IPv4 address, or an IPv6 `/64`), then one
+every 30 seconds; and thirty at an account from all networks together,
+then one every 12 seconds. Someone guessing your password from their
+network doesn't keep you from logging in from yours.
+
 ## Single sign-on
 
 On sites set up for it, **Log in with …** on the login page logs you in

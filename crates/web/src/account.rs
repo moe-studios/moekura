@@ -7,7 +7,7 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::context;
-use moekura_core::accounts::NAME_MAX_LEN;
+use moekura_core::accounts::{NAME_MAX_LEN, NAME_MIN_LEN};
 use moekura_core::permissions::SystemRole;
 use moekura_core::settings::RegistrationMode;
 use moekura_db::accounts::{self, AuthError, CreateError, NewAccount};
@@ -293,6 +293,16 @@ fn clipped(name: &str) -> &str {
     &name[..name.floor_char_boundary(NAME_MAX_LEN)]
 }
 
+/// Whether some account could be called `name`: account names are 2 to
+/// 32 ASCII letters, digits, `_`, `.` and `-` (see `UserName`, and the
+/// check on `users.name`).
+fn could_be_account_name(name: &str) -> bool {
+    (NAME_MIN_LEN..=NAME_MAX_LEN).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
+}
+
 async fn login_form(page: Page, Query(query): Query<NextQuery>) -> Response {
     if page.current.is_logged_in() {
         return Redirect::to(safe_next(query.next.as_deref())).into_response();
@@ -335,12 +345,14 @@ async fn login(
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
     let name = form.name.trim();
-    // No account has a longer name, so there's nothing to count, look up
-    // or log in full.
-    if name.len() > NAME_MAX_LEN {
+    // No account has a name like this, so there's nothing to count, look
+    // up or log in full. Refused before the limits also because the
+    // database would take some other spellings (`İ` for `i`) for a real
+    // account's name.
+    if !could_be_account_name(name) {
         tracing::info!(
             name = clipped(name),
-            reason = "name too long",
+            reason = "no account could have this name",
             "login failed"
         );
         let error = AuthError::InvalidCredentials;
@@ -676,6 +688,57 @@ mod tests {
             );
             assert!(!response.body.contains(&long[..33]));
         }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn names_no_account_could_have_are_refused_uncounted(pool: PgPool) {
+        let app = app(&pool).await;
+        app.post_form("/register", None, &[], &signup("alice"))
+            .await;
+        // The database may take these for alice, but no account can be
+        // called them.
+        for name in ["al\u{130}ce", "ALİCE", "alice\u{0}", "a"] {
+            let attempt = form(&[("name", name), ("password", "wrong horse")]);
+            for _ in 0..6 {
+                let response = app.post_form("/login", None, &[], &attempt).await;
+                assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+                assert!(response.body.contains("Wrong name or password."));
+            }
+        }
+        let right = form(&[("name", "alice"), ("password", "correct horse")]);
+        let response = app.post_form("/login", None, &[], &right).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn guessing_from_one_network_does_not_lock_the_owner_out(pool: PgPool) {
+        let mut state = test_state(&pool).await;
+        let mut config = (*state.config).clone();
+        config.server.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        state.config = std::sync::Arc::new(config);
+        let proxy = "10.0.0.2:40000".parse().unwrap();
+        let app = TestApp::with_peer(state, routes(), proxy);
+        app.post_form(
+            "/register",
+            None,
+            &[("x-forwarded-for", "198.51.100.1")],
+            &signup("alice"),
+        )
+        .await;
+
+        let guesser = [("x-forwarded-for", "203.0.113.9")];
+        let wrong = form(&[("name", "alice"), ("password", "wrong horse")]);
+        for _ in 0..5 {
+            let response = app.post_form("/login", None, &guesser, &wrong).await;
+            assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        let limited = app.post_form("/login", None, &guesser, &wrong).await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+
+        let owner = [("x-forwarded-for", "198.51.100.1")];
+        let right = form(&[("name", "alice"), ("password", "correct horse")]);
+        let response = app.post_form("/login", None, &owner, &right).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

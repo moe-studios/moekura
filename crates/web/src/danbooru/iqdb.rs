@@ -98,6 +98,9 @@ async fn post(
     info: RequestInfo,
     request: Request,
 ) -> Result<Response, AppError> {
+    // Before the body, so a visitor to a private site can't make it
+    // store files.
+    current.require(Permission::ViewPosts)?;
     let multipart = request
         .headers()
         .get(CONTENT_TYPE)
@@ -121,6 +124,11 @@ async fn post(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
     use moekura_core::permissions::SystemRole;
     use serde_json::Value;
     use sqlx::PgPool;
@@ -154,5 +162,31 @@ mod tests {
         assert_eq!(found[0]["score"].as_f64(), Some(98.4));
         assert_eq!(found[0]["post"]["id"].as_i64(), Some(second));
         assert_eq!(found.as_array().unwrap().len(), 1, "not the post itself");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn private_sites_refuse_before_reading_files(pool: PgPool) {
+        sqlx::query("UPDATE roles SET permissions = permissions & ~1::bigint WHERE system_key = 'anonymous'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = app(&pool).await;
+        let read = Arc::new(AtomicBool::new(false));
+        let body = {
+            let read = Arc::clone(&read);
+            futures_util::stream::once(async move {
+                read.store(true, Ordering::SeqCst);
+                let part = "--b\r\nContent-Disposition: form-data; name=\"file\"; \
+                            filename=\"a.png\"\r\n\r\npng\r\n--b--\r\n";
+                Ok::<_, std::io::Error>(axum::body::Bytes::from(part))
+            })
+        };
+        let request = Request::post("/iqdb_queries.json")
+            .header("content-type", "multipart/form-data; boundary=b")
+            .body(Body::from_stream(body))
+            .unwrap();
+        let response = app.raw(request).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!read.load(Ordering::SeqCst), "the body was read");
     }
 }

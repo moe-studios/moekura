@@ -758,12 +758,19 @@ async fn editable_post(
     Ok(p)
 }
 
+fn edit_context(p: &forum::Post, body: &str, error: Option<String>) -> Value {
+    context! {
+        id => p.id,
+        topic => p.topic_title,
+        topic_id => p.topic_id,
+        body => body,
+        error => error,
+    }
+}
+
 async fn edit_form(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
     let p = editable_post(page.state(), &page.current, id).await?;
-    Ok(page.render(
-        "forum_post_edit.html",
-        context! { id => p.id, topic => p.topic_title, topic_id => p.topic_id, body => p.body },
-    ))
+    Ok(page.render("forum_post_edit.html", edit_context(&p, &p.body, None)))
 }
 
 async fn edit_post(
@@ -774,16 +781,37 @@ async fn edit_post(
 ) -> Result<Response, AppError> {
     let state = page.state();
     let p = editable_post(state, &page.current, id).await?;
-    let body = clean_body(&form.body)?;
-    if save_edit(state, &page.current, &p, &body).await? {
-        return Ok((
+    let saved = async {
+        let body = clean_body(&form.body)?;
+        save_edit(state, &page.current, &p, &body).await
+    }
+    .await;
+    match saved {
+        Ok(true) => Ok((
             flash::set(jar, Flash::Held),
             Redirect::to(&topic_url(p.topic_id)),
         )
-            .into_response());
+            .into_response()),
+        Ok(false) => {
+            let location = post_location(state, &page.current, id).await?;
+            Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
+        }
+        // Refused, the form comes back with what they wrote.
+        Err(error @ (AppError::Unprocessable(_) | AppError::TooManyRequests { .. })) => {
+            let message = match &error {
+                AppError::TooManyRequests { retry_after_secs } => {
+                    format!("You're posting too quickly. Try again in {retry_after_secs} seconds.")
+                }
+                other => other.public_message().to_owned(),
+            };
+            Ok(page.render_with_status(
+                error.status(),
+                "forum_post_edit.html",
+                edit_context(&p, &form.body, Some(message)),
+            ))
+        }
+        Err(error) => Err(error),
     }
-    let location = post_location(state, &page.current, id).await?;
-    Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
 }
 
 /// Saves `body` (already cleaned) as the new text of post `p`, which
@@ -1163,6 +1191,34 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body, "More casino");
+
+        // Past the rate limit, the form comes back with what they wrote.
+        for i in 0..4 {
+            let saved = app
+                .post_form(
+                    &format!("/forum_posts/{post}"),
+                    Some(&staff),
+                    &[],
+                    &format!("body=Edit+{i}"),
+                )
+                .await;
+            assert_eq!(saved.status, StatusCode::SEE_OTHER, "{i}: {}", saved.body);
+        }
+        let refused = app
+            .post_form(
+                &format!("/forum_posts/{post}"),
+                Some(&staff),
+                &[],
+                "body=Redacted+at+last",
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            refused.body.contains("You&#x27;re posting too quickly")
+                && refused.body.contains("Redacted at last"),
+            "{}",
+            refused.body
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

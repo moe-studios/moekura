@@ -776,7 +776,8 @@ pub struct Vote {
 
 /// Vote on a post.
 ///
-/// Needs `vote`. A new vote replaces your earlier one.
+/// Needs `vote`. A new vote replaces your earlier one. You can't vote on
+/// your own uploads, only take back a vote you gave one.
 #[utoipa::path(
     put,
     path = "/posts/{id}/vote",
@@ -788,6 +789,7 @@ pub struct Vote {
         (status = 200, body = Reactions),
         (status = 400, body = ErrorBody),
         (status = 404, body = ErrorBody),
+        (status = 422, body = ErrorBody, description = "It's your own post"),
     ),
 )]
 pub(crate) async fn vote(
@@ -1271,6 +1273,7 @@ mod tests {
     async fn reactions_and_flags(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
         let id = upload(&app, &alice, &fixture::png(20, 20), "cat").await;
         let path = |rest: &str| format!("/api/v1/posts/{id}/{rest}");
 
@@ -1284,16 +1287,21 @@ mod tests {
             json!({"fav_count": 1, "favorited": true, "score": 0, "vote": 0})
         );
         let voted = json(
-            &app.json(
+            &app.json("PUT", &path("vote"), Some(&bob), Some(json!({"score": -1})))
+                .await
+                .body,
+        );
+        assert_eq!((&voted["score"], &voted["vote"]), (&json!(-1), &json!(-1)));
+        // Not on one's own post.
+        let own = app
+            .json(
                 "PUT",
                 &path("vote"),
                 Some(&alice),
-                Some(json!({"score": -1})),
+                Some(json!({"score": 1})),
             )
-            .await
-            .body,
-        );
-        assert_eq!((&voted["score"], &voted["vote"]), (&json!(-1), &json!(-1)));
+            .await;
+        assert_eq!(own.status, StatusCode::UNPROCESSABLE_ENTITY);
         let bad_vote = app
             .json(
                 "PUT",

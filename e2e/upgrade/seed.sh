@@ -92,7 +92,15 @@ json PUT /wiki-pages/upgrade_cat '{"body": "A [[upgrade_animal]] seeded before t
 
 say favorites, a vote, a favorite group and a saved search
 api PUT "/posts/$post2/favorite" > /dev/null
-json PUT "/posts/$post2/vote" '{"score": 1}' > /dev/null
+# Nobody may vote on their own posts, so the vote is ursula's.
+curl -fsS -c "$work/ursula" -b "$work/ursula" -H "$origin" -o /dev/null \
+  --data-urlencode "name=ursula" --data-urlencode "password=password for ursula" "$base/login"
+voter=$(curl -fsS -b "$work/ursula" -H "$origin" -d "name=upgrade vote&expires=never" \
+  --data-urlencode "password=password for ursula" "$base/settings/api-keys" \
+  | grep -o 'mka_[0-9a-f]\{64\}' | head -n 1)
+[ -n "$voter" ] || { echo "could not create ursula's API key" >&2; exit 1; }
+curl -fsS -X PUT -H "Authorization: Bearer $voter" -H "Content-Type: application/json" \
+  -d '{"score": 1}' "$base/api/v1/posts/$post2/vote" > /dev/null
 group=$(json POST /favorite-groups "{\"name\": \"upgrade_best\", \"post_ids\": [$post2]}" | jq -r .id)
 json POST /saved-searches '{"query": "upgrade_cat", "labels": ["upgrade"]}' > /dev/null
 

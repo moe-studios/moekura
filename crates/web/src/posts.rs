@@ -1009,7 +1009,9 @@ pub(crate) async fn render_post(
         favorited => favorited,
         vote => vote,
         can_favorite => me.is_some() && page.current.can(Permission::Favorite) && !limited,
-        can_vote => me.is_some() && page.current.can(Permission::Vote) && !limited,
+        // Not on their own post, unless to take back a vote from before.
+        can_vote => me.is_some() && page.current.can(Permission::Vote) && !limited
+            && (post.uploader_id != me || vote != 0),
         // Keeps the search across the form's redirect.
         query => (!search.is_empty()).then(|| url_value(&format!(
             "?{}",

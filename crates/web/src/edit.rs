@@ -476,7 +476,7 @@ mod tests {
                 "tags",
                 &format!(
                     "cat cute -cute rating:e source:https://example.com/x child:{other} \
-                     newpool:My_Comic fav favgroup:mine upvote"
+                     newpool:My_Comic fav favgroup:mine"
                 ),
             ),
             ("rating", "s"),
@@ -489,7 +489,7 @@ mod tests {
             (post.rating.code(), post.source.as_str()),
             ("e", "https://example.com/x")
         );
-        assert_eq!((post.fav_count, post.score), (1, 1));
+        assert_eq!(post.fav_count, 1);
         let child = moekura_db::posts::by_id(&pool, other)
             .await
             .unwrap()

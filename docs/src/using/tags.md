@@ -37,7 +37,7 @@ things:
 | `newpool:name` | starts a pool with the post (or adds it to the pool of that name) |
 | `fav`, `-fav` | favorites the post, or stops favoriting it |
 | `favgroup:12`, `favgroup:name`, `-favgroup:12` | adds the post to one of your favorite groups, or takes it out |
-| `upvote`, `downvote` | votes on the post |
+| `upvote`, `downvote` | votes on the post (not your own upload) |
 
 Each needs the permission it would need done by hand (editing pools to
 use `pool:`, favoriting to use `fav`, …), and is recorded where that

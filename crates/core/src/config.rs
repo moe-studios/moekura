@@ -309,6 +309,25 @@ impl OidcConfig {
     fn default_scopes() -> Vec<String> {
         ["openid", "email", "profile"].map(String::from).to_vec()
     }
+
+    /// Whether `url` is on this machine (`localhost` or a loopback
+    /// address), where a provider being developed against may use plain
+    /// http.
+    pub fn is_local(url: &Url) -> bool {
+        match url.host() {
+            Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        }
+    }
+
+    /// Whether the provider may be reached at `url`: over https, or plain
+    /// http on this machine. The ID token's signature isn't checked, so
+    /// the connection is what vouches for it.
+    pub fn is_secure(url: &Url) -> bool {
+        url.scheme() == "https" || (url.scheme() == "http" && Self::is_local(url))
+    }
 }
 
 /// Outgoing mail over SMTP, for email verification and password resets.
@@ -1131,12 +1150,7 @@ impl Config {
             });
         }
         if let Some(oidc) = &self.auth.oidc {
-            let loopback = oidc.issuer.host_str().is_some_and(|h| {
-                h == "localhost"
-                    || h.parse::<std::net::IpAddr>()
-                        .is_ok_and(|ip| ip.is_loopback())
-            });
-            if !(oidc.issuer.scheme() == "https" || (oidc.issuer.scheme() == "http" && loopback)) {
+            if !OidcConfig::is_secure(&oidc.issuer) {
                 problems.push(ConfigProblem {
                     key: "auth.oidc.issuer",
                     message: "must be an https:// URL".into(),
@@ -1800,6 +1814,22 @@ mod tests {
         oidc.client_id = "moekura".into();
         oidc.scopes = vec!["openid".into()];
         config.validate().unwrap();
+        for local in ["http://localhost:9000", "http://[::1]:9000/sso"] {
+            assert!(
+                OidcConfig::is_secure(&Url::parse(local).unwrap()),
+                "{local}"
+            );
+        }
+        for remote in [
+            "http://sso.example.com",
+            "http://10.0.0.1",
+            "ftp://localhost",
+        ] {
+            assert!(
+                !OidcConfig::is_secure(&Url::parse(remote).unwrap()),
+                "{remote}"
+            );
+        }
     }
 
     #[test]

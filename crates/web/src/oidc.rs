@@ -3,7 +3,9 @@
 //!
 //! The ID token comes straight from the provider's token endpoint over
 //! TLS, so, as OpenID Connect Core 3.1.3.7 allows, its signature isn't
-//! checked; its issuer, audience, expiry and nonce are.
+//! checked; its issuer, audience, expiry and nonce are. That makes TLS
+//! the guarantee, so the provider is only ever reached over https (plain
+//! http only on this machine, for development).
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -147,6 +149,9 @@ impl Oidc {
     pub fn new(config: OidcConfig, public_url: &Url) -> Self {
         moekura_storage::install_crypto_provider();
         let client = reqwest::Client::builder()
+            // Redirects included: a token request sent in the clear could
+            // be answered with anyone's ID token.
+            .https_only(!OidcConfig::is_local(&config.issuer))
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(20))
             .user_agent(concat!("moekura/", env!("CARGO_PKG_VERSION")))
@@ -183,6 +188,13 @@ impl Oidc {
                 "the provider calls itself {}, not {issuer}",
                 discovery.issuer
             )));
+        }
+        for endpoint in [&discovery.authorization_endpoint, &discovery.token_endpoint] {
+            if !OidcConfig::is_secure(endpoint) {
+                return Err(OidcError::Invalid(format!(
+                    "{endpoint} isn't an https:// URL"
+                )));
+            }
         }
         let discovery = Arc::new(discovery);
         *cached = Some((Instant::now(), discovery.clone()));
@@ -570,18 +582,24 @@ mod tests {
     }
 
     async fn provider() -> Arc<Provider> {
+        provider_with(|_| {}).await
+    }
+
+    /// A provider whose description `edit` changes.
+    async fn provider_with(edit: impl FnOnce(&mut serde_json::Value)) -> Arc<Provider> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let fake = Arc::new(Provider {
             base: base.clone(),
             ..Provider::default()
         });
-        let discovery = json!({
+        let mut discovery = json!({
             "issuer": base,
             "authorization_endpoint": format!("{base}/authorize"),
             "token_endpoint": format!("{base}/token"),
             "token_endpoint_auth_methods_supported": ["client_secret_basic"],
         });
+        edit(&mut discovery);
         let shared = fake.clone();
         let router = Router::new()
             .route(
@@ -899,6 +917,38 @@ mod tests {
         assert!(done.session_cookie().is_some(), "{}", done.body);
         assert!(users::by_name(&pool, "tagger").await.unwrap().is_none());
         assert!(users::by_name(&pool, "alice").await.unwrap().is_some());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn refuses_providers_reached_in_the_clear(pool: PgPool) {
+        for endpoint in ["authorization_endpoint", "token_endpoint"] {
+            let fake = provider_with(|discovery| {
+                discovery[endpoint] = json!("http://sso.example.com/oauth");
+            })
+            .await;
+            let app = app(&pool, &fake).await;
+            let start = app.get("/login/oidc", None).await;
+            assert_eq!(start.status, StatusCode::BAD_REQUEST, "{endpoint}");
+            assert!(start.location.is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn speaks_only_https_to_providers_elsewhere() {
+        let config = OidcConfig {
+            issuer: Url::parse("http://sso.example.invalid").unwrap(),
+            client_id: "moekura".into(),
+            client_secret: String::new(),
+            button_label: String::new(),
+            scopes: vec!["openid".into()],
+        };
+        let oidc = Oidc::new(config, &Url::parse("https://booru.example.com").unwrap());
+        // Refused before anything is sent.
+        let error = oidc.discovery().await.unwrap_err();
+        assert!(
+            matches!(&error, OidcError::Http(e) if e.is_builder()),
+            "{error}"
+        );
     }
 
     #[test]

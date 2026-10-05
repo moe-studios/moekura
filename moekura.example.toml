@@ -74,6 +74,7 @@ session_max_days = 365
 
 # Logging in through an OpenID Connect provider (single sign-on). Register
 # <public_url>/login/oidc/callback as the redirect URI with the provider.
+# The provider is only reached over https (plain http only on this machine).
 # [auth.oidc]
 # issuer = "https://sso.example.com/application/o/moekura/"
 # client_id = "moekura"

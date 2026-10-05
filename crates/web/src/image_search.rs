@@ -66,24 +66,42 @@ fn upload_error(error: UploadError) -> AppError {
     }
 }
 
+/// Why a file couldn't be hashed: its own fault, or ours.
+fn refused(e: moekura_media::MediaError) -> AppError {
+    if e.is_internal() {
+        AppError::Internal(e.to_string())
+    } else {
+        AppError::Unprocessable(format!("That file can't be searched with: {e}."))
+    }
+}
+
 /// The perceptual hash of a file, as processing would make it.
 pub(crate) async fn hash_file(state: &AppState, file: &TempUpload) -> Result<u64, AppError> {
-    let refused = |e: moekura_media::MediaError| {
-        if e.is_internal() {
-            AppError::Internal(e.to_string())
-        } else {
-            AppError::Unprocessable(format!("That file can't be searched with: {e}."))
-        }
-    };
-    let media = &state.media;
-    let kind = media.identify(file.path()).await.map_err(refused)?;
-    // Only pictures and videos: a zip would be opened and unpacked to
-    // find its first frame, too much to do for a search.
+    let kind = state.media.identify(file.path()).await.map_err(refused)?;
+    hash_as(state, file, kind).await
+}
+
+/// The perceptual hash of a file to search with. Only pictures and
+/// videos: a zip would be opened and unpacked to find its first frame,
+/// too much to do for a search anyone may make. Uploads still compare
+/// them, through [`hash_file`].
+async fn hash_needle(state: &AppState, file: &TempUpload) -> Result<u64, AppError> {
+    let kind = state.media.identify(file.path()).await.map_err(refused)?;
     if kind == moekura_media::MediaType::Ugoira {
         return Err(AppError::Unprocessable(
             "Search with a picture or a video, not a zip.".into(),
         ));
     }
+    hash_as(state, file, kind).await
+}
+
+/// The perceptual hash of `file`, a `kind` file.
+async fn hash_as(
+    state: &AppState,
+    file: &TempUpload,
+    kind: moekura_media::MediaType,
+) -> Result<u64, AppError> {
+    let media = &state.media;
     let dir = state.work_dir.join(format!(
         "search-{}",
         hex::encode(&moekura_core::tokens::NewToken::generate().hash[..8])
@@ -112,7 +130,7 @@ async fn search(
 ) -> Result<Vec<Match>, AppError> {
     let db = state.reader(current);
     let (hash, exclude) = match needle {
-        Needle::File(file) => (hash_file(state, file).await?, None),
+        Needle::File(file) => (hash_needle(state, file).await?, None),
         Needle::Post(id) => {
             let post = posts::by_id(db, id)
                 .await?
@@ -399,6 +417,63 @@ mod tests {
             .await;
         assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(refused.body.contains("not a zip"), "{}", refused.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn uploaded_zips_are_still_compared(pool: PgPool) {
+        use std::io::Write;
+
+        let state = test_state(&pool).await;
+        let app = TestApp::new(state.clone(), crate::upload::routes(10 * 1024 * 1024));
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let fields = vec![("rating", "g".to_owned()), ("tags", "cat".to_owned())];
+        let first = app
+            .post_multipart(
+                "/upload",
+                Some(&alice),
+                &fields,
+                Some(("a.png", &fixture::png(64, 64))),
+            )
+            .await;
+        assert_eq!(first.status, StatusCode::SEE_OTHER, "{}", first.body);
+        let original: i64 = first.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let frame = fixture::png(66, 66);
+        crate::test_support::hash_like(&state, &pool, original, &frame).await;
+
+        // The same picture as an ugoira: searches don't take it, but an
+        // upload still warns that it looks like the post.
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for n in 0..2 {
+            zip.start_file(format!("{n:06}.png"), options).unwrap();
+            zip.write_all(&frame).unwrap();
+        }
+        zip.start_file("animation.json", options).unwrap();
+        zip.write_all(
+            br#"{"frames":[{"file":"000000.png","delay":50},{"file":"000001.png","delay":70}]}"#,
+        )
+        .unwrap();
+        let zip = zip.finish().unwrap().into_inner();
+        let warned = app
+            .post_multipart("/upload", Some(&alice), &fields, Some(("b.zip", &zip)))
+            .await;
+        assert_eq!(warned.status, StatusCode::SEE_OTHER, "{}", warned.body);
+        let staged: (i64, Option<i64>) =
+            sqlx::query_as("SELECT upload_id, phash FROM staged_uploads")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            warned.location.as_deref(),
+            Some(format!("/uploads/{}", staged.0).as_str())
+        );
+        assert!(staged.1.is_some());
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

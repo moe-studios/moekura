@@ -333,6 +333,9 @@ pub(crate) struct Http<'a> {
     /// Whether the X login was left out (for a visitor, or with its
     /// allowance used up), so an uploader asking later should look again.
     partial: AtomicBool,
+    /// The addresses asked with a login, for tests to check.
+    #[cfg(test)]
+    logged_in_to: Mutex<Vec<String>>,
 }
 
 impl<'a> Http<'a> {
@@ -343,6 +346,8 @@ impl<'a> Http<'a> {
             probes: AtomicUsize::new(MAX_PROBES),
             x_login: OnceLock::new(),
             partial: AtomicBool::new(false),
+            #[cfg(test)]
+            logged_in_to: Mutex::default(),
         }
     }
 
@@ -361,6 +366,13 @@ impl<'a> Http<'a> {
             .then(|| self.sources.logins.login_for(&host))
             .flatten()
             .filter(|login| !self.is_x_login(&host, login) || self.may_use_x_login().is_ok());
+        #[cfg(test)]
+        if login.is_some() {
+            self.logged_in_to
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(url.to_string());
+        }
         if let Some(login) = login {
             if !login.query.is_empty() {
                 url.query_pairs_mut().extend_pairs(&login.query);
@@ -818,6 +830,18 @@ fn hides_path(url: &Url) -> bool {
         || url.query_pairs().any(|(_, value)| bad_value(&value))
 }
 
+/// Whether `page`, the work's page [`moekura_core::sites`] made from a
+/// link, is the page a link to it gives back: the strategies read it,
+/// and ask the site's API, with the site's login. A page made from a
+/// crafted id, query value or link inside a link (`?blogId=logout%3F`,
+/// `?h5url=…`) isn't the work's, but wherever on the site the id led.
+fn is_canonical(page: &str) -> bool {
+    Url::parse(page).is_ok_and(|url| !hides_path(&url))
+        && moekura_core::sites::parse(page)
+            .and_then(|known| known.page_url)
+            .is_some_and(|again| again == page)
+}
+
 /// What `url` says. `depth` is 0 for the link itself and 1 for a link
 /// found while reading it, which isn't followed further.
 async fn find(http: &Http<'_>, url: &Url, depth: u8) -> Result<Option<SourceInfo>, String> {
@@ -841,7 +865,7 @@ async fn find(http: &Http<'_>, url: &Url, depth: u8) -> Result<Option<SourceInfo
             if let Some(note) = sites::other_misskey(http, url).await {
                 return Ok(Some(note));
             }
-            return opengraph::fetch_unknown(http, url).await;
+            return opengraph::fetch(http, url).await;
         }
     };
     Ok(Some(found))
@@ -1556,6 +1580,42 @@ mod tests {
         }
     }
 
+    #[test]
+    fn strategies_only_read_canonical_pages() {
+        let page = |link: &str| {
+            moekura_core::sites::parse(link)
+                .and_then(|known| known.page_url)
+                .unwrap_or_else(|| panic!("{link} isn't a work"))
+        };
+        for link in [
+            "https://blog.naver.com/PostView.naver?blogId=cat&logNo=223",
+            "https://galleria.emotionflow.com/IllustDetailV.jsp?ID=1&TD=2",
+            "https://gall.dcinside.com/mgallery/board/view/?id=cat&no=1",
+            "http://a.blog.fc2.com/?mode=image&filename=b.jpg",
+            "https://www.patreon.com/file?h=123",
+            "https://fantia.jp/posts/2245222",
+            "https://caswac1.tistory.com/entry/용사의-선택지가-이상하다",
+        ] {
+            assert!(is_canonical(&page(link)), "{link}");
+        }
+        // Query values, and links inside links, that leave the work's
+        // page once they're put in it. They get past `hides_path`.
+        let nested = "https://a.lofter.com/post/1%2F..%2F..%2Flogout";
+        let nested: String = url::form_urlencoded::byte_serialize(nested.as_bytes()).collect();
+        for crafted in [
+            "https://blog.naver.com/PostView.naver?blogId=logout%3F&logNo=1",
+            "https://galleria.emotionflow.com/IllustDetailV.jsp?ID=account%2Fsettings%3F&TD=1",
+            "https://gall.dcinside.com/mgallery/board/view/?id=cat%26x%3D1&no=1",
+            "http://a.blog.fc2.com/?mode=image&filename=a/b?c",
+            "https://www.patreon.com/file?h=logout%3Fx",
+            &format!("https://uls.lofter.com/?h5url={nested}"),
+        ] {
+            assert!(!hides_path(&Url::parse(crafted).unwrap()), "{crafted}");
+            let page = page(crafted);
+            assert!(!is_canonical(&page), "{crafted} gave {page}");
+        }
+    }
+
     #[tokio::test]
     async fn strategies_check_ids_before_asking() {
         assert_eq!(number("123"), Ok("123"));
@@ -1611,6 +1671,13 @@ mod tests {
             )
             .await,
         );
+        // An album's file name, from the link's query.
+        let fc2 = "http://a.blog.fc2.com/?mode=image&filename=a/b?c";
+        assert_eq!(
+            known(fc2).page_url.as_deref(),
+            Some("http://a.blog.fc2.com/img/a/b?c/")
+        );
+        fails(fc2::fetch(&http, &known(fc2), "http://a.blog.fc2.com/img/a/b?c/").await);
         let note = "https://www.xiaohongshu.com/explore/65880524000000000700a643";
         fails(xiaohongshu::fetch(&http, &known(note), &format!("{note}?xsec_token=a&b=c")).await);
         let post = "https://www.youtube.com/post/Ugkx1";
@@ -1799,6 +1866,38 @@ mod tests {
         );
         assert!(uploader.partial.load(Ordering::Relaxed));
         assert!(carries_it(&uploader, "https://example.com/work"));
+    }
+
+    #[tokio::test]
+    async fn pages_a_strategy_refuses_are_read_without_the_login() {
+        // A server standing in for the site's: it doesn't speak https, so
+        // requests to it fail, but only once they're made.
+        let addr = serve(axum::Router::new()).await;
+        let sources = local_sources(login_for("127.0.0.1"));
+        let http = Http::new(&sources, Asker::Uploader);
+        // A blog name that leaves the post's address once it's put in.
+        let link = "https://blog.naver.com/PostView.naver?blogId=logout%3F&logNo=1";
+        let link = Url::parse(link).unwrap();
+        assert!(!hides_path(&link));
+        let mut known = moekura_core::sites::parse(link.as_str()).unwrap();
+        assert_eq!(
+            known.page_url.as_deref(),
+            Some("https://blog.naver.com/logout?/1")
+        );
+        known.page_url = Some(format!("https://{addr}/logout?/1"));
+        let info = sites::fetch(&http, &known, &link, 0)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(info.page_url, format!("https://{addr}/logout?/1"));
+        assert!(info.files.is_empty());
+        assert!(http.logged_in_to.lock().unwrap().is_empty());
+        // A strategy's own requests carry it.
+        let _ = http.page(&format!("https://{addr}/api"), &[]).await;
+        assert_eq!(
+            *http.logged_in_to.lock().unwrap(),
+            [format!("https://{addr}/api")]
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

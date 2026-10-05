@@ -16,9 +16,9 @@ post's source. Short links (`t.co`, `b23.tv`, `pin.it` and the like) are
 followed to the page they lead to.
 
 When a site has changed, refuses the server or wants a login it doesn't
-have, Moekura falls back to the page's preview (OpenGraph) image when
-that image is a file on a site it knows, and otherwise downloads the
-link as it is.
+have, Moekura falls back to the page's preview (OpenGraph) image, read
+without a login, when that image is a file on a site it knows, and
+otherwise downloads the link as it is.
 
 Google's and Kakao's image servers (behind YouTube, Blogger, Tistory
 and others), Skland and TikTok are only recognised: their files are
@@ -56,11 +56,15 @@ also tries the profile a work's page belongs to, so
 Some sites only show some works (or anything at all) to members. Give
 Moekura an account's cookies, API key or token in the
 [configuration](../configuration.md#sources), by domain; requests to that
-domain and its subdomains carry them, over https only. A request carrying
-a login follows redirects only to the sites the same login is for, and a
-link whose path hides separators or `..` (such as `%2F` or `%5C`) isn't
-read at all, so a crafted link can't send the login elsewhere or to
-another page of the site:
+domain and its subdomains carry them, over https only. Only the requests
+Moekura makes to read a work carry them: the work's own page (the one a
+link to it gives back, not one a crafted id or query value leads to) and
+the site's API, once it has checked the ids it puts in it. A page read
+for its preview image goes without. A request carrying a login follows
+redirects only to the sites the same login is for, and a link whose path
+hides separators or `..` (such as `%2F` or `%5C`) isn't read at all, so
+a crafted link can't send the login elsewhere or to another page of the
+site:
 
 ```toml
 [sources.logins."pixiv.net"]

@@ -76,21 +76,10 @@ pub(super) fn parse(html: &str, page: &Url) -> Option<SourceInfo> {
     })
 }
 
-/// What a known site's page says, read with the site's login.
+/// What a page says, read without a login: its address is a link as it
+/// was given, or a known site's page made from one (which a strategy
+/// may have refused as crafted), so it could be any page on the site.
 pub(super) async fn fetch(http: &Http<'_>, url: &Url) -> Result<Option<SourceInfo>, String> {
-    let (content_type, body) = http.text(url.as_str(), &[]).await?;
-    if !content_type.starts_with("text/html") {
-        return Ok(None);
-    }
-    Ok(parse(&body, url))
-}
-
-/// What a page on a site nothing knows says, read without a login: its
-/// address is just as it was given.
-pub(super) async fn fetch_unknown(
-    http: &Http<'_>,
-    url: &Url,
-) -> Result<Option<SourceInfo>, String> {
     let (content_type, body) = http.text_without_login(url.as_str(), &[]).await?;
     if !content_type.starts_with("text/html") {
         return Ok(None);

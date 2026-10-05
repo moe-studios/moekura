@@ -122,7 +122,9 @@ pub(super) async fn fetch(
         return http.redirected(&target, depth + 1).await;
     }
     let read = match known.page_url.as_deref() {
-        Some(page) => strategy(http, known, page, depth).await,
+        Some(page) if super::is_canonical(page) => strategy(http, known, page, depth).await,
+        // Read as a page, without a login.
+        Some(page) => Some(Err(format!("{page} isn't the work's own page"))),
         None => None,
     };
     let read = match read {

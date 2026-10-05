@@ -3,7 +3,7 @@
 
 use moekura_core::sites::SourceUrl;
 
-use super::{Http, SourceInfo, html, html_to_text};
+use super::{Http, SourceInfo, html, html_to_text, key, number};
 
 const HEADERS: [(&str, &str); 2] = [("User-Agent", "Android Mobile"), ("Cookie", "age_check=1")];
 /// The most of an entry's images kept, each asked for at its original
@@ -15,6 +15,26 @@ pub(super) async fn fetch(
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
+    // An album's file may come from the link's query, where anything
+    // could be.
+    let url = url::Url::parse(page).map_err(|e| e.to_string())?;
+    let path: Vec<&str> = url.path_segments().into_iter().flatten().collect();
+    match path.as_slice() {
+        [file] => {
+            let entry = file
+                .strip_prefix("blog-entry-")
+                .and_then(|f| f.strip_suffix(".html"))
+                .ok_or("FC2: not an entry")?;
+            number(entry)?;
+        }
+        ["img", file, ""] => {
+            key(file)?;
+        }
+        _ => return Err("FC2: not an entry".into()),
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err("FC2: not an entry".into());
+    }
     // Canonical entries are on http; blogs answer https too, which a
     // login needs.
     let secure = page.replacen("http://", "https://", 1);

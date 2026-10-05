@@ -7,6 +7,7 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::context;
+use moekura_core::accounts::NAME_MAX_LEN;
 use moekura_core::permissions::SystemRole;
 use moekura_core::settings::RegistrationMode;
 use moekura_db::accounts::{self, AuthError, CreateError, NewAccount};
@@ -286,6 +287,12 @@ struct LoginForm {
     next: Option<String>,
 }
 
+/// At most as much of a typed `name` as an account name can be, for logs
+/// and for showing it again.
+fn clipped(name: &str) -> &str {
+    &name[..name.floor_char_boundary(NAME_MAX_LEN)]
+}
+
 async fn login_form(page: Page, Query(query): Query<NextQuery>) -> Response {
     if page.current.is_logged_in() {
         return Redirect::to(safe_next(query.next.as_deref())).into_response();
@@ -328,18 +335,35 @@ async fn login(
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
     let name = form.name.trim();
+    // No account has a longer name, so there's nothing to count, look up
+    // or log in full.
+    if name.len() > NAME_MAX_LEN {
+        tracing::info!(
+            name = clipped(name),
+            reason = "name too long",
+            "login failed"
+        );
+        let error = AuthError::InvalidCredentials;
+        return Ok(render_login(
+            &page,
+            clipped(name),
+            form.next.as_deref(),
+            Some(&error),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ));
+    }
     state
         .rate_limits
         .check_login(info.ip, name)
         .await
         .inspect_err(|_| {
-            tracing::warn!(ip = ?info.ip, name, "login rate limited");
+            tracing::warn!(ip = ?info.ip, name = clipped(name), "login rate limited");
         })?;
     let user = match accounts::authenticate(state.db.primary(), name, &form.password).await {
         Ok(user) => user,
         Err(AuthError::Db(error)) => return Err(error.into()),
         Err(error) => {
-            tracing::info!(name, reason = %error, "login failed");
+            tracing::info!(name = clipped(name), reason = %error, "login failed");
             let status = StatusCode::UNPROCESSABLE_ENTITY;
             return Ok(render_login(
                 &page,
@@ -633,6 +657,25 @@ mod tests {
             limited.body
         );
         assert!(limited.retry_after.is_some_and(|s| s >= 1));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn impossibly_long_names_are_refused_uncounted(pool: PgPool) {
+        let app = app(&pool).await;
+        let long = "a".repeat(100_000);
+        let attempt = form(&[("name", &long), ("password", "wrong horse")]);
+        for _ in 0..10 {
+            let response = app.post_form("/login", None, &[], &attempt).await;
+            assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(response.body.contains("Wrong name or password."));
+            // Shown again only as far as a name can go.
+            assert!(
+                response
+                    .body
+                    .contains(&format!("value=\"{}\"", &long[..32]))
+            );
+            assert!(!response.body.contains(&long[..33]));
+        }
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

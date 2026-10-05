@@ -7,6 +7,11 @@
 //! Both use the same algorithm (GCRA: a burst, then one more every
 //! period). If Valkey can't be reached, each server falls back to its own
 //! counters rather than refusing everyone.
+//!
+//! Addresses are counted by [`ip_bucket`] (IPv6 by its /64), and names
+//! and email addresses by a digest of a fixed size, so a client can't
+//! get a fresh allowance by moving within its network, or make a counter
+//! as big as the text it sends.
 
 use std::net::IpAddr;
 use std::num::NonZeroU32;
@@ -16,6 +21,8 @@ use governor::clock::{Clock, DefaultClock};
 use governor::middleware::StateInformationMiddleware;
 use governor::state::keyed::DefaultKeyedStateStore;
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
+use moekura_core::accounts::EMAIL_MAX_LEN;
+use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
 use crate::shared::Valkey;
@@ -281,19 +288,19 @@ impl RateLimits {
     /// Counts a login attempt. `ip` is `None` only when the connection
     /// address is unknown (in-process tests).
     pub async fn check_login(&self, ip: Option<IpAddr>, name: &str) -> Result<(), AppError> {
-        if let Some(ip) = ip {
-            self.check(LOGIN_BY_IP, &self.login_by_ip, &ip, &ip.to_string())
+        if let Some(net) = ip.map(ip_bucket) {
+            self.check(LOGIN_BY_IP, &self.login_by_ip, &net, &net.to_string())
                 .await?;
         }
-        let name = name.to_lowercase();
+        let name = digest(&name.to_lowercase());
         self.check(LOGIN_BY_NAME, &self.login_by_name, &name, &name)
             .await
     }
 
     pub async fn check_register(&self, ip: Option<IpAddr>) -> Result<(), AppError> {
-        match ip {
-            Some(ip) => {
-                self.check(REGISTER_BY_IP, &self.register_by_ip, &ip, &ip.to_string())
+        match ip.map(ip_bucket) {
+            Some(net) => {
+                self.check(REGISTER_BY_IP, &self.register_by_ip, &net, &net.to_string())
                     .await
             }
             None => Ok(()),
@@ -301,13 +308,20 @@ impl RateLimits {
     }
 
     /// Counts a request that would email `address` (a name or an email
-    /// address, whatever the form asked for).
+    /// address, whatever the form asked for). Refuses one longer than any
+    /// account's without counting it.
     pub async fn check_mail(&self, ip: Option<IpAddr>, address: &str) -> Result<(), AppError> {
-        if let Some(ip) = ip {
-            self.check(MAIL_BY_IP, &self.mail_by_ip, &ip, &ip.to_string())
+        let address = address.trim();
+        if address.len() > EMAIL_MAX_LEN {
+            return Err(AppError::Unprocessable(
+                "No account has a name or email address that long.".into(),
+            ));
+        }
+        if let Some(net) = ip.map(ip_bucket) {
+            self.check(MAIL_BY_IP, &self.mail_by_ip, &net, &net.to_string())
                 .await?;
         }
-        let address = address.trim().to_lowercase();
+        let address = digest(&address.to_lowercase());
         self.check(MAIL_BY_ADDRESS, &self.mail_by_address, &address, &address)
             .await
     }
@@ -475,6 +489,12 @@ pub(crate) fn ip_bucket(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// A key of a fixed size for text a client chose (a name or an email
+/// address), so a long one costs no more memory than a short one.
+fn digest(text: &str) -> String {
+    hex::encode(&Sha256::digest(text.as_bytes())[..16])
+}
+
 /// Who a limit counts: an account, or else an address (by
 /// [`ip_bucket`]).
 pub(crate) fn client_key(user: Option<i64>, ip: Option<IpAddr>) -> String {
@@ -622,6 +642,77 @@ mod tests {
             assert!(limits.check_register(Some(address)).await.is_err());
             limits.check_register(None).await.unwrap();
         }
+    }
+
+    /// `count` addresses in one fresh IPv6 /64.
+    fn one_64(count: u128) -> Vec<Option<IpAddr>> {
+        let IpAddr::V6(base) = crate::shared::tests::unique_ip() else {
+            unreachable!("unique_ip is IPv6")
+        };
+        let net = u128::from(base) & !u128::from(u64::MAX);
+        (1..=count)
+            .map(|host| Some(IpAddr::V6((net | (host << 20)).into())))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn per_ip_limits_count_ipv6_by_64() {
+        for limits in backends().await {
+            let neighbours = one_64(6);
+            for ip in &neighbours[..5] {
+                limits.check_register(*ip).await.unwrap();
+            }
+            assert!(limits.check_register(neighbours[5]).await.is_err());
+            limits
+                .check_register(Some(crate::shared::tests::unique_ip()))
+                .await
+                .unwrap();
+
+            let neighbours = one_64(21);
+            for (i, ip) in neighbours[..20].iter().enumerate() {
+                let name = crate::shared::tests::unique(&format!("u{i}"));
+                limits.check_login(*ip, &name).await.unwrap();
+            }
+            assert!(
+                limits
+                    .check_login(neighbours[20], &crate::shared::tests::unique("v"))
+                    .await
+                    .is_err()
+            );
+
+            let neighbours = one_64(6);
+            for (i, ip) in neighbours[..5].iter().enumerate() {
+                let address = crate::shared::tests::unique(&format!("m{i}"));
+                limits.check_mail(*ip, &address).await.unwrap();
+            }
+            let address = crate::shared::tests::unique("n");
+            assert!(limits.check_mail(neighbours[5], &address).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn mail_limits_refuse_impossible_addresses_uncounted() {
+        for limits in backends().await {
+            let address = crate::shared::tests::unique_ip();
+            let long = format!("{}@example.com", "a".repeat(EMAIL_MAX_LEN));
+            for _ in 0..10 {
+                let err = limits.check_mail(Some(address), &long).await.unwrap_err();
+                assert!(matches!(err, AppError::Unprocessable(_)), "{err:?}");
+            }
+            // None of those used the address's allowance.
+            for i in 0..5 {
+                let to = crate::shared::tests::unique(&format!("a{i}"));
+                limits.check_mail(Some(address), &to).await.unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn keys_for_names_have_a_fixed_size() {
+        let long = "a".repeat(2 * 1024 * 1024);
+        assert_eq!(digest(&long).len(), 32);
+        assert_eq!(digest("alice").len(), 32);
+        assert_ne!(digest("alice"), digest("bob"));
     }
 
     #[test]

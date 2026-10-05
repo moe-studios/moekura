@@ -187,8 +187,10 @@ people who can manage users can turn two-factor login off for you
 log.
 
 [API keys](../api.md) don't need a code: keep them secret, and revoke any
-you no longer use. Making one asks for your password, and a key can't
-make more keys or change your login settings.
+you no longer use. Making one asks for your password (or, on an account
+made through single sign-on, which has none, works only within 10
+minutes of logging in), and a key can't make more keys or change your
+login settings.
 
 ## Saved searches
 

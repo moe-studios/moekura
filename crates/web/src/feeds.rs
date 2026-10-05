@@ -380,8 +380,10 @@ async fn feed_token(
     let db = page.state().db.primary();
     match form.action.as_str() {
         "new" => {
-            if !crate::auth::confirm_password(page.state(), user.id, &form.password).await? {
-                return Err(AppError::Unprocessable("Wrong password.".into()));
+            if let Err(message) =
+                crate::auth::confirm_password(page.state(), &page.current, &form.password).await?
+            {
+                return Err(AppError::Unprocessable(message));
             }
             let token = NewToken::generate();
             feeds::set_token(db, user.id, Some(&token.hash)).await?;
@@ -610,5 +612,36 @@ mod tests {
         app.post_form("/settings/feed-token", Some(&session), &[], "action=revoke")
             .await;
         assert!(!has_token().await);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn without_a_password_a_token_takes_a_fresh_login(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            routes().merge(crate::users::routes()),
+        );
+        // Made through single sign-on, logged in a while ago.
+        let session = session_for(&pool, "bob", SystemRole::Member).await;
+        let bob = moekura_db::users::by_name(&pool, "bob")
+            .await
+            .unwrap()
+            .unwrap();
+        sqlx::query("UPDATE sessions SET created_at = now() - interval '11 minutes'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let settings = app.get("/settings", Some(&session)).await;
+        assert!(!settings.body.contains("id=\"feed-password\""));
+        assert!(
+            settings.body.contains("within 10 minutes"),
+            "{}",
+            settings.body
+        );
+        let stale = app
+            .post_form("/settings/feed-token", Some(&session), &[], "action=new")
+            .await;
+        assert_eq!(stale.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(stale.body.contains("log in again"), "{}", stale.body);
+        assert!(!feeds::has_token(&pool, bob.id).await.unwrap());
     }
 }

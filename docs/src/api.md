@@ -20,8 +20,9 @@ banned only what visitors can. It's shown once, when created; revoke it
 from the same page if it leaks. Keys start with `mka_` so that secret
 scanners can spot them. Without a key, requests are made as a visitor.
 
-Making a key asks for your password (accounts made through single
-sign-on have none to give). A key can't manage keys or the feed token,
+Making a key asks for your password. Accounts made through single
+sign-on have none to give, so for them it works only within 10 minutes
+of logging in. A key can't manage keys or the feed token,
 or change your address, password, two-factor login or single sign-on
 links: those need you logged in on the site. Resetting your password
 revokes all your keys, and changing it does too unless you untick that.

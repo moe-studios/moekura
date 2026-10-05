@@ -342,6 +342,7 @@ fn render_settings(
             blacklist => blacklist,
             has_feed_token => has_feed_token,
             has_password => has_password,
+            fresh_login_minutes => crate::auth::FRESH_LOGIN.as_secs() / 60,
             can_invite => crate::invites::may_invite(&page.current),
             per_page => settings.per_page,
             default_per_page => page.state().search_config().per_page,

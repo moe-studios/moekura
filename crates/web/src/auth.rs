@@ -56,6 +56,9 @@ pub struct CurrentUser {
     pub unread_notifications: i64,
     /// Sent with an API key rather than a session cookie.
     pub with_api_key: bool,
+    /// When they logged in, for a session cookie: see
+    /// [`confirm_password`].
+    pub logged_in_at: Option<OffsetDateTime>,
 }
 
 /// The banned artists' tags hidden from someone in `role`.
@@ -80,6 +83,7 @@ impl CurrentUser {
             unread_messages: 0,
             unread_notifications: 0,
             with_api_key: false,
+            logged_in_at: None,
         }
     }
 
@@ -109,6 +113,7 @@ impl CurrentUser {
             unread_messages: 0,
             unread_notifications: 0,
             with_api_key: false,
+            logged_in_at: None,
         }
     }
 
@@ -200,21 +205,40 @@ async fn key_user(state: &AppState, token: &str) -> sqlx::Result<Option<CurrentU
     Ok(Some(current))
 }
 
-/// Whether `password` confirms a change to user `user_id`'s account,
-/// counted against guessing. Accounts made through single sign-on have no
-/// password to type, so for them the session alone has to do, as when
-/// linking a provider.
+/// How recently someone without a password must have logged in for their
+/// session to stand in for it.
+pub(crate) const FRESH_LOGIN: Duration = Duration::from_secs(10 * 60);
+
+/// Whether the requester, logged in on the site, confirmed it's them
+/// before being handed a new way in (an API key, a feed token), counted
+/// against guessing; `Err` says why not. That takes their password.
+/// Accounts made through single sign-on have none to type, so for them
+/// the session has to be fresh from logging in: one someone took a while
+/// ago isn't enough.
 pub(crate) async fn confirm_password(
     state: &AppState,
-    user_id: i64,
+    current: &CurrentUser,
     password: &str,
-) -> Result<bool, AppError> {
-    state.rate_limits.check_confirm(user_id).await?;
+) -> Result<Result<(), String>, AppError> {
+    let user = current.require_session()?;
+    state.rate_limits.check_confirm(user.id).await?;
     let db = state.db.primary();
-    if !moekura_db::users::has_password(db, user_id).await? {
-        return Ok(true);
+    if moekura_db::users::has_password(db, user.id).await? {
+        if moekura_db::accounts::check_password_of(db, user.id, password).await? {
+            return Ok(Ok(()));
+        }
+        return Ok(Err("Wrong password.".into()));
     }
-    Ok(moekura_db::accounts::check_password_of(db, user_id, password).await?)
+    let fresh = current
+        .logged_in_at
+        .is_some_and(|at| OffsetDateTime::now_utc() - at <= FRESH_LOGIN);
+    if fresh {
+        return Ok(Ok(()));
+    }
+    Ok(Err(format!(
+        "To confirm it's you, log out and log in again, then do this within {} minutes.",
+        FRESH_LOGIN.as_secs() / 60
+    )))
 }
 
 /// The answer to an unusable API key. It's refused outright rather than
@@ -303,7 +327,9 @@ pub async fn resolve_session(
                         tracing::warn!(%error, "could not touch session");
                     }
                 }
-                CurrentUser::for_user(session.user, session.ban, &site)
+                let mut current = CurrentUser::for_user(session.user, session.ban, &site);
+                current.logged_in_at = Some(session.created_at);
+                current
             }
             Ok(None) => {
                 stale_cookie = true;

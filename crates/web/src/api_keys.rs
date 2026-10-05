@@ -93,6 +93,7 @@ async fn render(
             name_max => NAME_MAX_LEN,
             docs_url => crate::api::DOCS,
             has_password => has_password,
+            fresh_login_minutes => crate::auth::FRESH_LOGIN.as_secs() / 60,
         },
     );
     // The page may show a new key: keep it out of every cache.
@@ -112,8 +113,10 @@ async fn create(page: Page, Form(form): Form<CreateForm>) -> Result<Response, Ap
     let user = page.current.require_session()?;
     let name = form.name.trim();
     let invalid = |message: &str| render(&page, None, Some((&form, message.to_owned())));
-    if !crate::auth::confirm_password(page.state(), user.id, &form.password).await? {
-        return invalid("Wrong password.").await;
+    if let Err(message) =
+        crate::auth::confirm_password(page.state(), &page.current, &form.password).await?
+    {
+        return invalid(&message).await;
     }
     if name.is_empty() {
         return invalid("Give the key a name.").await;
@@ -350,6 +353,51 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn without_a_password_a_key_takes_a_fresh_login(pool: PgPool) {
+        let app = app(&pool).await;
+        // Made through single sign-on: no password to ask for.
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let page = app.get("/settings/api-keys", Some(&bob)).await;
+        assert!(!page.body.contains("name=\"password\""), "{}", page.body);
+        assert!(page.body.contains("within 10 minutes"), "{}", page.body);
+        let keys = || async {
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM api_keys")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+
+        // Just logged in, the session vouches for them.
+        let made = app
+            .post_form(
+                "/settings/api-keys",
+                Some(&bob),
+                &[],
+                "name=bot&expires=never",
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::OK, "{}", made.body);
+        assert_eq!(keys().await, 1);
+
+        // A session from a while ago, which someone may have taken, doesn't.
+        sqlx::query("UPDATE sessions SET created_at = now() - interval '11 minutes'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let stale = app
+            .post_form(
+                "/settings/api-keys",
+                Some(&bob),
+                &[],
+                "name=more&expires=never",
+            )
+            .await;
+        assert_eq!(stale.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(stale.body.contains("log in again"), "{}", stale.body);
+        assert_eq!(keys().await, 1);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

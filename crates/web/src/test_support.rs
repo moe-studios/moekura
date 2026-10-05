@@ -450,5 +450,7 @@ pub async fn current_user(state: &AppState, session: &str) -> crate::auth::Curre
         .await
         .unwrap()
         .expect("a live session");
-    crate::auth::CurrentUser::for_user(found.user, found.ban, &state.site.get())
+    let mut current = crate::auth::CurrentUser::for_user(found.user, found.ban, &state.site.get());
+    current.logged_in_at = Some(found.created_at);
+    current
 }

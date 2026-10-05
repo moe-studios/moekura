@@ -68,6 +68,8 @@
     {% if has_password %}
     <label for="feed-password">{{ t("your-password") }}</label>
     <input id="feed-password" name="password" type="password" autocomplete="current-password" required>
+    {% else %}
+    <p class="hint">{{ t("confirm-fresh-login", minutes=fresh_login_minutes) }}</p>
     {% endif %}
     <button type="submit" class="secondary">{% if has_feed_token %}{{ t("settings-feed-token-new") }}{% else %}{{ t("settings-feed-token-make") }}{% endif %}</button>
   </form>

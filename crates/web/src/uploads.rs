@@ -539,7 +539,10 @@ async fn download_pending(
     for file in pending.iter().filter(|f| f.status == Status::Pending) {
         let url = file.file_url.as_deref().unwrap_or_default();
         let done = async {
-            staged_uploads::started(db, file.id).await?;
+            if !staged_uploads::started(db, file.id).await? {
+                // It was given up on before its turn (see find_upload).
+                return Ok(());
+            }
             let fetched = async {
                 let temp = upload::download(&state, url, info.as_deref()).await?;
                 let prepared = upload::prepare(&state, Some(&current), &temp).await?;
@@ -548,14 +551,30 @@ async fn download_pending(
             .await;
             match fetched {
                 Ok((prepared, hash)) => {
-                    let mut tx = db.begin().await?;
-                    if let Err(error) = upload::keep_original(&state, &mut tx, &prepared).await {
-                        drop(tx);
-                        return staged_uploads::failed(db, file.id, &failure(&error).0, None).await;
+                    let recorded = async {
+                        let mut tx = db.begin().await?;
+                        upload::keep_original(&state, &mut tx, &prepared).await?;
+                        if !staged_uploads::stored(&mut *tx, file.id, prepared.stored(hash)).await?
+                        {
+                            return Ok(false);
+                        }
+                        crate::suggestions::queue_staged(&state, &mut tx, file.id).await?;
+                        tx.commit().await?;
+                        Ok::<_, UploadError>(true)
                     }
-                    staged_uploads::stored(&mut *tx, file.id, prepared.stored(hash)).await?;
-                    crate::suggestions::queue_staged(&state, &mut tx, file.id).await?;
-                    tx.commit().await
+                    .await;
+                    if matches!(recorded, Ok(true)) {
+                        return Ok(());
+                    }
+                    // Nothing records the file: it was given up on while it
+                    // downloaded (see find_upload), or recording it failed.
+                    upload::forget_original(&state, &prepared).await;
+                    match recorded {
+                        Err(error) => {
+                            staged_uploads::failed(db, file.id, &failure(&error).0, None).await
+                        }
+                        Ok(_) => Ok(()),
+                    }
                 }
                 Err(error) => {
                     let (message, duplicate_of) = failure(&error);
@@ -2663,6 +2682,77 @@ mod tests {
             "{}",
             given_up.body
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn downloads_given_up_on_keep_no_file(pool: PgPool) {
+        use moekura_storage::Key;
+        use sha2::{Digest, Sha256};
+
+        let mut state = test_state(&pool).await;
+        state.fetcher = crate::fetch::Fetcher::new(Duration::from_secs(10), true);
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let current = crate::test_support::current_user(&state, &alice).await;
+        let uploader_id = current.user.as_ref().unwrap().id;
+        let upload = staged_uploads::create_upload(&pool, uploader_id, "", "")
+            .await
+            .unwrap();
+        // The upload's page gives up on its files while the first
+        // downloads, as it does on a long upload.
+        let png = fixture::png(40, 30);
+        let served = {
+            let (pool, png) = (pool.clone(), png.clone());
+            move || async move {
+                sqlx::query("UPDATE staged_uploads SET updated_at = now() - interval '1 hour'")
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+                staged_uploads::fail_abandoned(&pool, upload, ABANDONED_AFTER, "gone")
+                    .await
+                    .unwrap();
+                png
+            }
+        };
+        let fetched_late = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let late = {
+            let (fetched_late, png) = (fetched_late.clone(), png.clone());
+            move || async move {
+                fetched_late.store(true, std::sync::atomic::Ordering::SeqCst);
+                png
+            }
+        };
+        let origin = Router::new()
+            .route("/1.png", get(served))
+            .route("/2.png", get(late));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, origin).await });
+        let mut files = Vec::new();
+        for position in 0..2 {
+            let url = format!("http://{addr}/{}.png", position + 1);
+            let slot = Slot {
+                upload_id: upload,
+                uploader_id,
+                position,
+                file_name: &url,
+                source: &url,
+            };
+            let file = staged_uploads::create_pending(&pool, slot, &url)
+                .await
+                .unwrap();
+            files.push(file);
+        }
+
+        let (first, _) = tokio::sync::oneshot::channel();
+        download_pending(state.clone(), current, upload, None, first).await;
+        for file in files {
+            let file = staged_uploads::by_id(&pool, file).await.unwrap().unwrap();
+            assert_eq!((file.status, file.storage_key), (Status::Failed, None));
+        }
+        let key = Key::original(&hex::encode(Sha256::digest(&png)), "png");
+        assert!(!state.storage.exists(&key).await.unwrap());
+        // The second wasn't downloaded at all.
+        assert!(!fetched_late.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

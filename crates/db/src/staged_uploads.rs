@@ -228,18 +228,22 @@ pub async fn create_failed(
 }
 
 /// Records that a pending file is being downloaded now, so it isn't taken
-/// for abandoned.
-pub async fn started(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<()> {
-    sqlx::query("UPDATE staged_uploads SET updated_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(db)
-        .await?;
-    Ok(())
+/// for abandoned. Returns false when it isn't pending any more.
+pub async fn started(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE staged_uploads SET updated_at = now() WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected() == 1)
 }
 
-/// Fills in a pending file once it's stored.
-pub async fn stored(db: impl PgExecutor<'_>, id: i64, file: StoredFile<'_>) -> sqlx::Result<()> {
-    sqlx::query(
+/// Fills in a pending file once it's stored. Returns false when it isn't
+/// pending any more (it was [given up on](fail_abandoned) meanwhile), so
+/// nothing records the file.
+pub async fn stored(db: impl PgExecutor<'_>, id: i64, file: StoredFile<'_>) -> sqlx::Result<bool> {
+    let result = sqlx::query(
         "UPDATE staged_uploads
          SET status = 'ready', sha256 = $2, md5 = $3, media_type = $4, width = $5, height = $6,
              duration_ms = $7, frames = $8, has_audio = $9, file_size = $10,
@@ -263,7 +267,7 @@ pub async fn stored(db: impl PgExecutor<'_>, id: i64, file: StoredFile<'_>) -> s
     .bind(file.traits)
     .execute(db)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() == 1)
 }
 
 /// Marks a pending file failed.
@@ -566,7 +570,8 @@ mod tests {
         let second = create_pending(&pool, slot(1), "https://example.com/2.png")
             .await
             .unwrap();
-        stored(&pool, first, file("original/a.png")).await.unwrap();
+        assert!(started(&pool, first).await.unwrap());
+        assert!(stored(&pool, first, file("original/a.png")).await.unwrap());
         let hour = std::time::Duration::from_secs(3600);
         assert_eq!(
             fail_abandoned(&pool, upload, hour, "gone").await.unwrap(),
@@ -594,6 +599,12 @@ mod tests {
         assert_eq!(files[0].storage_key.as_deref(), Some("original/a.png"));
         // Neither can change once settled.
         failed(&pool, first, "late", None).await.unwrap();
+        assert!(!started(&pool, second).await.unwrap());
+        assert!(!stored(&pool, second, file("original/b.png")).await.unwrap());
+        assert_eq!(
+            by_id(&pool, second).await.unwrap().unwrap().storage_key,
+            None
+        );
         assert_eq!(
             by_id(&pool, first).await.unwrap().unwrap().status,
             Status::Ready

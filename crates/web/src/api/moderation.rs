@@ -409,7 +409,7 @@ pub struct Dismissed {
     params(("id" = i64, Path, description = "Post number")),
     responses(
         (status = 200, body = Dismissed),
-        (status = 400, body = ErrorBody, description = "The post has no open flags"),
+        (status = 400, body = ErrorBody, description = "The post has no open flags, or its status is locked"),
     ),
 )]
 pub(crate) async fn dismiss_flags(

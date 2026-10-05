@@ -100,7 +100,7 @@ posts*:
   by reverting to an earlier version;
 - locked **notes** can't be added, changed or deleted;
 - a locked **status** means the post can't be flagged, approved,
-  rejected, deleted, restored or appealed.
+  rejected, deleted, restored or appealed, nor its flags dismissed.
 
 Mass tag edits leave posts with locked tags alone, and the tagger doesn't
 touch locked tags or ratings. Tag aliases and implications still apply to

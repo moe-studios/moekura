@@ -339,6 +339,10 @@ pub(crate) async fn dismiss(
     current.require(Permission::ApprovePosts)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
+    // Dismissing makes a flagged post active again, which a status lock
+    // keeps for those who can lock posts.
+    let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
+    crate::posts::check_lock(current, &post, PostLock::Status)?;
     let dismissed = flags::resolve(&mut *tx, id, false, actor).await?;
     if dismissed == 0 {
         return Err(AppError::BadRequest("The post has no open flags".into()));
@@ -1684,6 +1688,56 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(flags, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn a_status_lock_keeps_flags_from_being_dismissed(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(state, super::routes().merge(crate::api::routes(max)));
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let post: i64 = sqlx::query_scalar(
+            "WITH p AS (INSERT INTO posts (rating, status, locks)
+                        VALUES ('g', 'flagged', '{status}') RETURNING id)
+             INSERT INTO post_flags (post_id, reason) SELECT id, 'keep looking' FROM p
+             RETURNING post_id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let status = async || -> String {
+            sqlx::query_scalar("SELECT status FROM posts WHERE id = $1")
+                .bind(post)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let web = app
+            .post(&format!("/posts/{post}/flags/dismiss"), Some(&janitor), &[])
+            .await;
+        assert_eq!(web.status, StatusCode::BAD_REQUEST);
+        assert!(web.body.contains("status is locked"), "{}", web.body);
+        let api = app
+            .json(
+                "POST",
+                &format!("/api/v1/posts/{post}/flags/dismiss"),
+                Some(&janitor),
+                None,
+            )
+            .await;
+        assert_eq!(api.status, StatusCode::BAD_REQUEST, "{}", api.body);
+        assert_eq!(status().await, "flagged");
+        // Those who can lock posts still can.
+        let web = app
+            .post(
+                &format!("/posts/{post}/flags/dismiss"),
+                Some(&moderator),
+                &[],
+            )
+            .await;
+        assert_eq!(web.status, StatusCode::SEE_OTHER);
+        assert_eq!(status().await, "active");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

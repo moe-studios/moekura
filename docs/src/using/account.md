@@ -108,8 +108,8 @@ for staff who manage users. Staff who can ban users can rename anyone
 ranked below them, with **Rename** on their profile, at any time; that
 goes in the moderation log.
 
-A name may not end in `.json`: `/users/name.json` is an address of the
-[Danbooru API](danbooru-clients.md), so the profile couldn't be opened.
+A name may not end in `.json`: addresses ending in `.json`, like
+`/users/{id}.json`, belong to the [Danbooru API](danbooru-clients.md).
 
 ## Email address and password
 

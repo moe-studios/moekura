@@ -145,6 +145,29 @@ const IMAGE_SEARCH: Limit = Limit {
     period: Duration::from_secs(12),
 };
 
+// Looking up a link on its site (the artist finder, related tags, the
+// upload source panel): each fetches a page from another server.
+const SOURCE_LOOKUP: Limit = Limit {
+    name: "source_lookup",
+    burst: 10,
+    period: Duration::from_secs(6),
+};
+
+// Uploads, against one account flooding the media workers.
+const UPLOAD_BY_USER: Limit = Limit {
+    name: "upload_user",
+    burst: 20,
+    period: Duration::from_secs(30),
+};
+
+// Tag and bulk update requests: each opens a forum topic and lands in the
+// staff's queue.
+const REQUEST_BY_USER: Limit = Limit {
+    name: "request_user",
+    burst: 5,
+    period: Duration::from_secs(60),
+};
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -164,6 +187,9 @@ pub struct RateLimits {
     appeal_by_user: DefaultKeyedRateLimiter<i64>,
     image_search: DefaultKeyedRateLimiter<String>,
     dmail_by_user: DefaultKeyedRateLimiter<i64>,
+    source_lookup: DefaultKeyedRateLimiter<String>,
+    upload_by_user: DefaultKeyedRateLimiter<i64>,
+    request_by_user: DefaultKeyedRateLimiter<i64>,
     /// Off when `server.api_requests_per_minute` is 0.
     api: Option<(Limit, InfoLimiter)>,
     valkey: Option<Valkey>,
@@ -191,6 +217,9 @@ impl RateLimits {
             appeal_by_user: RateLimiter::keyed(quota(APPEAL_BY_USER)),
             image_search: RateLimiter::keyed(quota(IMAGE_SEARCH)),
             dmail_by_user: RateLimiter::keyed(quota(DMAIL_BY_USER)),
+            source_lookup: RateLimiter::keyed(quota(SOURCE_LOOKUP)),
+            upload_by_user: RateLimiter::keyed(quota(UPLOAD_BY_USER)),
+            request_by_user: RateLimiter::keyed(quota(REQUEST_BY_USER)),
             api: None,
             valkey,
         }
@@ -357,6 +386,36 @@ impl RateLimits {
             .await
     }
 
+    /// Counts a lookup of a link on its site by `client` (`user:<id>` or
+    /// `ip:<address>`, see [`client_key`]).
+    pub async fn check_source_lookup(&self, client: &str) -> Result<(), AppError> {
+        let key = client.to_owned();
+        self.check(SOURCE_LOOKUP, &self.source_lookup, &key, &key)
+            .await
+    }
+
+    /// Counts an upload (a file or a link) by user `user_id`.
+    pub async fn check_upload(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            UPLOAD_BY_USER,
+            &self.upload_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
+    /// Counts a tag or bulk update request by user `user_id`.
+    pub async fn check_request(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            REQUEST_BY_USER,
+            &self.request_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
     /// Forgets keys that are back at full allowance, bounding memory use.
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
@@ -372,6 +431,9 @@ impl RateLimits {
         self.appeal_by_user.retain_recent();
         self.image_search.retain_recent();
         self.dmail_by_user.retain_recent();
+        self.source_lookup.retain_recent();
+        self.upload_by_user.retain_recent();
+        self.request_by_user.retain_recent();
         if let Some((_, api)) = &self.api {
             api.retain_recent();
         }
@@ -400,16 +462,25 @@ impl RateLimits {
     }
 }
 
-/// Who a limit counts: an account, or else an address (IPv6 by /64,
-/// which one person usually has).
+/// The address a per-IP limit counts: IPv4 as it is (also when it comes
+/// IPv4-mapped, as `::ffff:a.b.c.d`), IPv6 by its /64, which one person
+/// usually has.
+pub(crate) fn ip_bucket(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(ipnet::Ipv6Net::new(v6, 64).map_or(v6, |net| net.network())),
+        },
+        v4 => v4,
+    }
+}
+
+/// Who a limit counts: an account, or else an address (by
+/// [`ip_bucket`]).
 pub(crate) fn client_key(user: Option<i64>, ip: Option<IpAddr>) -> String {
     match (user, ip) {
         (Some(id), _) => format!("user:{id}"),
-        (None, Some(IpAddr::V6(ip))) => {
-            let net = ipnet::Ipv6Net::new(ip, 64).map_or(ip, |net| net.network());
-            format!("ip:{net}")
-        }
-        (None, Some(ip)) => format!("ip:{ip}"),
+        (None, Some(ip)) => format!("ip:{}", ip_bucket(ip)),
         // In-process tests only.
         (None, None) => "ip:unknown".to_owned(),
     }
@@ -550,6 +621,45 @@ mod tests {
             }
             assert!(limits.check_register(Some(address)).await.is_err());
             limits.check_register(None).await.unwrap();
+        }
+    }
+
+    #[test]
+    fn buckets_ipv6_by_64_and_unmaps_ipv4() {
+        let v6 = |s: &str| IpAddr::V6(s.parse().unwrap());
+        assert_eq!(ip_bucket(v6("2001:db8:1:2:aaaa::1")), v6("2001:db8:1:2::"));
+        assert_eq!(
+            ip_bucket(v6("2001:db8:1:2:bbbb::9")),
+            ip_bucket(v6("2001:db8:1:2:aaaa::1"))
+        );
+        assert_eq!(
+            ip_bucket(v6("::ffff:198.51.100.7")),
+            IpAddr::from([198, 51, 100, 7])
+        );
+        assert_eq!(ip_bucket(ip(7).unwrap()), ip(7).unwrap());
+        assert_eq!(
+            client_key(None, Some(v6("::ffff:198.51.100.7"))),
+            "ip:198.51.100.7"
+        );
+    }
+
+    #[tokio::test]
+    async fn limits_uploads_lookups_and_requests() {
+        for limits in backends().await {
+            let id = crate::shared::tests::fresh() as i64 & i64::MAX;
+            for _ in 0..20 {
+                limits.check_upload(id).await.unwrap();
+            }
+            assert!(limits.check_upload(id).await.is_err());
+            for _ in 0..5 {
+                limits.check_request(id).await.unwrap();
+            }
+            assert!(limits.check_request(id).await.is_err());
+            let client = format!("ip:{}", crate::shared::tests::unique_ip());
+            for _ in 0..10 {
+                limits.check_source_lookup(&client).await.unwrap();
+            }
+            assert!(limits.check_source_lookup(&client).await.is_err());
         }
     }
 

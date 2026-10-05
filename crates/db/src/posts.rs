@@ -193,7 +193,9 @@ impl Visibility {
             .collect()
     }
 
-    fn status_names(&self) -> Vec<&'static str> {
+    /// The statuses visible to everyone in the role, for
+    /// `p.status = ANY(…)`.
+    pub fn status_names(&self) -> Vec<&'static str> {
         self.statuses.iter().map(|s| s.as_str()).collect()
     }
 }

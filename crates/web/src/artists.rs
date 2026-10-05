@@ -57,7 +57,7 @@ fn display(name: &str) -> String {
 }
 
 /// Whether `current` sees deleted artists.
-fn sees_deleted(current: &CurrentUser) -> bool {
+pub(crate) fn sees_deleted(current: &CurrentUser) -> bool {
     current.can(Permission::EditWiki) || current.can(Permission::ViewDeleted)
 }
 

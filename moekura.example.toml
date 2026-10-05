@@ -303,5 +303,6 @@ allow_private_addresses = false
 # Seconds a delivery may take.
 timeout_secs = 10
 # Deliveries sent at once, across all job workers. The rest wait their
-# turn, so receivers that don't answer can't hold every worker.
+# turn, so receivers that don't answer can't hold every worker (keep it
+# below jobs.workers).
 max_concurrent = 1

@@ -409,7 +409,7 @@ are downloaded without them.
 |---|---|---|
 | `allow_private_addresses` | `false` | let [webhooks](admin/webhooks.md) go to private, loopback and link-local addresses (a service on the same machine or network) |
 | `timeout_secs` | `10` | how long a delivery may take |
-| `max_concurrent` | `1` | deliveries sent at once, across all job workers; the rest wait their turn, so receivers that don't answer can't hold every worker |
+| `max_concurrent` | `1` | deliveries sent at once, across all job workers; the rest wait their turn, so receivers that don't answer can't hold every worker (keep it below `jobs.workers`) |
 
 [Discord webhooks](admin/webhooks.md#discord) are public addresses, so
 they work without `allow_private_addresses`.

@@ -28,7 +28,9 @@ run_in_serve = false     # on the web servers
 Workers claim jobs without stepping on each other, and only the kinds
 they can do: `ml.tag_post` jobs wait for a tagger. Webhook deliveries,
 which wait on other servers, run at most `webhooks.max_concurrent` at a
-time across all workers, so they never hold every worker. A failed job is retried
+time across all workers, so with more workers than that they never hold
+every worker. (A delivery whose worker died keeps its place until its
+lock runs out, `jobs.lock_timeout_secs`.) A failed job is retried
 with increasing delays; after its last attempt it's kept as *failed*.
 **Admin → Overview** shows the queue, and failed jobs with their errors,
 to retry or discard. Errors and the buttons are only for those who

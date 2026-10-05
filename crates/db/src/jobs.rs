@@ -101,8 +101,9 @@ pub async fn claim(
 
 /// Like [`claim`], but passes over each `(kind, most)` of `limits` while
 /// that many jobs of the kind are running, on any worker, so slow jobs of
-/// one kind can't take every worker. Such claims take turns, so two
-/// workers can't both take the last place.
+/// one kind can't take every worker. A job whose lock expired (its worker
+/// died) doesn't count. Such claims take turns, so two workers can't both
+/// take the last place.
 pub async fn claim_limited(
     db: &PgPool,
     worker: &str,
@@ -138,7 +139,7 @@ async fn claim_limited_in(
 }
 
 /// The claim, passing over kinds `limited` while `most` (the same
-/// position) of theirs are running.
+/// position) of theirs are running with a live lock.
 fn claim_query<'q>(
     worker: &'q str,
     lock: Duration,
@@ -156,7 +157,8 @@ fn claim_query<'q>(
                AND kind <> ALL (
                    SELECT l.kind FROM unnest($4::text[], $5::int[]) AS l (kind, most)
                    WHERE (SELECT count(*) FROM jobs r
-                          WHERE r.status = 'running' AND r.kind = l.kind) >= l.most
+                          WHERE r.status = 'running' AND r.kind = l.kind
+                            AND r.locked_until > now()) >= l.most
                )
              ORDER BY run_at, id
              FOR UPDATE SKIP LOCKED
@@ -500,6 +502,35 @@ mod tests {
         );
         complete(&pool, first, "w1").await.unwrap();
         let job = claim_limited(&pool, "w3", LOCK, kinds, limits)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.id, second);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn abandoned_jobs_free_their_place(pool: PgPool) {
+        let first = push(&pool, 1).await;
+        let second = push(&pool, 2).await;
+        let limits = &[("test.ping", 1)];
+        let job = claim_limited(&pool, "w1", LOCK, KINDS, limits)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.id, first);
+        assert!(
+            claim_limited(&pool, "w2", LOCK, KINDS, limits)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        // w1 died: its lock ran out before the reaper requeued the job.
+        sqlx::query("UPDATE jobs SET locked_until = now() - interval '1 second' WHERE id = $1")
+            .bind(first)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let job = claim_limited(&pool, "w2", LOCK, KINDS, limits)
             .await
             .unwrap()
             .unwrap();

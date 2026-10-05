@@ -235,7 +235,8 @@ async fn show(
         .map(|(_, card)| card)
         .collect();
     let page_url = |n: i64| url_value(&format!("/pools/{id}?page={n}"));
-    // The first post visitors may see, for link previews.
+    // The first post visitors may see, for link previews (whose image
+    // depends on its rating).
     let preview = if pool.is_deleted {
         None
     } else {

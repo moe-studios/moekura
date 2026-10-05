@@ -5,7 +5,7 @@ use moekura_core::notes::NoteBox;
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
-use crate::posts::Visibility;
+use crate::posts::{BindVisibility, Visibility, visible_post};
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Note {
@@ -328,8 +328,7 @@ pub async fn recent_versions(
     before: Option<i64>,
     limit: i64,
 ) -> sqlx::Result<Vec<Change>> {
-    let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
-    sqlx::query_as(
+    sqlx::query_as(concat!(
         "SELECT v.id, v.note_id, v.post_id, v.version, u.name::text AS updater_name,
                 v.x, v.y, v.width, v.height, v.body, v.is_active, v.created_at,
                 pv.body AS previous_body, pv.is_active AS previous_is_active,
@@ -339,14 +338,13 @@ pub async fn recent_versions(
          JOIN posts p ON p.id = v.post_id
          LEFT JOIN note_versions pv ON pv.note_id = v.note_id AND pv.version = v.version - 1
          LEFT JOIN users u ON u.id = v.updater_id
-         WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
-           AND p.rating = ANY($3)
-           AND ($4::bigint IS NULL OR v.updater_id = $4) AND ($5::bigint IS NULL OR v.id < $5)
-         ORDER BY v.id DESC LIMIT $6",
-    )
-    .bind(statuses)
-    .bind(visibility.viewer)
-    .bind(visibility.rating_codes())
+         WHERE ",
+        visible_post!(),
+        "
+           AND ($5::bigint IS NULL OR v.updater_id = $5) AND ($6::bigint IS NULL OR v.id < $6)
+         ORDER BY v.id DESC LIMIT $7"
+    ))
+    .bind_visibility(visibility)
     .bind(updater_id)
     .bind(before)
     .bind(limit)
@@ -454,5 +452,38 @@ mod tests {
             4
         );
         assert_eq!(for_posts(&pool, &[post]).await.unwrap().len(), 2);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn recent_versions_leave_out_hidden_posts(pool: PgPool) {
+        let banned: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('banned') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        for (tags, body) in [(vec![], "Shown"), (vec![banned], "Banned")] {
+            let post: i64 = sqlx::query_scalar(
+                "INSERT INTO posts (rating, tag_ids) VALUES ('g', $1) RETURNING id",
+            )
+            .bind(tags)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            create(&pool, post, b(1, 1, 5, 5), body, None)
+                .await
+                .unwrap();
+        }
+        let visitor = Visibility {
+            statuses: vec![moekura_core::posts::PostStatus::Active],
+            hidden_tags: vec![banned],
+            ..Visibility::default()
+        };
+        let bodies: Vec<String> = recent_versions(&pool, None, &visitor, None, 10)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|c| c.version.body)
+            .collect();
+        assert_eq!(bodies, ["Shown"]);
     }
 }

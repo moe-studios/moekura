@@ -7,7 +7,7 @@ use moekura_core::posts::{PostLock, Rating};
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
-use crate::posts::{PostEdit, Visibility};
+use crate::posts::{BindVisibility, PostEdit, Visibility, visible_post};
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Version {
@@ -172,8 +172,7 @@ pub async fn search(
     visibility: &Visibility,
     limit: i64,
 ) -> sqlx::Result<Vec<Change>> {
-    let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
-    sqlx::query_as(
+    sqlx::query_as(concat!(
         "SELECT v.post_id, v.id, v.version, v.updater_id, u.name::text AS updater_name,
                 r.kind AS relation_kind, r.antecedent_name::text AS relation_antecedent,
                 r.consequent_name::text AS relation_consequent,
@@ -187,19 +186,19 @@ pub async fn search(
          LEFT JOIN post_versions pv ON pv.post_id = v.post_id AND pv.version = v.version - 1
          LEFT JOIN users u ON u.id = v.updater_id
          LEFT JOIN tag_relations r ON r.id = v.relation_id
-         WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
-           AND p.rating = ANY($11)
-           AND ($3::bigint IS NULL OR v.updater_id = $3)
-           AND ($4::bigint IS NULL OR v.post_id = $4)
-           AND ($5::int IS NULL OR v.added_tag_ids @> ARRAY[$5::int])
-           AND ($6::int IS NULL OR v.removed_tag_ids @> ARRAY[$6::int])
-           AND ($7::timestamptz IS NULL OR v.created_at >= $7)
-           AND ($8::timestamptz IS NULL OR v.created_at < $8)
-           AND ($9::bigint IS NULL OR v.id < $9)
-         ORDER BY v.id DESC LIMIT $10",
-    )
-    .bind(statuses)
-    .bind(visibility.viewer)
+         WHERE ",
+        visible_post!(),
+        "
+           AND ($5::bigint IS NULL OR v.updater_id = $5)
+           AND ($6::bigint IS NULL OR v.post_id = $6)
+           AND ($7::int IS NULL OR v.added_tag_ids @> ARRAY[$7::int])
+           AND ($8::int IS NULL OR v.removed_tag_ids @> ARRAY[$8::int])
+           AND ($9::timestamptz IS NULL OR v.created_at >= $9)
+           AND ($10::timestamptz IS NULL OR v.created_at < $10)
+           AND ($11::bigint IS NULL OR v.id < $11)
+         ORDER BY v.id DESC LIMIT $12"
+    ))
+    .bind_visibility(visibility)
     .bind(filter.updater_id)
     .bind(filter.post_id)
     .bind(filter.added_tag)
@@ -208,7 +207,6 @@ pub async fn search(
     .bind(filter.until)
     .bind(filter.before)
     .bind(limit)
-    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }
@@ -527,6 +525,17 @@ mod tests {
         };
         assert!(
             search(&pool, &Filter::default(), &hidden, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Nor the history of a banned artist's post.
+        let banned = Visibility {
+            hidden_tags: vec![ids[1]],
+            ..everyone.clone()
+        };
+        assert!(
+            search(&pool, &Filter::default(), &banned, 10)
                 .await
                 .unwrap()
                 .is_empty()

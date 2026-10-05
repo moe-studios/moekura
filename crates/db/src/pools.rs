@@ -5,7 +5,7 @@ use moekura_core::search::PoolRef;
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
-use crate::posts::Visibility;
+use crate::posts::{BindVisibility, Visibility, visible_post};
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Pool {
@@ -107,20 +107,16 @@ pub async fn visible_post_ids(
     offset: i64,
     limit: i64,
 ) -> sqlx::Result<Vec<i64>> {
-    let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
-    sqlx::query_scalar(
+    sqlx::query_scalar(concat!(
         "SELECT pp.post_id FROM pool_posts pp JOIN posts p ON p.id = pp.post_id
-         WHERE pp.pool_id = $1
-           AND (p.status = ANY($2) OR (p.status = 'pending' AND p.uploader_id = $3))
-           AND p.rating = ANY($6)
-         ORDER BY pp.position OFFSET $4 LIMIT $5",
-    )
+         WHERE pp.pool_id = $5 AND ",
+        visible_post!(),
+        " ORDER BY pp.position OFFSET $6 LIMIT $7"
+    ))
+    .bind_visibility(visibility)
     .bind(pool_id)
-    .bind(statuses)
-    .bind(visibility.viewer)
     .bind(offset)
     .bind(limit)
-    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }
@@ -131,17 +127,13 @@ pub async fn visible_count(
     pool_id: i32,
     visibility: &Visibility,
 ) -> sqlx::Result<i64> {
-    let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
-    sqlx::query_scalar(
+    sqlx::query_scalar(concat!(
         "SELECT count(*) FROM pool_posts pp JOIN posts p ON p.id = pp.post_id
-         WHERE pp.pool_id = $1
-           AND (p.status = ANY($2) OR (p.status = 'pending' AND p.uploader_id = $3))
-           AND p.rating = ANY($4)",
-    )
+         WHERE pp.pool_id = $5 AND ",
+        visible_post!()
+    ))
+    .bind_visibility(visibility)
     .bind(pool_id)
-    .bind(statuses)
-    .bind(visibility.viewer)
-    .bind(visibility.rating_codes())
     .fetch_one(db)
     .await
 }
@@ -180,23 +172,20 @@ pub async fn neighbours(
     position: i32,
     visibility: &Visibility,
 ) -> sqlx::Result<(Option<i64>, Option<i64>, Option<i64>, Option<i64>)> {
-    let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
-    sqlx::query_as(
+    sqlx::query_as(concat!(
         "WITH visible AS (
              SELECT pp.post_id, pp.position FROM pool_posts pp JOIN posts p ON p.id = pp.post_id
-             WHERE pp.pool_id = $1
-               AND (p.status = ANY($3) OR (p.status = 'pending' AND p.uploader_id = $4))
-               AND p.rating = ANY($5))
+             WHERE pp.pool_id = $5 AND ",
+        visible_post!(),
+        ")
          SELECT (SELECT post_id FROM visible ORDER BY position LIMIT 1),
-                (SELECT post_id FROM visible WHERE position < $2 ORDER BY position DESC LIMIT 1),
-                (SELECT post_id FROM visible WHERE position > $2 ORDER BY position LIMIT 1),
-                (SELECT post_id FROM visible ORDER BY position DESC LIMIT 1)",
-    )
+                (SELECT post_id FROM visible WHERE position < $6 ORDER BY position DESC LIMIT 1),
+                (SELECT post_id FROM visible WHERE position > $6 ORDER BY position LIMIT 1),
+                (SELECT post_id FROM visible ORDER BY position DESC LIMIT 1)"
+    ))
+    .bind_visibility(visibility)
     .bind(pool_id)
     .bind(position)
-    .bind(statuses)
-    .bind(visibility.viewer)
-    .bind(visibility.rating_codes())
     .fetch_one(db)
     .await
 }
@@ -661,6 +650,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(post_ids(&pool, id).await.unwrap().len(), 3);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn banned_artists_posts_stay_hidden(pool: PgPool) {
+        let banned: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('banned') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let ids = posts(&pool, &["active", "active", "active"]).await;
+        sqlx::query("UPDATE posts SET tag_ids = $1 WHERE id = $2")
+            .bind(vec![banned])
+            .bind(ids[1])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let id = create(&pool, &contents("Comic", &ids), None).await.unwrap();
+        let visitor = Visibility {
+            statuses: vec![PostStatus::Active, PostStatus::Flagged],
+            hidden_tags: vec![banned],
+            ..Visibility::default()
+        };
+        assert_eq!(
+            visible_post_ids(&pool, id, &visitor, 0, 10).await.unwrap(),
+            [ids[0], ids[2]]
+        );
+        assert_eq!(visible_count(&pool, id, &visitor).await.unwrap(), 2);
+        assert_eq!(
+            neighbours(&pool, id, 0, &visitor).await.unwrap(),
+            (Some(ids[0]), None, Some(ids[2]), Some(ids[2]))
+        );
+        // Staff, who see them, get all three.
+        let staff = Visibility {
+            hidden_tags: Vec::new(),
+            ..visitor
+        };
+        assert_eq!(visible_count(&pool, id, &staff).await.unwrap(), 3);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

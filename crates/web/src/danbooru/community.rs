@@ -811,4 +811,64 @@ mod tests {
             StatusCode::UNAUTHORIZED
         );
     }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn pools_and_groups_leave_out_hidden_posts(pool: PgPool) {
+        let uploads = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let a = upload(&uploads, &alice, 20, "cat").await;
+        let banned = upload(&uploads, &alice, 24, "bad_artist").await;
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('bad_artist', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let id = moekura_db::pools::create(
+            &pool,
+            &moekura_db::pools::Contents {
+                name: "My_Comic".into(),
+                description: String::new(),
+                category: "series".into(),
+                is_deleted: false,
+                post_ids: vec![banned, a],
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        moekura_db::favorite_groups::create(
+            &pool,
+            alice_id,
+            &moekura_db::favorite_groups::Contents {
+                name: "Best".into(),
+                is_public: true,
+                post_ids: vec![a, banned],
+            },
+        )
+        .await
+        .unwrap();
+        // The banned artist's post is hidden once the site knows of the
+        // ban.
+        let app = app(&pool).await;
+        let shown = parse(&app.get(&format!("/pools/{id}.json"), None).await.body);
+        assert_eq!(shown["post_ids"], json!([a]));
+        let listed = parse(
+            &app.get(&format!("/pools.json?search[id]={id}"), None)
+                .await
+                .body,
+        );
+        assert_eq!(
+            (&listed[0]["post_ids"], &listed[0]["post_count"]),
+            (&json!([a]), &json!(1))
+        );
+        let groups = parse(
+            &app.get("/favorite_groups.json?search[creator_name]=alice", None)
+                .await
+                .body,
+        );
+        assert_eq!(groups[0]["post_ids"], json!([a]));
+    }
 }

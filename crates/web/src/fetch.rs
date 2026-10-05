@@ -36,6 +36,43 @@ pub fn check_url(url: &Url, allow_private: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Follows a few redirects, each to a URL [`check_url`] accepts.
+pub(crate) fn redirect_policy(allow_private: bool) -> redirect::Policy {
+    redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        match check_url(attempt.url(), allow_private) {
+            Ok(()) => attempt.follow(),
+            Err(reason) => attempt.error(reason),
+        }
+    })
+}
+
+/// `response`'s body, refused once it's more than `limit` bytes.
+pub(crate) async fn read_body(
+    response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let too_large = || "the response is too large".to_owned();
+    if response
+        .content_length()
+        .is_some_and(|len| len > limit as u64)
+    {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| short_reason(&e).to_owned())?;
+        if body.len() + chunk.len() > limit {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 #[derive(Clone)]
 pub struct Fetcher {
     client: reqwest::Client,
@@ -46,16 +83,7 @@ impl Fetcher {
     /// `allow_private` exists for tests against a local server; the app
     /// always passes false.
     pub fn new(timeout: Duration, allow_private: bool) -> Self {
-        let policy = redirect::Policy::custom(move |attempt| {
-            if attempt.previous().len() >= MAX_REDIRECTS {
-                return attempt.error("too many redirects");
-            }
-            match check_url(attempt.url(), allow_private) {
-                Ok(()) => attempt.follow(),
-                Err(reason) => attempt.error(reason),
-            }
-        });
-        let client = moekura_net::client(timeout, allow_private, policy);
+        let client = moekura_net::client(timeout, allow_private, redirect_policy(allow_private));
         Self {
             client,
             allow_private,
@@ -182,16 +210,7 @@ impl Fetcher {
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default()
             .to_owned();
-        let mut body = Vec::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| short_reason(&e).to_owned())?;
-            if body.len() + chunk.len() > limit {
-                return Err("the response is too large".into());
-            }
-            body.extend_from_slice(&chunk);
-        }
-        Ok((content_type, body))
+        Ok((content_type, read_body(response, limit).await?))
     }
 
     /// [`Self::fetch`], sending `headers` (some sites want a `Referer`).
@@ -436,6 +455,9 @@ mod tests {
             .err()
             .unwrap();
         assert!(err.to_string().contains("404"), "{err}");
+        let big = Url::parse(&format!("http://{addr}/big")).unwrap();
+        let err = fetcher.get(&big, &[], 1024 * 1024).await.unwrap_err();
+        assert!(err.contains("too large"), "{err}");
     }
 
     #[tokio::test]

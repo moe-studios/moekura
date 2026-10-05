@@ -107,8 +107,11 @@ your user id and API key). Posts whose file the site hides are skipped.
 Progress is saved as it goes. Running the same site and search again
 carries on where it stopped (after `--limit`, a failure or Ctrl-C), and
 once it's finished there's nothing to do; `--restart` starts from the
-newest posts again, which also picks up posts added since. To import from
-a site on your own network, add `--allow-private-addresses`.
+newest posts again, which also picks up posts added since. The site's
+API pages, the files and every redirect must be on the public internet;
+to import from a site on your own network, add
+`--allow-private-addresses`. An API page (posts, a post's notes or
+pools) may be up to 16 MB.
 
 ## Exporting
 

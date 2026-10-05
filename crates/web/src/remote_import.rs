@@ -59,6 +59,9 @@ pub enum Outcome {
     },
 }
 
+/// The most a page of posts, or a post's notes or pools, may be.
+const MAX_PAGE_BYTES: usize = 16 * 1024 * 1024;
+
 /// Talks to the other site.
 struct Remote<'a> {
     options: &'a Options,
@@ -67,16 +70,25 @@ struct Remote<'a> {
 }
 
 impl Remote<'_> {
+    /// Reads one of the site's API pages. Like file downloads, it and
+    /// every redirect must be on the public internet (unless
+    /// `allow_private`).
     async fn get(&self, url: &str) -> Result<String, String> {
         tokio::time::sleep(self.options.delay).await;
+        let parsed = url::Url::parse(url).map_err(|e| format!("{url} isn't a valid URL: {e}"))?;
+        crate::fetch::check_url(&parsed, self.options.allow_private)
+            .map_err(|e| format!("won't fetch {url}: {e}"))?;
         let response = self
             .client
-            .get(url)
+            .get(parsed)
             .send()
             .await
             .map_err(|e| format!("couldn't reach {url}: {e}"))?;
         let status = response.status();
-        let body = response.text().await.map_err(|e| e.to_string())?;
+        let body = crate::fetch::read_body(response, MAX_PAGE_BYTES)
+            .await
+            .map_err(|e| format!("couldn't read {url}: {e}"))?;
+        let body = String::from_utf8_lossy(&body).into_owned();
         if !status.is_success() {
             return Err(format!(
                 "{url} answered {status}: {}",
@@ -113,7 +125,7 @@ pub async fn run(
         client: moekura_net::client(
             Duration::from_secs(60),
             options.allow_private,
-            reqwest::redirect::Policy::limited(5),
+            crate::fetch::redirect_policy(options.allow_private),
         ),
         fetcher: Fetcher::new(Duration::from_secs(300), options.allow_private),
     };
@@ -557,5 +569,63 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((over.imported, over.duplicates), (0, 3));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn checks_pages_like_downloads(pool: PgPool) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/empty/posts.json", get(|| async { axum::Json(json!([])) }))
+            // Redirects to a link downloads refuse (it has a password).
+            .route(
+                "/sneaky/posts.json",
+                get(move || async move {
+                    axum::response::Redirect::temporary(&format!(
+                        "http://user:secret@{addr}/empty/posts.json"
+                    ))
+                }),
+            )
+            .route(
+                "/huge/posts.json",
+                get(|| async { vec![b' '; MAX_PAGE_BYTES + 1] }),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = test_state(&pool).await;
+        session_for(&pool, "importer", SystemRole::Admin).await;
+        let uploader = moekura_db::users::by_name(&pool, "importer")
+            .await
+            .unwrap()
+            .unwrap();
+        let options = |path: &str, allow_private: bool| Options {
+            kind: Kind::Danbooru,
+            base: format!("http://{addr}/{path}"),
+            tags: String::new(),
+            credentials: Credentials::default(),
+            delay: Duration::ZERO,
+            limit: None,
+            notes: false,
+            pools: false,
+            restart: true,
+            allow_private,
+        };
+
+        let done = run(&state, &uploader, &options("empty", true), |_| {})
+            .await
+            .unwrap();
+        assert!(done.finished);
+        let err = run(&state, &uploader, &options("empty", false), |_| {})
+            .await
+            .unwrap_err();
+        assert!(err.contains("public internet"), "{err}");
+        let err = run(&state, &uploader, &options("sneaky", true), |_| {})
+            .await
+            .unwrap_err();
+        assert!(err.contains("redirect"), "{err}");
+        assert!(err.contains("couldn't reach"), "{err}");
+        let err = run(&state, &uploader, &options("huge", true), |_| {})
+            .await
+            .unwrap_err();
+        assert!(err.contains("too large"), "{err}");
     }
 }

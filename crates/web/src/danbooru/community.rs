@@ -718,7 +718,10 @@ mod tests {
             .await;
         assert_eq!(changed.status, StatusCode::OK, "{}", changed.body);
         assert_eq!(parse(&changed.body)["is_deleted"], json!(true));
-        assert_eq!(parse(&app.get("/comments.json", None).await.body), json!([]));
+        assert_eq!(
+            parse(&app.get("/comments.json", None).await.body),
+            json!([])
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

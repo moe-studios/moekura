@@ -256,7 +256,8 @@ holds:
 
 - links (`http://`, `https://`, `www.`) from accounts younger than 3
   days;
-- text its writer already posted 3 times in the past day, anywhere;
+- text its writer already posted (or changed something to) 3 times in
+  the past day, anywhere;
 - anything containing one of the **spam words**, one word or phrase per
   line, whatever the case.
 
@@ -266,7 +267,8 @@ hides it again until the staff approve it. People who can *Hide comments
 and handle reports about them* are never held, and review what is under
 **Moderation → Held for review**, oldest first, with why each was held.
 **Approve** lets it through as if just posted (mentions, replies and
-messages notify then, and webhooks fire); **Reject** keeps it hidden for
+messages notify then, and webhooks fire; an approved change just
+reappears, as changes notify nobody); **Reject** keeps it hidden for
 good, and a rejected message never reaches its recipient. Both go in the
 moderation log. Hiding or restoring a held comment or forum post the
 usual way also settles it.

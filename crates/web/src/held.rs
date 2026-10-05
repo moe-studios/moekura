@@ -133,7 +133,8 @@ async fn decide(
         )
             .into_response());
     }
-    if approve {
+    // A change to something already out was told of when it first was.
+    if approve && !item.edited {
         published(state, &item, kind).await?;
     }
     let mut action = NewAction::new(
@@ -382,5 +383,67 @@ mod tests {
             .post_form(&format!("/posts/{post}/comments"), Some(&alice), &[], link)
             .await;
         assert!(free.location.unwrap().contains("#comment-"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn approved_changes_are_not_announced_again(pool: PgPool) {
+        settings::set(&pool, "spam_filter", json!({ "words": ["casino"] }))
+            .await
+            .unwrap();
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes()
+                .merge(crate::comments::routes())
+                .merge(crate::notifications::routes())
+                .merge(crate::danbooru::test_support::routes()),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let staff = session_for(&pool, "staff", SystemRole::Moderator).await;
+        let post = crate::danbooru::test_support::upload(&app, &staff, 20, "cat").await;
+        app.post_form(
+            &format!("/posts/{post}/comments"),
+            Some(&alice),
+            &[],
+            "body=Nice",
+        )
+        .await;
+        let comment: i64 = sqlx::query_scalar("SELECT id FROM comments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let held = app
+            .post_form(
+                &format!("/comments/{comment}/edit"),
+                Some(&alice),
+                &[],
+                "body=casino+%40bob",
+            )
+            .await;
+        assert_eq!(held.status, StatusCode::SEE_OTHER, "{}", held.body);
+        let approved = app
+            .post_form(
+                &format!("/moderation/held/comment/{comment}/approve"),
+                Some(&staff),
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(approved.status, StatusCode::SEE_OTHER);
+        let shown: (String, bool) =
+            sqlx::query_as("SELECT body, is_deleted FROM comments WHERE id = $1")
+                .bind(comment)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(shown, ("casino @bob".to_owned(), false));
+        // Changes mention nobody, approved or not.
+        assert!(
+            !app.get("/notifications", Some(&bob))
+                .await
+                .body
+                .contains("mentioned you")
+        );
     }
 }

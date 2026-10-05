@@ -43,6 +43,9 @@ pub struct Held {
     /// The message's recipient.
     pub recipient_id: Option<i64>,
     pub recipient_name: Option<String>,
+    /// A change to a comment or forum post that was already out, not a
+    /// new one.
+    pub edited: bool,
 }
 
 /// Everything held, as one list: `$1` limits it, `$2` offsets it, and
@@ -51,18 +54,19 @@ const HELD: &str = "
     SELECT * FROM (
         SELECT 'comment' AS kind, c.id, c.creator_id, u.name::text AS creator_name, c.body,
                NULL::text AS title, c.held_reason AS reason, c.created_at,
-               c.post_id AS parent_id, NULL::bigint AS recipient_id, NULL::text AS recipient_name
+               c.post_id AS parent_id, NULL::bigint AS recipient_id, NULL::text AS recipient_name,
+               c.edited_at IS NOT NULL AS edited
         FROM comments c LEFT JOIN users u ON u.id = c.creator_id
         WHERE c.held_reason IS NOT NULL
         UNION ALL
         SELECT 'forum_post', p.id, p.creator_id, u.name::text, p.body, t.title, p.held_reason,
-               p.created_at, p.topic_id, NULL, NULL
+               p.created_at, p.topic_id, NULL, NULL, p.updated_at > p.created_at
         FROM forum_posts p JOIN forum_topics t ON t.id = p.topic_id
         LEFT JOIN users u ON u.id = p.creator_id
         WHERE p.held_reason IS NOT NULL
         UNION ALL
         SELECT 'dmail', d.id, d.from_id, u.name::text, d.body, d.title, d.held_reason,
-               d.created_at, NULL, d.to_id, r.name::text
+               d.created_at, NULL, d.to_id, r.name::text, false
         FROM dmails d LEFT JOIN users u ON u.id = d.from_id LEFT JOIN users r ON r.id = d.to_id
         WHERE d.held_reason IS NOT NULL
     ) held
@@ -164,13 +168,14 @@ pub async fn reject(db: impl PgExecutor<'_>, kind: Kind, id: i64) -> sqlx::Resul
 }
 
 /// How many times `user_id` posted exactly `body` (comments, forum posts
-/// and messages sent) in the past day.
+/// and messages sent) in the past day, or changed one to it.
 pub async fn repeats(db: impl PgExecutor<'_>, user_id: i64, body: &str) -> sqlx::Result<i64> {
     sqlx::query_scalar(
         "SELECT (SELECT count(*) FROM comments
-                 WHERE creator_id = $1 AND body = $2 AND created_at > now() - interval '1 day')
+                 WHERE creator_id = $1 AND body = $2
+                   AND coalesce(edited_at, created_at) > now() - interval '1 day')
               + (SELECT count(*) FROM forum_posts
-                 WHERE creator_id = $1 AND body = $2 AND created_at > now() - interval '1 day')
+                 WHERE creator_id = $1 AND body = $2 AND updated_at > now() - interval '1 day')
               + (SELECT count(*) FROM dmails
                  WHERE owner_id = $1 AND from_id = $1 AND body = $2
                    AND created_at > now() - interval '1 day')",
@@ -179,4 +184,86 @@ pub async fn repeats(db: impl PgExecutor<'_>, user_id: i64, body: &str) -> sqlx:
     .bind(body)
     .fetch_one(db)
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+
+    use super::*;
+    use crate::comments;
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn changes_count_and_are_told_apart(pool: PgPool) {
+        let alice: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let post: i64 = sqlx::query_scalar("INSERT INTO posts (rating) VALUES ('g') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let old = comments::create(&pool, post, alice, "Seed", true)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE comments SET created_at = now() - interval '2 days' WHERE id = $1")
+            .bind(old)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(repeats(&pool, alice, "Seed").await.unwrap(), 0);
+
+        // Changing an old comment writes its text anew.
+        comments::update_held(&pool, old, "Spam", Some("links"))
+            .await
+            .unwrap();
+        assert_eq!(repeats(&pool, alice, "Spam").await.unwrap(), 1);
+        assert!(
+            get(&pool, Kind::Comment, old)
+                .await
+                .unwrap()
+                .unwrap()
+                .edited
+        );
+        let new = comments::create_held(&pool, post, alice, "Spam", true, Some("links"))
+            .await
+            .unwrap();
+        assert!(
+            !get(&pool, Kind::Comment, new)
+                .await
+                .unwrap()
+                .unwrap()
+                .edited
+        );
+        assert_eq!(repeats(&pool, alice, "Spam").await.unwrap(), 2);
+
+        let category: i16 = sqlx::query_scalar("SELECT min(id) FROM forum_categories")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let (_, first) =
+            crate::forum::create_topic(&pool, category, Some(alice), "Hi", "Hello", Some("words"))
+                .await
+                .unwrap();
+        assert!(
+            !get(&pool, Kind::ForumPost, first)
+                .await
+                .unwrap()
+                .unwrap()
+                .edited
+        );
+        crate::forum::update_post(&pool, first, "Spam", Some(alice), Some("words"))
+            .await
+            .unwrap();
+        assert!(
+            get(&pool, Kind::ForumPost, first)
+                .await
+                .unwrap()
+                .unwrap()
+                .edited
+        );
+        assert_eq!(repeats(&pool, alice, "Spam").await.unwrap(), 3);
+    }
 }

@@ -201,7 +201,15 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     tracing::info!(addr = %listener.local_addr()?, "listening");
     let shutdown = CancellationToken::new();
     let metrics = match config.telemetry.metrics_bind {
-        Some(bind) => Some(telemetry::start_metrics(bind, db.clone(), shutdown.clone()).await?),
+        Some(bind) => Some(
+            telemetry::start_metrics(
+                bind,
+                config.server.connections.clone(),
+                db.clone(),
+                shutdown.clone(),
+            )
+            .await?,
+        ),
         None => None,
     };
 
@@ -240,7 +248,13 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let workers = workers.map(|run| tokio::spawn(run(shutdown.clone())));
 
     let app = moekura_web::router(state.clone());
-    moekura_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
+    moekura_web::serve(
+        listener,
+        app,
+        &state.config.server.connections,
+        shutdown.clone().cancelled_owned(),
+    )
+    .await?;
     // Views and searches counted since the last minute.
     moekura_web::explore::flush(&state).await;
 
@@ -266,7 +280,15 @@ async fn worker(config: Config) -> anyhow::Result<()> {
     }
     let shutdown = CancellationToken::new();
     let metrics = match config.telemetry.metrics_bind {
-        Some(bind) => Some(telemetry::start_metrics(bind, db.clone(), shutdown.clone()).await?),
+        Some(bind) => Some(
+            telemetry::start_metrics(
+                bind,
+                config.server.connections.clone(),
+                db.clone(),
+                shutdown.clone(),
+            )
+            .await?,
+        ),
         None => None,
     };
     tokio::spawn(cancel_on_signal(shutdown.clone()));

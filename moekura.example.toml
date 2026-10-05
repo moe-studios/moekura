@@ -35,6 +35,14 @@ allow_credentials = false
 # Seconds browsers may cache a preflight answer.
 max_age_secs = 600
 
+[server.connections]
+# Connections served at once; more wait until one closes. Each takes a
+# file descriptor: keep this well under `ulimit -n` (often 1024).
+max = 512
+# Close a connection that goes this many seconds without sending a whole
+# request's headers: one sending nothing, or too slowly, or left idle.
+idle_timeout_secs = 10
+
 [database]
 # Required. Connection URL of the primary.
 url = "postgres://moekura:CHANGE_ME@localhost/moekura"

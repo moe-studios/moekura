@@ -59,6 +59,28 @@ are never available to other websites.
 allowed_origins = ["https://viewer.example.com", "http://localhost:5173"]
 ```
 
+## `[server.connections]`
+
+Limits on the connections the app serves, so clients that open them and
+send nothing, or send their requests a byte at a time, can't hold them
+for long or run the process out of file descriptors.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max` | `512` | connections served at once; more wait to be accepted until one closes. Each takes a file descriptor, so keep it well under the process's open file limit (`ulimit -n`, often 1024), which also covers database connections, files and media tools |
+| `idle_timeout_secs` | `10` | a connection is closed when it goes this long without sending a whole request's headers: one that sends nothing, sends its headers too slowly, or sits idle between requests. A request in progress is answered first |
+
+These hold whether or not a reverse proxy is in front. They don't tell
+one client from another: a client opening connections fast enough can
+still fill them all, and others then wait. A [reverse proxy](install/reverse-proxy.md)
+in front can limit connections per client (nginx's `limit_conn`) and
+has its own client timeouts, which is one more reason to keep the app's
+port reachable only by the proxy. A proxy that keeps connections to the
+app open between requests should let idle ones go sooner than
+`idle_timeout_secs` (Caddy's `keepalive` transport option, nginx's
+`keepalive_timeout` in an `upstream` block), or a request may now and
+then be sent on a connection the app is closing.
+
 ## `[database]`
 
 | Key | Default | Meaning |

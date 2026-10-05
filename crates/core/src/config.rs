@@ -55,6 +55,9 @@ pub struct ServerConfig {
     pub api_burst: u32,
     /// Which other websites' scripts may call the APIs.
     pub cors: CorsConfig,
+    /// How many connections are served at once, and how long they may
+    /// wait for a request.
+    pub connections: ConnectionConfig,
 }
 
 impl Default for ServerConfig {
@@ -67,6 +70,7 @@ impl Default for ServerConfig {
             api_requests_per_minute: 300,
             api_burst: 60,
             cors: CorsConfig::default(),
+            connections: ConnectionConfig::default(),
         }
     }
 }
@@ -101,6 +105,30 @@ impl CorsConfig {
     /// Whether any website is allowed.
     pub fn allows_any(&self) -> bool {
         self.allowed_origins.iter().any(|o| o == "*")
+    }
+}
+
+/// Limits on the HTTP server's connections, so clients that open them
+/// and send nothing, or send slowly, can't hold them all.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConnectionConfig {
+    /// Connections served at once; more wait to be accepted until one
+    /// closes. Each takes a file descriptor, so this stays under the
+    /// process's limit (`ulimit -n`), with room for everything else.
+    pub max: u32,
+    /// A connection that hasn't sent a whole request's headers for this
+    /// long is closed: one sending nothing, or its headers too slowly, or
+    /// left idle between requests.
+    pub idle_timeout_secs: u64,
+}
+
+impl Default for ConnectionConfig {
+    fn default() -> Self {
+        Self {
+            max: 512,
+            idle_timeout_secs: 10,
+        }
     }
 }
 
@@ -1195,6 +1223,21 @@ impl Config {
                 message: "must be at least 1".into(),
             });
         }
+        let connections = &self.server.connections;
+        for (key, value) in [
+            ("server.connections.max", u64::from(connections.max)),
+            (
+                "server.connections.idle_timeout_secs",
+                connections.idle_timeout_secs,
+            ),
+        ] {
+            if value == 0 {
+                problems.push(ConfigProblem {
+                    key,
+                    message: "must be at least 1".into(),
+                });
+            }
+        }
 
         if problems.is_empty() {
             Ok(())
@@ -1463,6 +1506,28 @@ mod tests {
         config.media.ffmpeg_memory_mb = 100;
         let problems = config.validate().unwrap_err();
         assert_eq!(problems[0].key, "media.ffmpeg_memory_mb");
+    }
+
+    #[test]
+    fn connections_are_limited() {
+        let connections = Config::default().server.connections;
+        assert_eq!((connections.max, connections.idle_timeout_secs), (512, 10));
+        let mut config = valid();
+        config.server.connections.max = 0;
+        config.server.connections.idle_timeout_secs = 0;
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "server.connections.max",
+                "server.connections.idle_timeout_secs"
+            ]
+        );
     }
 
     #[test]

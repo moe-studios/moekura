@@ -16,6 +16,15 @@ curl localhost:8080/readyz   # → ok
 Open <http://localhost:8080>. The database is migrated automatically on
 start.
 
+The app's port is published on `127.0.0.1` only, so only this machine
+reaches it: other people come in through a [reverse proxy](reverse-proxy.md),
+which adds HTTPS and limits on what each client may do. Docker's
+published ports get past host firewalls such as ufw, so changing it to
+`"8080:8080"` (to try the site from another machine on your network,
+say) puts the app on every network the machine is on, without the
+proxy's protection; the app's own [connection limits](../configuration.md#serverconnections)
+still apply.
+
 Two volumes hold everything worth keeping: `db` (PostgreSQL) and `files`
 (uploads and thumbnails). Back them up together; see [Backups](../admin/backups.md).
 

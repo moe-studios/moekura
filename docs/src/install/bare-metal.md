@@ -32,6 +32,9 @@ Then write `/etc/moekura/moekura.toml` (start from
 ```toml
 [server]
 public_url = "https://booru.example.com"
+# Only the reverse proxy on this machine connects.
+bind = "127.0.0.1:8080"
+trusted_proxies = ["127.0.0.1/32"]
 
 [database]
 url = "postgres://moekura:PASSWORD@localhost/moekura"

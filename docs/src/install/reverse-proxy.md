@@ -18,6 +18,13 @@ trusted_proxies = ["127.0.0.1/32"]
 The proxy must pass the `Host` and `Origin` headers through unchanged:
 they protect forms against cross-site requests.
 
+Let only the proxy reach the app: bind it to `127.0.0.1:8080` when the
+proxy runs on the same machine (the compose file publishes its port
+there), or keep the port behind a firewall. The app has its own
+[connection limits](../configuration.md#serverconnections), but it
+can't tell clients apart behind them; the proxy's client timeouts and
+per-client limits (nginx's `limit_conn`) can.
+
 ## Caddy
 
 ```text

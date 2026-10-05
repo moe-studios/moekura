@@ -13,7 +13,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
-use moekura_core::config::{LogFormat, TelemetryConfig};
+use moekura_core::config::{ConnectionConfig, LogFormat, TelemetryConfig};
 use moekura_db::Db;
 use opentelemetry::trace::TracerProvider as _;
 use opentelemetry_otlp::{WithExportConfig, WithHttpConfig};
@@ -188,9 +188,11 @@ struct Scrape {
 
 /// Installs the recorder and serves `/metrics` on `bind` until
 /// `shutdown`: what the recorder counted, plus the database pools and the
-/// job queue as they are at the time of the scrape.
+/// job queue as they are at the time of the scrape. Connections are
+/// limited as the site's are.
 pub async fn start_metrics(
     bind: SocketAddr,
+    limits: ConnectionConfig,
     db: Db,
     shutdown: CancellationToken,
 ) -> anyhow::Result<tokio::task::JoinHandle<()>> {
@@ -201,9 +203,7 @@ pub async fn start_metrics(
     tracing::info!(addr = %listener.local_addr()?, "serving metrics at /metrics");
     let app = metrics_router(handle, db);
     Ok(tokio::spawn(async move {
-        let served = axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown.cancelled_owned())
-            .await;
+        let served = moekura_web::serve(listener, app, &limits, shutdown.cancelled_owned()).await;
         if let Err(error) = served {
             tracing::warn!(%error, "the metrics listener stopped");
         }

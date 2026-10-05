@@ -2100,6 +2100,7 @@ dependencies = [
  "hex",
  "hmac",
  "http-body-util",
+ "hyper-util",
  "ipnet",
  "jiff",
  "md-5",

@@ -93,9 +93,9 @@ The Linux binaries are built on Ubuntu 24.04 and need glibc 2.39 or newer
 
 ## Changed defaults
 
-Defaults that changed after 0.5. Sites that set these keys keep what they
-set; sites that relied on the old default behave differently after
-upgrading.
+Defaults that changed after 0.5. Sites that set these themselves keep
+what they set; sites that relied on the old default behave differently
+after upgrading.
 
 ### Metadata is removed from originals
 
@@ -108,3 +108,23 @@ Files of other types (GIF, AVIF, JPEG XL, videos, ugoira) still keep
 their metadata, and posts uploaded before the upgrade keep their
 originals as they are. To keep originals exactly as uploaded, set
 `strip_metadata = "off"`. See [File metadata](using/posts.md#file-metadata).
+
+### Connections are limited
+
+The server serves at most 512 connections at once
+([`server.connections.max`](configuration.md#serverconnections)); more
+wait their turn. A connection that goes 10 seconds without sending a
+request's headers (`idle_timeout_secs`) is closed, which includes
+keep-alive connections left idle; clients open a new one. A busy site
+served without a reverse proxy may need a higher `max`, and an open file
+limit (`ulimit -n`) to match.
+
+### The compose file publishes the app on this machine only
+
+`deploy/compose.tiny.yml` publishes port 8080 on `127.0.0.1` instead of
+on every network the machine is on. A reverse proxy on the same machine
+keeps working. If people reached the app at `http://<server>:8080`
+directly, put a [reverse proxy](install/reverse-proxy.md) in front, or
+publish it on every network again with `"8080:8080"` in your copy,
+knowing that Docker's published ports get past host firewalls such as
+ufw.

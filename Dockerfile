@@ -44,8 +44,8 @@ RUN apt-get update \
         libjxl-dev libexif-dev liblcms2-dev libhwy-dev
 WORKDIR /build
 # ffmpeg: reading MP4 and WebM (H.264, VP8, VP9, AV1) for probing,
-# writing a PNG poster frame, and playing Pixiv ugoira (PNG frames, which
-# libvips converts JPEG ones to, each for its own time) into a VP9 WebM.
+# writing a PNG poster frame, and playing Pixiv ugoira (their frames,
+# which libvips re-encodes as PNG, each for its own time) into a VP9 WebM.
 RUN curl -fsSLo ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
     && echo "${FFMPEG_SHA256}  ffmpeg.tar.xz" | sha256sum -c - \
     && tar xJf ffmpeg.tar.xz \

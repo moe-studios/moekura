@@ -280,21 +280,19 @@ impl Media {
         for file in &files {
             self.probe_frame(file).await?;
         }
-        // ffmpeg reads PNG only; libvips reads every JPEG (and checks the
-        // frame is one).
+        // ffmpeg judges each listed file by its contents, so it only gets
+        // PNGs libvips wrote here, never a frame as uploaded.
         for file in &mut files {
-            if frame_type(file) == MediaType::Jpeg {
-                let png = file.with_extension("png");
-                let target = format!("{}[compression=1]", png.display());
-                self.run_trusted(
-                    &self.config.tools.vips,
-                    [OsStr::new("copy"), file.as_os_str(), OsStr::new(&target)],
-                    self.timeout(),
-                )
-                .await
-                .map_err(crate::probe::corrupt_unless_missing)?;
-                *file = png;
-            }
+            let png = file.with_extension("vips.png");
+            let target = format!("{}[compression=1]", png.display());
+            self.run_trusted(
+                &self.config.tools.vips,
+                [OsStr::new("copy"), file.as_os_str(), OsStr::new(&target)],
+                self.timeout(),
+            )
+            .await
+            .map_err(crate::probe::corrupt_unless_missing)?;
+            *file = png;
         }
         let list = dir.join("frames.ffconcat");
         let delays: Vec<u32> = frames.iter().map(|f| f.delay_ms).collect();
@@ -305,10 +303,14 @@ impl Media {
             OsStr::new("-loglevel"),
             OsStr::new("error"),
             OsStr::new("-y"),
+            // Local files only, named plainly beside the list (the
+            // concat demuxer's safe mode), whatever ffmpeg was built with.
+            OsStr::new("-protocol_whitelist"),
+            OsStr::new("file"),
             OsStr::new("-f"),
             OsStr::new("concat"),
             OsStr::new("-safe"),
-            OsStr::new("0"),
+            OsStr::new("1"),
             OsStr::new("-i"),
             list.as_os_str(),
             // Even sizes for 4:2:0.
@@ -582,5 +584,59 @@ pub(crate) mod tests {
             webm.duration_ms.is_some_and(|ms| (500..=700).contains(&ms)),
             "{webm:?}"
         );
+        // ffmpeg read PNGs libvips made, named as the concat demuxer's
+        // safe mode wants.
+        let list = std::fs::read_to_string(work.join("frames.ffconcat")).unwrap();
+        let listed: Vec<&str> = list
+            .lines()
+            .filter_map(|line| line.strip_prefix("file '")?.strip_suffix('\''))
+            .collect();
+        assert_eq!(listed.len(), 4, "{list}");
+        for name in listed {
+            assert!(name.ends_with(".vips.png"), "{name}");
+            assert!(safe_for_concat(name), "{name}");
+            assert!(work.join(name).is_file(), "{name}");
+        }
+
+        let jpeg = zip_of(&dir, 2, None, "jpg");
+        let work = dir.join("work-jpeg");
+        std::fs::create_dir_all(&work).unwrap();
+        let (video, _, first_type) = media.ugoira_video(&jpeg, &work).await.unwrap();
+        assert_eq!(first_type, MediaType::Jpeg);
+        assert!(video.is_file());
+    }
+
+    /// ffmpeg's rule for the concat demuxer's safe mode: relative, and
+    /// each part only letters, digits, `_`, `-` and `.`, not first.
+    fn safe_for_concat(name: &str) -> bool {
+        !name.starts_with('/')
+            && name.split('/').all(|part| {
+                part.chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                    && part
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+            })
+    }
+
+    #[tokio::test]
+    async fn only_real_frames_reach_ffmpeg() {
+        let dir = fixtures::dir("ugoira-playlist");
+        let png = std::fs::read(fixtures::image(&dir, "f.png", 32, 24)).unwrap();
+        // A playlist ffmpeg would follow, named as a frame.
+        let playlist = b"#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttp://10.0.0.1/x\n";
+        let path = deflated(
+            &dir,
+            "playlist.zip",
+            &[("000000.png", &png), ("000001.png", playlist)],
+        );
+        let media = crate::tests::media();
+        media.probe(&path, MediaType::Ugoira).await.unwrap();
+        let work = dir.join("work");
+        std::fs::create_dir_all(&work).unwrap();
+        let err = media.ugoira_video(&path, &work).await.unwrap_err();
+        assert!(matches!(err, MediaError::Corrupt(_)), "{err}");
+        assert!(!work.join("frames.ffconcat").exists());
     }
 }

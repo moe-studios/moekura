@@ -162,11 +162,17 @@ pub struct CommentText {
     /// Leave the post's place in `order:comment_bumped` alone.
     #[serde(default)]
     do_not_bump: bool,
+    /// A solved captcha's token, which new accounts need to comment when
+    /// the site asks for one; ignored on changes.
+    #[serde(default)]
+    captcha: Option<String>,
 }
 
 /// Comment on a post.
 ///
 /// Needs `comment`. Rate limited; deleted posts can't be commented on.
+/// Comments that look like spam are held for the staff to check, hidden
+/// meanwhile.
 #[utoipa::path(
     post,
     path = "/posts/{id}/comments",
@@ -176,14 +182,16 @@ pub struct CommentText {
     request_body = CommentText,
     responses(
         (status = 201, body = ApiComment),
+        (status = 400, body = ErrorBody, description = "The captcha wasn't solved"),
         (status = 404, body = ErrorBody),
-        (status = 422, body = ErrorBody, description = "The text is empty or too long, or the post is deleted"),
+        (status = 422, body = ErrorBody, description = "The text is empty or too long, the post is deleted, or a new account sent no captcha"),
         (status = 429, body = ErrorBody),
     ),
 )]
 pub(crate) async fn create(
     State(state): State<AppState>,
     current: CurrentUser,
+    info: crate::auth::RequestInfo,
     Path(id): Path<i64>,
     Json(text): Json<CommentText>,
 ) -> Result<(StatusCode, Json<ApiComment>), AppError> {
@@ -193,7 +201,7 @@ pub(crate) async fn create(
         .filter(|p| visibility(&current).allows(p))
         .ok_or(AppError::NotFound)?;
     let body = clean_body(&text.body)?;
-    let user = commenter(&state, &current, &post).await?;
+    let user = commenter(&state, &current, &post, text.captcha.as_deref(), info.ip).await?;
     let db = state.db.primary();
     let (comment_id, _) =
         crate::comments::publish(&state, &current, id, user, &body, !text.do_not_bump).await?;

@@ -18,6 +18,11 @@ held until the staff check it; the same goes for forum posts and
 messages, and for edits, which hide a comment again until it's checked.
 See [the spam filter](../admin/moderation.md#spam-filter).
 
+If the site asks new accounts for a captcha, it does so on every new
+comment, through the [API](../api.md) too: clients send a solved
+captcha's token as `captcha`, or the comment is refused until the account
+is old enough.
+
 Tick **Don't bump the post** to comment without moving the post up in
 `order:comment_bumped`; it still counts for `order:comment`. Moderators
 can **Pin to top** a comment, which then comes first among the post's

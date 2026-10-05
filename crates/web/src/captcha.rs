@@ -1,6 +1,7 @@
 //! Asking for a captcha (Turnstile or hCaptcha) on sign-up and on new
-//! users' comments, when `auth.captcha` is configured and site settings
-//! turn it on. Both services check tokens the same way.
+//! users' comments (on the site and through the APIs alike), when
+//! `auth.captcha` is configured and site settings turn it on. Both
+//! services check tokens the same way.
 
 use std::net::IpAddr;
 use std::time::Duration;
@@ -282,5 +283,68 @@ mod tests {
             StatusCode::SEE_OTHER,
             "older accounts needn't"
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_apis_ask_new_accounts_too(pool: PgPool) {
+        settings::set(&pool, "captcha", json!({ "comment_account_days": 7 }))
+            .await
+            .unwrap();
+        let mut config = test_config();
+        config.auth.captcha = Some(super::test_service::start().await);
+        let app = TestApp::new(
+            test_state_with(&pool, config).await,
+            crate::api::routes(1024 * 1024).merge(crate::danbooru::routes(1024 * 1024)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let post: i64 = sqlx::query_scalar("INSERT INTO posts (rating) VALUES ('g') RETURNING id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let api = format!("/api/v1/posts/{post}/comments");
+        let refused = app
+            .json("POST", &api, Some(&alice), Some(json!({ "body": "hi" })))
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("captcha"), "{}", refused.body);
+        let wrong = app
+            .json(
+                "POST",
+                &api,
+                Some(&alice),
+                Some(json!({ "body": "hi", "captcha": "bad" })),
+            )
+            .await;
+        assert_eq!(wrong.status, StatusCode::BAD_REQUEST, "{}", wrong.body);
+        let posted = app
+            .json(
+                "POST",
+                &api,
+                Some(&alice),
+                Some(json!({ "body": "hi", "captcha": "good" })),
+            )
+            .await;
+        assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+
+        let danbooru = format!("comment[post_id]={post}&comment[body]=hello");
+        let refused = app
+            .post_form("/comments.json", Some(&alice), &[], &danbooru)
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let posted = app
+            .post_form(
+                "/comments.json",
+                Some(&alice),
+                &[],
+                &format!("{danbooru}&captcha=good"),
+            )
+            .await;
+        assert_eq!(posted.status, StatusCode::CREATED, "{}", posted.body);
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM comments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
     }
 }

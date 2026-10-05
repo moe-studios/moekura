@@ -2,6 +2,8 @@
 //! your own, votes, reports and hiding by staff, and the list of recent
 //! comments.
 
+use std::net::IpAddr;
+
 use axum::extract::{Path, Query};
 use axum::http::HeaderMap;
 use axum::http::header::ACCEPT;
@@ -111,10 +113,15 @@ pub(crate) async fn visible_comment(
 }
 
 /// Checks `current` may post a comment on `post` and returns their id.
+/// `captcha` is the answer to the captcha new accounts are asked for,
+/// sent from `ip`; `None` where no widget was shown (API clients that
+/// don't pass a token on).
 pub(crate) async fn commenter(
     state: &AppState,
     current: &CurrentUser,
     post: &Post,
+    captcha: Option<&str>,
+    ip: Option<IpAddr>,
 ) -> Result<i64, AppError> {
     current.require(Permission::Comment)?;
     let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
@@ -124,7 +131,30 @@ pub(crate) async fn commenter(
         ));
     }
     state.rate_limits.check_comment(user.id).await?;
+    check_captcha(state, current, captcha, ip).await?;
     Ok(user.id)
+}
+
+/// Checks the captcha `current` has to solve to comment while their
+/// account is new, if one is asked for: every way of commenting goes
+/// through here.
+async fn check_captcha(
+    state: &AppState,
+    current: &CurrentUser,
+    token: Option<&str>,
+    ip: Option<IpAddr>,
+) -> Result<(), AppError> {
+    let Some(captcha) = crate::captcha::for_comment(state, current) else {
+        return Ok(());
+    };
+    let token = token.ok_or_else(|| {
+        AppError::Unprocessable(
+            "New accounts have to solve a captcha to comment: comment on the site, or send \
+             a solved captcha's token as `captcha`."
+                .into(),
+        )
+    })?;
+    captcha.check(token, ip).await.map_err(AppError::BadRequest)
 }
 
 /// Posts `current`'s comment (already checked by [`commenter`]) as user
@@ -363,13 +393,7 @@ async fn create(
     };
     let result = async {
         let body = clean_body(&form.body)?;
-        let user = commenter(state, &page.current, &post).await?;
-        if let Some(captcha) = crate::captcha::for_comment(state, &page.current) {
-            captcha
-                .check(&form.captcha, info.ip)
-                .await
-                .map_err(AppError::BadRequest)?;
-        }
+        let user = commenter(state, &page.current, &post, Some(&form.captcha), info.ip).await?;
         Ok::<_, AppError>((body, user))
     }
     .await;

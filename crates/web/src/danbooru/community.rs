@@ -170,6 +170,7 @@ async fn show_comment(
 async fn create_comment(
     State(state): State<AppState>,
     current: CurrentUser,
+    info: crate::auth::RequestInfo,
     fields: Fields,
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
@@ -183,7 +184,8 @@ async fn create_comment(
         .filter(|p| visibility(&current).allows(p))
         .ok_or(AppError::NotFound)?;
     let body = crate::comments::clean_body(fields.get("comment[body]").unwrap_or_default())?;
-    let user = crate::comments::commenter(&state, &current, &post).await?;
+    let user =
+        crate::comments::commenter(&state, &current, &post, fields.get("captcha"), info.ip).await?;
     let bump = !fields
         .get("comment[do_not_bump_post]")
         .is_some_and(|v| matches!(v.trim(), "yes" | "true" | "1"));

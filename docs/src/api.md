@@ -132,7 +132,8 @@ curl -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" 
   https://booru.example.com/api/v1/wiki-pages/cat
 ```
 
-Comment on a post:
+Comment on a post (accounts new enough that the site asks them for a
+captcha also send a solved one's token as `"captcha"`):
 
 ```sh
 curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \

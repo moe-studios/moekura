@@ -237,6 +237,8 @@ Settings → Spam** keep spam accounts out:
 - **Captcha**: with a service set up (see
   [`[auth.captcha]`](../configuration.md#authcaptcha)), ask for it when
   signing up, and on comments by accounts younger than a number of days.
+  The APIs ask too: such accounts' comments through them are refused
+  unless the client passes a solved captcha's token on.
   It isn't asked for when signing up through single sign-on, where the
   provider has checked who is logging in; the limit of new accounts per
   address still applies.

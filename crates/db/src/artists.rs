@@ -2,6 +2,7 @@
 //! `artist_versions`).
 
 use moekura_core::artists::{ArtistUrl, normalize_url, url_prefixes};
+use moekura_core::sites::encoded_url;
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
@@ -346,7 +347,9 @@ async fn announce_bans(conn: &mut PgConnection) -> sqlx::Result<()> {
 }
 
 /// Recomputes every artist URL's normalized form with the current rules
-/// ([`normalize_url`]), a batch at a time. Returns how many changed.
+/// ([`normalize_url`]), a batch at a time, encoding what a stored URL
+/// can't hold raw ([`encoded_url`]: quotes, angle brackets, spaces) on
+/// the way. Returns how many changed.
 pub async fn renormalize_urls(db: &PgPool) -> sqlx::Result<u64> {
     let mut changed = 0;
     let mut after = 0_i64;
@@ -361,22 +364,28 @@ pub async fn renormalize_urls(db: &PgPool) -> sqlx::Result<u64> {
             break;
         };
         after = *last;
-        let updates: Vec<(i64, String)> = batch
-            .into_iter()
-            .filter_map(|(id, url, old)| {
-                let new = normalize_url(&url).unwrap_or(url);
-                (new != old).then_some((id, new))
-            })
-            .collect();
-        if updates.is_empty() {
+        let mut ids = Vec::new();
+        let mut urls = Vec::new();
+        let mut normalized = Vec::new();
+        for (id, url, old) in batch {
+            let encoded = encoded_url(&url);
+            let new = normalize_url(&encoded).unwrap_or_else(|| encoded.clone());
+            if encoded != url || new != old {
+                ids.push(id);
+                urls.push(encoded);
+                normalized.push(new);
+            }
+        }
+        if ids.is_empty() {
             continue;
         }
-        let (ids, normalized): (Vec<i64>, Vec<String>) = updates.into_iter().unzip();
         changed += sqlx::query(
-            "UPDATE artist_urls au SET normalized_url = n.normalized
-             FROM unnest($1::bigint[], $2::text[]) AS n(id, normalized) WHERE au.id = n.id",
+            "UPDATE artist_urls au SET url = n.url, normalized_url = n.normalized
+             FROM unnest($1::bigint[], $2::text[], $3::text[]) AS n(id, url, normalized)
+             WHERE au.id = n.id",
         )
         .bind(ids)
+        .bind(urls)
         .bind(normalized)
         .execute(db)
         .await?
@@ -553,6 +562,31 @@ mod tests {
         assert_eq!(renormalize_urls(&pool).await.unwrap(), 1);
         assert_eq!(renormalize_urls(&pool).await.unwrap(), 0);
         let found = find_by_url(&pool, "https://sa-dui.artstation.com")
+            .await
+            .unwrap();
+        assert_eq!(found.iter().map(|a| a.id).collect::<Vec<_>>(), [id]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn renormalizing_encodes_raw_urls(pool: PgPool) {
+        let id = create(&pool, &sample("cat_artist", "https://example.com/a"), None)
+            .await
+            .unwrap();
+        // Saved while canonical forms kept decoded quotes and brackets.
+        sqlx::query(
+            "UPDATE artist_urls SET url = 'https://misskey.io/@a\"><b>''c',
+             normalized_url = 'misskey.io/@a%22%3E%3Cb%3E''c' WHERE artist_id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 1);
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 0);
+        let stored = urls(&pool, &[id]).await.unwrap();
+        assert_eq!(stored[0].url, "https://misskey.io/@a%22%3E%3Cb%3E%27c");
+        assert_eq!(stored[0].normalized_url, "misskey.io/@a%22%3E%3Cb%3E%27c");
+        let found = find_by_url(&pool, "https://misskey.io/@a%22%3E%3Cb%3E'c")
             .await
             .unwrap();
         assert_eq!(found.iter().map(|a| a.id).collect::<Vec<_>>(), [id]);

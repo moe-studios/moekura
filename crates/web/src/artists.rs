@@ -1020,4 +1020,60 @@ mod tests {
             .await;
         assert_eq!(app.get(&page, Some(&alice)).await.status, StatusCode::OK);
     }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn urls_are_kept_encoded_and_shown_escaped(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let evil = "https://twitter.com/a\"><form data-upload>'";
+        state.sources.remember(
+            evil,
+            crate::sources::SourceInfo {
+                site: "Example",
+                page_url: evil.to_owned(),
+                profile_urls: vec![evil.to_owned()],
+                artist_name: Some("someone".into()),
+                ..crate::sources::SourceInfo::default()
+            },
+        );
+        let app = TestApp::new(
+            state,
+            super::routes().merge(crate::uploads::routes(1024 * 1024)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        // Typed encoded, a profile's canonical form stays encoded.
+        let created = app
+            .post_form(
+                "/artists",
+                Some(&alice),
+                &[],
+                "name=cat_artist&urls=https%3A%2F%2Fmisskey.io%2F%40a%2522%253E%253Cb%2527",
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.body);
+        let id = id_from(&created.location.unwrap());
+        let stored = moekura_db::artists::urls(&pool, &[id]).await.unwrap();
+        assert_eq!(stored[0].url, "https://misskey.io/@a%22%3E%3Cb%27");
+
+        // One stored raw before that is escaped wherever it's linked.
+        sqlx::query("UPDATE artist_urls SET url = $1 WHERE artist_id = $2")
+            .bind(evil)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let escaped = "https://twitter.com/a&quot;&gt;&lt;form data-upload&gt;&#x27;";
+        let query: String = url::form_urlencoded::byte_serialize(evil.as_bytes()).collect();
+        for path in [
+            format!("/artists/{id}"),
+            "/artists".to_owned(),
+            format!("/uploads/source-data?url={query}"),
+        ] {
+            let body = app.get(&path, Some(&alice)).await.body;
+            assert!(!body.contains("<form data-upload"), "{path}: {body}");
+            assert!(
+                body.contains(&format!("href=\"{escaped}\"")),
+                "{path}: {body}"
+            );
+        }
+    }
 }

@@ -102,7 +102,7 @@ fn type_html(schema: &Json) -> String {
             Some("binary") => "file".to_owned(),
             _ => "string".to_owned(),
         },
-        Some(other) => other.to_owned(),
+        Some(other) => escape(other),
         None => "any".to_owned(),
     };
     if let Some(values) = schema.get("enum").and_then(Json::as_array) {

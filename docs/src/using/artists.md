@@ -26,7 +26,8 @@ of ones no longer in use (a deleted account, a site that closed): they're
 shown struck out, but still identify the artist. Profiles on the
 [sites Moekura knows](sources.md) are saved in their canonical form
 (`pixiv.net/member.php?id=1` becomes `https://www.pixiv.net/users/1`) and
-shown with the site's icon.
+shown with the site's icon. Quotes, angle brackets and spaces in an
+address are kept percent-encoded (`%22`, `%3C`, `%20`).
 
 **Find an artist by URL** (`/artists/finder`) takes any address, a
 profile or a page of one of the artist's works, and lists the artists

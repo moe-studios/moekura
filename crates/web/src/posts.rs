@@ -719,7 +719,7 @@ fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option
     };
     context! {
         id => card.id,
-        href => Value::from_safe_string(href),
+        href => url_value(&href),
         thumb => url(&card.thumb),
         thumb_2x => url(&card.thumb_2x),
         width => width,

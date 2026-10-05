@@ -39,8 +39,9 @@ impl Job for HashPixels {
     const KIND: &'static str = "media.hash_pixels";
 }
 
-/// Recompute every artist URL's normalized form, after the way URLs are
-/// compared changed; queued by the migration that changed it.
+/// Recompute every artist URL's normalized form, and encode what a stored
+/// URL can't hold raw, after the way URLs are compared or kept changed;
+/// queued by the migration that changed it.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizeArtistUrls {}
 

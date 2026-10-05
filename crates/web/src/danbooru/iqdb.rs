@@ -7,6 +7,7 @@ use axum::extract::{FromRequest, Multipart, Query, Request, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::response::Response;
 use axum::routing::get;
+use futures_util::StreamExt;
 use moekura_core::permissions::Permission;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,10 @@ use crate::AppState;
 use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::image_search::Asked;
+
+/// Most bytes a POST without a file may send: its fields are a link or a
+/// post id.
+const FIELDS_MAX: usize = 64 * 1024;
 
 pub(super) fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new().route(
@@ -111,6 +116,17 @@ async fn post(
             .map_err(|e| AppError::BadRequest(e.body_text()))?;
         Asked::from_multipart(&state, form).await?
     } else {
+        // Only a file may take the route's limit, which is sized for one.
+        let (parts, body) = request.into_parts();
+        let (mut chunks, mut body) = (body.into_data_stream(), Vec::new());
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.map_err(|e| AppError::BadRequest(e.to_string()))?;
+            if body.len() + chunk.len() > FIELDS_MAX {
+                return Err(crate::upload::TextFieldError::TooLong.into());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let request = Request::from_parts(parts, body.into());
         let fields = Fields::from_request(request, &state).await?;
         let field = |names: [&str; 2]| names.iter().find_map(|n| fields.get(n)).unwrap_or_default();
         Asked {

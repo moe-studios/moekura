@@ -3410,7 +3410,8 @@ mod tests {
         let max = state.config.media.max_upload_mb * 1024 * 1024;
         let routes = routes(max)
             .merge(upload::routes(max))
-            .merge(crate::image_search::routes(max));
+            .merge(crate::image_search::routes(max))
+            .merge(crate::danbooru::routes(max));
         let app = TestApp::new(state, routes);
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
         let long = format!("https://example.com/{}", "a".repeat(upload::LINK_FIELD_MAX));
@@ -3435,6 +3436,23 @@ mod tests {
                 sent.body
             );
         }
+        // Danbooru's image search takes its fields without a file in a
+        // plain form too.
+        let form = format!("url={}", "a".repeat(100 * 1024));
+        let sent = app
+            .post_form("/iqdb_queries.json", Some(&alice), &[], &form)
+            .await;
+        assert_eq!(sent.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            sent.body.contains("A form field is too long."),
+            "{}",
+            sent.body
+        );
+        // A short one is read as before.
+        let sent = app
+            .post_form("/iqdb_queries.json", Some(&alice), &[], "url=+")
+            .await;
+        assert!(sent.body.contains("Give `search[url]`"), "{}", sent.body);
     }
 
     #[test]

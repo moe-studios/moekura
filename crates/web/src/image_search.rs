@@ -110,6 +110,8 @@ async fn hash_as(
     tokio::fs::create_dir_all(&dir)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    // Removed however the request ends.
+    let _scratch = crate::uploads::ScratchDir(dir.clone());
     let hashed = async {
         let probe = media.probe(file.path(), kind).await?;
         let (source, source_type) = media
@@ -118,7 +120,6 @@ async fn hash_as(
         media.perceptual_hash(&source, source_type, &dir).await
     }
     .await;
-    let _ = tokio::fs::remove_dir_all(&dir).await;
     hashed.map_err(refused)
 }
 

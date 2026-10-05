@@ -497,7 +497,7 @@ async fn unpack_archives(
             out.push(file);
             continue;
         }
-        let dir = UnpackDir(state.work_dir.join(format!(
+        let dir = ScratchDir(state.work_dir.join(format!(
             "unpacked-{}",
             &hex::encode(moekura_core::tokens::NewToken::generate().hash)[..24]
         )));
@@ -541,10 +541,12 @@ async fn unpack_archives(
     Ok(out)
 }
 
-/// The directory an archive is unpacked into, removed when dropped.
-struct UnpackDir(PathBuf);
+/// A scratch directory in the work directory (an archive unpacked, a
+/// searched file's frames), removed when dropped: when the request ends
+/// early too.
+pub(crate) struct ScratchDir(pub PathBuf);
 
-impl Drop for UnpackDir {
+impl Drop for ScratchDir {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }

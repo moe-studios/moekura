@@ -1,7 +1,7 @@
 //! Artist entries, their URLs and history (`artists`, `artist_urls`,
 //! `artist_versions`).
 
-use moekura_core::artists::{ArtistUrl, normalize_url, url_prefixes};
+use moekura_core::artists::{ArtistUrl, URL_MAX_LEN, normalize_url, url_prefixes};
 use moekura_core::sites::encoded_url;
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
@@ -391,8 +391,19 @@ pub async fn renormalize_urls(db: &PgPool) -> sqlx::Result<u64> {
         let mut urls = Vec::new();
         let mut normalized = Vec::new();
         for (id, url, old) in batch {
-            let encoded = encoded_url(&url);
-            let new = normalize_url(&encoded).unwrap_or_else(|| encoded.clone());
+            let mut encoded = encoded_url(&url);
+            let mut new = normalize_url(&encoded).unwrap_or_else(|| encoded.clone());
+            // Encoding triples what it touches, so a URL stored before can
+            // come out longer than the table or its index holds. Such a one
+            // keeps its stored form (pages escape it) rather than failing
+            // its whole batch, and every batch after it, on each retry.
+            if encoded.chars().count() > URL_MAX_LEN {
+                tracing::warn!(id, "artist URL too long to keep encoded; left as it is");
+                encoded = url.clone();
+            }
+            if new.len() > URL_MAX_LEN {
+                new = old.clone();
+            }
             if encoded != url || new != old {
                 ids.push(id);
                 urls.push(encoded);
@@ -613,6 +624,66 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(found.iter().map(|a| a.id).collect::<Vec<_>>(), [id]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn renormalizing_skips_what_encoding_makes_too_long(pool: PgPool) {
+        let mut ids = Vec::new();
+        for name in ["quotes", "query", "plain"] {
+            ids.push(
+                create(&pool, &sample(name, "https://example.com/a"), None)
+                    .await
+                    .unwrap(),
+            );
+        }
+        // All within the column's 2048 characters as stored, the first two
+        // three times that once their quotes are encoded.
+        let quotes = "'".repeat(1000);
+        let stored = [
+            (
+                format!("https://example.com/{quotes}{quotes}"),
+                format!("example.com/{quotes}{quotes}"),
+            ),
+            (
+                format!("https://example.com/a'b?q={quotes}"),
+                "example.com/a'b".to_owned(),
+            ),
+            (
+                "https://example.com/it's".to_owned(),
+                "example.com/it's".to_owned(),
+            ),
+        ];
+        for (id, (url, normalized)) in ids.iter().zip(&stored) {
+            sqlx::query(
+                "UPDATE artist_urls SET url = $1, normalized_url = $2 WHERE artist_id = $3",
+            )
+            .bind(url)
+            .bind(normalized)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 2);
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 0);
+        let after = urls(&pool, &ids).await.unwrap();
+        // Too long either way: left as it was.
+        assert_eq!(
+            (&after[0].url, &after[0].normalized_url),
+            (&stored[0].0, &stored[0].1)
+        );
+        // Too long to keep encoded, but its comparison form fits.
+        assert_eq!(after[1].url, stored[1].0);
+        assert_eq!(after[1].normalized_url, "example.com/a%27b");
+        // The rest of the table still gets encoded.
+        assert_eq!(after[2].url, "https://example.com/it%27s");
+        for (raw, id) in [
+            ("https://example.com/a'b", ids[1]),
+            ("https://example.com/it's", ids[2]),
+        ] {
+            let found = find_by_url(&pool, raw).await.unwrap();
+            assert_eq!(found.iter().map(|a| a.id).collect::<Vec<_>>(), [id]);
+        }
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

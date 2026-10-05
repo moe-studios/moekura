@@ -62,11 +62,14 @@ impl ArtistUrl {
             if !seen.insert(normalized) {
                 continue;
             }
-            // A profile on a site we know is kept in its canonical form.
-            out.push(Self {
-                url: crate::sites::canonical_artist_url(url.as_str()),
-                is_active,
-            });
+            // A profile on a site we know is kept in its canonical form,
+            // which encoding can make longer than what was typed (`'`
+            // becomes `%27`), so the limit applies to it too.
+            let url = crate::sites::canonical_artist_url(url.as_str());
+            if url.len() > URL_MAX_LEN {
+                return Err(UrlError::TooLong);
+            }
+            out.push(Self { url, is_active });
         }
         if out.len() > MAX_URLS {
             return Err(UrlError::TooMany);
@@ -239,5 +242,18 @@ mod tests {
             ArtistUrl::parse_list(&urls(50_000, 50_000)),
             Err(UrlError::TooMany)
         );
+    }
+
+    #[test]
+    fn the_kept_form_is_held_to_the_limit() {
+        // Short enough as typed, three times as long once encoded.
+        let quotes = "'".repeat(1000);
+        assert_eq!(
+            ArtistUrl::parse_list(&format!("https://example.com/{quotes}")),
+            Err(UrlError::TooLong)
+        );
+        let urls =
+            ArtistUrl::parse_list(&format!("https://example.com/{}", &quotes[..600])).unwrap();
+        assert_eq!(urls[0].url.len(), "https://example.com/".len() + 3 * 600);
     }
 }

@@ -1243,6 +1243,30 @@ mod tests {
         let id = id_from(&created.location.unwrap());
         let stored = moekura_db::artists::urls(&pool, &[id]).await.unwrap();
         assert_eq!(stored[0].url, "https://misskey.io/@a%22%3E%3Cb%27");
+        // One that only grows past the limit once encoded is refused as
+        // too long, not left to the table to fail.
+        let long = app
+            .post_form(
+                "/artists",
+                Some(&alice),
+                &[],
+                &format!(
+                    "name=long_artist&urls=https%3A%2F%2Fexample.com%2F{}",
+                    "%27".repeat(1000)
+                ),
+            )
+            .await;
+        assert_eq!(
+            long.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            long.body
+        );
+        assert!(
+            long.body.contains("at most 2048 characters"),
+            "{}",
+            long.body
+        );
 
         // One stored raw before that is escaped wherever it's linked.
         sqlx::query("UPDATE artist_urls SET url = $1 WHERE artist_id = $2")

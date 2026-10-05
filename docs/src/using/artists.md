@@ -27,7 +27,8 @@ shown struck out, but still identify the artist. Profiles on the
 [sites Moekura knows](sources.md) are saved in their canonical form
 (`pixiv.net/member.php?id=1` becomes `https://www.pixiv.net/users/1`) and
 shown with the site's icon. Quotes, angle brackets and spaces in an
-address are kept percent-encoded (`%22`, `%3C`, `%20`).
+address are kept percent-encoded (`%22`, `%3C`, `%20`), and an address
+can be at most 2048 characters as it's kept, encoding included.
 
 **Find an artist by URL** (`/artists/finder`) takes any address, a
 profile or a page of one of the artist's works, and lists the artists

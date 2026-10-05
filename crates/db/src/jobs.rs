@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use moekura_core::jobs::Job;
 use serde_json::Value;
-use sqlx::{PgConnection, PgExecutor};
+use sqlx::{PgConnection, PgExecutor, PgPool};
 
 /// Workers `LISTEN` here; enqueueing notifies it.
 pub const CHANNEL: &str = "moekura_jobs";
@@ -94,6 +94,58 @@ pub async fn claim(
     lock: Duration,
     kinds: &[&str],
 ) -> sqlx::Result<Option<ClaimedJob>> {
+    claim_query(worker, lock, kinds, &[], &[])
+        .fetch_optional(db)
+        .await
+}
+
+/// Like [`claim`], but passes over each `(kind, most)` of `limits` while
+/// that many jobs of the kind are running, on any worker, so slow jobs of
+/// one kind can't take every worker. Such claims take turns, so two
+/// workers can't both take the last place.
+pub async fn claim_limited(
+    db: &PgPool,
+    worker: &str,
+    lock: Duration,
+    kinds: &[&str],
+    limits: &[(&str, i32)],
+) -> sqlx::Result<Option<ClaimedJob>> {
+    if limits.is_empty() {
+        return claim(db, worker, lock, kinds).await;
+    }
+    let mut tx = db.begin().await?;
+    let job = claim_limited_in(&mut tx, worker, lock, kinds, limits).await?;
+    tx.commit().await?;
+    Ok(job)
+}
+
+/// [`claim_limited`] in the caller's transaction: until it ends, other
+/// limited claims wait, since they couldn't see this one yet.
+async fn claim_limited_in(
+    conn: &mut PgConnection,
+    worker: &str,
+    lock: Duration,
+    kinds: &[&str],
+    limits: &[(&str, i32)],
+) -> sqlx::Result<Option<ClaimedJob>> {
+    let (limited, most): (Vec<&str>, Vec<i32>) = limits.iter().copied().unzip();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('moekura_jobs.claim_limited'))")
+        .execute(&mut *conn)
+        .await?;
+    claim_query(worker, lock, kinds, &limited, &most)
+        .fetch_optional(&mut *conn)
+        .await
+}
+
+/// The claim, passing over kinds `limited` while `most` (the same
+/// position) of theirs are running.
+fn claim_query<'q>(
+    worker: &'q str,
+    lock: Duration,
+    kinds: &'q [&'q str],
+    limited: &'q [&'q str],
+    most: &'q [i32],
+) -> sqlx::query::QueryAs<'q, sqlx::Postgres, ClaimedJob, sqlx::postgres::PgArguments> {
     sqlx::query_as(
         "UPDATE jobs
          SET status = 'running', attempts = attempts + 1, locked_by = $1,
@@ -101,6 +153,11 @@ pub async fn claim(
          WHERE id = (
              SELECT id FROM jobs
              WHERE status = 'queued' AND run_at <= now() AND kind = ANY($3)
+               AND kind <> ALL (
+                   SELECT l.kind FROM unnest($4::text[], $5::int[]) AS l (kind, most)
+                   WHERE (SELECT count(*) FROM jobs r
+                          WHERE r.status = 'running' AND r.kind = l.kind) >= l.most
+               )
              ORDER BY run_at, id
              FOR UPDATE SKIP LOCKED
              LIMIT 1
@@ -110,8 +167,8 @@ pub async fn claim(
     .bind(worker)
     .bind(lock.as_secs_f64())
     .bind(kinds)
-    .fetch_optional(db)
-    .await
+    .bind(limited)
+    .bind(most)
 }
 
 /// Extends a running job's lock. Returns false if the job is no longer ours
@@ -411,6 +468,64 @@ mod tests {
         let before = all.len();
         all.dedup();
         assert_eq!((before, all.len()), (20, 20));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn limited_kinds_wait_their_turn(pool: PgPool) {
+        let first = push(&pool, 1).await;
+        let second = push(&pool, 2).await;
+        let other: i64 =
+            sqlx::query_scalar("INSERT INTO jobs (kind) VALUES ('test.other') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let kinds = &["test.ping", "test.other"];
+        let limits = &[("test.ping", 1)];
+        let job = claim_limited(&pool, "w1", LOCK, kinds, limits)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.id, first);
+        // A ping is running, so the next worker passes the other over.
+        let job = claim_limited(&pool, "w2", LOCK, kinds, limits)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.id, other);
+        assert!(
+            claim_limited(&pool, "w3", LOCK, kinds, limits)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        complete(&pool, first, "w1").await.unwrap();
+        let job = claim_limited(&pool, "w3", LOCK, kinds, limits)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.id, second);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn concurrent_claims_keep_to_limits(pool: PgPool) {
+        push(&pool, 1).await;
+        push(&pool, 2).await;
+        let limits = &[("test.ping", 1)];
+        // One worker's claim, not committed yet...
+        let mut first = pool.begin().await.unwrap();
+        claim_limited_in(&mut first, "w1", LOCK, KINDS, limits)
+            .await
+            .unwrap()
+            .unwrap();
+        // ...so another's can't see it, and waits for it to end.
+        let second = tokio::spawn({
+            let pool = pool.clone();
+            async move { claim_limited(&pool, "w2", LOCK, KINDS, limits).await }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        first.commit().await.unwrap();
+        assert!(second.await.unwrap().unwrap().is_none());
+        assert_eq!(counts(&pool).await.unwrap().running, 1);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

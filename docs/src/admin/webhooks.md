@@ -71,6 +71,17 @@ answer are read, so keep it short. A webhook's page lists its latest
 deliveries with what came back (the first 1000 bytes), and **Send a
 test** sends a `ping` event. Deliveries are kept for 30 days.
 
+Deliveries are sent one at a time (`webhooks.max_concurrent` in the
+[configuration](../configuration.md#webhooks)), so the other background
+jobs, like thumbnails and mail, don't wait on a receiver that's slow to
+answer. After 5 deliveries in a row that couldn't reach a receiver, or
+that it didn't answer within `webhooks.timeout_secs`, the webhook is
+paused for 10 minutes: its page says so, and its deliveries go on being
+retried on their usual schedule without being sent. Then the next one
+tries again; an answer of any status ends the pause, and **Send a test**
+goes even while paused. Pointing the webhook at another URL ends it
+too.
+
 Webhooks don't follow redirects, and don't go to private or local
 addresses unless `webhooks.allow_private_addresses` is on in the
 [configuration](../configuration.md#webhooks).

@@ -13,7 +13,7 @@
     <tr>
       <td><a href="/admin/webhooks/{{ h.id }}">{{ h.url }}</a>{% if h.format == "discord" %} <span class="hint">({{ t("webhook-format-discord") }})</span>{% endif %}{% if h.description %}<div class="hint">{{ h.description }}</div>{% endif %}</td>
       <td>{{ h.events|join(", ") }}</td>
-      <td>{% if h.enabled %}{{ t("on") }}{% else %}<span class="hint">{{ t("off") }}</span>{% endif %}</td>
+      <td>{% if h.enabled %}{{ t("on") }}{% if h.paused_until %} <span class="hint">({{ t("webhook-paused-short") }})</span>{% endif %}{% else %}<span class="hint">{{ t("off") }}</span>{% endif %}</td>
     </tr>
     {% endfor %}
   </tbody>

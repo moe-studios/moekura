@@ -113,6 +113,8 @@ webhook-result = Result
 webhook-sent = Sent
 webhook-tries = after { $count } tries
 webhook-none-sent = Nothing sent yet.
+webhook-paused = Paused: { $count } deliveries in a row couldn't reach the receiver, or it didn't answer in time. A test still goes at once; other deliveries wait until
+webhook-paused-short = paused
 
 ## Permissions, as `permission-<key>`
 

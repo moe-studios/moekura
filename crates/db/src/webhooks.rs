@@ -1,5 +1,7 @@
 //! Outgoing webhooks and their deliveries.
 
+use std::time::Duration;
+
 use moekura_core::jobs::DeliverWebhook;
 use moekura_core::webhooks::{Event, Format};
 use serde_json::Value;
@@ -20,6 +22,10 @@ pub struct Webhook {
     pub image_ratings: Vec<String>,
     pub username: String,
     pub avatar_url: String,
+    /// Deliveries in a row that couldn't reach the receiver.
+    pub network_failures: i32,
+    /// After too many of those, deliveries wait until then.
+    pub paused_until: Option<OffsetDateTime>,
 }
 
 /// What an admin sets on a webhook.
@@ -89,7 +95,10 @@ pub async fn update(
     let result = sqlx::query(
         "UPDATE webhooks SET url = $2, description = $3, events = $4, is_enabled = $5,
                              format = $6, image_ratings = $7, username = $8,
-                             avatar_url = $9, updated_at = now()
+                             avatar_url = $9, updated_at = now(),
+                             -- A new receiver hasn't failed yet.
+                             network_failures = CASE WHEN url = $2 THEN network_failures ELSE 0 END,
+                             paused_until = CASE WHEN url = $2 THEN paused_until END
          WHERE id = $1",
     )
     .bind(id)
@@ -210,6 +219,44 @@ pub async fn record_attempt(
     Ok(())
 }
 
+/// Counts a delivery to webhook `id` that couldn't reach its receiver (or
+/// timed out); the `limit`th in a row pauses the webhook for `pause`.
+/// Returns until when, if it's paused now.
+pub async fn note_unreachable(
+    db: impl PgExecutor<'_>,
+    id: i32,
+    limit: i32,
+    pause: Duration,
+) -> sqlx::Result<Option<OffsetDateTime>> {
+    let paused: Option<Option<OffsetDateTime>> = sqlx::query_scalar(
+        "UPDATE webhooks
+         SET network_failures = network_failures + 1,
+             paused_until = CASE WHEN network_failures + 1 >= $2
+                                 THEN now() + make_interval(secs => $3) END
+         WHERE id = $1
+         RETURNING paused_until",
+    )
+    .bind(id)
+    .bind(limit)
+    .bind(pause.as_secs_f64())
+    .fetch_optional(db)
+    .await?;
+    Ok(paused.flatten())
+}
+
+/// Notes that webhook `id`'s receiver answered: it isn't paused, and its
+/// count of failures starts again.
+pub async fn note_reachable(db: impl PgExecutor<'_>, id: i32) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE webhooks SET network_failures = 0, paused_until = NULL
+         WHERE id = $1 AND (network_failures > 0 OR paused_until IS NOT NULL)",
+    )
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
 /// Removes deliveries older than `days`; returns how many.
 pub async fn prune(db: impl PgExecutor<'_>, days: i32) -> sqlx::Result<u64> {
     let result = sqlx::query(
@@ -298,5 +345,50 @@ mod tests {
         assert_eq!((done.status.as_str(), done.attempts), ("delivered", 2));
         assert_eq!(deliveries(&pool, posts, 10).await.unwrap().len(), 1);
         assert_eq!(prune(&pool, 30).await.unwrap(), 0);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn unreachable_receivers_pause(pool: PgPool) {
+        let fields = Fields::new("https://a.example/hook", &[Event::PostCreated]);
+        let id = create(&pool, &fields, "s").await.unwrap();
+        let pause = Duration::from_secs(600);
+        let fail_three_times = || async {
+            for _ in 0..2 {
+                assert_eq!(note_unreachable(&pool, id, 3, pause).await.unwrap(), None);
+            }
+            note_unreachable(&pool, id, 3, pause).await.unwrap()
+        };
+        let until = fail_three_times().await.unwrap();
+        assert!(until > OffsetDateTime::now_utc() + Duration::from_secs(590));
+        let hook = by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!((hook.network_failures, hook.paused_until), (3, Some(until)));
+        // Failing on, it stays paused.
+        assert!(
+            note_unreachable(&pool, id, 3, pause)
+                .await
+                .unwrap()
+                .is_some()
+        );
+
+        // An answer starts the count again.
+        note_reachable(&pool, id).await.unwrap();
+        let hook = by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!((hook.network_failures, hook.paused_until), (0, None));
+
+        // So does sending to another receiver, but not saving the same one.
+        fail_three_times().await.unwrap();
+        update(&pool, id, &fields, true).await.unwrap();
+        assert!(
+            by_id(&pool, id)
+                .await
+                .unwrap()
+                .unwrap()
+                .paused_until
+                .is_some()
+        );
+        let elsewhere = Fields::new("https://b.example/hook", &[Event::PostCreated]);
+        update(&pool, id, &elsewhere, true).await.unwrap();
+        let hook = by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!((hook.network_failures, hook.paused_until), (0, None));
     }
 }

@@ -353,6 +353,7 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
         Duration::from_secs(config.webhooks.timeout_secs),
         config.webhooks.allow_private_addresses,
     )
+    .max_concurrent(config.webhooks.max_concurrent)
     .register(&mut registry);
     let mailer = if config.mail.is_enabled() {
         let mailer = Mailer::new(&config.mail).context("mail")?;

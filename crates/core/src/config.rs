@@ -397,6 +397,9 @@ pub struct WebhooksConfig {
     pub allow_private_addresses: bool,
     /// Seconds a delivery may take before it counts as failed.
     pub timeout_secs: u64,
+    /// Deliveries sent at once, across all job workers; the rest wait their
+    /// turn, so receivers that don't answer can't hold every worker.
+    pub max_concurrent: u32,
 }
 
 impl Default for WebhooksConfig {
@@ -404,6 +407,7 @@ impl Default for WebhooksConfig {
         Self {
             allow_private_addresses: false,
             timeout_secs: 10,
+            max_concurrent: 1,
         }
     }
 }
@@ -1149,6 +1153,12 @@ impl Config {
                 message: "must be at least 10".into(),
             });
         }
+        if self.webhooks.max_concurrent == 0 {
+            problems.push(ConfigProblem {
+                key: "webhooks.max_concurrent",
+                message: "must be at least 1".into(),
+            });
+        }
         if let Some(oidc) = &self.auth.oidc {
             if !OidcConfig::is_secure(&oidc.issuer) {
                 problems.push(ConfigProblem {
@@ -1677,6 +1687,15 @@ mod tests {
         config.validate().unwrap();
         let custom = config.tagger.source().unwrap();
         assert_eq!(custom.model_sha256, "ab".repeat(32));
+    }
+
+    #[test]
+    fn webhooks_get_at_least_one_delivery_at_once() {
+        let mut config = valid();
+        assert_eq!(config.webhooks.max_concurrent, 1);
+        config.webhooks.max_concurrent = 0;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "webhooks.max_concurrent");
     }
 
     #[test]

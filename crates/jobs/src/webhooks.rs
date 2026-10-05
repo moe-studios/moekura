@@ -27,31 +27,53 @@ const RESPONSE_READ: usize = 64 * 1024;
 /// to this.
 const MAX_RETRY_AFTER: f64 = 3600.0;
 
+/// Deliveries in a row that couldn't reach a receiver (or timed out)
+/// before its webhook is paused.
+const PAUSE_AFTER: i32 = 5;
+
+/// How long a paused webhook's deliveries wait (retried as usual, without
+/// sending) before the next one tries the receiver again.
+const PAUSE: Duration = Duration::from_secs(10 * 60);
+
 #[derive(Clone)]
 pub struct WebhookJobs {
     pub db: PgPool,
     pub client: reqwest::Client,
     pub allow_private: bool,
+    /// Deliveries sent at once, across all workers.
+    pub max_concurrent: u32,
 }
 
 impl WebhookJobs {
     /// A sender whose connections only go to public addresses (unless
-    /// `allow_private`), following no redirects.
+    /// `allow_private`), following no redirects, one delivery at a time.
     pub fn new(db: PgPool, timeout: Duration, allow_private: bool) -> Self {
         let client = moekura_net::client(timeout, allow_private, reqwest::redirect::Policy::none());
         Self {
             db,
             client,
             allow_private,
+            max_concurrent: 1,
         }
+    }
+
+    /// Sends up to `most` deliveries at once instead.
+    #[must_use]
+    pub fn max_concurrent(mut self, most: u32) -> Self {
+        self.max_concurrent = most;
+        self
     }
 
     pub fn register(self, registry: &mut Registry) {
         let pruner = self.db.clone();
-        registry.register(move |job: DeliverWebhook| {
-            let jobs = self.clone();
-            async move { jobs.deliver(job.delivery_id).await }
-        });
+        let most = self.max_concurrent;
+        registry
+            .register(move |job: DeliverWebhook| {
+                let jobs = self.clone();
+                async move { jobs.deliver(job.delivery_id).await }
+            })
+            // Each waits on a receiver, for up to the whole timeout.
+            .at_most::<DeliverWebhook>(most);
         registry
             .register(move |_: PruneWebhookDeliveries| {
                 let db = pruner.clone();
@@ -65,7 +87,9 @@ impl WebhookJobs {
 
     /// Sends delivery `id`, in its webhook's format. Failures the receiver
     /// might recover from (network errors, 5xx, 408, 429) are retried with
-    /// backoff, or when a 429 says; others are recorded and given up.
+    /// backoff, or when a 429 says; others are recorded and given up. After
+    /// [`PAUSE_AFTER`] network errors in a row, deliveries to the webhook
+    /// wait for [`PAUSE`] without sending.
     pub async fn deliver(&self, id: i64) -> Result<(), JobError> {
         let Some(delivery) = webhooks::delivery(&self.db, id).await? else {
             return Ok(());
@@ -97,6 +121,24 @@ impl WebhookJobs {
         {
             give_up("the address isn't on the public internet").await?;
             return Ok(());
+        }
+        // A receiver that keeps not answering is left alone for a while,
+        // rather than every delivery holding a worker for the whole
+        // timeout; they're retried as usual meanwhile. A test still goes,
+        // to see whether it's back.
+        let test = delivery.event == Event::Ping.as_str();
+        if let Some(until) = hook
+            .paused_until
+            .filter(|until| !test && *until > OffsetDateTime::now_utc())
+        {
+            let why = format!(
+                "not sent: {} tries in a row couldn't reach the receiver, so deliveries \
+                 wait until {}",
+                hook.network_failures,
+                until.format(&Rfc3339).unwrap_or_default()
+            );
+            webhooks::record_attempt(&self.db, id, false, None, &why).await?;
+            return Err(JobError::Retry(why));
         }
 
         let created_at = delivery.created_at.format(&Rfc3339).unwrap_or_default();
@@ -147,8 +189,19 @@ impl WebhookJobs {
                     .get("retry-after")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.trim().parse::<f64>().ok());
-                let (body, _) = read_start(response, RESPONSE_READ).await;
+                let (body, broke) = read_start(response, RESPONSE_READ).await;
                 let mut text = String::from_utf8_lossy(&body).into_owned();
+                // An answer that stalls held the worker as long as one
+                // that never came.
+                match broke {
+                    Some(error) => {
+                        if text.is_empty() {
+                            text = format!("couldn't read the answer: {}", describe(error));
+                        }
+                        webhooks::note_unreachable(&self.db, hook.id, PAUSE_AFTER, PAUSE).await?;
+                    }
+                    None => webhooks::note_reachable(&self.db, hook.id).await?,
+                }
                 if format == Format::Discord && status.is_success() {
                     let message: Option<serde_json::Value> = serde_json::from_str(&text).ok();
                     if let Some(id) = message.as_ref().and_then(|m| m["id"].as_str()) {
@@ -188,7 +241,13 @@ impl WebhookJobs {
                 }
             }
             Err(error) => {
-                let why = format!("couldn't send: {}", describe(error));
+                let mut why = format!("couldn't send: {}", describe(error));
+                if let Some(until) =
+                    webhooks::note_unreachable(&self.db, hook.id, PAUSE_AFTER, PAUSE).await?
+                {
+                    let until = until.format(&Rfc3339).unwrap_or_default();
+                    let _ = write!(why, "; paused until {until}");
+                }
                 webhooks::record_attempt(&self.db, id, false, None, &why).await?;
                 Err(JobError::Retry(why))
             }
@@ -233,6 +292,7 @@ fn describe(error: reqwest::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+    use moekura_core::jobs::Job;
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -407,6 +467,82 @@ mod tests {
         let done = webhooks::delivery(&pool, id).await.unwrap().unwrap();
         assert_eq!(done.status, "delivered");
         assert_eq!(done.response.unwrap(), "a".repeat(RESPONSE_KEPT));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn receivers_that_dont_answer_are_paused(pool: PgPool) {
+        let jobs = WebhookJobs::new(pool.clone(), Duration::from_secs(5), true);
+        let url = format!("http://{}/hook", closed_port().await);
+        let fields = webhooks::Fields::new(&url, &[Event::PostCreated]);
+        let hook = webhooks::create(&pool, &fields, "s").await.unwrap();
+        let emit = |event: Event| {
+            let pool = pool.clone();
+            async move {
+                let mut conn = pool.acquire().await.unwrap();
+                webhooks::emit(&mut conn, event, &json!({ "post_id": 7 }), Some(hook))
+                    .await
+                    .unwrap()[0]
+            }
+        };
+        for n in 1..=PAUSE_AFTER {
+            let id = emit(Event::PostCreated).await;
+            let Err(JobError::Retry(why)) = jobs.deliver(id).await else {
+                panic!("a network error is retried");
+            };
+            assert_eq!(why.contains("; paused until "), n == PAUSE_AFTER, "{why}");
+        }
+
+        // Pointed elsewhere behind its back: paused deliveries don't try.
+        let (live, request) = receiver(200).await;
+        sqlx::query("UPDATE webhooks SET url = $2 WHERE id = $1")
+            .bind(hook)
+            .bind(&live)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let waiting = emit(Event::PostCreated).await;
+        let Err(JobError::Retry(why)) = jobs.deliver(waiting).await else {
+            panic!("a paused delivery is retried later");
+        };
+        assert!(why.starts_with("not sent: 5 tries in a row"), "{why}");
+        let recorded = webhooks::delivery(&pool, waiting).await.unwrap().unwrap();
+        assert_eq!(recorded.response.as_deref(), Some(why.as_str()));
+        assert!(!request.is_finished(), "nothing was sent");
+
+        // A test still goes, and an answer ends the pause.
+        let test = emit(Event::Ping).await;
+        jobs.deliver(test).await.unwrap();
+        assert!(request.await.unwrap().contains("x-moekura-event: ping"));
+        let hook = webhooks::by_id(&pool, hook).await.unwrap().unwrap();
+        assert_eq!((hook.network_failures, hook.paused_until), (0, None));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn stalled_answers_count_as_failures(pool: PgPool) {
+        let jobs = WebhookJobs::new(pool.clone(), Duration::from_secs(1), true);
+        let url = endless(10).await;
+        let id = delivery_to(&pool, &url).await;
+        jobs.deliver(id).await.unwrap();
+        let done = webhooks::delivery(&pool, id).await.unwrap().unwrap();
+        assert_eq!(
+            (done.status.as_str(), done.response.as_deref()),
+            ("delivered", Some("aaaaaaaaaa"))
+        );
+        let hook = webhooks::by_id(&pool, done.webhook_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(hook.network_failures, 1);
+    }
+
+    #[tokio::test]
+    async fn deliveries_are_limited() {
+        let pool = PgPool::connect_lazy("postgres://localhost/unused").unwrap();
+        let mut registry = Registry::new();
+        WebhookJobs::new(pool, Duration::from_secs(5), true)
+            .max_concurrent(3)
+            .register(&mut registry);
+        assert_eq!(registry.limits, [(DeliverWebhook::KIND, 3)]);
     }
 
     /// A local address nothing listens on.

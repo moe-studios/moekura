@@ -187,6 +187,10 @@ fn events_context(chosen: &[String]) -> Vec<Value> {
 }
 
 fn hook_context(hook: &Webhook) -> Value {
+    let paused_until = hook
+        .paused_until
+        .filter(|until| *until > time::OffsetDateTime::now_utc())
+        .map(|until| until.format(&Rfc3339).unwrap_or_default());
     context! {
         id => hook.id,
         url => hook.url,
@@ -194,6 +198,8 @@ fn hook_context(hook: &Webhook) -> Value {
         events => hook.events,
         enabled => hook.is_enabled,
         format => hook.format,
+        paused_until => paused_until,
+        failures => hook.network_failures,
     }
 }
 
@@ -605,6 +611,34 @@ mod tests {
         );
         app.post(&format!("{url}/delete"), Some(&admin), &[]).await;
         assert!(webhooks::list(&pool).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn paused_webhooks_say_so(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, routes());
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let fields = Fields::new("https://hooks.example/a", &[Event::PostCreated]);
+        let id = webhooks::create(&pool, &fields, "s").await.unwrap();
+        let page = app
+            .get(&format!("/admin/webhooks/{id}"), Some(&admin))
+            .await;
+        assert!(!page.body.contains("Paused"), "{}", page.body);
+
+        for _ in 0..5 {
+            webhooks::note_unreachable(&pool, id, 5, std::time::Duration::from_secs(600))
+                .await
+                .unwrap();
+        }
+        let page = app
+            .get(&format!("/admin/webhooks/{id}"), Some(&admin))
+            .await;
+        assert!(
+            page.body.contains("Paused: 5 deliveries in a row"),
+            "{}",
+            page.body
+        );
+        let list = app.get("/admin/webhooks", Some(&admin)).await;
+        assert!(list.body.contains("(paused)"), "{}", list.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

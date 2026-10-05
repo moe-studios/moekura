@@ -1162,6 +1162,36 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn refused_sign_ups_dont_use_up_the_mail_limit(pool: PgPool) {
+        member(&pool, "bob", "bob@example.com").await;
+        let app = app(&pool, true).await;
+        // More tries than the address may be mailed, all sent back for the
+        // name, send nothing and so aren't counted.
+        for _ in 0..5 {
+            let refused = app
+                .post_form("/register", None, &[], &signup("bob", "carol@example.com"))
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(
+                refused.body.contains("That name is taken."),
+                "{}",
+                refused.body
+            );
+        }
+        assert_eq!(mail_count(&pool).await, 0);
+        let made = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &signup("carol", "carol@example.com"),
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
+        assert_eq!(last_mail(&pool).await.unwrap().0, "carol@example.com");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn display_name_addresses_are_refused(pool: PgPool) {
         moekura_db::settings::set(
             &pool,

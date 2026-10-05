@@ -219,9 +219,6 @@ async fn register(
         _ => UserStatus::Active,
     };
     let mailing = !email.is_empty() && crate::email::mail_enabled(&state);
-    if mailing {
-        state.rate_limits.check_mail(info.ip, email).await?;
-    }
 
     // One transaction, so a failed signup doesn't use up the invite.
     let mut tx = state.db.primary().begin().await?;
@@ -280,6 +277,10 @@ async fn register(
         invites::record_use(&mut *tx, invite, user.id).await?;
     }
     if mailing {
+        // Only now that a message goes out, so a form sent back for a
+        // taken name doesn't use up the address's mail. Refused, the
+        // account and the invite are rolled back.
+        state.rate_limits.check_mail(info.ip, email).await?;
         match &taken {
             Some(owner) => crate::email::send_address_in_use(&mut tx, &state, owner).await?,
             None => crate::email::send_verification(&mut tx, &state, &user, email).await?,

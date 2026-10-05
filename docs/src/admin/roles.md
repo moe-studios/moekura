@@ -73,6 +73,12 @@ every 5 that were deleted, from 1 up to four times the role's limit.
 The upload page tells users how many uploads they have left, and why an
 upload was refused; the API's `/users/me` says the same under `uploads`.
 
+Whatever the role's limits, each account may upload 20 times in a short
+while, then once every 30 seconds, so that one account can't flood the
+media tools that process every file. Sending files to be posted counts
+once, posting each of them counts again, and so does replacing a post's
+file. Staff who can approve posts aren't held to this.
+
 ## Automatic promotion
 
 With **Automatic promotion** ticked in the site settings, members become

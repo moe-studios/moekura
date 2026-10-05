@@ -47,6 +47,7 @@ pub(crate) struct Replacement<'a> {
 fn refused(error: UploadError) -> AppError {
     match error {
         UploadError::Duplicate(id) => AppError::Duplicate(id),
+        UploadError::TooFast(retry_after_secs) => AppError::TooManyRequests { retry_after_secs },
         UploadError::Internal(detail) => AppError::Internal(detail),
         other => AppError::Unprocessable(other.to_string()),
     }
@@ -182,6 +183,10 @@ async fn replace(
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ReplacePosts)?;
     let state = page.state();
+    // A new file is processed like an upload, and counted as one.
+    crate::upload::check_pace(state, &page.current)
+        .await
+        .map_err(refused)?;
     let mut file = None;
     let mut fields = UploadFields::default();
     let mut reason = String::new();

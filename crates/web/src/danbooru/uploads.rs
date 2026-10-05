@@ -39,6 +39,7 @@ fn upload_error(error: UploadError) -> AppError {
             staged: found.staged,
         },
         UploadError::Limit(message) => AppError::Blocked(message),
+        UploadError::TooFast(retry_after_secs) => AppError::TooManyRequests { retry_after_secs },
         UploadError::Internal(detail) => AppError::Internal(detail),
     }
 }

@@ -537,6 +537,7 @@ fn upload_error(error: UploadError) -> AppError {
             staged: found.staged,
         },
         UploadError::Limit(message) => AppError::Blocked(message),
+        UploadError::TooFast(retry_after_secs) => AppError::TooManyRequests { retry_after_secs },
         UploadError::Internal(detail) => AppError::Internal(detail),
     }
 }
@@ -563,6 +564,7 @@ fn upload_error(error: UploadError) -> AppError {
         (status = 409, body = ErrorBody, description = "The file was already uploaded, and `post_id` names that post; or it looks like posts already here, named in `similar`, and waits as `staged` until you confirm"),
         (status = 413, body = ErrorBody, description = "The request is larger than the site allows"),
         (status = 422, body = ErrorBody, description = "A field or the file isn't acceptable"),
+        (status = 429, body = ErrorBody, description = "Too many uploads in a short time; wait and try again"),
     ),
 )]
 pub(crate) async fn upload(

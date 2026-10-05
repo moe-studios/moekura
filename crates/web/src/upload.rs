@@ -136,6 +136,10 @@ pub enum UploadError {
     /// Over the uploader's upload limits.
     #[error("{0}")]
     Limit(String),
+    /// Too many uploads in a short time; more are taken after this many
+    /// seconds.
+    #[error("You're uploading too quickly. Please wait a moment and try again.")]
+    TooFast(u64),
     #[error("{0}")]
     Internal(String),
 }
@@ -219,14 +223,38 @@ pub(crate) fn queued(state: &AppState, uploader: &CurrentUser) -> bool {
     state.site.get().settings.upload_approval && !uploader.can(Permission::UploadWithoutApproval)
 }
 
-/// Refuses an upload over `uploader`'s limits.
+/// Refuses an upload over `uploader`'s limits, or one too many in a short
+/// time (see [`check_pace`]).
 pub(crate) async fn check_limits(
     state: &AppState,
     uploader: &CurrentUser,
 ) -> Result<(), UploadError> {
-    match allowance(state, uploader).await?.refusal {
-        Some(message) => Err(UploadError::Limit(message)),
-        None => Ok(()),
+    if let Some(message) = allowance(state, uploader).await?.refusal {
+        return Err(UploadError::Limit(message));
+    }
+    check_pace(state, uploader).await
+}
+
+/// Refuses one upload too many in a short time: each upload (each file
+/// posted from one, and each replaced file) is work for the media tools,
+/// so one account can't flood them. Staff who approve posts aren't
+/// counted.
+pub(crate) async fn check_pace(
+    state: &AppState,
+    uploader: &CurrentUser,
+) -> Result<(), UploadError> {
+    let Some(user) = &uploader.user else {
+        return Ok(());
+    };
+    if uploader.can(Permission::ApprovePosts) {
+        return Ok(());
+    }
+    match state.rate_limits.check_upload(user.id).await {
+        Ok(()) => Ok(()),
+        Err(AppError::TooManyRequests { retry_after_secs }) => {
+            Err(UploadError::TooFast(retry_after_secs))
+        }
+        Err(error) => Err(UploadError::Internal(format!("{error:?}"))),
     }
 }
 
@@ -452,7 +480,7 @@ fn failed(page: &Page, fields: &UploadFields, error: UploadError) -> Response {
 /// The status a page about `error` has.
 pub(crate) fn error_status(error: &UploadError) -> StatusCode {
     match error {
-        UploadError::Limit(_) => StatusCode::TOO_MANY_REQUESTS,
+        UploadError::Limit(_) | UploadError::TooFast(_) => StatusCode::TOO_MANY_REQUESTS,
         UploadError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::UNPROCESSABLE_ENTITY,
     }
@@ -2038,6 +2066,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(upload(&member, 36).await.status, StatusCode::SEE_OTHER);
+    }
+
+    /// Uses up the upload allowance of the user of `session`.
+    async fn spend_upload_allowance(state: &AppState, session: &str) {
+        let user = crate::test_support::current_user(state, session).await;
+        let id = user.user.unwrap().id;
+        for _ in 0..1000 {
+            if state.rate_limits.check_upload(id).await.is_err() {
+                return;
+            }
+        }
+        panic!("uploads aren't limited");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn uploads_in_quick_succession_are_limited(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        spend_upload_allowance(&state, &alice).await;
+        spend_upload_allowance(&state, &janitor).await;
+
+        let png = fixture::png(30, 20);
+        let refused = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", &png)))
+            .await;
+        assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            refused.body.contains("uploading too quickly"),
+            "{}",
+            refused.body
+        );
+        let staged = app
+            .post_multipart("/uploads", Some(&alice), &[], Some(("a.png", &png)))
+            .await;
+        assert_eq!(staged.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM staged_uploads")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+
+        // Staff who approve posts aren't counted.
+        let posted = app
+            .post_multipart(
+                "/upload",
+                Some(&janitor),
+                &fields("g"),
+                Some(("a.png", &png)),
+            )
+            .await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

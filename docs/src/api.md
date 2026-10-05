@@ -68,8 +68,9 @@ the same allowance. Every response says what's left:
 
 Past the limit, requests get a `429` with `Retry-After`, the seconds to
 wait. Some actions also have their own, tighter limits, the same as on the
-site: logging in, posting comments, flagging and reporting, and forms that
-send email.
+site: logging in, uploading (see [upload
+limits](admin/roles.md#upload-limits)), posting comments, flagging and
+reporting, and forms that send email.
 
 ## Browser apps on other websites
 

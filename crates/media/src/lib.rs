@@ -98,10 +98,39 @@ impl Media {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        let tools = &self.config.tools;
         let mut args: Vec<OsString> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
-        let is_ffmpeg = program == tools.ffmpeg;
-        let limits = if is_ffmpeg || program == tools.ffprobe {
+        if program == self.config.tools.ffmpeg && self.config.ffmpeg_threads > 0 {
+            args = with_threads(args, self.config.ffmpeg_threads);
+        }
+        // Closed only if the process is shutting down.
+        let _turn = self.permits.acquire().await.ok();
+        tool::run_limited(program, args, timeout, loaders, self.limits_for(program)).await
+    }
+
+    /// [`Self::run`], handing the program's standard output to `sink` as
+    /// it comes rather than collecting it.
+    pub(crate) async fn stream<I, S>(
+        &self,
+        program: &Path,
+        args: I,
+        timeout: std::time::Duration,
+        loaders: tool::Loaders,
+        sink: impl FnMut(&[u8]),
+    ) -> Result<(), ToolError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let _turn = self.permits.acquire().await.ok();
+        let limits = self.limits_for(program);
+        tool::stream_limited(program, args, timeout, loaders, limits, sink).await
+    }
+
+    /// What a run of `program` may use: ffmpeg's limits for ffmpeg and
+    /// ffprobe, libvips' for the libvips tools.
+    fn limits_for(&self, program: &Path) -> tool::Limits {
+        let tools = &self.config.tools;
+        if program == tools.ffmpeg || program == tools.ffprobe {
             tool::Limits {
                 memory_mb: self.config.ffmpeg_memory_mb,
                 cpu_secs: self.config.ffmpeg_cpu_secs,
@@ -116,13 +145,7 @@ impl Media {
             }
         } else {
             tool::Limits::NONE
-        };
-        if is_ffmpeg && self.config.ffmpeg_threads > 0 {
-            args = with_threads(args, self.config.ffmpeg_threads);
         }
-        // Closed only if the process is shutting down.
-        let _turn = self.permits.acquire().await.ok();
-        tool::run_limited(program, args, timeout, loaders, limits).await
     }
 
     /// [`Self::run`] with only the trusted libvips loaders.

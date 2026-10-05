@@ -195,8 +195,7 @@ pub(crate) async fn apply(
     if let Some(parent) = parent_id
         && parent_id != post.parent_id
     {
-        let exists = posts::by_id(&mut *tx, parent).await?.is_some();
-        if !exists {
+        if !visible_parent(&mut tx, current, parent).await? {
             return invalid(&format!("There is no post #{parent}."));
         }
         if posts::has_ancestor(&mut *tx, parent, id).await? {
@@ -309,6 +308,19 @@ async fn copied_tags(state: &AppState, current: &CurrentUser, id: &str) -> Resul
         .join(" "))
 }
 
+/// Whether post `parent` exists and `current` may see it, as a new parent
+/// must (as on upload): a hidden one would show in the family bar, and
+/// the answer would tell hidden posts from missing ones.
+async fn visible_parent(
+    tx: &mut sqlx::PgConnection,
+    current: &CurrentUser,
+    parent: i64,
+) -> Result<bool, sqlx::Error> {
+    Ok(posts::by_id(tx, parent)
+        .await?
+        .is_some_and(|p| visibility(current).allows(&p)))
+}
+
 /// Sets post `id`'s parent as `current` (for `child:` metatags), with the
 /// same checks as the edit form, recorded in its history.
 pub(crate) async fn set_parent(
@@ -333,7 +345,7 @@ pub(crate) async fn set_parent(
         if parent == id {
             return invalid("A post can't be its own parent.".to_owned());
         }
-        if posts::by_id(&mut *tx, parent).await?.is_none() {
+        if !visible_parent(&mut tx, current, parent).await? {
             return invalid(format!("There is no post #{parent}."));
         }
         if posts::has_ancestor(&mut *tx, parent, id).await? {
@@ -753,6 +765,52 @@ mod tests {
             // The form keeps what was typed.
             assert!(response.body.contains(&format!("value=\"{parent_field}\"")));
         }
+
+        // A parent the editor can't see reads as missing, here and for
+        // `child:` metatags and the Danbooru API.
+        let gone = upload(&app, &alice, &fixture::png(28, 20), "c").await;
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(gone)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let response = app
+            .post_form(
+                &format!("/posts/{child}/edit"),
+                Some(&alice),
+                &[],
+                &edit(&gone.to_string(), "b"),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            response
+                .body
+                .contains(&format!("There is no post #{gone}.")),
+            "{}",
+            response.body
+        );
+        let state = test_state(&pool).await;
+        let current = crate::test_support::current_user(&state, &alice).await;
+        assert!(matches!(
+            super::set_parent(&state, &current, child, Some(gone)).await,
+            Err(super::Refused::Invalid(message)) if message == format!("There is no post #{gone}.")
+        ));
+        // Keeping a parent deleted since is fine.
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(parent)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let kept = app
+            .post_form(
+                &format!("/posts/{child}/edit"),
+                Some(&alice),
+                &[],
+                &edit(&parent.to_string(), "b c"),
+            )
+            .await;
+        assert_eq!(kept.status, StatusCode::SEE_OTHER, "{}", kept.body);
 
         let anonymous = app
             .post_form(&format!("/posts/{child}/edit"), None, &[], &edit("", "b"))

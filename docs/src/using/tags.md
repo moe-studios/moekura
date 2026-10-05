@@ -31,7 +31,7 @@ things:
 |---|---|
 | `rating:g`, `s`, `q`, `e` (or the full name) | sets the rating |
 | `source:https://…`, `source:none` | sets or clears the source |
-| `parent:123`, `parent:none` or `-parent` | sets or clears the parent; `-parent:123` clears it only if it's 123 |
+| `parent:123`, `parent:none` or `-parent` | sets or clears the parent (a post you can see, as in the form's parent field); `-parent:123` clears it only if it's 123 |
 | `child:123`, `-child:123` | makes post 123 a child of this one, or stops it being one |
 | `pool:12`, `pool:name`, `-pool:12` | adds the post to the end of a pool, or takes it out |
 | `newpool:name` | starts a pool with the post (or adds it to the pool of that name) |

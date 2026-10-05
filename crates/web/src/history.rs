@@ -158,9 +158,17 @@ async fn revert(
     )
     .await
     .map_err(AppError::Unprocessable)?;
-    // A parent deleted since then is dropped rather than failing.
+    // A parent purged or hidden since then is dropped rather than failing
+    // (the post keeps the parent it has now, whatever became of it).
     let parent_id = match old.parent_id {
-        Some(parent) if posts::by_id(&mut *tx, parent).await?.is_some() => Some(parent),
+        Some(parent) if old.parent_id == post.parent_id => Some(parent),
+        Some(parent)
+            if posts::by_id(&mut *tx, parent)
+                .await?
+                .is_some_and(|p| visibility(&page.current).allows(&p)) =>
+        {
+            Some(parent)
+        }
         _ => None,
     };
     let rating = old
@@ -339,5 +347,87 @@ mod tests {
         let kept = revert(ids[2]).await;
         assert_eq!(kept.status, StatusCode::SEE_OTHER, "{}", kept.body);
         assert_eq!(tags(ids[2]).await, ["bird", "cute", "old"]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn revert_drops_a_parent_hidden_since(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::edit::routes())
+                .merge(crate::upload::routes(max)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let mut ids = Vec::new();
+        for width in [20, 24] {
+            let fields = vec![("rating", "s".to_owned()), ("tags", "cat".to_owned())];
+            let response = app
+                .post_multipart(
+                    "/upload",
+                    Some(&alice),
+                    &fields,
+                    Some(("a.png", &fixture::png(width, 20))),
+                )
+                .await;
+            ids.push(
+                response.location.unwrap()["/posts/".len()..]
+                    .split('?')
+                    .next()
+                    .unwrap()
+                    .parse::<i64>()
+                    .unwrap(),
+            );
+        }
+        let (parent, child) = (ids[0], ids[1]);
+        let set_parent = |parent: String| {
+            let app = &app;
+            let alice = &alice;
+            async move {
+                let form = format!("old_tags=cat&tags=cat&rating=s&parent={parent}");
+                let response = app
+                    .post_form(&format!("/posts/{child}/edit"), Some(alice), &[], &form)
+                    .await;
+                assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+            }
+        };
+        let parent_status = |status: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("UPDATE posts SET status = $1 WHERE id = $2")
+                    .bind(status)
+                    .bind(parent)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        let parent_now = || {
+            let pool = pool.clone();
+            async move {
+                moekura_db::posts::by_id(&pool, child)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .parent_id
+            }
+        };
+        // Version 2 has the parent, version 3 doesn't.
+        set_parent(parent.to_string()).await;
+        set_parent(String::new()).await;
+        parent_status("deleted").await;
+        let revert = format!("/posts/{child}/revert/2");
+        let response = app.post(&revert, Some(&alice), &[]).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        assert_eq!(parent_now().await, None);
+
+        // A parent the post still has stays, whatever became of it.
+        parent_status("active").await;
+        set_parent(parent.to_string()).await;
+        parent_status("deleted").await;
+        let response = app.post(&revert, Some(&alice), &[]).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        assert_eq!(parent_now().await, Some(parent));
     }
 }

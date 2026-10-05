@@ -103,9 +103,10 @@ promotion](../admin/roles.md#automatic-promotion).
 once every 7 days. Your profile lists your former names, and links to
 your old profile and searches such as `user:oldname` and
 `ordfav:oldname` keep finding you, unless someone else takes the name
-later. Staff who can ban users can rename anyone ranked below them,
-with **Rename** on their profile, at any time; that goes in the
-moderation log.
+later. An inactive account's old profile address leads nowhere, except
+for staff who manage users. Staff who can ban users can rename anyone
+ranked below them, with **Rename** on their profile, at any time; that
+goes in the moderation log.
 
 A name may not end in `.json`: `/users/name.json` is an address of the
 [Danbooru API](danbooru-clients.md), so the profile couldn't be opened.

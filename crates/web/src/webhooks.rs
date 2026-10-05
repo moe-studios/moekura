@@ -9,7 +9,7 @@ use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
-use moekura_core::posts::Rating;
+use moekura_core::posts::{PostStatus, Rating};
 use moekura_core::tokens::NewToken;
 use moekura_core::webhooks::{Event, Format, discord};
 use moekura_db::webhooks::{self, Fields, Webhook};
@@ -70,11 +70,13 @@ async fn post_data(state: &AppState, id: i64) -> Option<serde_json::Value> {
             .map(|u| u.name),
         None => None,
     };
-    // Only what visitors may see, so a Discord channel never shows more.
-    let visitors = &state.site.get().settings.visitor_ratings;
-    let image = if post.status.as_str() != "deleted"
+    // Only posts visitors may see, so a Discord channel never shows more:
+    // not pending ones (until post.approved), banned artists' or ratings
+    // kept from visitors, nor deleted ones even where visitors see those.
+    let visitor = crate::auth::CurrentUser::anonymous(&state.site.get());
+    let image = if post.status != PostStatus::Deleted
         && !state.is_private()
-        && (visitors.is_empty() || visitors.contains(&post.rating))
+        && crate::posts::visibility(&visitor).allows(&post)
     {
         crate::previews::any_post_image(state, db, post.id)
             .await
@@ -603,6 +605,58 @@ mod tests {
         );
         app.post(&format!("{url}/delete"), Some(&admin), &[]).await;
         assert!(webhooks::list(&pool).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn images_only_of_posts_visitors_see(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(state.clone(), crate::upload::routes(max));
+        let member = session_for(&pool, "alice", SystemRole::Member).await;
+        let uploaded = app
+            .post_multipart(
+                "/upload",
+                Some(&member),
+                &[("rating", "g".to_owned()), ("tags", "cat".to_owned())],
+                Some(("a.png", &fixture::png(20, 20))),
+            )
+            .await;
+        let post: i64 = uploaded.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let image = |state: AppState| async move {
+            post_data(&state, post).await.unwrap()["image_url"].clone()
+        };
+        let set_status = |status: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("UPDATE posts SET status = $2 WHERE id = $1")
+                    .bind(post)
+                    .bind(status)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        assert!(image(state.clone()).await.is_string());
+
+        // Waiting for approval: post.approved shows it, once it is.
+        set_status("pending").await;
+        assert_eq!(image(state.clone()).await, json!(null));
+        set_status("flagged").await;
+        assert!(image(state.clone()).await.is_string());
+
+        // A banned artist's, hidden from visitors.
+        set_status("active").await;
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('cat', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        state.site.reload(&pool).await.unwrap();
+        assert_eq!(image(state.clone()).await, json!(null));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

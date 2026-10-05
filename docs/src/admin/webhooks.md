@@ -33,9 +33,12 @@ Each event is a `POST` of JSON:
 
 Post events carry `post_id`, `url`, `status`, `rating`, `source`,
 `tags`, `uploader` and `uploader_url`, `created_at`, and `image_url`: a
-sample of the image (or a video's poster), only for ratings visitors who
-aren't logged in may see and never for deleted posts; deletions and
-flags add a `reason`. Comments carry `comment_id`, `post_id`, `url`,
+sample of the image (or a video's poster), only for posts visitors who
+aren't logged in may see on a site that isn't private, and never for
+deleted posts. So a post waiting for approval has no image until
+`post.approved`, and neither do banned artists' posts while they're
+hidden or ratings kept from visitors. Deletions and flags add a
+`reason`. Comments carry `comment_id`, `post_id`, `url`,
 `creator`, `creator_url`, `body` and `created_at`; registrations
 `user_id`, `name`, `url` and `status`.
 
@@ -84,8 +87,9 @@ message.
 - Images show only for posts whose rating is ticked under **Images in
   Discord messages** (general and sensitive at first) *and* that
   visitors who aren't logged in may see (the `visitor_ratings` site
-  setting). Others get a message without the image. Private sites
-  never send images, since Discord couldn't load them.
+  setting; not pending posts or hidden banned artists' posts). Others
+  get a message without the image. Private sites never send images,
+  since Discord couldn't load them.
 - Nobody is pinged: messages turn off `@everyone`, role and user
   mentions, whatever a comment says.
 - **Name** and **Avatar URL** replace the webhook's own name and avatar

@@ -79,7 +79,10 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new()
         .route("/uploads", get(index).post(create).layer(body_limit))
         .route("/uploads/new", get(new))
-        .route("/uploads/bookmarklet", get(bookmarklet))
+        .route(
+            "/uploads/bookmarklet",
+            get(bookmarklet).post(new_bookmarklet_key),
+        )
         .route("/uploads/{id}", get(show))
         .route("/uploads/{id}/status", get(status))
         .route("/uploads/{id}/assets/{file}", get(asset).post(post_asset))
@@ -144,14 +147,18 @@ async fn new(page: Page, Query(query): Query<NewQuery>) -> Result<Response, AppE
     Ok(form_page(&page, link, None, StatusCode::OK, &notes))
 }
 
-/// What bookmarklet tokens are made with, in `moekura_db::secrets`.
-const BOOKMARKLET_KEY: &str = "bookmarklet";
+/// What user `user_id`'s bookmarklet token is made with is called in
+/// `moekura_db::secrets`. Each user has their own, so that one can make a
+/// new one (see [`new_bookmarklet_key`]) without stopping others'.
+fn bookmarklet_key(user_id: i64) -> String {
+    format!("bookmarklet:{user_id}")
+}
 
 /// The MAC behind user `user_id`'s bookmarklet token.
 async fn bookmarklet_mac(state: &AppState, user_id: i64) -> Result<Hmac<Sha256>, AppError> {
     let key = moekura_db::secrets::get_or_create(
         state.db.primary(),
-        BOOKMARKLET_KEY,
+        &bookmarklet_key(user_id),
         moekura_core::tokens::NewToken::generate().hash,
     )
     .await?;
@@ -232,6 +239,16 @@ async fn bookmarklet(page: Page) -> Result<Response, AppError> {
             .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     }
     Ok(response)
+}
+
+/// Makes the user's bookmarklet token anew: a site the bookmarklet was
+/// used on saw the old one, which now only fills in the form.
+async fn new_bookmarklet_key(page: Page, jar: CookieJar) -> Result<Response, AppError> {
+    let user = uploader(&page.current)?;
+    moekura_db::secrets::remove(page.state().db.primary(), &bookmarklet_key(user.id)).await?;
+    tracing::info!(user = user.name, "bookmarklet key replaced");
+    let to = Redirect::to("/uploads/bookmarklet");
+    Ok((flash::set(jar, Flash::Saved), to).into_response())
 }
 
 /// The link on the upload form, and the page it was found on.
@@ -2254,6 +2271,21 @@ mod tests {
                     .contains(&format!("value=\"http:&#x2f;&#x2f;{addr}"))
             );
         }
+        // A new key stops the old bookmarklet sending by itself, and only
+        // the user's own.
+        let renewed = app.post("/uploads/bookmarklet", Some(&alice), &[]).await;
+        assert_eq!(renewed.status, StatusCode::SEE_OTHER);
+        assert_eq!(renewed.location.as_deref(), Some("/uploads/bookmarklet"));
+        let old = app.get(&opened(&token), Some(&alice)).await;
+        assert!(!old.body.contains("data-upload-send-now"));
+        let new = bookmarklet_token(&state, current_user(&state, &alice).await.user.unwrap().id)
+            .await
+            .unwrap();
+        assert_ne!(new, token);
+        let form = app.get(&opened(&new), Some(&alice)).await;
+        assert!(form.body.contains("data-upload-send-now"));
+        let form = app.get(&opened(&bobs), Some(&bob)).await;
+        assert!(form.body.contains("data-upload-send-now"));
 
         // The bare image's work is the page it was found on.
         let sent = app
@@ -2315,6 +2347,9 @@ mod tests {
         // Logged out, it carries no token, and says to log in first.
         assert!(!page.body.contains("token="), "{}", page.body);
         assert!(page.body.contains("Log in before"), "{}", page.body);
+        assert!(!page.body.contains("Make a new key"), "{}", page.body);
+        let refused = app.post("/uploads/bookmarklet", None, &[]).await;
+        assert_ne!(refused.status, StatusCode::SEE_OTHER);
 
         // An uploader's carries theirs, and is kept out of caches.
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -2328,6 +2363,13 @@ mod tests {
             "{}",
             page.body
         );
+        // The sites it's used on see the key, so a new one can be made.
+        assert!(
+            page.body.contains("action=\"/uploads/bookmarklet\""),
+            "{}",
+            page.body
+        );
+        assert!(page.body.contains("Make a new key"), "{}", page.body);
         let request = axum::http::Request::get("/uploads/bookmarklet")
             .header(
                 axum::http::header::COOKIE,

@@ -152,10 +152,14 @@ Clicking it on a work's page opens the upload page with the page's link
 back skips the upload page. `token` is a key of your own, so take the
 bookmarklet while logged in, and don't share it: without it, as in a
 link to the upload page from another site, the link only fills in the
-form, and waits for you to press **Upload**. `ref` is the page you came
-from: when the link is a bare image, the work is read from that page if
-it's on the same site or shows the image. It's kept as the upload's
-`referer_url` (also in the Danbooru API's `upload[referer_url]`).
+form, and waits for you to press **Upload**. The sites you use the
+bookmarklet on can see the key as well. **Make a new key** on the
+bookmarklet page replaces it (yours only), if you doubt one of them;
+bookmarklets taken before then only fill in the form, so take it again.
+`ref` is the page you came from: when the link is a bare image, the work
+is read from that page if it's on the same site or shows the image. It's
+kept as the upload's `referer_url` (also in the Danbooru API's
+`upload[referer_url]`).
 
 ## Ugoira
 

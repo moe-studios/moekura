@@ -12,7 +12,12 @@
     <li>{{ t("bookmarklet-step-open") }}</li>
     <li>{{ t("bookmarklet-step-click") }}</li>
   </ol>
-  {% if personal %}<p class="hint">{{ t("bookmarklet-personal") }}</p>{% elif not me %}<p class="hint">{{ t("bookmarklet-log-in") }}</p>{% endif %}
+  {% if personal %}
+  <p class="hint">{{ t("bookmarklet-personal") }}</p>
+  <form class="inline" method="post" action="/uploads/bookmarklet">
+    <button type="submit" class="secondary" data-confirm="{{ t('bookmarklet-new-key-confirm') }}">{{ t("bookmarklet-new-key") }}</button>
+  </form>
+  {% elif not me %}<p class="hint">{{ t("bookmarklet-log-in") }}</p>{% endif %}
   <p class="hint">{{ t("bookmarklet-mobile") }}</p>
 
   <h2 id="supported-sites">{{ t("bookmarklet-sites-title") }}</h2>

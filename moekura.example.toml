@@ -5,7 +5,7 @@
 # MOEKURA_<SECTION>__<KEY>, e.g. MOEKURA_DATABASE__URL. Environment variables win
 # over this file. Values shown are the defaults unless noted.
 #
-# `moekura check-config` prints the effective settings.
+# `moekura check-config` prints the effective settings, credentials redacted.
 
 [server]
 # Address the HTTP server listens on.

@@ -26,7 +26,10 @@ underscores), for example `MOEKURA_DATABASE__URL` or
 a typo fails loudly instead of being ignored.
 
 `moekura check-config` validates the configuration and prints the result
-with passwords redacted.
+with credentials replaced by `REDACTED`: passwords and secret keys, the
+cookies, query values and headers of `[sources.logins]`, and the user,
+password and query values of every address (the OTLP collector, the
+tagger's model, …). Names stay, so it still shows what is sent where.
 
 ## `[server]`
 

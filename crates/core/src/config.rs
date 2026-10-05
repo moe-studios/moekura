@@ -1201,7 +1201,9 @@ impl Config {
         }
     }
 
-    /// A copy with credentials masked, safe to print or log.
+    /// A copy with credentials masked, safe to print or log: passwords,
+    /// secret keys, site logins, and whatever an address carries in its
+    /// userinfo or query.
     pub fn redacted(&self) -> Self {
         let mut config = self.clone();
         config.database.url = redact_url(&config.database.url);
@@ -1211,19 +1213,73 @@ impl Config {
         if let Some(url) = &mut config.cache.url {
             *url = redact_url(url);
         }
-        if !config.storage.s3.secret_access_key.is_empty() {
-            config.storage.s3.secret_access_key = REDACTED.to_owned();
+        redact_secret(&mut config.storage.s3.secret_access_key);
+        if let Some(oidc) = &mut config.auth.oidc {
+            redact_secret(&mut oidc.client_secret);
         }
-        if let Some(oidc) = &mut config.auth.oidc
-            && !oidc.client_secret.is_empty()
+        if let Some(captcha) = &mut config.auth.captcha {
+            redact_secret(&mut captcha.secret_key);
+        }
+        redact_secret(&mut config.mail.password);
+        // Session cookies, API keys and tokens for other sites: names are
+        // kept, so it still shows what is sent where.
+        for login in config.sources.logins.values_mut() {
+            redact_secret(&mut login.cookie);
+            login.query.values_mut().for_each(redact_secret);
+            login.headers.values_mut().for_each(redact_secret);
+        }
+        if let Ok(mut url) = Url::parse(&config.sources.x.fxembed_api_url)
+            && redact_web_url(&mut url)
         {
-            oidc.client_secret = REDACTED.to_owned();
+            config.sources.x.fxembed_api_url = url.into();
         }
-        if !config.mail.password.is_empty() {
-            config.mail.password = REDACTED.to_owned();
+        for url in [
+            config.telemetry.otlp_endpoint.as_mut(),
+            config.tagger.model_url.as_mut(),
+            config.tagger.tags_url.as_mut(),
+            config.storage.public_base_url.as_mut(),
+            config.storage.s3.endpoint.as_mut(),
+            config
+                .auth
+                .captcha
+                .as_mut()
+                .and_then(|c| c.verify_url.as_mut()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            redact_web_url(url);
         }
         config
     }
+}
+
+/// Masks a secret that is set, leaving an unset one visibly empty.
+fn redact_secret(secret: &mut String) {
+    if !secret.is_empty() {
+        *secret = REDACTED.to_owned();
+    }
+}
+
+/// Masks the userinfo and every query value of a web address, where
+/// services take credentials and API keys. Says whether there were any.
+fn redact_web_url(url: &mut Url) -> bool {
+    let secret = !url.username().is_empty() || url.password().is_some() || url.query().is_some();
+    // Both only fail for URLs that cannot have credentials, which then
+    // have none to hide.
+    if !url.username().is_empty() {
+        let _ = url.set_username(REDACTED);
+    }
+    if url.password().is_some() {
+        let _ = url.set_password(Some(REDACTED));
+    }
+    if url.query().is_some() {
+        let keys: Vec<String> = url.query_pairs().map(|(k, _)| k.into_owned()).collect();
+        url.query_pairs_mut()
+            .clear()
+            .extend_pairs(keys.iter().map(|k| (k, REDACTED)));
+    }
+    secret
 }
 
 fn check_postgres_url(raw: &str) -> Result<(), String> {
@@ -1612,6 +1668,68 @@ mod tests {
         let redacted = config.redacted();
         assert!(!redacted.database.url.contains("hunter2"));
         assert!(!redacted.database.replicas[0].contains("secret"));
+    }
+
+    #[test]
+    fn redacted_hides_every_credential() {
+        let config: Config = toml::from_str(
+            r#"
+            [database]
+            url = "postgres://moekura:s3cr3t-db@db/moekura"
+            replicas = ["postgres://db/moekura?password=s3cr3t-replica"]
+            [cache]
+            url = "rediss://default:s3cr3t-cache@valkey:6379"
+            [auth.oidc]
+            issuer = "https://sso.example.com"
+            client_id = "moekura"
+            client_secret = "s3cr3t-oidc"
+            [auth.captcha]
+            provider = "turnstile"
+            site_key = "public-site-key"
+            secret_key = "s3cr3t-captcha"
+            verify_url = "https://verify:s3cr3t-verify@captcha.example.com/check?key=s3cr3t-verify-key"
+            [mail]
+            host = "smtp.example.com"
+            username = "moekura"
+            password = "s3cr3t-mail"
+            [sources.logins."pixiv.net"]
+            cookie = "PHPSESSID=s3cr3t-cookie"
+            [sources.logins."gelbooru.com"]
+            query = { user_id = "s3cr3t-user-id", api_key = "s3cr3t-api-key" }
+            [sources.logins."pawoo.net"]
+            headers = { Authorization = "Bearer s3cr3t-bearer" }
+            [sources.x]
+            fxembed_api_url = "https://fx:s3cr3t-fx@fx.example.com/?token=s3cr3t-fx-token"
+            [storage]
+            public_base_url = "https://cdn.example.com/?sig=s3cr3t-cdn"
+            [storage.s3]
+            endpoint = "https://minio:s3cr3t-endpoint@minio.example.com"
+            secret_access_key = "s3cr3t-s3"
+            [tagger]
+            model = "custom"
+            model_url = "https://huggingface.co/m/model.onnx?token=s3cr3t-model"
+            tags_url = "https://user:s3cr3t-tags@example.com/tags.csv"
+            [telemetry]
+            otlp_endpoint = "https://otel:s3cr3t-otlp@collector.example.com:4318"
+            "#,
+        )
+        .unwrap();
+        let printed = toml::to_string_pretty(&config.redacted()).unwrap();
+        assert!(!printed.contains("s3cr3t"), "{printed}");
+        // Still says what is configured, and where.
+        for shown in [
+            "public-site-key",
+            "Authorization",
+            "api_key",
+            "collector.example.com",
+            "token=REDACTED",
+        ] {
+            assert!(printed.contains(shown), "{shown}: {printed}");
+        }
+        // Unset secrets stay visibly unset, and plain addresses unchanged.
+        let plain = Config::default().redacted();
+        assert_eq!(plain.mail.password, "");
+        assert_eq!(plain.sources.x.fxembed_api_url, "https://api.fixupx.com");
     }
 
     #[test]

@@ -97,12 +97,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Openapi => unreachable!("handled before loading the configuration"),
         Command::CheckConfig => {
-            // Site settings live in the database; say which ones win.
-            println!(
-                "# search.per_page, max_per_page and max_page are defaults: the `pagination`\n\
-                 # site setting overrides them (see `moekura admin settings`).\n"
-            );
-            print!("{}", toml::to_string_pretty(&config.redacted())?);
+            print!("{}", effective_settings(&config)?);
             Ok(())
         }
         Command::Migrate => {
@@ -180,6 +175,17 @@ fn parse_args() -> Cli {
         eprintln!("warning: {warning}");
     }
     Cli::parse_from(args)
+}
+
+/// What `check-config` prints: the settings in effect, with credentials
+/// masked, as operators paste it into bug reports.
+fn effective_settings(config: &Config) -> anyhow::Result<String> {
+    // Site settings live in the database; say which ones win.
+    Ok(format!(
+        "# search.per_page, max_per_page and max_page are defaults: the `pagination`\n\
+         # site setting overrides them (see `moekura admin settings`).\n\n{}",
+        toml::to_string_pretty(&config.redacted())?
+    ))
 }
 
 async fn serve(config: Config) -> anyhow::Result<()> {
@@ -451,8 +457,11 @@ async fn shutdown_signal() {
 }
 
 #[cfg(test)]
+// `Jail` closures must return `figment::Result`, whose error type is large.
+#[allow(clippy::result_large_err)]
 mod tests {
     use clap::CommandFactory;
+    use figment::Jail;
 
     use super::*;
 
@@ -482,5 +491,36 @@ mod tests {
             );
             assert!(!exists(old), "{} still exists", rename.old);
         }
+    }
+
+    #[test]
+    fn check_config_prints_no_credentials() {
+        Jail::expect_with(|jail| {
+            jail.create_file(
+                config::DEFAULT_PATH,
+                r#"
+                [database]
+                url = "postgres://moekura:s3cr3t-db@db/moekura"
+                [auth.captcha]
+                provider = "hcaptcha"
+                site_key = "public-site-key"
+                secret_key = "s3cr3t-captcha"
+                [sources.logins."x.com"]
+                cookie = "auth_token=s3cr3t-cookie"
+                headers = { "x-csrf-token" = "s3cr3t-csrf" }
+                [sources.logins."gelbooru.com"]
+                query = { user_id = "7", api_key = "s3cr3t-api-key" }
+                [telemetry]
+                otlp_endpoint = "https://otel:s3cr3t-otlp@collector.example.com"
+                "#,
+            )?;
+            jail.set_env("MOEKURA_MAIL__PASSWORD", "s3cr3t-mail");
+            let (config, _) = config::load(None).map_err(|e| format!("{e:#}"))?;
+            let printed = effective_settings(&config).map_err(|e| format!("{e:#}"))?;
+            assert!(!printed.contains("s3cr3t"), "{printed}");
+            assert!(printed.contains("public-site-key"), "{printed}");
+            assert!(printed.contains("x-csrf-token"), "{printed}");
+            Ok(())
+        });
     }
 }

@@ -115,9 +115,11 @@ The server serves at most 512 connections at once
 ([`server.connections.max`](configuration.md#serverconnections)); more
 wait their turn. A connection that goes 10 seconds without sending a
 request's headers (`idle_timeout_secs`) is closed, which includes
-keep-alive connections left idle; clients open a new one. A busy site
-served without a reverse proxy may need a higher `max`, and an open file
-limit (`ulimit -n`) to match.
+keep-alive connections left idle; clients open a new one. Once closing,
+it's cut off if the client takes none of its response for 60 seconds
+(`send_timeout_secs`), so a download paused for longer than that stops.
+A busy site served without a reverse proxy may need a higher `max`, and
+an open file limit (`ulimit -n`) to match.
 
 ### The compose file publishes the app on this machine only
 

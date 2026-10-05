@@ -42,6 +42,9 @@ max = 512
 # Close a connection that goes this many seconds without sending a whole
 # request's headers: one sending nothing, or too slowly, or left idle.
 idle_timeout_secs = 10
+# Then cut it off if the client takes none of its response for this many
+# seconds (while no request is being worked on): one that stopped reading.
+send_timeout_secs = 60
 
 [database]
 # Required. Connection URL of the primary.

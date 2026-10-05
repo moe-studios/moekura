@@ -2097,6 +2097,7 @@ dependencies = [
  "fluent-langneg",
  "futures-util",
  "governor",
+ "h2",
  "hex",
  "hmac",
  "http-body-util",

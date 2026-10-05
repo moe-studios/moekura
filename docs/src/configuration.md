@@ -62,17 +62,23 @@ allowed_origins = ["https://viewer.example.com", "http://localhost:5173"]
 ## `[server.connections]`
 
 Limits on the connections the app serves, so clients that open them and
-send nothing, or send their requests a byte at a time, can't hold them
-for long or run the process out of file descriptors.
+send nothing, send their requests a byte at a time, or stop reading the
+responses they asked for, can't hold them for long or run the process
+out of file descriptors.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `max` | `512` | connections served at once; more wait to be accepted until one closes. Each takes a file descriptor, so keep it well under the process's open file limit (`ulimit -n`, often 1024), which also covers database connections, files and media tools |
 | `idle_timeout_secs` | `10` | a connection is closed when it goes this long without sending a whole request's headers: one that sends nothing, sends its headers too slowly, or sits idle between requests. A request in progress is answered first |
+| `send_timeout_secs` | `60` | a connection being closed (as idle, or because the app is stopping) is cut off when the client takes none of its response for this long, while no request is still being worked on: a client that stops reading, or never lets an HTTP/2 response through, can't keep it. A slow download goes on as long as the client keeps taking some of it |
 
-These hold whether or not a reverse proxy is in front. They don't tell
-one client from another: a client opening connections fast enough can
-still fill them all, and others then wait. A [reverse proxy](install/reverse-proxy.md)
+These hold whether or not a reverse proxy is in front. Stopping the app
+waits for the responses in progress, but no longer than
+`send_timeout_secs` for a client that takes nothing. The limits don't
+tell one client from another: a client opening connections fast enough
+can still fill them all, and others then wait, and one that keeps
+sending something, or takes a little of a response now and then, keeps
+its connection. A [reverse proxy](install/reverse-proxy.md)
 in front can limit connections per client (nginx's `limit_conn`) and
 has its own client timeouts, which is one more reason to keep the app's
 port reachable only by the proxy. A proxy that keeps connections to the

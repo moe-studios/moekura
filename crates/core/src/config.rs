@@ -56,7 +56,7 @@ pub struct ServerConfig {
     /// Which other websites' scripts may call the APIs.
     pub cors: CorsConfig,
     /// How many connections are served at once, and how long they may
-    /// wait for a request.
+    /// wait for a request, or for the client to take a response.
     pub connections: ConnectionConfig,
 }
 
@@ -109,7 +109,7 @@ impl CorsConfig {
 }
 
 /// Limits on the HTTP server's connections, so clients that open them
-/// and send nothing, or send slowly, can't hold them all.
+/// and send nothing, send slowly, or stop reading, can't hold them all.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConnectionConfig {
@@ -121,6 +121,10 @@ pub struct ConnectionConfig {
     /// long is closed: one sending nothing, or its headers too slowly, or
     /// left idle between requests.
     pub idle_timeout_secs: u64,
+    /// Once a connection is closing, it's cut off when the client takes
+    /// none of its response for this long (and no request is still being
+    /// handled), so a client that stops reading can't keep it open.
+    pub send_timeout_secs: u64,
 }
 
 impl Default for ConnectionConfig {
@@ -128,6 +132,7 @@ impl Default for ConnectionConfig {
         Self {
             max: 512,
             idle_timeout_secs: 10,
+            send_timeout_secs: 60,
         }
     }
 }
@@ -1230,6 +1235,10 @@ impl Config {
                 "server.connections.idle_timeout_secs",
                 connections.idle_timeout_secs,
             ),
+            (
+                "server.connections.send_timeout_secs",
+                connections.send_timeout_secs,
+            ),
         ] {
             if value == 0 {
                 problems.push(ConfigProblem {
@@ -1511,10 +1520,18 @@ mod tests {
     #[test]
     fn connections_are_limited() {
         let connections = Config::default().server.connections;
-        assert_eq!((connections.max, connections.idle_timeout_secs), (512, 10));
+        assert_eq!(
+            (
+                connections.max,
+                connections.idle_timeout_secs,
+                connections.send_timeout_secs
+            ),
+            (512, 10, 60)
+        );
         let mut config = valid();
         config.server.connections.max = 0;
         config.server.connections.idle_timeout_secs = 0;
+        config.server.connections.send_timeout_secs = 0;
         let keys: Vec<_> = config
             .validate()
             .unwrap_err()
@@ -1525,7 +1542,8 @@ mod tests {
             keys,
             [
                 "server.connections.max",
-                "server.connections.idle_timeout_secs"
+                "server.connections.idle_timeout_secs",
+                "server.connections.send_timeout_secs"
             ]
         );
     }

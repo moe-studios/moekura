@@ -53,6 +53,14 @@ fn corrupt(message: impl std::fmt::Display) -> MediaError {
     MediaError::Corrupt(format!("not an ugoira zip: {message}"))
 }
 
+/// Opens the zip at `path`; see [`crate::zipfile`].
+fn open(path: &Path) -> Result<crate::zipfile::Zip, MediaError> {
+    crate::zipfile::open(path).map_err(|e| match e {
+        crate::zipfile::OpenError::Io(e) => MediaError::Io(e),
+        other => corrupt(other),
+    })
+}
+
 fn is_frame(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     [".jpg", ".jpeg", ".png"]
@@ -62,7 +70,7 @@ fn is_frame(name: &str) -> bool {
 
 /// The frames of the zip at `path`, in order, with their delays.
 pub fn frames(path: &Path) -> Result<Vec<Frame>, MediaError> {
-    let mut archive = zip::ZipArchive::new(File::open(path)?).map_err(corrupt)?;
+    let mut archive = open(path)?;
     let mut names = Vec::new();
     let mut total = 0u64;
     let mut data: Option<FrameData> = None;
@@ -142,7 +150,7 @@ fn extract_within(
     max_frame: u64,
     max_total: u64,
 ) -> Result<Vec<PathBuf>, MediaError> {
-    let mut archive = zip::ZipArchive::new(File::open(path)?).map_err(corrupt)?;
+    let mut archive = open(path)?;
     let mut out = Vec::with_capacity(frames.len());
     let mut written = 0u64;
     for (n, frame) in frames.iter().enumerate() {
@@ -181,7 +189,9 @@ fn extract_within(
 /// it has one.
 pub fn add_frame_data(path: &Path, frames: &[Frame]) -> Result<(), MediaError> {
     {
-        let mut archive = zip::ZipArchive::new(File::open(path)?).map_err(corrupt)?;
+        // Opened with the limit first: appending reads the same directory
+        // again.
+        let mut archive = open(path)?;
         if archive.by_name(FRAME_DATA).is_ok() {
             return Ok(());
         }

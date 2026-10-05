@@ -198,10 +198,12 @@ work's page on a site Moekura reads works too), or a post, and lists the
 posts that look most like it, with how alike they are, without uploading
 anything. Matches are found by the same perceptual hash as `similar:`,
 so a resized or recompressed copy is found, but a crop or an edit may
-not be. Each search compares the picture with every post, so they're
-limited to a few a minute, counted before a link is looked up. A linked
-picture may be up to 20 MB (or the upload limit, if that's lower). The
-API has it as `POST /api/v1/posts/similar`, and Danbooru clients as
+not be. A video searches by its poster frame; zips, ugoira included,
+can't be searched with (search with the ugoira's post instead). Each
+search compares the picture with every post, so they're limited to a few
+a minute, counted before a link is looked up. A linked picture may be up
+to 20 MB (or the upload limit, if that's lower). The API has it as
+`POST /api/v1/posts/similar`, and Danbooru clients as
 `/iqdb_queries.json`.
 
 ## Popular posts and searches

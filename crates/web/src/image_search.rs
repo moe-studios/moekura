@@ -77,6 +77,13 @@ pub(crate) async fn hash_file(state: &AppState, file: &TempUpload) -> Result<u64
     };
     let media = &state.media;
     let kind = media.identify(file.path()).await.map_err(refused)?;
+    // Only pictures and videos: a zip would be opened and unpacked to
+    // find its first frame, too much to do for a search.
+    if kind == moekura_media::MediaType::Ugoira {
+        return Err(AppError::Unprocessable(
+            "Search with a picture or a video, not a zip.".into(),
+        ));
+    }
     let dir = state.work_dir.join(format!(
         "search-{}",
         hex::encode(&moekura_core::tokens::NewToken::generate().hash[..8])
@@ -373,6 +380,25 @@ mod tests {
         let page = app.get("/iqdb_queries", None).await;
         assert_eq!(page.status, StatusCode::OK);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn searches_with_pictures_not_zips(pool: PgPool) {
+        use std::io::Write;
+
+        let state = test_state(&pool).await;
+        let app = TestApp::new(state, routes(10 * 1024 * 1024));
+        // An ugoira, as uploads take them.
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        zip.start_file("000000.png", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(&fixture::png(16, 16)).unwrap();
+        let zip = zip.finish().unwrap().into_inner();
+        let refused = app
+            .post_multipart("/iqdb_queries", None, &[], Some(("a.zip", &zip)))
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("not a zip"), "{}", refused.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

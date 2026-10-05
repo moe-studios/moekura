@@ -12,6 +12,7 @@ mod render;
 pub mod strip;
 pub mod tool;
 pub mod ugoira;
+mod zipfile;
 
 use std::ffi::OsString;
 use std::path::Path;

@@ -94,7 +94,13 @@ impl Media {
         // after the file, so files hashed at once in `dir` don't meet.
         let mut name = path.file_name().unwrap_or_default().to_owned();
         name.push(".pixels.raw");
-        let target = StdoutTarget::create(dir.join(name)).await;
+        let Some(target) = StdoutTarget::create(dir.join(name)).await else {
+            tracing::warn!(
+                dir = %dir.display(),
+                "pixels not hashed: no link to standard output could be made there"
+            );
+            return Ok(None);
+        };
         let loaders = loaders_for(media_type);
         // Only to guess how the pixels will be laid out: a file vips
         // can't read fails below.
@@ -194,31 +200,31 @@ fn likely_per_pixel(header: &Metadata, icc: bool) -> u64 {
 
 /// A path vips saves raw pixels to that leads to its standard output: a
 /// link to it, named `.raw` to pick the saver. vips takes a bare `.raw`
-/// for its standard output too, but only from libvips 8.16, so that's
-/// only where there's no link. The link is removed when this is dropped.
-struct StdoutTarget(Option<PathBuf>);
+/// for its standard output too, but only from libvips 8.16; older ones
+/// save a file named `.raw` in the server's directory, so there's no
+/// fallback. The link is removed when this is dropped.
+struct StdoutTarget(PathBuf);
 
 impl StdoutTarget {
-    async fn create(link: PathBuf) -> Self {
+    /// `None` where no link can be made (no symlinks on the filesystem).
+    async fn create(link: PathBuf) -> Option<Self> {
         // Left by a run that crashed.
         let _ = tokio::fs::remove_file(&link).await;
         #[cfg(unix)]
         if tokio::fs::symlink("/dev/stdout", &link).await.is_ok() {
-            return Self(Some(link));
+            return Some(Self(link));
         }
-        Self(None)
+        None
     }
 
     fn path(&self) -> &Path {
-        self.0.as_deref().unwrap_or(Path::new(".raw"))
+        &self.0
     }
 }
 
 impl Drop for StdoutTarget {
     fn drop(&mut self) {
-        if let Some(link) = &self.0 {
-            let _ = std::fs::remove_file(link);
-        }
+        let _ = std::fs::remove_file(&self.0);
     }
 }
 
@@ -534,7 +540,7 @@ mod tests {
         let png = fixtures::image(&dir, "rgb.png", 64, 48);
         let input = png.to_str().unwrap().to_owned();
         let rgba = fixtures::make(&dir, "rgba.png", &["-i", &input, "-pix_fmt", "rgba"]);
-        let target = StdoutTarget::create(dir.join("guess.raw")).await;
+        let target = StdoutTarget::create(dir.join("guess.raw")).await.unwrap();
         for (path, right) in [(png, 3), (rgba, 4)] {
             let expected = hashed_from_file(&path, (64, 48), false, &dir).unwrap();
             for guess in [3, 4, 6, 8] {
@@ -597,6 +603,24 @@ mod tests {
             std::fs::read_to_string(&saved).unwrap()
         );
         assert!(std::fs::symlink_metadata(dir.join("a.png.pixels.raw")).is_err());
+    }
+
+    #[tokio::test]
+    async fn without_a_link_the_pixels_go_unhashed() {
+        use crate::fixtures;
+
+        let media = Media::new(moekura_core::config::MediaConfig::default());
+        let dir = fixtures::dir("pixel-hash-no-link");
+        let png = fixtures::image(&dir, "a.png", 32, 24);
+        // Nowhere to make the link: older libvips would take a bare
+        // `.raw` as a file in the server's directory, so none is used.
+        let nowhere = dir.join("missing");
+        let hash = media
+            .pixel_hash(&png, MediaType::Png, (32, 24), false, &nowhere)
+            .await
+            .unwrap();
+        assert_eq!(hash, None);
+        assert!(!Path::new(".raw").exists());
     }
 
     #[test]

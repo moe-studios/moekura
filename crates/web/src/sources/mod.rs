@@ -93,11 +93,11 @@ use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
-use moekura_core::config::SourcesConfig;
+use moekura_core::config::{SiteLogin, SourcesConfig};
 use moekura_core::permissions::Permission;
 use time::OffsetDateTime;
 use tokio::sync::Semaphore;
@@ -125,10 +125,13 @@ const TURN_WAIT: Duration = Duration::from_secs(10);
 const LOOKUP_DEADLINE: Duration = Duration::from_secs(20);
 /// HEAD requests one lookup may make to find a file's best size.
 const MAX_PROBES: usize = 40;
-/// Logged-in requests to X, site-wide: this many at once, then one per
-/// [`X_LOGIN_PERIOD`] (30 every 15 minutes).
+/// Lookups using the X login, on this server: this many at once, then
+/// one per [`X_LOGIN_PERIOD`] (30 every 15 minutes).
 const X_LOGIN_BURST: u32 = 30;
 const X_LOGIN_PERIOD: Duration = Duration::from_secs(30);
+/// X's domains, whose requests carry the X login only when
+/// [`Http::may_use_x_login`] says so.
+const X_DOMAINS: &[&str] = &["x.com", "twitter.com"];
 
 /// What's kept of a lookup (see [`SourceInfo::clamped`]): a page can say
 /// a great deal, and what it says is cached.
@@ -325,6 +328,8 @@ pub(crate) struct Http<'a> {
     asker: Asker,
     /// HEAD requests this lookup may still make.
     probes: AtomicUsize,
+    /// Whether this lookup may use the X login, once that's been asked.
+    x_login: OnceLock<Result<(), &'static str>>,
     /// Whether the X login was left out (for a visitor, or with its
     /// allowance used up), so an uploader asking later should look again.
     partial: AtomicBool,
@@ -336,25 +341,26 @@ impl<'a> Http<'a> {
             sources,
             asker,
             probes: AtomicUsize::new(MAX_PROBES),
+            x_login: OnceLock::new(),
             partial: AtomicBool::new(false),
         }
     }
 
     /// A request for `url` with `headers`, and its site's login if it has
-    /// one and the request goes over https.
+    /// one and the request goes over https (and, for X's, if
+    /// [`Self::may_use_x_login`]).
     fn logged_in(&self, url: &str, headers: &[(&str, &str)]) -> Result<Request, String> {
         let mut url = Url::parse(url).map_err(|e| e.to_string())?;
         let mut all: Vec<(String, String)> = headers
             .iter()
             .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
             .collect();
+        let host = url.host_str().unwrap_or_default().to_owned();
         // Never in the clear.
         let login = (url.scheme() == "https")
-            .then(|| {
-                url.host_str()
-                    .and_then(|h| self.sources.logins.login_for(h))
-            })
-            .flatten();
+            .then(|| self.sources.logins.login_for(&host))
+            .flatten()
+            .filter(|login| !self.is_x_login(&host, login) || self.may_use_x_login().is_ok());
         if let Some(login) = login {
             if !login.query.is_empty() {
                 url.query_pairs_mut().extend_pairs(&login.query);
@@ -386,18 +392,36 @@ impl<'a> Http<'a> {
         self.sources.logins.login_for(host).is_some()
     }
 
-    /// Whether the X login may be used for this lookup (why not, if not),
-    /// counting it against the site-wide allowance when it may.
+    /// Whether `login`, found for `host`, is X's: whatever X's own
+    /// domains carry, and the login given for them wherever it's sent.
+    fn is_x_login(&self, host: &str, login: &SiteLogin) -> bool {
+        X_DOMAINS.iter().any(|domain| {
+            host == *domain
+                || host.ends_with(&format!(".{domain}"))
+                || self
+                    .sources
+                    .logins
+                    .login_for(domain)
+                    .is_some_and(|x| std::ptr::eq(x, login))
+        })
+    }
+
+    /// Whether the X login may be used for this lookup (why not, if not).
+    /// The first time it's asked, it counts against the site-wide
+    /// allowance when it may; the lookup's other requests to X go by the
+    /// same answer.
     fn may_use_x_login(&self) -> Result<(), &'static str> {
-        let refused = if self.asker != Asker::Uploader {
-            "only for uploaders"
-        } else if self.sources.x_logins.check().is_err() {
-            "its allowance is used up for now"
-        } else {
-            return Ok(());
-        };
-        self.partial.store(true, Ordering::Relaxed);
-        Err(refused)
+        *self.x_login.get_or_init(|| {
+            let refused = if self.asker != Asker::Uploader {
+                "only for uploaders"
+            } else if self.sources.x_logins.check().is_err() {
+                "its allowance is used up for now"
+            } else {
+                return Ok(());
+            };
+            self.partial.store(true, Ordering::Relaxed);
+            Err(refused)
+        })
     }
 
     pub async fn text(
@@ -848,7 +872,7 @@ pub struct Sources {
     cache: SourceCache,
     /// Turns to ask other servers (see [`IN_FLIGHT`]).
     in_flight: Arc<Semaphore>,
-    /// Logged-in requests to X left (see [`X_LOGIN_BURST`]).
+    /// Lookups that may still use the X login (see [`X_LOGIN_BURST`]).
     x_logins: DefaultDirectRateLimiter,
 }
 
@@ -1735,20 +1759,46 @@ mod tests {
 
     #[test]
     fn the_x_login_is_for_uploaders_within_its_allowance() {
-        let sources = Sources::new(true, login_for("x.com"));
+        let mut logins = login_for("x.com");
+        logins.logins.insert(
+            "example.com".into(),
+            moekura_core::config::SiteLogin {
+                cookie: "other=secret".into(),
+                ..Default::default()
+            },
+        );
+        let sources = Sources::new(true, logins);
+        let carries_it = |http: &Http<'_>, url: &str| {
+            let sent = http.logged_in(url, &[]).unwrap();
+            let cookie = sent.headers.iter().any(|(name, _)| name == "Cookie");
+            assert_eq!(sent.logged_in, cookie, "{url}");
+            cookie
+        };
+
+        // Whatever asks X for a visitor goes without it: a link to a post
+        // X's strategy reads, or a page of X's read as it is.
         let visitor = Http::new(&sources, Asker::Visitor);
-        assert_eq!(visitor.may_use_x_login(), Err("only for uploaders"));
+        assert!(!carries_it(&visitor, "https://x.com/i/web/status/1"));
         assert!(visitor.partial.load(Ordering::Relaxed));
-        let uploader = Http::new(&sources, Asker::Uploader);
+        assert_eq!(visitor.may_use_x_login(), Err("only for uploaders"));
+        assert!(carries_it(&visitor, "https://example.com/work"));
+
+        // An uploader's lookup counts once, however often it asks X.
         for _ in 0..X_LOGIN_BURST {
+            let uploader = Http::new(&sources, Asker::Uploader);
             assert_eq!(uploader.may_use_x_login(), Ok(()));
+            assert!(carries_it(&uploader, "https://x.com/i/api/graphql/q"));
+            assert!(carries_it(&uploader, "https://api.x.com/1/a"));
+            assert!(!uploader.partial.load(Ordering::Relaxed));
         }
-        assert!(!uploader.partial.load(Ordering::Relaxed));
+        let uploader = Http::new(&sources, Asker::Uploader);
+        assert!(!carries_it(&uploader, "https://x.com/a/status/1"));
         assert_eq!(
             uploader.may_use_x_login(),
             Err("its allowance is used up for now")
         );
         assert!(uploader.partial.load(Ordering::Relaxed));
+        assert!(carries_it(&uploader, "https://example.com/work"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

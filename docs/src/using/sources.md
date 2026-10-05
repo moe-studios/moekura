@@ -105,7 +105,8 @@ all to servers. Moekura reads posts on X:
    and suspends accounts it finds reading it automatically. So the login
    is only used for members who can upload (not for visitors using the
    artist finder or the related tags), not when FxEmbed said there's no
-   such post, and at most 30 times every 15 minutes for the whole site;
+   such post, and for at most 30 links every 15 minutes on each web
+   server;
 3. last, through the API X's own embedded posts use, which only sees
    public posts that aren't age-restricted.
 

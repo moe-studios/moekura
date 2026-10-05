@@ -284,8 +284,8 @@ service_name = "moekura"
 # [sources.logins."baraag.net"]
 # headers = { Authorization = "Bearer …" }
 # Posts on X are also read as this account when the FxEmbed API below
-# can't give them (for members who can upload, at most 30 times every 15
-# minutes); it needs the auth_token and ct0 cookies.
+# can't give them (for members who can upload, at most 30 links every 15
+# minutes on each web server); it needs the auth_token and ct0 cookies.
 # [sources.logins."x.com"]
 # cookie = "auth_token=…; ct0=…"
 

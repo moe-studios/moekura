@@ -1,9 +1,10 @@
 //! Posts on X (Twitter): `x.com/<user>/status/<id>` (or twitter.com,
-//! with `/photo/<n>`). Read through an FxEmbed instance's API
-//! (`[sources.x]`), which needs no account and sees age-restricted posts;
-//! failing that, from X itself as the account `[sources.logins."x.com"]`
-//! gives, if any; and last from the embed API that shows posts on other
-//! sites, which only sees public ones. Images are asked for at full size.
+//! with `/photo/<n>`, and the other ways X links to a post). Read through
+//! an FxEmbed instance's API (`[sources.x]`), which needs no account and
+//! sees age-restricted posts; failing that, from X itself as the account
+//! `[sources.logins."x.com"]` gives, if any; and last from the embed API
+//! that shows posts on other sites, which only sees public ones. Images
+//! are asked for at full size.
 
 use serde_json::Value;
 use time::OffsetDateTime;
@@ -31,14 +32,26 @@ pub(super) fn target(url: &Url) -> Option<Target> {
         return None;
     }
     let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
-    match segments.as_slice() {
-        [user, "status", id, rest @ ..] => Some(Target {
-            user: (*user).to_owned(),
+    let post = |user: &str, id: &str| {
+        Some(Target {
+            user: user.to_owned(),
             id: id.parse().ok()?,
+            page: 0,
+        })
+    };
+    match segments.as_slice() {
+        ["i", "web", "status", id] => post("i", id),
+        ["intent", "favorite" | "retweet"] => {
+            let id = url.query_pairs().find(|(k, _)| k == "tweet_id")?.1;
+            post("i", &id)
+        }
+        // `<id>.json` too.
+        [user, "status" | "statuses", id, rest @ ..] => Some(Target {
             page: match rest {
                 ["photo", n, ..] => n.parse::<usize>().ok()?.saturating_sub(1),
                 _ => 0,
             },
+            ..post(user, id.split('.').next().unwrap_or(id))?
         }),
         _ => None,
     }
@@ -453,6 +466,18 @@ mod tests {
                 page: 1
             })
         );
+        // The other ways X links to a post (anything else of X's would be
+        // read as a page).
+        for other in [
+            "https://x.com/i/web/status/17",
+            "https://x.com/artist/statuses/17",
+            "https://x.com/artist/status/17.json",
+            "https://x.com/intent/retweet?tweet_id=17",
+            "https://twitter.com/intent/favorite?tweet_id=17",
+        ] {
+            assert_eq!(t(other).map(|t| t.id), Some(17), "{other}");
+        }
+        assert!(t("https://x.com/intent/retweet?tweet_id=x").is_none());
         assert!(t("https://twitter.com/artist").is_none());
         assert!(t("https://example.com/a/status/1").is_none());
     }

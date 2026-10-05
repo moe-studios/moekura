@@ -28,12 +28,27 @@ pub enum ToolError {
         source: std::io::Error,
     },
     /// Over [`Limits::memory_mb`]: the file needs more memory to process
-    /// than the site allows.
-    #[error("{program} needed more than the {limit_mb} MB of memory it may use")]
+    /// than the site allows. Shown to uploaders, so the program goes by
+    /// its name, not where it's installed.
+    #[error(
+        "{} needed more than the {limit_mb} MB of memory it may use",
+        file_name(.program)
+    )]
     OutOfMemory { program: String, limit_mb: u64 },
     /// Over [`Limits::cpu_secs`].
-    #[error("{program} needed more than the {limit_secs} seconds of CPU time it may use")]
+    #[error(
+        "{} needed more than the {limit_secs} seconds of CPU time it may use",
+        file_name(.program)
+    )]
     OutOfCpu { program: String, limit_secs: u64 },
+}
+
+/// `program` without the directories it's configured in.
+fn file_name(program: &str) -> &str {
+    Path::new(program)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(program)
 }
 
 impl ToolError {
@@ -357,6 +372,26 @@ mod tests {
         .await
         .unwrap_err();
         assert!(matches!(err, ToolError::Missing(_)), "{err}");
+    }
+
+    #[test]
+    fn limits_name_programs_without_their_paths() {
+        let memory = ToolError::OutOfMemory {
+            program: "/opt/media/bin/vips".into(),
+            limit_mb: 4096,
+        };
+        assert_eq!(
+            memory.to_string(),
+            "vips needed more than the 4096 MB of memory it may use"
+        );
+        let cpu = ToolError::OutOfCpu {
+            program: "/usr/local/bin/ffmpeg".into(),
+            limit_secs: 60,
+        };
+        assert_eq!(
+            cpu.to_string(),
+            "ffmpeg needed more than the 60 seconds of CPU time it may use"
+        );
     }
 
     #[tokio::test]

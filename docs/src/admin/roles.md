@@ -35,7 +35,7 @@ roles can't be deleted and keep their ranks.
 | Approve posts and handle flags | the approval and flag queues |
 | Delete and restore posts | |
 | Purge posts | removing deleted posts and their files for good |
-| Manage tags, aliases and implications | moving tags between categories, deprecating tags, deciding alias and implication requests |
+| Manage tags, aliases and implications | moving tags between categories, deprecating tags, deciding alias and implication requests; banning artists, and renaming, deleting or restoring a banned artist's entry |
 | See deleted posts | deleted posts and comments |
 | Hide comments and handle reports about them | hiding and restoring anyone's comments, and the reported comments queue |
 | Ban users and networks | |

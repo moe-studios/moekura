@@ -7,8 +7,8 @@
 <form class="wiki-form" method="post" action="{{ action }}">
   {% if artist %}<input type="hidden" name="base" value="{{ base }}">{% endif %}
   <label for="artist-name">{{ t("account-name") }}</label>
-  <input id="artist-name" name="name" value="{{ name }}" maxlength="170" required autocapitalize="none" spellcheck="false" data-autocomplete="edit">
-  <p class="hint">{{ t("artist-name-hint") }}</p>
+  <input id="artist-name" name="name" value="{{ name }}" maxlength="170" required autocapitalize="none" spellcheck="false"{% if name_locked %} readonly{% else %} data-autocomplete="edit"{% endif %}>
+  <p class="hint">{% if name_locked %}{{ t("artist-name-banned-hint") }}{% else %}{{ t("artist-name-hint") }}{% endif %}</p>
   <label for="artist-other-names">{{ t("other-names") }}</label>
   <input id="artist-other-names" name="other_names" value="{{ other_names }}" spellcheck="false">
   <p class="hint">{{ t("artist-other-names-hint") }}</p>

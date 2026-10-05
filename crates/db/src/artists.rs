@@ -197,6 +197,18 @@ pub struct Contents {
     pub is_deleted: bool,
 }
 
+impl Contents {
+    /// Whether saving `self` over `before` changes a ban. A ban applies
+    /// to the tag with the entry's name while the entry isn't deleted
+    /// ([`banned_tag_ids`]), so renaming, deleting or restoring a banned
+    /// entry moves or lifts it as surely as unbanning does.
+    pub fn changes_ban(&self, before: &Contents) -> bool {
+        self.is_banned != before.is_banned
+            || (before.is_banned
+                && (self.name != before.name || self.is_deleted != before.is_deleted))
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SaveError {
     /// Someone else saved the artist since the editor loaded `base`.
@@ -204,6 +216,10 @@ pub enum SaveError {
     Conflict { base: i32, current: i32 },
     #[error("there is already an artist entry with that name")]
     NameTaken,
+    /// The save would change a ban ([`Contents::changes_ban`]), which
+    /// the saver may not do.
+    #[error("only those who manage tags can change an artist's ban")]
+    BanLocked,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 }
@@ -250,13 +266,17 @@ pub async fn create(
 ///
 /// `base` is the version the editor started from; a different current
 /// version is a [`SaveError::Conflict`]. `None` saves over whatever is
-/// there. Saving what's already there records no new version.
+/// there. Saving what's already there records no new version. Unless
+/// `may_ban` (the saver manages tags), a change to a ban is a
+/// [`SaveError::BanLocked`]; it's checked against the row as locked
+/// here, so a ban made since the editor loaded the entry counts.
 pub async fn save(
     db: &PgPool,
     id: i32,
     contents: &Contents,
     updater_id: Option<i64>,
     base: Option<i32>,
+    may_ban: bool,
 ) -> Result<i32, SaveError> {
     let mut tx = db.begin().await?;
     let (version,): (i32,) = sqlx::query_as("SELECT version FROM artists WHERE id = $1 FOR UPDATE")
@@ -275,6 +295,9 @@ pub async fn save(
     let before = current_contents(&mut tx, id).await?;
     if before.as_ref() == Some(contents) {
         return Ok(version);
+    }
+    if !may_ban && before.as_ref().is_some_and(|b| contents.changes_ban(b)) {
+        return Err(SaveError::BanLocked);
     }
     sqlx::query(
         "UPDATE artists SET name = $2, group_name = $3, other_names = $4, is_banned = $5,
@@ -627,10 +650,20 @@ mod tests {
 
         let mut changed = sample("cat_artist", "-https://twitter.com/cat");
         changed.group_name = "Cats".into();
-        assert_eq!(save(&pool, cat, &changed, None, Some(1)).await.unwrap(), 2);
-        assert_eq!(save(&pool, cat, &changed, None, Some(2)).await.unwrap(), 2);
+        assert_eq!(
+            save(&pool, cat, &changed, None, Some(1), false)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            save(&pool, cat, &changed, None, Some(2), false)
+                .await
+                .unwrap(),
+            2
+        );
         assert!(matches!(
-            save(&pool, cat, &changed, None, Some(1)).await,
+            save(&pool, cat, &changed, None, Some(1), false).await,
             Err(SaveError::Conflict { .. })
         ));
         assert_eq!(contents_of(&pool, cat).await, changed);
@@ -702,8 +735,41 @@ mod tests {
         assert!(banned_tag_ids(&pool).await.unwrap().is_empty());
         let mut banned = sample("dog_artist", "twitter.com/dog");
         banned.is_banned = true;
-        save(&pool, dog, &banned, None, None).await.unwrap();
-        assert_eq!(banned_tag_ids(&pool).await.unwrap().len(), 1);
+        assert!(matches!(
+            save(&pool, dog, &banned, None, None, false).await,
+            Err(SaveError::BanLocked)
+        ));
+        save(&pool, dog, &banned, None, None, true).await.unwrap();
+        let dog_tag = banned_tag_ids(&pool).await.unwrap();
+        assert_eq!(dog_tag.len(), 1);
+
+        // A banned entry's name and deleted flag are part of its ban.
+        let mut renamed = banned.clone();
+        renamed.name = "cat_artist_2".into();
+        let mut deleted = banned.clone();
+        deleted.is_deleted = true;
+        for change in [&renamed, &deleted] {
+            assert!(matches!(
+                save(&pool, dog, change, None, None, false).await,
+                Err(SaveError::BanLocked)
+            ));
+        }
+        assert_eq!(banned_tag_ids(&pool).await.unwrap(), dog_tag);
+        // Its other fields are anyone's to edit.
+        let mut grouped = banned.clone();
+        grouped.group_name = "Dogs".into();
+        save(&pool, dog, &grouped, None, None, false).await.unwrap();
+        save(&pool, dog, &deleted, None, None, true).await.unwrap();
+        assert!(banned_tag_ids(&pool).await.unwrap().is_empty());
+        // Restoring it bans again, and renaming a deleted one is locked.
+        let mut renamed_deleted = deleted.clone();
+        renamed_deleted.name = "cat_artist_2".into();
+        for change in [&banned, &renamed_deleted] {
+            assert!(matches!(
+                save(&pool, dog, change, None, None, false).await,
+                Err(SaveError::BanLocked)
+            ));
+        }
     }
 
     async fn contents_of(pool: &PgPool, id: i32) -> Contents {

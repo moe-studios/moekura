@@ -56,8 +56,14 @@ at the artist's request). What that does is a site setting, under
 - **Refuse uploads** (on by default): uploads with the tag, and edits
   adding it (reverting to a version that had it, too), are refused.
 
-Staff who approve posts still see the posts and can post them. Bans are
-recorded in the moderation log.
+Staff who approve posts still see the posts and can post them.
+
+The ban is on the tag with the entry's name, for as long as the entry
+isn't deleted. So renaming, deleting or restoring a banned artist's entry
+also takes the manage tags permission; anyone who can edit artists can
+still change its other names, group and URLs. Bans, unbans, and renames,
+deletions and restorations of banned entries are recorded in the
+moderation log.
 
 ## Commentary
 

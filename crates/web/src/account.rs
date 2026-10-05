@@ -178,20 +178,23 @@ async fn register(
         });
     }
     let verify = crate::email::verification_required(&state);
-    if verify && form.email.trim().is_empty() {
+    let email = form.email.trim();
+    if verify && email.is_empty() {
         return invalid(RegisterErrors {
             email: Some("An email address is required, to confirm your account.".into()),
             ..Default::default()
         });
     }
-    if !form.email.trim().is_empty()
-        && !state
-            .site
-            .get()
-            .settings
-            .email_domains
-            .allows(form.email.trim())
+    // A bare address first: the domain list reads what follows the `@`.
+    if !email.is_empty()
+        && let Err(e) = moekura_core::accounts::check_email(email)
     {
+        return invalid(RegisterErrors {
+            email: Some(format!("The address {e}.")),
+            ..Default::default()
+        });
+    }
+    if !email.is_empty() && !state.site.get().settings.email_domains.allows(email) {
         return invalid(RegisterErrors {
             email: Some(DOMAIN_REFUSED.into()),
             ..Default::default()

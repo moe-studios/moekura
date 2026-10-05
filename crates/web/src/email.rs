@@ -953,6 +953,42 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn display_name_addresses_are_refused(pool: PgPool) {
+        moekura_db::settings::set(
+            &pool,
+            "email_domains",
+            serde_json::json!({ "mode": "block", "domains": ["spam.example"] }),
+        )
+        .await
+        .unwrap();
+        let app = app(&pool, true).await;
+        for email in [
+            "x@spam.example <someone@example.com>",
+            "Someone <someone@spam.example>",
+        ] {
+            let refused = app
+                .post_form("/register", None, &[], &signup("carol", email))
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{email}");
+            assert!(
+                refused.body.contains("not a valid email address"),
+                "{}",
+                refused.body
+            );
+        }
+        let (_, session) = member(&pool, "alice", "alice@example.com").await;
+        let change = form(&[
+            ("email", "Alice <alice@spam.example>"),
+            ("password", "correct horse"),
+        ]);
+        let refused = app
+            .post_form("/settings/account/email", Some(&session), &[], &change)
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(mail_count(&pool).await, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn refused_domains_cant_be_used(pool: PgPool) {
         moekura_db::settings::set(
             &pool,

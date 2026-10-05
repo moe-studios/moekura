@@ -112,6 +112,9 @@ moderation log.
 Changing either needs your current password. Changing the password logs
 you out everywhere else.
 
+An address is written plainly, as `name@example.com`, without a name
+in front or angle brackets.
+
 On sites that send mail, a new address only replaces the old one once
 you follow the link sent to it, and **Forgot your password?** on the
 login page emails you a link to choose a new one. The link works for an

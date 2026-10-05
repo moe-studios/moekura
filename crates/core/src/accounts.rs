@@ -124,16 +124,28 @@ pub fn check_password(password: &str) -> Result<(), PasswordError> {
 pub struct EmailError;
 
 /// A deliberately loose check; only a confirmation mail proves an address.
+///
+/// It does insist on a bare address: no display name, angle brackets,
+/// quotes, comments or lists, which a mailer would read past to some other
+/// address than the one the domain list, uniqueness and mail limits saw.
 pub fn check_email(email: &str) -> Result<(), EmailError> {
     let Some((local, domain)) = email.rsplit_once('@') else {
         return Err(EmailError);
     };
     let valid = !local.is_empty()
+        && !local.contains('@')
         && domain.contains('.')
         && !domain.starts_with('.')
         && !domain.ends_with('.')
         && email.len() <= EMAIL_MAX_LEN
-        && !email.chars().any(|c| c.is_whitespace() || c.is_control());
+        && !email.chars().any(|c| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(
+                    c,
+                    '<' | '>' | '"' | '(' | ')' | ',' | ';' | ':' | '[' | ']' | '\\'
+                )
+        });
     if valid { Ok(()) } else { Err(EmailError) }
 }
 
@@ -247,6 +259,19 @@ mod tests {
             "a@localhost",
             "a@.com",
             "a b@c.com",
+            // Only bare addresses: a mailer would send these elsewhere.
+            "Name<victim@example.com>",
+            "\"Name\"<victim@example.com>",
+            "x@blocked.example<victim@example.com>",
+            "victim@example.com>",
+            "<victim@example.com>",
+            "victim@example.com(comment)",
+            "a@example.com,b@example.com",
+            "a@example.com;b@example.com",
+            "group:a@example.com",
+            "a@[192.0.2.1]",
+            "a\\@b@example.com",
+            "a@b@example.com",
         ] {
             assert_eq!(check_email(bad), Err(EmailError), "{bad}");
         }

@@ -1339,7 +1339,8 @@ pub struct SimilarRequest {
     /// A picture.
     #[schema(value_type = Option<String>, format = Binary)]
     file: Option<Vec<u8>>,
-    /// A link to a picture, or to a work's page on a site Moekura reads.
+    /// A link to a picture of at most 20 MB, or to a work's page on a site
+    /// Moekura reads.
     url: Option<String>,
     /// A post, to find others like it.
     post_id: Option<i64>,

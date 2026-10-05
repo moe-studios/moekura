@@ -351,6 +351,16 @@ pub(crate) async fn download(
     file_url: &str,
     info: Option<&SourceInfo>,
 ) -> Result<TempUpload, UploadError> {
+    download_within(state, file_url, info, max_bytes(state)).await
+}
+
+/// [`download`], refusing files over `limit` bytes.
+pub(crate) async fn download_within(
+    state: &AppState,
+    file_url: &str,
+    info: Option<&SourceInfo>,
+    limit: u64,
+) -> Result<TempUpload, UploadError> {
     let url = url::Url::parse(file_url).map_err(|_| match info {
         Some(info) => {
             UploadError::Invalid(format!("{} gave a file link that isn't valid.", info.site))
@@ -361,7 +371,7 @@ pub(crate) async fn download(
     let writer = TempWriter::create(&state.work_dir).await?;
     let mut file = state
         .fetcher
-        .fetch_with(&url, &headers, writer, max_bytes(state))
+        .fetch_with(&url, &headers, writer, limit)
         .await?;
     file.set_name(file_url);
     let frames = info

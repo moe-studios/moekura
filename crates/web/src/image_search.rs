@@ -15,7 +15,7 @@ use crate::AppState;
 use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::pages::Page;
-use crate::upload::{TempUpload, UploadError, UploadFields};
+use crate::upload::{TempUpload, UploadError};
 
 /// The most bits two hashes may differ by and still be listed (out of
 /// 64): about 75% alike.
@@ -97,17 +97,12 @@ pub(crate) async fn hash_file(state: &AppState, file: &TempUpload) -> Result<u64
 }
 
 /// The posts `current` may see that look most like `needle`, closest
-/// first. Counts against the searcher's allowance, as each compares
-/// with every post.
-pub(crate) async fn search(
+/// first. [`Asked::run`] counts it against the searcher's allowance.
+async fn search(
     state: &AppState,
     current: &CurrentUser,
-    info: &RequestInfo,
     needle: Needle<'_>,
 ) -> Result<Vec<Match>, AppError> {
-    current.require(Permission::ViewPosts)?;
-    let client = crate::rate_limit::client_key(current.user.as_ref().map(|u| u.id), info.ip);
-    state.rate_limits.check_image_search(&client).await?;
     let db = state.reader(current);
     let (hash, exclude) = match needle {
         Needle::File(file) => (hash_file(state, file).await?, None),
@@ -141,13 +136,23 @@ pub(crate) async fn search(
         .collect())
 }
 
-/// Downloads `url` to search with (a work's page gives its best file).
-pub(crate) async fn fetch(state: &AppState, url: &str) -> Result<TempUpload, AppError> {
-    let mut fields = UploadFields {
-        url: url.trim().to_owned(),
-        ..UploadFields::default()
+/// The largest file a link to search with may be (or the upload limit,
+/// if that's lower). Visitors can search too, so a link may cost far
+/// less than an upload's, and a search only needs one picture.
+const MAX_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Downloads `url` to search with (a work's page gives its best file),
+/// up to [`MAX_DOWNLOAD_BYTES`].
+async fn fetch(state: &AppState, url: &str) -> Result<TempUpload, AppError> {
+    let url = url.trim();
+    let found = state.sources.lookup(url).await;
+    crate::upload::check_found(url, found.as_deref()).map_err(upload_error)?;
+    let file_url = match found.as_deref() {
+        Some(info) if !info.files.is_empty() => info.files[0].as_str(),
+        _ => url,
     };
-    crate::upload::fetch_url(state, &mut fields)
+    let limit = MAX_DOWNLOAD_BYTES.min(state.media.config().max_upload_mb * 1024 * 1024);
+    crate::upload::download_within(state, file_url, found.as_deref(), limit)
         .await
         .map_err(upload_error)
 }
@@ -191,30 +196,32 @@ impl Asked {
         Ok(asked)
     }
 
-    /// Runs the search, if anything was asked.
+    /// Runs the search, if anything was asked. Each counts against the
+    /// searcher's allowance, as it compares with every post, before a
+    /// link is looked up or downloaded.
     pub async fn run(
         &self,
         state: &AppState,
         current: &CurrentUser,
         info: &RequestInfo,
     ) -> Result<Option<Vec<Match>>, AppError> {
-        if let Some(file) = &self.file {
-            return search(state, current, info, Needle::File(file))
-                .await
-                .map(Some);
+        let url = self.url.trim();
+        if self.file.is_none() && url.is_empty() && self.post_id.is_none() {
+            return Ok(None);
         }
-        if !self.url.trim().is_empty() {
-            let file = fetch(state, &self.url).await?;
-            return search(state, current, info, Needle::File(&file))
-                .await
-                .map(Some);
-        }
-        if let Some(id) = self.post_id {
-            return search(state, current, info, Needle::Post(id))
-                .await
-                .map(Some);
-        }
-        Ok(None)
+        current.require(Permission::ViewPosts)?;
+        let client = crate::rate_limit::client_key(current.user.as_ref().map(|u| u.id), info.ip);
+        state.rate_limits.check_image_search(&client).await?;
+        let fetched;
+        let needle = if let Some(file) = &self.file {
+            Needle::File(file)
+        } else if let Some(id) = self.post_id.filter(|_| url.is_empty()) {
+            Needle::Post(id)
+        } else {
+            fetched = fetch(state, url).await?;
+            Needle::File(&fetched)
+        };
+        search(state, current, needle).await.map(Some)
     }
 }
 
@@ -400,5 +407,78 @@ mod tests {
             .post_multipart("/api/v1/posts/similar", None, &[], None)
             .await;
         assert_eq!(nothing.status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    /// A local server with `origin`'s routes standing in for the web, and
+    /// an app whose lookups and downloads may reach it.
+    async fn app_with_origin(pool: &PgPool, origin: Router) -> (TestApp, AppState, String) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, origin).await });
+        let mut state = test_state(pool).await;
+        state.fetcher = crate::fetch::Fetcher::new(std::time::Duration::from_secs(10), true);
+        state.sources = std::sync::Arc::new(crate::sources::Sources::new(
+            true,
+            moekura_core::config::SourcesConfig::default(),
+        ));
+        let routes = routes(10 * 1024 * 1024)
+            .merge(crate::api::routes(10 * 1024 * 1024))
+            .merge(crate::danbooru::test_support::routes());
+        let app = TestApp::new(state.clone(), routes);
+        (app, state, format!("http://{addr}"))
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn counts_searches_before_fetching_links(pool: PgPool) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counted = hits.clone();
+        let png = fixture::png(20, 20);
+        let origin = Router::new().route(
+            "/a.png",
+            get(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                let png = png.clone();
+                async move { png }
+            }),
+        );
+        let (app, state, origin) = app_with_origin(&pool, origin).await;
+        // A visitor who has used up their searches.
+        let visitor = crate::rate_limit::client_key(None, None);
+        let mut allowed = 0;
+        while state.rate_limits.check_image_search(&visitor).await.is_ok() {
+            allowed += 1;
+            assert!(allowed < 1000, "searches are limited");
+        }
+        let link = format!("{origin}/a.png");
+
+        let page = app.get(&format!("/iqdb_queries?url={link}"), None).await;
+        assert_eq!(page.status, StatusCode::TOO_MANY_REQUESTS, "{}", page.body);
+        let danbooru = app
+            .get(&format!("/iqdb_queries.json?url={link}"), None)
+            .await;
+        assert_eq!(danbooru.status, StatusCode::TOO_MANY_REQUESTS);
+        let api = app
+            .post_multipart("/api/v1/posts/similar", None, &[("url", link)], None)
+            .await;
+        assert_eq!(api.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was fetched");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn downloads_far_less_than_uploads(pool: PgPool) {
+        let origin = Router::new().route(
+            "/big.png",
+            get(|| async { vec![0u8; MAX_DOWNLOAD_BYTES as usize + 1] }),
+        );
+        let (app, state, origin) = app_with_origin(&pool, origin).await;
+        assert!(state.media.config().max_upload_mb * 1024 * 1024 > MAX_DOWNLOAD_BYTES);
+        let found = app
+            .get(&format!("/iqdb_queries?url={origin}/big.png"), None)
+            .await;
+        assert_eq!(found.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(found.body.contains("larger than 20 MB"), "{}", found.body);
     }
 }

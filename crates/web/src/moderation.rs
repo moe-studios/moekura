@@ -255,13 +255,16 @@ pub(crate) async fn flag_post(
 ) -> Result<(), AppError> {
     current.require(Permission::Flag)?;
     let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    // Before anything else, so a post's state shows only to those who
+    // can see the post.
+    let post = posts::by_id(state.db.primary(), id)
+        .await?
+        .filter(|p| crate::posts::visibility(current).allows(p))
+        .ok_or(AppError::NotFound)?;
     let reason = check_reason(reason)?;
     if reason.is_empty() {
         return Err(AppError::BadRequest("Say why the post should go".into()));
     }
-    let post = posts::by_id(state.db.primary(), id)
-        .await?
-        .ok_or(AppError::NotFound)?;
     crate::posts::check_lock(current, &post, PostLock::Status)?;
     state.rate_limits.check_report(user.id).await?;
     let mut tx = state.db.primary().begin().await?;
@@ -1625,6 +1628,62 @@ mod tests {
             page.contains("off-topic") && page.contains("dismissed"),
             "{page}"
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn posts_out_of_sight_are_not_found_for_flagging(pool: PgPool) {
+        // A banned artist's posts are hidden from members.
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('banned_one', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let tag: i32 = sqlx::query_scalar(
+            "INSERT INTO tags (name, category_id) VALUES ('banned_one', 1) RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(state, super::routes().merge(crate::api::routes(max)));
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let mut hidden = Vec::new();
+        for (status, tags) in [
+            ("pending", vec![]),
+            ("deleted", vec![]),
+            ("active", vec![tag]),
+        ] {
+            hidden.push(
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO posts (rating, status, tag_ids) VALUES ('g', $1, $2) RETURNING id",
+                )
+                .bind(status)
+                .bind(tags)
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            );
+        }
+        for id in hidden {
+            let web = app
+                .post_form(&format!("/posts/{id}/flag"), Some(&bob), &[], "reason=x")
+                .await;
+            assert_eq!(web.status, StatusCode::NOT_FOUND, "{id}: {}", web.body);
+            let api = app
+                .json(
+                    "POST",
+                    &format!("/api/v1/posts/{id}/flags"),
+                    Some(&bob),
+                    Some(serde_json::json!({ "reason": "x" })),
+                )
+                .await;
+            assert_eq!(api.status, StatusCode::NOT_FOUND, "{id}: {}", api.body);
+        }
+        let flags: i64 = sqlx::query_scalar("SELECT count(*) FROM post_flags")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(flags, 0);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

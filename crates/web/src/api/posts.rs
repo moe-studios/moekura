@@ -822,6 +822,7 @@ pub struct NewFlag {
     responses(
         (status = 204, description = "Flagged"),
         (status = 400, body = ErrorBody, description = "No reason, or the post can't be flagged now"),
+        (status = 404, body = ErrorBody, description = "No such post, or not one you can see"),
     ),
 )]
 pub(crate) async fn flag(

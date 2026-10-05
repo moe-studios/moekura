@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
-use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
+use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE, VARY};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Router};
@@ -35,8 +35,12 @@ use crate::posts::visibility;
 /// Entries in a feed, unless the search asks for fewer (`limit:`).
 const ENTRIES: u32 = 40;
 
-/// How long readers and proxies may keep a feed.
+/// How long readers and proxies may keep a feed read by a visitor.
 const MAX_AGE: &str = "public, max-age=300";
+
+/// How long a reader may keep a feed read as someone; shared caches
+/// mustn't.
+const PRIVATE_MAX_AGE: &str = "private, max-age=300";
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -168,21 +172,26 @@ fn atom(
     xml
 }
 
-fn respond(xml: String, private: bool) -> Response {
-    // Feeds of private sites (read with a token) aren't for shared caches.
-    let cache = if private {
-        "private, max-age=300"
-    } else {
-        MAX_AGE
-    };
+/// The feed. Only one a visitor read on a public site is for shared
+/// caches: read with a session or a token, it shows what that user may
+/// see and leaves out what their blacklist does.
+fn respond(xml: String, shareable: bool) -> Response {
+    let cache = if shareable { MAX_AGE } else { PRIVATE_MAX_AGE };
     (
         [
             (CONTENT_TYPE, "application/atom+xml; charset=utf-8"),
             (CACHE_CONTROL, cache),
+            // The same address reads differently with a session cookie.
+            (VARY, "Cookie"),
         ],
         xml,
     )
         .into_response()
+}
+
+/// Whether a feed read as `current` is the same for every visitor.
+fn shareable(state: &AppState, current: &CurrentUser) -> bool {
+    !state.is_private() && !current.is_logged_in()
 }
 
 /// The feed's own URL, without the token (the id of a feed shouldn't
@@ -307,7 +316,7 @@ async fn posts_feed(
         &title,
         &entries,
     );
-    Ok(respond(xml, state.is_private()))
+    Ok(respond(xml, shareable(&state, &current)))
 }
 
 fn search_error(error: SearchError) -> AppError {
@@ -358,7 +367,7 @@ async fn comments_feed(
         &format!("{site}: comments"),
         &entries,
     );
-    Ok(respond(xml, state.is_private()))
+    Ok(respond(xml, shareable(&state, &current)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -644,5 +653,59 @@ mod tests {
         assert_eq!(stale.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(stale.body.contains("log in again"), "{}", stale.body);
         assert!(!feeds::has_token(&pool, bob.id).await.unwrap());
+    }
+
+    /// `Cache-Control` and every `Vary` of a feed read with `cookie`.
+    async fn caching(app: &TestApp, path: &str, cookie: Option<&str>) -> (String, Vec<String>) {
+        let mut request = axum::http::Request::get(path);
+        if let Some(cookie) = cookie {
+            request = request.header(axum::http::header::COOKIE, cookie);
+        }
+        let response = app
+            .raw(request.body(axum::body::Body::empty()).unwrap())
+            .await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let headers = response.headers();
+        (
+            headers[CACHE_CONTROL].to_str().unwrap().to_owned(),
+            headers
+                .get_all(VARY)
+                .iter()
+                .map(|v| v.to_str().unwrap().to_owned())
+                .collect(),
+        )
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn only_visitors_feeds_are_for_shared_caches(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, routes());
+        post(&pool, &["cat"], "g").await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let cookie = format!("{}={admin}", crate::auth::SESSION_COOKIE);
+        let token = NewToken::generate();
+        let root: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'root'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        feeds::set_token(&pool, root, Some(&token.hash))
+            .await
+            .unwrap();
+        let public = "public, max-age=300".to_owned();
+        let private = "private, max-age=300".to_owned();
+        for path in ["/posts.atom?tags=cat", "/comments.atom"] {
+            let (cache, vary) = caching(&app, path, None).await;
+            assert_eq!(cache, public, "{path}");
+            assert!(vary.iter().any(|v| v == "Cookie"), "{path}: {vary:?}");
+            // Read as staff: theirs alone, even on a public site.
+            let (cache, vary) = caching(&app, path, Some(&cookie)).await;
+            assert_eq!(cache, private, "{path}");
+            assert!(vary.iter().any(|v| v == "Cookie"), "{path}: {vary:?}");
+            let with_token = format!(
+                "{path}{}token={}",
+                if path.contains('?') { '&' } else { '?' },
+                token.token
+            );
+            assert_eq!(caching(&app, &with_token, None).await.0, private);
+        }
     }
 }

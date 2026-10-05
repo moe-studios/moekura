@@ -238,6 +238,11 @@ reader to follow new posts of a tag, an artist (`user:alice` for a
 user's uploads), or anything else you can search for. `/comments.atom`
 follows the newest comments.
 
+Feeds may be kept for five minutes. A proxy or CDN in front of the site
+may keep only those read by visitors who aren't logged in: a feed read
+while logged in, or with a token, is marked private, since it shows what
+that user may see.
+
 On a private site, feed readers can't log in; make a feed token under
 **Settings → Feeds** (which asks for your password, as making an
 [API key](../api.md) does) and add `&token=…` to the feed's address.

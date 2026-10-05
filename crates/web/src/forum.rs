@@ -109,6 +109,20 @@ async fn check_category(state: &AppState, current: &CurrentUser, id: i16) -> Res
     Ok(())
 }
 
+/// The category keeping `current` from renaming or moving `topic`, if it is
+/// one they can't post in: a topic staff put in a staff-only category reads
+/// as theirs, so only staff change it there.
+fn closed_category<'a>(
+    current: &CurrentUser,
+    categories: &'a [forum::Category],
+    topic: &Topic,
+) -> Option<&'a forum::Category> {
+    categories
+        .iter()
+        .find(|c| c.id == topic.category_id)
+        .filter(|c| !may_post_in(current, c))
+}
+
 /// Topic `id`, if `current` may see it.
 pub(crate) async fn visible_topic(
     state: &AppState,
@@ -504,6 +518,8 @@ async fn show(
         (None, None) => None,
     };
     let page_url = |n: i64| url_value(&format!("{}?page={n}", topic_url(id)));
+    let categories = forum::categories(db).await?;
+    let may_change = closed_category(&page.current, &categories, &topic).is_none();
     Ok(page.render(
         "forum_topic.html",
         context! {
@@ -513,9 +529,9 @@ async fn show(
             request_url => request_url.map(|u| url_value(&u)),
             can_reply => can_post && !topic.is_deleted && (!topic.is_locked || staff),
             can_moderate => staff,
-            can_edit_topic => staff || (me.is_some() && topic.creator_id == me && !topic.is_locked),
+            can_edit_topic => staff || (me.is_some() && topic.creator_id == me && !topic.is_locked && may_change),
             // Where the topic may move; it can stay where it is.
-            categories => forum::categories(db).await?
+            categories => categories
                 .iter()
                 .filter(|c| c.id == topic.category_id || may_post_in(&page.current, c))
                 .map(|c| context! { id => c.id, name => c.name })
@@ -539,10 +555,18 @@ async fn update_topic(
         return Err(AppError::Forbidden);
     }
     let title = clean_title(&form.title)?;
+    let db = page.state().db.primary();
+    let categories = forum::categories(db).await?;
+    if let Some(category) = closed_category(&page.current, &categories, &topic) {
+        return Err(AppError::Unprocessable(format!(
+            "Only staff can change topics in {}.",
+            category.name
+        )));
+    }
     if form.category != topic.category_id {
         check_category(page.state(), &page.current, form.category).await?;
     }
-    forum::update_topic(page.state().db.primary(), id, &title, form.category).await?;
+    forum::update_topic(db, id, &title, form.category).await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&topic_url(id))).into_response())
 }
 
@@ -1222,17 +1246,39 @@ mod tests {
             .await;
         assert_eq!(moved.status, StatusCode::SEE_OTHER, "{}", moved.body);
         let shown = app
-            .get(&format!("/forum_topics/{topic}"), Some(&alice))
+            .get(&format!("/forum_topics/{topic}"), Some(&staff))
             .await
             .body;
         assert!(
             shown.contains(&format!("<option value=\"{news}\" selected>Site news")),
             "{shown}"
         );
+        // There it's the staff's: its creator can't rename it any more.
+        let shown = app
+            .get(&format!("/forum_topics/{topic}"), Some(&alice))
+            .await
+            .body;
+        assert!(!shown.contains("id=\"topic-title\""), "{shown}");
         let renamed = app
             .post_form(
                 &format!("/forum_topics/{topic}"),
                 Some(&alice),
+                &[],
+                &format!("category={news}&title=Re-verify+your+account"),
+            )
+            .await;
+        assert_eq!(renamed.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            renamed
+                .body
+                .contains("Only staff can change topics in Site news."),
+            "{}",
+            renamed.body
+        );
+        let renamed = app
+            .post_form(
+                &format!("/forum_topics/{topic}"),
+                Some(&staff),
                 &[],
                 &format!("category={news}&title=Hello+again"),
             )

@@ -402,6 +402,21 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn damaged_files_are_refused_without_server_details(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let work_dir = state.work_dir.to_string_lossy().into_owned();
+        let app = TestApp::new(state, routes(10 * 1024 * 1024));
+        let broken = b"\x89PNG\r\n\x1a\nthis is not really a png";
+        let refused = app
+            .post_multipart("/iqdb_queries", None, &[], Some(("b.png", broken)))
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(refused.body.contains("damaged"), "{}", refused.body);
+        assert!(!refused.body.contains(&work_dir), "{}", refused.body);
+        assert!(!refused.body.contains("vips"), "{}", refused.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn api_by_post(pool: PgPool) {
         let state = test_state(&pool).await;
         let app = TestApp::new(

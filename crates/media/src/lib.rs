@@ -510,6 +510,21 @@ pub(crate) mod tests {
         std::fs::write(&path, b"\x89PNG\r\n\x1a\nthis is not really a png").unwrap();
         let err = media().probe(&path, MediaType::Png).await.unwrap_err();
         assert!(matches!(err, MediaError::Corrupt(_)), "{err}");
+        // What vips said, naming the file on the server, isn't repeated.
+        assert_eq!(
+            err.to_string(),
+            "the file appears to be damaged (it couldn't be decoded)"
+        );
+        let err = media()
+            .fit_within(&path, MediaType::Png, 32, &dir.join("t.webp"))
+            .await
+            .unwrap_err();
+        assert!(!err.to_string().contains("broken.png"), "{err}");
+        let err = media()
+            .perceptual_hash(&path, MediaType::Png, &dir)
+            .await
+            .unwrap_err();
+        assert!(!err.to_string().contains("broken.png"), "{err}");
     }
 
     #[tokio::test]
@@ -564,6 +579,7 @@ pub(crate) mod tests {
         let err = media().probe(&fake, MediaType::Mp4).await.unwrap_err();
         assert!(matches!(err, MediaError::Corrupt(_)), "{err}");
         assert!(!err.is_internal());
+        assert!(!err.to_string().contains("fake.mp4"), "{err}");
     }
 
     #[tokio::test]

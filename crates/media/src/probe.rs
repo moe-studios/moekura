@@ -243,10 +243,15 @@ pub(crate) fn loaders_for(media_type: MediaType) -> Loaders {
 }
 
 /// A tool rejecting the file means the file is bad; a tool that is missing
-/// or timed out is our problem.
+/// or timed out is our problem. What the tool said goes to the log, not
+/// to whoever sent the file: it names paths on the server and the
+/// libraries' internals.
 pub(crate) fn corrupt_unless_missing(error: ToolError) -> MediaError {
     match error {
-        ToolError::Failed { stderr, .. } => MediaError::Corrupt(stderr),
+        ToolError::Failed { program, stderr } => {
+            tracing::info!(%program, %stderr, "a media tool couldn't read a file");
+            MediaError::Corrupt("it couldn't be decoded".into())
+        }
         other if other.is_over_limit() => MediaError::OverLimit(other),
         other => MediaError::Tool(other),
     }

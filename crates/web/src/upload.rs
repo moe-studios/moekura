@@ -535,9 +535,13 @@ pub(crate) async fn receive(
             | "commentary_description"
             | "translated_title"
             | "translated_description" => {
-                let text = match field.text().await {
+                let max = match name.as_str() {
+                    "url" | "ref" | "source" => LINK_FIELD_MAX,
+                    _ => TEXT_FIELD_MAX,
+                };
+                let text = match upload_text(state, field, max).await {
                     Ok(text) => text,
-                    Err(error) => return (fields, Err(multipart_error(state, &error))),
+                    Err(error) => return (fields, Err(error)),
                 };
                 match name.as_str() {
                     "url" => fields.url = text.trim().to_owned(),
@@ -586,6 +590,58 @@ fn too_large(state: &AppState) -> UploadError {
         "The file is larger than {} MB.",
         state.media.config().max_upload_mb
     ))
+}
+
+/// Most bytes a text field of a form with a file may have: the longest
+/// commentary, in characters of up to four bytes. Only this keeps a field
+/// far below the route's body limit, which is sized for files.
+pub(crate) const TEXT_FIELD_MAX: usize = 4 * crate::commentary::DESCRIPTION_MAX_LEN;
+/// Most bytes a link field may have: [`SOURCE_MAX_LEN`] characters of up
+/// to four bytes.
+pub(crate) const LINK_FIELD_MAX: usize = 4 * SOURCE_MAX_LEN;
+
+/// Why a text field of a multipart form wasn't read.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TextFieldError {
+    #[error("A form field is too long.")]
+    TooLong,
+    #[error("The form was interrupted or malformed ({}).", .0.body_text())]
+    Multipart(MultipartError),
+}
+
+impl From<TextFieldError> for AppError {
+    fn from(error: TextFieldError) -> Self {
+        match error {
+            TextFieldError::TooLong => AppError::Unprocessable(error.to_string()),
+            TextFieldError::Multipart(_) => AppError::BadRequest(error.to_string()),
+        }
+    }
+}
+
+/// Reads a text field of a multipart form, refusing one of more than `max`
+/// bytes rather than holding it all in memory, as `Field::text` would.
+pub(crate) async fn text_field(mut field: Field<'_>, max: usize) -> Result<String, TextFieldError> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = field.chunk().await.map_err(TextFieldError::Multipart)? {
+        if bytes.len() + chunk.len() > max {
+            return Err(TextFieldError::TooLong);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(String::from_utf8(bytes)
+        .unwrap_or_else(|invalid| String::from_utf8_lossy(invalid.as_bytes()).into_owned()))
+}
+
+/// [`text_field`] on an upload form.
+pub(crate) async fn upload_text(
+    state: &AppState,
+    field: Field<'_>,
+    max: usize,
+) -> Result<String, UploadError> {
+    text_field(field, max).await.map_err(|error| match error {
+        TextFieldError::Multipart(error) => multipart_error(state, &error),
+        TextFieldError::TooLong => UploadError::Invalid(error.to_string()),
+    })
 }
 
 pub(crate) async fn save_to_temp(

@@ -235,10 +235,10 @@ async fn receive(
             }
             name @ ("url" | "ref") => {
                 let name = name.to_owned();
-                match field.text().await {
+                match upload::upload_text(state, field, upload::LINK_FIELD_MAX).await {
                     Ok(text) if name == "url" => link.url = text.trim().to_owned(),
                     Ok(text) => link.referer = text.trim().to_owned(),
-                    Err(error) => return (link, Err(upload::multipart_error(state, &error))),
+                    Err(error) => return (link, Err(error)),
                 }
             }
             _ => {}
@@ -2771,5 +2771,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(uploads, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn long_form_fields_are_refused(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let routes = routes(max)
+            .merge(upload::routes(max))
+            .merge(crate::image_search::routes(max));
+        let app = TestApp::new(state, routes);
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let long = format!("https://example.com/{}", "a".repeat(upload::LINK_FIELD_MAX));
+        for (path, field, value) in [
+            ("/uploads", "url", long.clone()),
+            ("/uploads", "ref", long.clone()),
+            ("/upload", "source", long.clone()),
+            ("/upload", "tags", "a ".repeat(upload::TEXT_FIELD_MAX)),
+            ("/iqdb_queries", "url", long.clone()),
+        ] {
+            let sent = app
+                .post_multipart(path, Some(&alice), &[(field, value)], None)
+                .await;
+            assert_eq!(
+                sent.status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{path} {field}"
+            );
+            assert!(
+                sent.body.contains("A form field is too long."),
+                "{path} {field}: {}",
+                sent.body
+            );
+        }
     }
 }

@@ -142,7 +142,15 @@ async fn read_form(mut multipart: Multipart) -> Result<ProfileForm, String> {
                     *slot = Some(bytes.to_vec());
                 }
             }
-            "bio" => form.bio = Some(field.text().await.map_err(too_large)?),
+            "bio" => {
+                let text = crate::upload::text_field(field, 4 * BIO_MAX_CHARS).await;
+                form.bio = Some(text.map_err(|error| match error {
+                    crate::upload::TextFieldError::TooLong => {
+                        format!("The bio can be at most {BIO_MAX_CHARS} characters.")
+                    }
+                    crate::upload::TextFieldError::Multipart(error) => too_large(error),
+                })?);
+            }
             "remove_avatar" => form.remove_avatar = true,
             "remove_banner" => form.remove_banner = true,
             _ => {}

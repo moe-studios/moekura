@@ -167,10 +167,7 @@ async fn receive(state: &AppState, request: Request) -> Result<Sent, AppError> {
             name.as_str(),
             "upload[source]" | "upload[source_url]" | "upload[referer_url]"
         ) {
-            let text = field
-                .text()
-                .await
-                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            let text = crate::upload::text_field(field, crate::upload::LINK_FIELD_MAX).await?;
             if name == "upload[referer_url]" {
                 sent.referer = clean(&text);
             } else {

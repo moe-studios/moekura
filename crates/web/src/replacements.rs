@@ -23,7 +23,9 @@ use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
-use crate::upload::{TempUpload, UploadError, UploadFields};
+use crate::upload::{
+    LINK_FIELD_MAX, TEXT_FIELD_MAX, TempUpload, UploadError, UploadFields, text_field,
+};
 
 pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new()
@@ -234,8 +236,10 @@ async fn replace(
                         .map_err(refused)?,
                 );
             }
-            "url" => fields.url = field.text().await.unwrap_or_default().trim().to_owned(),
-            "reason" => reason = field.text().await.unwrap_or_default(),
+            "url" => {
+                fields.url = text_field(field, LINK_FIELD_MAX).await?.trim().to_owned();
+            }
+            "reason" => reason = text_field(field, TEXT_FIELD_MAX).await?,
             "rescale_notes" => rescale = true,
             _ => {}
         }

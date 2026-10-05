@@ -15,7 +15,7 @@ use crate::AppState;
 use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::pages::Page;
-use crate::upload::{TempUpload, UploadError};
+use crate::upload::{LINK_FIELD_MAX, TempUpload, UploadError, text_field};
 
 /// The most bits two hashes may differ by and still be listed (out of
 /// 64): about 75% alike.
@@ -212,9 +212,11 @@ impl Asked {
                             .map_err(upload_error)?,
                     );
                 }
-                "url" | "search[url]" => asked.url = field.text().await.unwrap_or_default(),
+                "url" | "search[url]" => {
+                    asked.url = text_field(field, LINK_FIELD_MAX).await?;
+                }
                 "post_id" | "search[post_id]" => {
-                    asked.post_id = field.text().await.unwrap_or_default().trim().parse().ok();
+                    asked.post_id = text_field(field, 64).await?.trim().parse().ok();
                 }
                 _ => {}
             }

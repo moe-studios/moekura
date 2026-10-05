@@ -105,9 +105,10 @@ once every 7 days. Your profile lists your former names, and links to
 your old profile and searches such as `user:oldname` and
 `ordfav:oldname` keep finding you, unless someone else takes the name
 later. An inactive account's old profile address leads nowhere, except
-for staff who manage users. Staff who can ban users can rename anyone
-ranked below them, with **Rename** on their profile, at any time; that
-goes in the moderation log.
+for staff who manage users. You can't change your name while banned.
+Staff who can ban users can rename anyone ranked below them, with
+**Rename** on their profile, at any time; that goes in the moderation
+log.
 
 A name may not end in `.json`: addresses ending in `.json`, like
 `/users/{id}.json`, belong to the [Danbooru API](danbooru-clients.md).

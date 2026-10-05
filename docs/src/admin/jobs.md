@@ -29,4 +29,7 @@ Workers claim jobs without stepping on each other, and only the kinds
 they can do: `ml.tag_post` jobs wait for a tagger. A failed job is retried
 with increasing delays; after its last attempt it's kept as *failed*.
 **Admin → Overview** shows the queue, and failed jobs with their errors,
-to retry or discard.
+to retry or discard. Errors and the buttons are only for those who
+manage site settings (an error can quote what the job was sending to),
+and a failed mail shows only who it was for, never its text, which may
+hold a password reset link.

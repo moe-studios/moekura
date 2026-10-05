@@ -1,6 +1,7 @@
 //! The `webhooks.deliver` job: sending one delivery, signed, to its
 //! webhook; and `webhooks.prune`, forgetting old deliveries.
 
+use std::fmt::Write as _;
 use std::time::Duration;
 
 use moekura_core::jobs::{DeliverWebhook, PruneWebhookDeliveries};
@@ -182,12 +183,26 @@ impl WebhookJobs {
                 }
             }
             Err(error) => {
-                let why = format!("couldn't send: {error}");
+                let why = format!("couldn't send: {}", describe(error));
                 webhooks::record_attempt(&self.db, id, false, None, &why).await?;
                 Err(JobError::Retry(why))
             }
         }
     }
+}
+
+/// What went wrong with a request, with its causes but not its URL: a
+/// Discord webhook's token is in the path, and the error is kept with the
+/// delivery and the job.
+fn describe(error: reqwest::Error) -> String {
+    let error = error.without_url();
+    let mut why = error.to_string();
+    let mut cause = std::error::Error::source(&error);
+    while let Some(error) = cause {
+        let _ = write!(why, ": {error}");
+        cause = error.source();
+    }
+    why
 }
 
 #[cfg(test)]
@@ -328,6 +343,36 @@ mod tests {
             refused.response.as_deref(),
             Some("the address isn't on the public internet")
         );
+    }
+
+    /// A local address nothing listens on.
+    async fn closed_port() -> std::net::SocketAddr {
+        TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap()
+            .local_addr()
+            .unwrap()
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn network_errors_leave_the_url_out(pool: PgPool) {
+        let jobs = WebhookJobs::new(pool.clone(), Duration::from_secs(5), true);
+        // Like a Discord webhook, whose token is in the path.
+        let url = format!("http://{}/api/webhooks/1/tok3n", closed_port().await);
+        let id = delivery_with(&pool, &discord_hook(&url)).await;
+        let Err(JobError::Retry(why)) = jobs.deliver(id).await else {
+            panic!("a network error is retried");
+        };
+        let failed = webhooks::delivery(&pool, id).await.unwrap().unwrap();
+        let stored = failed.response.unwrap();
+        assert_eq!(stored, why);
+        assert!(stored.starts_with("couldn't send: "), "{stored}");
+        assert!(
+            !stored.contains("tok3n") && !stored.contains("127.0.0.1"),
+            "{stored}"
+        );
+        // But with what went wrong.
+        assert!(stored.to_lowercase().contains("connect"), "{stored}");
     }
 
     /// A webhook in Discord's format, to `url`.

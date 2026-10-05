@@ -10,18 +10,22 @@ import { t } from "./i18n.ts";
 const UPLOADS = "/uploads";
 /** The upload page, the only one that sends a link given with it. */
 const UPLOAD_PAGE = "/uploads/new";
+/** The pages that show the upload form: the upload page, and the form again after a refusal. */
+const FORM_PAGES = [UPLOAD_PAGE, UPLOADS, "/upload"];
 
 /**
  * Whether a form with these `action` and `method` attributes, on the page
- * at `page`, is the upload form: one posting to this site's `/uploads`.
- * Only that form is sent by itself, so markup slipped into some other
- * page can't have a form of its own sent as the viewer.
+ * at `page`, is the upload form: one posting to this site's `/uploads`,
+ * on a page that shows it. Only that form is sent by itself, so markup
+ * slipped into some other page can't have a form of its own sent as the
+ * viewer.
  */
 export function isUploadForm(action: string | null, method: string | null, page: string): boolean {
   if (action === null || method?.toLowerCase() !== "post") return false;
   try {
-    const target = new URL(action, page);
-    return target.origin === new URL(page).origin && target.pathname === UPLOADS && target.search === "";
+    const here = new URL(page);
+    const target = new URL(action, here);
+    return FORM_PAGES.includes(here.pathname) && target.origin === here.origin && target.pathname === UPLOADS && target.search === "";
   } catch {
     return false;
   }

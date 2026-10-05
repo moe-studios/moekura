@@ -35,6 +35,13 @@ test("only the upload form, posting to this site's /uploads, is sent by itself",
   assert.equal(isUploadForm("/uploads", "get", page), false);
   assert.equal(isUploadForm("/uploads", null, page), false);
   assert.equal(isUploadForm(null, "post", page), false);
+  // The form shown again after a refusal.
+  assert.equal(isUploadForm("/uploads", "post", "https://booru.example/uploads"), true);
+  assert.equal(isUploadForm("/uploads", "post", "https://booru.example/upload"), true);
+  // A form slipped into another page, posting to /uploads.
+  assert.equal(isUploadForm("/uploads", "post", "https://booru.example/artists/1"), false);
+  assert.equal(isUploadForm("/uploads", "post", "https://booru.example/uploads/1"), false);
+  assert.equal(isUploadForm("/uploads", "post", "https://booru.example/uploads/new/x"), false);
 });
 
 test("only the upload page sends a link given with it", () => {

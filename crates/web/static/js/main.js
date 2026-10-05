@@ -1561,11 +1561,13 @@ function enableTagScript(root = document) {
 // src/upload.ts
 var UPLOADS = "/uploads";
 var UPLOAD_PAGE = "/uploads/new";
+var FORM_PAGES = [UPLOAD_PAGE, UPLOADS, "/upload"];
 function isUploadForm(action, method, page) {
   if (action === null || method?.toLowerCase() !== "post") return false;
   try {
-    const target2 = new URL(action, page);
-    return target2.origin === new URL(page).origin && target2.pathname === UPLOADS && target2.search === "";
+    const here = new URL(page);
+    const target2 = new URL(action, here);
+    return FORM_PAGES.includes(here.pathname) && target2.origin === here.origin && target2.pathname === UPLOADS && target2.search === "";
   } catch {
     return false;
   }

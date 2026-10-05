@@ -135,11 +135,19 @@ test("a form slipped into another page isn't sent by itself", async ({ page }) =
   });
   expect(pasted).toBe(false);
   await expect(page.locator("[data-upload-hint]")).toBeHidden();
-  // Posting to /uploads, but not on the upload page: the link waits for the button.
+  // Posting to /uploads, but not on a page that shows the upload form: left alone too.
   await page.route("**/artists/2", (route) => route.fulfill({ contentType: "text/html", body: planted }));
   await page.goto("/artists/2");
   await page.addScriptTag({ content: script, type: "module" });
-  await expect(page.locator("[data-upload-hint]")).toBeVisible();
+  const pastedThere = await page.locator("#url").evaluate((element) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "https://example.com/other");
+    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(pastedThere).toBe(false);
+  await expect(page.locator("[data-upload-hint]")).toBeHidden();
   await expect(page.locator("[data-upload-status]")).toBeEmpty();
   // On the upload page, a form slipped in before the real one: neither is trusted.
   await page.route("**/uploads/new?*", (route) => route.fulfill({ contentType: "text/html", body: planted + form }));

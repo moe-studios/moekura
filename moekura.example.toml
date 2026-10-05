@@ -82,8 +82,9 @@ session_max_days = 365
 # scopes = ["openid", "email", "profile"]
 
 # A captcha for sign-up and new users' comments (turned on under Admin →
-# Settings): "turnstile" (Cloudflare) or "hcaptcha", with the keys the
-# provider gives you.
+# Settings), and for logging in to an account while its password is being
+# guessed from many networks: "turnstile" (Cloudflare) or "hcaptcha",
+# with the keys the provider gives you.
 # [auth.captcha]
 # provider = "turnstile"
 # site_key = ""

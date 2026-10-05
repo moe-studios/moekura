@@ -285,7 +285,14 @@ struct LoginForm {
     name: String,
     password: String,
     next: Option<String>,
+    /// The captcha widget's token, once one is asked for (see [`login`]).
+    #[serde(default, alias = "cf-turnstile-response", alias = "h-captcha-response")]
+    captcha: String,
 }
+
+/// A captcha the login form asks for, and what's wrong with the last
+/// answer, if anything.
+type CaptchaPrompt<'a> = (&'a crate::captcha::Captcha, Option<&'a str>);
 
 /// At most as much of a typed `name` as an account name can be, for logs
 /// and for showing it again.
@@ -307,7 +314,7 @@ async fn login_form(page: Page, Query(query): Query<NextQuery>) -> Response {
     if page.current.is_logged_in() {
         return Redirect::to(safe_next(query.next.as_deref())).into_response();
     }
-    render_login(&page, "", query.next.as_deref(), None, StatusCode::OK)
+    render_login(&page, "", query.next.as_deref(), None, None, StatusCode::OK)
 }
 
 fn render_login(
@@ -315,6 +322,7 @@ fn render_login(
     name: &str,
     next: Option<&str>,
     error: Option<&AuthError>,
+    captcha: Option<CaptchaPrompt>,
     status: StatusCode,
 ) -> Response {
     let message = error.map(|error| match error {
@@ -331,6 +339,8 @@ fn render_login(
             next => next,
             error => message,
             unverified => matches!(error, Some(AuthError::Unverified)),
+            captcha => captcha.map(|(captcha, _)| captcha.widget()),
+            captcha_error => captcha.and_then(|(_, error)| error),
             mail_enabled => crate::email::mail_enabled(page.state()),
             sso_label => page.state().oidc.as_ref().map(|o| o.button_label().to_owned()),
         },
@@ -361,6 +371,7 @@ async fn login(
             clipped(name),
             form.next.as_deref(),
             Some(&error),
+            None,
             StatusCode::UNPROCESSABLE_ENTITY,
         ));
     }
@@ -371,13 +382,19 @@ async fn login(
         .await
         .inspect_err(|_| limited())?;
     // Past the limit for the account from all networks together, someone
-    // is guessing from many; then only its owner gets in, with the right
-    // password from a network the account has used. Everyone else is
-    // refused alike, after the same work, so a refusal tells nothing about
-    // the password or the network.
+    // is guessing from many. Then an attempt gets through with a solved
+    // captcha, if the site has a captcha service, and the owner also gets
+    // in with the right password from a network the account has used.
+    // Everyone else is refused alike, after the same work, so a refusal
+    // tells nothing about the password or the network.
     let ceiling = limits.check_login_ceiling(name).await;
+    let captcha = match (&ceiling, state.captcha.as_deref()) {
+        (Err(_), Some(captcha)) => Some((captcha, captcha.check(&form.captcha, info.ip).await)),
+        _ => None,
+    };
+    let solved = matches!(captcha, Some((_, Ok(()))));
     let used_network = match (&ceiling, info.ip) {
-        (Err(_), Some(ip)) => {
+        (Err(_), Some(ip)) if !solved => {
             let network = crate::rate_limit::ip_bucket_net(ip);
             user_ips::name_used(state.db.primary(), name, network).await?
         }
@@ -385,13 +402,24 @@ async fn login(
     };
     let result = accounts::authenticate(state.db.primary(), name, &form.password).await;
     if let Err(refused) = ceiling
+        && !solved
         && !(used_network && result.is_ok())
     {
         if let Err(AuthError::Db(error)) = result {
             return Err(error.into());
         }
         limited();
-        return Err(refused);
+        return match &captcha {
+            Some((captcha, Err(message))) => Ok(render_login(
+                &page,
+                name,
+                form.next.as_deref(),
+                None,
+                Some((*captcha, Some(message.as_str()))),
+                StatusCode::TOO_MANY_REQUESTS,
+            )),
+            _ => Err(refused),
+        };
     }
     let user = match result {
         Ok(user) => user,
@@ -399,11 +427,14 @@ async fn login(
         Err(error) => {
             tracing::info!(name = clipped(name), reason = %error, "login failed");
             let status = StatusCode::UNPROCESSABLE_ENTITY;
+            // Still past the limit: the next attempt needs one too.
+            let captcha = captcha.map(|(captcha, _)| (captcha, None));
             return Ok(render_login(
                 &page,
                 name,
                 form.next.as_deref(),
                 Some(&error),
+                captcha,
                 status,
             ));
         }
@@ -802,6 +833,60 @@ mod tests {
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
         let status = login("2001:db8:1:2::abcd", "correct horse").await;
         assert_eq!(status, StatusCode::SEE_OTHER);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn guessing_from_many_networks_lets_the_owner_in_with_a_captcha(pool: PgPool) {
+        let mut config = crate::test_support::test_config();
+        config.server.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        config.auth.captcha = Some(crate::captcha::test_service::start().await);
+        let state = crate::test_support::test_state_with(&pool, config).await;
+        let limits = state.rate_limits.clone();
+        let proxy = "10.0.0.2:40000".parse().unwrap();
+        let app = TestApp::with_peer(state, routes(), proxy);
+        let from = [("x-forwarded-for", "198.51.100.1")];
+        let response = app
+            .post_form("/register", None, &from, &signup("alice"))
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        // Not asked for while the account's allowance lasts.
+        let page = app.get("/login", None).await;
+        assert!(!page.body.contains("cf-turnstile"), "{}", page.body);
+        let right = form(&[("name", "alice"), ("password", "correct horse")]);
+        let response = app.post_form("/login", None, &from, &right).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+
+        // From a network the account never used, once guesses from many
+        // have used up its allowance.
+        let login = async |password: &str, token: &str| {
+            while limits.check_login_ceiling("alice").await.is_ok() {}
+            let attempt = form(&[
+                ("name", "alice"),
+                ("password", password),
+                ("cf-turnstile-response", token),
+            ]);
+            let from = [("x-forwarded-for", "203.0.113.7")];
+            app.post_form("/login", None, &from, &attempt).await
+        };
+        for (password, token) in [("correct horse", ""), ("correct horse", "bad")] {
+            let refused = login(password, token).await;
+            assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS, "{token}");
+            assert!(
+                refused
+                    .body
+                    .contains("class=\"cf-turnstile\" data-sitekey=\"site-key\""),
+                "{}",
+                refused.body
+            );
+            assert!(refused.body.contains("captcha"), "{}", refused.body);
+        }
+        // Solved, the attempt is checked as usual.
+        let wrong = login("wrong horse", "good").await;
+        assert_eq!(wrong.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(wrong.body.contains("Wrong name or password."));
+        assert!(wrong.body.contains("cf-turnstile"), "{}", wrong.body);
+        let right = login("correct horse", "good").await;
+        assert_eq!(right.status, StatusCode::SEE_OTHER, "{}", right.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

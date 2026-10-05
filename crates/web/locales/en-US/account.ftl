@@ -25,6 +25,7 @@ forgot-back = Back to logging in
 forgot-intro = Enter the email address of your account, and we'll send you a link to choose a new password.
 login-resend = Send it again
 login-no-account = No account yet?
+login-captcha = This account has had many login attempts lately, so logging in to it needs a captcha for now.
 name-title = Your name
 name-current = You're <strong>{ $name }</strong>.
 name-wait = You can change your name once every { $days } days; you can next change it on { $next }.

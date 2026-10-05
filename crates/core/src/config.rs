@@ -200,7 +200,8 @@ pub struct AuthConfig {
     pub session_max_days: u32,
     /// Logging in through an OpenID Connect provider (single sign-on).
     pub oidc: Option<OidcConfig>,
-    /// A captcha service; site settings say where it's asked for.
+    /// A captcha service; site settings say where it's asked for, besides
+    /// logging in to an account whose password is being guessed.
     pub captcha: Option<CaptchaConfig>,
 }
 

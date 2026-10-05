@@ -119,12 +119,13 @@ hour, and using it logs you out everywhere.
 
 Logging in is limited, against password guessing: five tries at an
 account from one network (an IPv4 address, or an IPv6 `/64`), then one
-every 30 seconds; and thirty at an account from all networks together,
-then one every 12 seconds. Someone guessing your password from their
-network doesn't keep you from logging in from yours, and while people
-guess it from many networks at once, you can still log in from a
-network you used the account from before (if the site keeps the
-addresses accounts use, as it does by default).
+every 30 seconds; and ten at an account from all networks together,
+then one every 30 seconds. Someone guessing your password from their
+network doesn't keep you from logging in from yours. While people guess
+it from many networks at once, you can still log in from a network you
+used the account from before (if the site keeps the addresses accounts
+use, as it does by default), and from anywhere by also solving a
+captcha (on sites with a captcha service).
 
 ## Single sign-on
 

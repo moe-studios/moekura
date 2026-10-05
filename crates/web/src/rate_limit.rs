@@ -49,14 +49,15 @@ const LOGIN_BY_NAME_AND_NET: Limit = Limit {
     burst: 5,
     period: Duration::from_secs(30),
 };
-// Looser per account, from any network: guessing it from many at once.
-// One more every 12 seconds is more than two networks get at the tight
-// limit. Past it, the login page still lets the owner in from a network
-// the account has used (see `check_login_ceiling`).
+// Per account, from any network: guessing it from many at once. Twice
+// the burst of the limit per network, and the same rate, so one network
+// alone can't use it up. Past it, the login page still lets the owner in
+// with a solved captcha, or from a network the account has used (see
+// `account::login`).
 const LOGIN_BY_NAME: Limit = Limit {
     name: "login_name",
-    burst: 30,
-    period: Duration::from_secs(12),
+    burst: 10,
+    period: Duration::from_secs(30),
 };
 const REGISTER_BY_IP: Limit = Limit {
     name: "register_ip",
@@ -667,14 +668,14 @@ mod tests {
 
         for limits in backends().await {
             let name = unique("alice");
-            for _ in 0..6 {
+            for _ in 0..2 {
                 let network = Some(unique_ip());
                 for _ in 0..5 {
                     limits.check_login(network, &name).await.unwrap();
                     limits.check_login_ceiling(&name).await.unwrap();
                 }
             }
-            // A seventh network passes its own limit, not the account's.
+            // A third network passes its own limit, not the account's.
             limits.check_login(Some(unique_ip()), &name).await.unwrap();
             let err = limits
                 .check_login_ceiling(&name.to_uppercase())

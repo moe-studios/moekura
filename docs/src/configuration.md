@@ -137,7 +137,9 @@ nobody here uses it yet, and the site accepts its domain.
 
 A captcha service for the sign-up form and new accounts' comments: where
 it's asked for is chosen under **Admin → Settings** (nowhere, until
-then). Leave the section out to turn it off.
+then). Logging in to an account also asks for it while someone guesses
+the account's password from many networks at once. Leave the section
+out to turn it off.
 
 | Key | Default | Meaning |
 |---|---|---|

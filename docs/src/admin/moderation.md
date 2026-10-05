@@ -202,7 +202,8 @@ keeps none and stops recording them. Deleting an account deletes its
 addresses. Sessions separately keep the address they were started from
 until they end. The addresses also help at login: while someone guesses
 an account's password from many networks at once, its owner can still
-log in from a network (an IPv4 address or an IPv6 `/64`) it used.
+log in from a network (an IPv4 address or an IPv6 `/64`) it used, or
+from elsewhere with a captcha, if one is set up.
 
 ## Renaming users
 
@@ -226,6 +227,8 @@ Settings → Spam** keep spam accounts out:
 - **Captcha**: with a service set up (see
   [`[auth.captcha]`](../configuration.md#authcaptcha)), ask for it when
   signing up, and on comments by accounts younger than a number of days.
+  Logging in to an account asks for it, whatever these say, while
+  someone guesses its password from many networks at once.
 
 ## Spam filter
 

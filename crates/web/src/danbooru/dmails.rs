@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use moekura_db::dmails::{self, Dmail, Folder};
+use moekura_db::users::UserStatus;
 use serde::{Deserialize, Serialize};
 
 use super::tags::window;
@@ -122,8 +123,10 @@ async fn create(
                 .trim()
                 .parse()
                 .map_err(|_| AppError::Unprocessable("`dmail[to_name]` is required".into()))?;
+            // Only active users, so an error never names a hidden account.
             moekura_db::users::by_id(state.db.primary(), id)
                 .await?
+                .filter(|u| u.status == UserStatus::Active)
                 .map(|u| u.name)
                 .ok_or_else(|| AppError::Unprocessable("There's no such user.".into()))?
         }
@@ -184,5 +187,40 @@ mod tests {
                 .status,
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn ids_never_name_inactive_users(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let mut refused = Vec::new();
+        for status in ["pending", "unverified", "deactivated"] {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO users (name, role_id, status)
+                 SELECT 'hidden_' || $1, id, $1 FROM roles WHERE system_key = 'member'
+                 RETURNING id",
+            )
+            .bind(status)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            refused.push(id);
+        }
+        refused.push(refused.iter().max().unwrap() + 1000);
+        for id in refused {
+            let body =
+                json!({ "dmail": { "to_id": id.to_string(), "title": "Hi", "body": "Hello" } });
+            let sent = app
+                .json("POST", "/dmails.json", Some(&alice), Some(body))
+                .await;
+            assert_eq!(
+                sent.status,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "{}",
+                sent.body
+            );
+            let error: Value = serde_json::from_str(&sent.body).unwrap();
+            assert_eq!(error["message"], "There's no such user.", "{id}");
+        }
     }
 }

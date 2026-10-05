@@ -6,13 +6,22 @@ use moekura_core::sites::SourceUrl;
 use super::{Http, SourceInfo, html, html_to_text};
 
 const HEADERS: [(&str, &str); 2] = [("User-Agent", "Android Mobile"), ("Cookie", "age_check=1")];
+/// The most of an entry's images kept, each asked for at its original
+/// size: the entry is whoever wrote it's, and may list any number.
+const MAX_IMAGES: usize = 30;
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let body = http.page(page, &HEADERS).await?;
+    // Canonical entries are on http; blogs answer https too, which a
+    // login needs.
+    let secure = page.replacen("http://", "https://", 1);
+    let body = match http.page(&secure, &HEADERS).await {
+        Ok(body) => body,
+        Err(_) => http.page(page, &HEADERS).await?,
+    };
     let mut info = entry_info(known, page, &body).ok_or("FC2: no entry in the page")?;
     let mut files = Vec::new();
     for file in &info.files {
@@ -36,6 +45,7 @@ fn entry_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo> {
     info.files = html::tags(entry, "img")
         .into_iter()
         .filter_map(|t| t.attr("src").map(str::to_owned))
+        .take(MAX_IMAGES)
         .collect();
     info.title = html::find(body, "div", |t| t.has_class("entry_title"))
         .map(|(_, inner)| html_to_text(inner))
@@ -61,5 +71,11 @@ mod tests {
         );
         assert_eq!(info.title, "Art");
         assert_eq!(info.description, "Drawn");
+
+        // However many images the entry lists.
+        let images = "<img src=\"https://blog-imgs-1.fc2.com/a/s.jpg\">".repeat(1000);
+        let body = format!(r#"<div class="entry_body">{images}</div>"#);
+        let info = entry_info(&known, page, &body).unwrap();
+        assert_eq!(info.files.len(), MAX_IMAGES);
     }
 }

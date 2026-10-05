@@ -115,7 +115,7 @@ pub(super) async fn fetch(
 ) -> Result<Option<SourceInfo>, String> {
     if depth < 2 && is_short_link(url) {
         // Where it leads is what it says.
-        let target = http.final_url(url.as_str(), &[]).await?;
+        let target = http.final_url_without_login(url.as_str()).await?;
         if target.host_str() == url.host_str() {
             return Ok(None);
         }

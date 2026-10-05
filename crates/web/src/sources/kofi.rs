@@ -2,7 +2,7 @@
 
 use moekura_core::sites::SourceUrl;
 
-use super::{Http, SourceInfo, html, html_to_text};
+use super::{Http, SourceInfo, html, html_to_text, key};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -16,6 +16,7 @@ pub(super) async fn fetch(
         .map(|(_, v)| v.into_owned())
         .or_else(|| page.strip_prefix("https://ko-fi.com/i/").map(str::to_owned));
     if let Some(item) = item {
+        let item = key(&item)?;
         let body = http
             .page(
                 &format!("https://ko-fi.com/Gallery/LoadGalleryItem?galleryItemId={item}"),

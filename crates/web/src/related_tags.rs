@@ -23,7 +23,7 @@ use moekura_db::{post_versions, wiki};
 use serde::{Deserialize, Serialize};
 
 use crate::AppState;
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::pages::Page;
 use crate::posts::visibility;
@@ -126,6 +126,7 @@ fn box_tags(input: &str, categories: &[Category]) -> Vec<String> {
 
 async fn related(
     page: Page,
+    request: RequestInfo,
     headers: HeaderMap,
     Query(query): Query<RelatedQuery>,
 ) -> Result<Response, AppError> {
@@ -147,8 +148,11 @@ async fn related(
     };
     let mut groups = Vec::new();
 
-    // The source's artist and its tags, translated.
-    if let Some(info) = state.sources.lookup(&query.source).await {
+    // The source's artist and its tags, translated. Without lookups left
+    // for now, the panel goes without them.
+    if let Some(info) =
+        crate::sources::lookup_for_panel(state, current, request.ip, &query.source, false).await?
+    {
         let artists = crate::sources::artists_for(db, &info).await?;
         let names: Vec<&str> = artists.iter().map(|a| a.name.as_str()).collect();
         let mut tags: Vec<RelatedTag> =

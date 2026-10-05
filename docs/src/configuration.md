@@ -399,8 +399,9 @@ and can set any of:
 | `query` | parameters added to the address, such as an API key |
 | `headers` | other headers, such as `Authorization` |
 
-They're sent only to that site, when reading where an upload comes
-from; the files themselves are downloaded without them.
+They're sent only to that site, over https, when reading where an upload
+comes from, and not along redirects to other sites; the files themselves
+are downloaded without them.
 
 ## `[webhooks]`
 

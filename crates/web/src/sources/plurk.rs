@@ -3,7 +3,7 @@
 
 use moekura_core::sites::SourceUrl;
 
-use super::{Http, SourceInfo, html, html_to_text, tags_named};
+use super::{Http, SourceInfo, html, html_to_text, key, tags_named};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -11,7 +11,7 @@ pub(super) async fn fetch(
     page: &str,
 ) -> Result<SourceInfo, String> {
     let url = url::Url::parse(page).map_err(|e| e.to_string())?;
-    let id = url.path().rsplit('/').next().unwrap_or_default();
+    let id = key(url.path().rsplit('/').next().unwrap_or_default())?;
     let response = url
         .query_pairs()
         .find(|(k, _)| k == "r")
@@ -40,8 +40,7 @@ fn plurk_info(
         .into_iter()
         .filter(|a| a.has_class("pictureservices"))
         .filter_map(|a| {
-            let (_, inner) = html::find(content, "a", |t| t.end == a.end)?;
-            html::tags(inner, "img")
+            html::tags(html::inner(content, &a), "img")
                 .first()?
                 .attr("alt")
                 .map(str::to_owned)
@@ -59,11 +58,8 @@ fn plurk_info(
         html::tags(content, "span")
             .into_iter()
             .filter(|s| s.has_class("hashtag"))
-            .map(|s| {
-                html_to_text(html::inner(content, &s))
-                    .trim_start_matches('#')
-                    .to_owned()
-            })
+            .filter_map(|s| html::label(content, &s))
+            .map(|name| name.trim_start_matches('#').to_owned())
             .collect::<Vec<_>>(),
     );
     info.description = html_to_text(content);

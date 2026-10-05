@@ -82,11 +82,8 @@ fn page_info(known: &SourceUrl, page: &str, body: &str) -> SourceInfo {
         html::tags(body, "div")
             .into_iter()
             .filter(|t| t.has_class("TagName"))
-            .map(|t| {
-                html_to_text(html::inner(body, &t))
-                    .trim_start_matches('#')
-                    .to_owned()
-            })
+            .filter_map(|t| html::label(body, &t))
+            .map(|name| name.trim_start_matches('#').to_owned())
             .collect::<Vec<_>>(),
     );
     info

@@ -4,14 +4,14 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, id_of, strings, tags_named, text_of};
+use super::{Http, SourceInfo, id_of, number, strings, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = number(page.rsplit('/').next().unwrap_or_default())?;
     let hoyolab = page.starts_with("https://www.hoyolab.com/");
     let api = if hoyolab {
         format!("https://bbs-api-os.hoyolab.com/community/post/wapi/getPostFull?post_id={id}")

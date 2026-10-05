@@ -170,9 +170,13 @@ const MAX_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
 
 /// Downloads `url` to search with (a work's page gives its best file),
 /// up to [`MAX_DOWNLOAD_BYTES`].
-async fn fetch(state: &AppState, url: &str) -> Result<TempUpload, AppError> {
+pub(crate) async fn fetch(state: &AppState, url: &str) -> Result<TempUpload, AppError> {
     let url = url.trim();
-    let found = state.sources.lookup(url).await;
+    // Anyone may search, so the site's logins aren't used for it.
+    let found = state
+        .sources
+        .lookup_as(url, crate::sources::Asker::Visitor)
+        .await;
     crate::upload::check_found(url, found.as_deref()).map_err(upload_error)?;
     let file_url = match found.as_deref() {
         Some(info) if !info.files.is_empty() => info.files[0].as_str(),

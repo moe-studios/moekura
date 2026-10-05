@@ -5,19 +5,19 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html, html_to_text, id_of, strings, tags_named, text_of};
+use super::{Http, SourceInfo, html, html_to_text, id_of, number, strings, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
+    let id = number(page.rsplit('/').next().unwrap_or_default())?;
     let body = http.page(page, &[]).await?;
     if page.contains("/products/") {
         return Ok(product_info(known, page, &body));
     }
     let token = html::meta(&body, "csrf-token").ok_or("Fantia: no token in the page")?;
-    let id = page.rsplit('/').next().unwrap_or_default();
     let api = http
         .json(
             &format!("https://fantia.jp/api/v1/posts/{id}"),

@@ -5,7 +5,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, id_of, opengraph, tags_named, text_of};
+use super::{Http, SourceInfo, id_of, number, opengraph, tags_named, text_of};
 
 const AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0";
@@ -24,6 +24,7 @@ pub(super) async fn fetch(
         info.site = known.site.name;
         return Ok(info);
     };
+    let id = number(id)?;
     let buvid = http
         .json(
             "https://api.bilibili.com/x/web-frontend/getbuvid",

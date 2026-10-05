@@ -89,22 +89,59 @@ mod youtube;
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::net::IpAddr;
+use std::num::NonZeroU32;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use governor::{DefaultDirectRateLimiter, Quota, RateLimiter};
 use moekura_core::config::SourcesConfig;
+use moekura_core::permissions::Permission;
 use time::OffsetDateTime;
+use tokio::sync::Semaphore;
+use tracing::Instrument;
 use url::Url;
 
+use crate::AppState;
+use crate::auth::CurrentUser;
+use crate::error::AppError;
 use crate::fetch::Fetcher;
 
 /// How long a lookup is reused.
 const CACHE_TTL: Duration = Duration::from_secs(10 * 60);
 /// Lookups kept at once.
 const CACHE_SIZE: usize = 500;
+/// About how much memory the kept lookups may take, all together.
+const CACHE_BYTES: usize = 32 * 1024 * 1024;
 /// The most read from an API or page.
 const MAX_RESPONSE: usize = 4 * 1024 * 1024;
+/// Lookups asking other servers at once; more wait their turn.
+const IN_FLIGHT: usize = 16;
+/// How long a lookup waits for its turn before giving up.
+const TURN_WAIT: Duration = Duration::from_secs(10);
+/// How long a whole lookup may take, all its requests together.
+const LOOKUP_DEADLINE: Duration = Duration::from_secs(20);
+/// HEAD requests one lookup may make to find a file's best size.
+const MAX_PROBES: usize = 40;
+/// Logged-in requests to X, site-wide: this many at once, then one per
+/// [`X_LOGIN_PERIOD`] (30 every 15 minutes).
+const X_LOGIN_BURST: u32 = 30;
+const X_LOGIN_PERIOD: Duration = Duration::from_secs(30);
+
+/// What's kept of a lookup (see [`SourceInfo::clamped`]): a page can say
+/// a great deal, and what it says is cached.
+const MAX_FILES: usize = 200;
+const MAX_PROFILES: usize = 20;
+const MAX_HEADERS: usize = 8;
+const MAX_TAGS: usize = 200;
+/// The longest URL kept, in bytes.
+const MAX_URL: usize = 4096;
+/// The longest name (an artist's, a tag's, a frame's file), in bytes.
+const MAX_NAME: usize = 256;
+/// An ugoira's most frames, as `moekura_media` takes them.
+const MAX_FRAMES: usize = 2000;
 
 /// A tag the source gave the work, with the site's own translation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -148,6 +185,13 @@ pub(crate) fn date(text: &str) -> Option<OffsetDateTime> {
     OffsetDateTime::parse(text.trim(), &time::format_description::well_known::Rfc3339).ok()
 }
 
+/// `text` cut to its first `max` characters.
+fn truncate_chars(text: &mut String, max: usize) {
+    if let Some((at, _)) = text.char_indices().nth(max) {
+        text.truncate(at);
+    }
+}
+
 impl SourceInfo {
     /// A work on `site` whose page is `page_url`, nothing else known yet.
     pub(crate) fn new(
@@ -165,28 +209,153 @@ impl SourceInfo {
     pub fn header_pairs(&self) -> Vec<(&str, &str)> {
         self.headers.iter().map(|(n, v)| (*n, v.as_str())).collect()
     }
+
+    /// What's worth keeping: no more files, profiles and tags than the
+    /// `MAX_` constants say, no longer URLs and names (those are left
+    /// out), and the title and description as long as a commentary's.
+    /// `None` when the work's page is too long an address to be one.
+    fn clamped(mut self) -> Option<Self> {
+        if self.page_url.len() > MAX_URL {
+            return None;
+        }
+        let short_url = |url: &String| url.len() <= MAX_URL;
+        self.files.retain(short_url);
+        self.files.truncate(MAX_FILES);
+        self.headers.retain(|(_, value)| value.len() <= MAX_URL);
+        self.headers.truncate(MAX_HEADERS);
+        self.profile_urls.retain(short_url);
+        self.profile_urls.truncate(MAX_PROFILES);
+        let short_name = |name: &String| name.len() <= MAX_NAME;
+        self.artist_name = self.artist_name.filter(short_name);
+        self.artist_account = self.artist_account.filter(short_name);
+        self.tags.retain(|tag| short_name(&tag.name));
+        self.tags.truncate(MAX_TAGS);
+        for tag in &mut self.tags {
+            tag.translation = tag.translation.take().filter(short_name);
+        }
+        truncate_chars(&mut self.title, crate::commentary::TITLE_MAX_LEN);
+        truncate_chars(
+            &mut self.description,
+            crate::commentary::DESCRIPTION_MAX_LEN,
+        );
+        self.ugoira_frames = self.ugoira_frames.filter(|frames| {
+            frames.len() <= MAX_FRAMES && frames.iter().all(|(file, _)| short_name(file))
+        });
+        // What was read may have left the strings far larger than they are.
+        for text in [&mut self.page_url, &mut self.title, &mut self.description]
+            .into_iter()
+            .chain(&mut self.files)
+            .chain(&mut self.profile_urls)
+        {
+            text.shrink_to_fit();
+        }
+        self.files.shrink_to_fit();
+        self.tags.shrink_to_fit();
+        self.profile_urls.shrink_to_fit();
+        Some(self)
+    }
+
+    /// About how many bytes it takes up.
+    fn size(&self) -> usize {
+        const ITEM: usize = 48;
+        let texts = [&self.page_url, &self.title, &self.description]
+            .into_iter()
+            .chain(&self.files)
+            .chain(&self.profile_urls)
+            .chain(self.artist_name.iter())
+            .chain(self.artist_account.iter())
+            .map(|t| t.len() + ITEM)
+            .sum::<usize>();
+        let tags = self
+            .tags
+            .iter()
+            .map(|t| t.name.len() + t.translation.as_ref().map_or(0, String::len) + ITEM)
+            .sum::<usize>();
+        let headers = self
+            .headers
+            .iter()
+            .map(|(_, v)| v.len() + ITEM)
+            .sum::<usize>();
+        let frames = self
+            .ugoira_frames
+            .iter()
+            .flatten()
+            .map(|(f, _)| f.len() + ITEM)
+            .sum::<usize>();
+        std::mem::size_of::<Self>() + texts + tags + headers + frames
+    }
+}
+
+/// Who a lookup is for. The X login (`[sources.logins."x.com"]`) only
+/// reads posts for members who can upload: X suspends accounts it finds
+/// reading it for anyone who asks.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Asker {
+    /// A signed-in member who can upload: who the upload paths, which
+    /// check that first, look links up for.
+    #[default]
+    Uploader,
+    /// Anyone else: a visitor, or a member who can't upload.
+    Visitor,
+}
+
+impl Asker {
+    pub fn of(current: &CurrentUser) -> Self {
+        if current.user.is_some() && current.can(Permission::Upload) {
+            Self::Uploader
+        } else {
+            Self::Visitor
+        }
+    }
+}
+
+/// A request as it's sent: its address and headers, with its site's
+/// login when it has one.
+struct Request {
+    url: Url,
+    headers: Vec<(String, String)>,
+    /// Whether it carries a login.
+    logged_in: bool,
 }
 
 /// Reading JSON and pages for the strategies, logged in to the sites
-/// `[sources.logins]` has logins for.
+/// `[sources.logins]` has logins for, for one lookup.
 pub(crate) struct Http<'a> {
-    fetcher: &'a Fetcher,
-    logins: &'a SourcesConfig,
+    sources: &'a Sources,
+    asker: Asker,
+    /// HEAD requests this lookup may still make.
+    probes: AtomicUsize,
+    /// Whether the X login was left out (for a visitor, or with its
+    /// allowance used up), so an uploader asking later should look again.
+    partial: AtomicBool,
 }
 
-impl Http<'_> {
-    /// `url` with its site's login added, and the headers to send.
-    fn logged_in(
-        &self,
-        url: &str,
-        headers: &[(&str, &str)],
-    ) -> Result<(Url, Vec<(String, String)>), String> {
+impl<'a> Http<'a> {
+    fn new(sources: &'a Sources, asker: Asker) -> Self {
+        Self {
+            sources,
+            asker,
+            probes: AtomicUsize::new(MAX_PROBES),
+            partial: AtomicBool::new(false),
+        }
+    }
+
+    /// A request for `url` with `headers`, and its site's login if it has
+    /// one and the request goes over https.
+    fn logged_in(&self, url: &str, headers: &[(&str, &str)]) -> Result<Request, String> {
         let mut url = Url::parse(url).map_err(|e| e.to_string())?;
         let mut all: Vec<(String, String)> = headers
             .iter()
             .map(|(n, v)| ((*n).to_owned(), (*v).to_owned()))
             .collect();
-        if let Some(login) = url.host_str().and_then(|h| self.logins.login_for(h)) {
+        // Never in the clear.
+        let login = (url.scheme() == "https")
+            .then(|| {
+                url.host_str()
+                    .and_then(|h| self.sources.logins.login_for(h))
+            })
+            .flatten();
+        if let Some(login) = login {
             if !login.query.is_empty() {
                 url.query_pairs_mut().extend_pairs(&login.query);
             }
@@ -195,12 +364,40 @@ impl Http<'_> {
             }
             all.extend(login.headers.iter().map(|(n, v)| (n.clone(), v.clone())));
         }
-        Ok((url, all))
+        Ok(Request {
+            url,
+            headers: all,
+            logged_in: login.is_some(),
+        })
+    }
+
+    /// The fetcher for a request: one that stays on the site when it
+    /// carries a login.
+    fn fetcher(&self, logged_in: bool) -> &Fetcher {
+        if logged_in {
+            &self.sources.logged_in
+        } else {
+            &self.sources.fetcher
+        }
     }
 
     /// Whether there's a login for `host`'s site.
     pub fn has_login(&self, host: &str) -> bool {
-        self.logins.login_for(host).is_some()
+        self.sources.logins.login_for(host).is_some()
+    }
+
+    /// Whether the X login may be used for this lookup (why not, if not),
+    /// counting it against the site-wide allowance when it may.
+    fn may_use_x_login(&self) -> Result<(), &'static str> {
+        let refused = if self.asker != Asker::Uploader {
+            "only for uploaders"
+        } else if self.sources.x_logins.check().is_err() {
+            "its allowance is used up for now"
+        } else {
+            return Ok(());
+        };
+        self.partial.store(true, Ordering::Relaxed);
+        Err(refused)
     }
 
     pub async fn text(
@@ -208,12 +405,36 @@ impl Http<'_> {
         url: &str,
         headers: &[(&str, &str)],
     ) -> Result<(String, String), String> {
-        let (url, headers) = self.logged_in(url, headers)?;
+        let Request {
+            url,
+            headers,
+            logged_in,
+        } = self.logged_in(url, headers)?;
         let headers: Vec<(&str, &str)> = headers
             .iter()
             .map(|(n, v)| (n.as_str(), v.as_str()))
             .collect();
-        let (content_type, body) = self.fetcher.get(&url, &headers, MAX_RESPONSE).await?;
+        let (content_type, body) = self
+            .fetcher(logged_in)
+            .get(&url, &headers, MAX_RESPONSE)
+            .await?;
+        Ok((content_type, String::from_utf8_lossy(&body).into_owned()))
+    }
+
+    /// [`Self::text`] without a login, for an address someone gave as it
+    /// is: a login is for the strategies' own requests, not whatever page
+    /// on its site a link names.
+    pub async fn text_without_login(
+        &self,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<(String, String), String> {
+        let url = Url::parse(url).map_err(|e| e.to_string())?;
+        let (content_type, body) = self
+            .sources
+            .fetcher
+            .get(&url, headers, MAX_RESPONSE)
+            .await?;
         Ok((content_type, String::from_utf8_lossy(&body).into_owned()))
     }
 
@@ -238,14 +459,18 @@ impl Http<'_> {
         headers: &[(&str, &str)],
         body: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let (url, headers) = self.logged_in(url, headers)?;
+        let Request {
+            url,
+            headers,
+            logged_in,
+        } = self.logged_in(url, headers)?;
         let mut headers: Vec<(&str, &str)> = headers
             .iter()
             .map(|(n, v)| (n.as_str(), v.as_str()))
             .collect();
         headers.push(("Content-Type", "application/json"));
         let (_, answer) = self
-            .fetcher
+            .fetcher(logged_in)
             .post(&url, &headers, body.to_string().into_bytes(), MAX_RESPONSE)
             .await?;
         serde_json::from_slice(&answer).map_err(|e| format!("unreadable answer: {e}"))
@@ -258,7 +483,11 @@ impl Http<'_> {
         headers: &[(&str, &str)],
         form: &[(&str, &str)],
     ) -> Result<String, String> {
-        let (url, headers) = self.logged_in(url, headers)?;
+        let Request {
+            url,
+            headers,
+            logged_in,
+        } = self.logged_in(url, headers)?;
         let mut headers: Vec<(&str, &str)> = headers
             .iter()
             .map(|(n, v)| (n.as_str(), v.as_str()))
@@ -268,7 +497,7 @@ impl Http<'_> {
             .extend_pairs(form)
             .finish();
         let (_, answer) = self
-            .fetcher
+            .fetcher(logged_in)
             .post(&url, &headers, body.into_bytes(), MAX_RESPONSE)
             .await?;
         Ok(String::from_utf8_lossy(&answer).into_owned())
@@ -276,14 +505,24 @@ impl Http<'_> {
 
     /// The first of `urls` that exists (asked with HEAD requests): the
     /// best of a file's sizes when the site doesn't say which it has.
+    /// `None` too once the lookup has made [`MAX_PROBES`] of them: the
+    /// files come from the page, which may list any number.
     pub async fn first_existing(
         &self,
         urls: &[String],
         headers: &[(&str, &str)],
     ) -> Option<String> {
         for url in urls {
+            // Renamed `try_update` in 1.95, past the minimum supported Rust.
+            #[allow(deprecated)]
+            let left = self
+                .probes
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+            if left.is_err() {
+                return None;
+            }
             if let Ok(parsed) = Url::parse(url)
-                && self.fetcher.exists(&parsed, headers).await
+                && self.sources.fetcher.exists(&parsed, headers).await
             {
                 return Some(url.clone());
             }
@@ -297,12 +536,18 @@ impl Http<'_> {
         url: &str,
         headers: &[(&str, &str)],
     ) -> Result<Vec<String>, String> {
-        let (url, headers) = self.logged_in(url, headers)?;
+        let Request {
+            url,
+            headers,
+            logged_in,
+        } = self.logged_in(url, headers)?;
         let headers: Vec<(&str, &str)> = headers
             .iter()
             .map(|(n, v)| (n.as_str(), v.as_str()))
             .collect();
-        self.fetcher.set_cookies(&url, &headers, None).await
+        self.fetcher(logged_in)
+            .set_cookies(&url, &headers, None)
+            .await
     }
 
     /// POSTs nothing to `url` and reads the answer as text.
@@ -312,12 +557,23 @@ impl Http<'_> {
 
     /// Where `url` leads after its redirects.
     pub async fn final_url(&self, url: &str, headers: &[(&str, &str)]) -> Result<Url, String> {
-        let (url, headers) = self.logged_in(url, headers)?;
+        let Request {
+            url,
+            headers,
+            logged_in,
+        } = self.logged_in(url, headers)?;
         let headers: Vec<(&str, &str)> = headers
             .iter()
             .map(|(n, v)| (n.as_str(), v.as_str()))
             .collect();
-        self.fetcher.final_url(&url, &headers).await
+        self.fetcher(logged_in).final_url(&url, &headers).await
+    }
+
+    /// [`Self::final_url`] without a login, for an address someone gave
+    /// as it is (see [`Self::text_without_login`]).
+    pub async fn final_url_without_login(&self, url: &str) -> Result<Url, String> {
+        let url = Url::parse(url).map_err(|e| e.to_string())?;
+        self.sources.fetcher.final_url(&url, &[]).await
     }
 
     /// What another link says (a booru post's original source), looked up
@@ -339,33 +595,93 @@ impl Http<'_> {
     }
 }
 
-/// A lookup's answer and when it was made.
-type Cached = (Instant, Option<Arc<SourceInfo>>);
+/// A lookup's answer, when it was made, and whether an uploader should
+/// look again (see [`Http::partial`]).
+struct Cached {
+    at: Instant,
+    info: Option<Arc<SourceInfo>>,
+    partial: bool,
+    bytes: usize,
+}
 
-/// Remembers lookups for [`CACHE_TTL`].
+#[derive(Default)]
+struct Entries {
+    by_url: HashMap<String, Cached>,
+    /// What they all take up, about.
+    bytes: usize,
+}
+
+impl Entries {
+    fn remove(&mut self, url: &str) {
+        if let Some(gone) = self.by_url.remove(url) {
+            self.bytes -= gone.bytes;
+        }
+    }
+}
+
+/// Remembers lookups for [`CACHE_TTL`], at most [`CACHE_SIZE`] of them
+/// in about [`CACHE_BYTES`].
 #[derive(Default)]
 pub struct SourceCache {
-    entries: Mutex<HashMap<String, Cached>>,
+    entries: Mutex<Entries>,
 }
 
 impl SourceCache {
-    fn get(&self, url: &str) -> Option<Option<Arc<SourceInfo>>> {
-        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        entries
-            .get(url)
-            .filter(|(at, _)| at.elapsed() < CACHE_TTL)
-            .map(|(_, info)| info.clone())
+    fn get(&self, url: &str, asker: Asker) -> Option<Option<Arc<SourceInfo>>> {
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        let entry = entries.by_url.get(url)?;
+        if entry.at.elapsed() >= CACHE_TTL {
+            entries.remove(url);
+            return None;
+        }
+        if entry.partial && asker == Asker::Uploader {
+            return None;
+        }
+        Some(entry.info.clone())
     }
 
-    fn put(&self, url: &str, info: Option<Arc<SourceInfo>>) {
-        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
-        if entries.len() >= CACHE_SIZE {
-            entries.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
-            if entries.len() >= CACHE_SIZE {
-                entries.clear();
-            }
+    fn put(&self, url: &str, info: Option<Arc<SourceInfo>>, partial: bool) {
+        let bytes = url.len() + info.as_deref().map_or(0, SourceInfo::size);
+        if bytes > CACHE_BYTES {
+            return;
         }
-        entries.insert(url.to_owned(), (Instant::now(), info));
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        entries.remove(url);
+        let expired: Vec<String> = entries
+            .by_url
+            .iter()
+            .filter(|(_, e)| e.at.elapsed() >= CACHE_TTL)
+            .map(|(url, _)| url.clone())
+            .collect();
+        for url in expired {
+            entries.remove(&url);
+        }
+        // The oldest go first.
+        while entries.by_url.len() >= CACHE_SIZE || entries.bytes + bytes > CACHE_BYTES {
+            let Some(oldest) = entries
+                .by_url
+                .iter()
+                .min_by_key(|(_, e)| e.at)
+                .map(|(url, _)| url.clone())
+            else {
+                break;
+            };
+            entries.remove(&oldest);
+        }
+        entries.bytes += bytes;
+        entries.by_url.insert(
+            url.to_owned(),
+            Cached {
+                at: Instant::now(),
+                info,
+                partial,
+                bytes,
+            },
+        );
+    }
+
+    fn contains(&self, url: &str, asker: Asker) -> bool {
+        self.get(url, asker).is_some()
     }
 
     fn forget(&self, url: &str) {
@@ -427,9 +743,63 @@ fn is_file_url(url: &Url) -> bool {
     .any(|ext| path.ends_with(ext))
 }
 
+/// Whether `piece` is `.` or `..`, as a URL parser reads it (`%2e` is a
+/// dot too, and tabs and line breaks are dropped).
+fn is_dot_segment(piece: &str) -> bool {
+    let piece: String = piece
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect::<String>()
+        .to_ascii_lowercase()
+        .replace("%2e", ".");
+    piece == "." || piece == ".."
+}
+
+/// Whether `text` has a `%` escape in it, which another decoding (when
+/// it's put into an address) would turn into something else.
+fn has_escape(text: &str) -> bool {
+    text.as_bytes()
+        .windows(3)
+        .any(|w| w[0] == b'%' && w[1].is_ascii_hexdigit() && w[2].is_ascii_hexdigit())
+}
+
+/// Whether `url`'s decoded path segments or query values could move a
+/// request built from them somewhere else on the site: the sites'
+/// canonical pages, and the strategies' API addresses, are made from
+/// them. A segment mustn't hide a separator (`/`, `\`, `?`, `#`), an
+/// escape or a control character, or be a dot segment; a query value
+/// (which may be a link of its own) mustn't climb out with dot segments,
+/// backslashes or control characters.
+fn hides_path(url: &Url) -> bool {
+    let decoded = |text: &str| {
+        percent_encoding::percent_decode_str(text)
+            .decode_utf8_lossy()
+            .into_owned()
+    };
+    let bad_segment = |segment: &str| {
+        segment.contains(['/', '\\', '?', '#'])
+            || segment.chars().any(char::is_control)
+            || has_escape(segment)
+            || is_dot_segment(segment)
+    };
+    let bad_value = |value: &str| {
+        value.contains('\\')
+            || value.chars().any(char::is_control)
+            || value.split('/').any(is_dot_segment)
+    };
+    url.path_segments()
+        .into_iter()
+        .flatten()
+        .any(|segment| bad_segment(&decoded(segment)))
+        || url.query_pairs().any(|(_, value)| bad_value(&value))
+}
+
 /// What `url` says. `depth` is 0 for the link itself and 1 for a link
 /// found while reading it, which isn't followed further.
 async fn find(http: &Http<'_>, url: &Url, depth: u8) -> Result<Option<SourceInfo>, String> {
+    if hides_path(url) {
+        return Err("the link hides separators or dot segments in its path".into());
+    }
     let found = match site(url) {
         Some(Strategy::Pixiv(target)) => pixiv::fetch(http, &target).await?,
         Some(Strategy::Twitter(target)) => twitter::fetch(http, &target).await?,
@@ -447,53 +817,150 @@ async fn find(http: &Http<'_>, url: &Url, depth: u8) -> Result<Option<SourceInfo
             if let Some(note) = sites::other_misskey(http, url).await {
                 return Ok(Some(note));
             }
-            return opengraph::fetch(http, url).await;
+            return opengraph::fetch_unknown(http, url).await;
         }
     };
     Ok(Some(found))
 }
 
+/// Whether a request to `first` that carries a login may follow a
+/// redirect to `next`: over https, to a site the same login is for.
+fn same_login(logins: &SourcesConfig, first: &Url, next: &Url) -> bool {
+    let login = |url: &Url| url.host_str().and_then(|h| logins.login_for(h));
+    next.scheme() == "https"
+        && match (login(first), login(next)) {
+            (Some(was), Some(is)) => std::ptr::eq(was, is),
+            _ => false,
+        }
+}
+
 /// How long asking a source may take: uploads can wait on it.
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Source lookups, with their own quick fetcher, the sites' logins and
+/// Source lookups, with their own quick fetchers, the sites' logins and
 /// the cache.
 pub struct Sources {
     fetcher: Fetcher,
+    /// For requests carrying a login: they only follow redirects within
+    /// the login's site (see [`same_login`]).
+    logged_in: Fetcher,
     logins: SourcesConfig,
     cache: SourceCache,
+    /// Turns to ask other servers (see [`IN_FLIGHT`]).
+    in_flight: Arc<Semaphore>,
+    /// Logged-in requests to X left (see [`X_LOGIN_BURST`]).
+    x_logins: DefaultDirectRateLimiter,
 }
 
 impl Sources {
     /// `allow_private` exists for tests against a local server.
     pub fn new(allow_private: bool, config: SourcesConfig) -> Self {
+        let x_quota = Quota::with_period(X_LOGIN_PERIOD)
+            .expect("period is non-zero")
+            .allow_burst(NonZeroU32::new(X_LOGIN_BURST).expect("burst is non-zero"));
+        let logins = config.clone();
         Self {
             fetcher: Fetcher::new(LOOKUP_TIMEOUT, allow_private),
+            logged_in: Fetcher::with_redirects(
+                LOOKUP_TIMEOUT,
+                allow_private,
+                move |first, next| same_login(&logins, first, next),
+            ),
             logins: config,
             cache: SourceCache::default(),
+            in_flight: Arc::new(Semaphore::new(IN_FLIGHT)),
+            x_logins: RateLimiter::direct(x_quota),
         }
     }
 
-    /// What `url`'s source says (see [`lookup`]).
-    pub async fn lookup(&self, url: &str) -> Option<Arc<SourceInfo>> {
-        let http = Http {
-            fetcher: &self.fetcher,
-            logins: &self.logins,
+    /// What `url`'s source says, for an uploader (see [`Self::lookup_as`]).
+    pub async fn lookup(self: &Arc<Self>, url: &str) -> Option<Arc<SourceInfo>> {
+        self.lookup_as(url, Asker::Uploader).await
+    }
+
+    /// What `url`'s source says, if it's a page some strategy reads,
+    /// looked up for `asker` (cached). Failures are logged and give
+    /// `None`.
+    ///
+    /// The lookup runs on a blocking thread, as reading a page takes
+    /// time, and holds one of [`IN_FLIGHT`] turns until it's done, even
+    /// if whoever asked has gone.
+    pub async fn lookup_as(self: &Arc<Self>, url: &str, asker: Asker) -> Option<Arc<SourceInfo>> {
+        let url = url.trim();
+        let parsed = Url::parse(url)
+            .ok()
+            .filter(|u| matches!(u.scheme(), "http" | "https"))?;
+        if let Some(cached) = self.cache.get(url, asker) {
+            return cached;
+        }
+        let turn = tokio::time::timeout(TURN_WAIT, Arc::clone(&self.in_flight).acquire_owned());
+        let Ok(Ok(turn)) = turn.await else {
+            tracing::warn!(url, "too many sources are being read; not reading this one");
+            return None;
         };
-        lookup(&http, &self.cache, url).await
+        let this = Arc::clone(self);
+        let url = url.to_owned();
+        let runtime = tokio::runtime::Handle::current();
+        let span = tracing::Span::current();
+        tokio::task::spawn_blocking(move || {
+            let _turn = turn;
+            runtime.block_on(this.read(&url, &parsed, asker).instrument(span))
+        })
+        .await
+        .ok()?
+    }
+
+    /// Reads what `url` says and caches it.
+    async fn read(&self, url: &str, parsed: &Url, asker: Asker) -> Option<Arc<SourceInfo>> {
+        let http = Http::new(self, asker);
+        let found = match tokio::time::timeout(LOOKUP_DEADLINE, find(&http, parsed, 0)).await {
+            Ok(Ok(found)) => found.and_then(SourceInfo::clamped).map(Arc::new),
+            Ok(Err(error)) => {
+                tracing::info!(url, error, "could not read the source");
+                None
+            }
+            Err(_) => {
+                tracing::info!(url, "reading the source took too long");
+                None
+            }
+        };
+        self.cache
+            .put(url, found.clone(), http.partial.load(Ordering::Relaxed));
+        found
+    }
+
+    /// Whether a lookup of `url` for `asker` would be answered from the
+    /// cache, without asking another server.
+    pub(crate) fn is_cached(&self, url: &str, asker: Asker) -> bool {
+        self.cache.contains(url.trim(), asker)
     }
 
     /// What `url` says, or, when it's a bare file nothing names the work
     /// of, what `referer` (the page it was found on, from a bookmarklet)
     /// says, with `url` as the work's first file. The referring page
-    /// counts when it's on the file's site, or lists the file.
-    pub async fn lookup_from(&self, url: &str, referer: &str) -> Option<Arc<SourceInfo>> {
-        let found = self.lookup(url).await;
+    /// counts when it's on the file's site, or lists the file. For an
+    /// uploader.
+    pub async fn lookup_from(
+        self: &Arc<Self>,
+        url: &str,
+        referer: &str,
+    ) -> Option<Arc<SourceInfo>> {
+        self.lookup_from_as(url, referer, Asker::Uploader).await
+    }
+
+    /// [`Self::lookup_from`] for `asker`.
+    pub async fn lookup_from_as(
+        self: &Arc<Self>,
+        url: &str,
+        referer: &str,
+        asker: Asker,
+    ) -> Option<Arc<SourceInfo>> {
+        let found = self.lookup_as(url, asker).await;
         let referer = referer.trim();
         if referer.is_empty() || referer == url || !is_bare_file(url, found.as_deref()) {
             return found;
         }
-        let page = self.lookup(referer).await?;
+        let page = self.lookup_as(referer, asker).await?;
         let same_site = moekura_core::sites::site_of(url)
             .is_some_and(|site| moekura_core::sites::site_of(referer) == Some(site));
         if !same_site && !page.files.iter().any(|f| f == url) {
@@ -507,44 +974,66 @@ impl Sources {
         Some(Arc::new(info))
     }
 
-    /// Looks `url` up again, rather than reusing what was found before.
-    pub async fn refresh(&self, url: &str) -> Option<Arc<SourceInfo>> {
-        self.cache.forget(url.trim());
-        self.lookup(url).await
-    }
-
     /// Answers lookups of `url` with `info`, as if its page said so.
     #[cfg(test)]
     pub fn remember(&self, url: &str, info: SourceInfo) {
-        self.cache.put(url, Some(Arc::new(info)));
+        self.cache.put(url, Some(Arc::new(info)), false);
     }
 
     /// Answers lookups of `url` with nothing, as if its page couldn't be read.
     #[cfg(test)]
     pub fn remember_unread(&self, url: &str) {
-        self.cache.put(url, None);
+        self.cache.put(url, None, false);
     }
 }
 
-/// What `url`'s source says, if it's a page some strategy reads (cached).
-/// Failures are logged and give `None`.
-async fn lookup(http: &Http<'_>, cache: &SourceCache, url: &str) -> Option<Arc<SourceInfo>> {
+/// Whether `current` may have a source looked up again rather than see
+/// what was found a few minutes ago: users whose uploads skip the
+/// approval queue. Others would make every request ask the site.
+pub(crate) fn may_refresh(current: &CurrentUser) -> bool {
+    current.can(Permission::UploadWithoutApproval)
+}
+
+/// What `url`'s source says, for a page `current` opened from `ip`: a
+/// lookup that asks another server counts against their allowance
+/// (`TooManyRequests` once it's used up), and the X login is only used
+/// for uploaders. `refresh` looks again rather than reuse what was found,
+/// for those who [`may_refresh`].
+pub(crate) async fn lookup_for_page(
+    state: &AppState,
+    current: &CurrentUser,
+    ip: Option<IpAddr>,
+    url: &str,
+    refresh: bool,
+) -> Result<Option<Arc<SourceInfo>>, AppError> {
     let url = url.trim();
-    let parsed = Url::parse(url)
-        .ok()
-        .filter(|u| matches!(u.scheme(), "http" | "https"))?;
-    if let Some(cached) = cache.get(url) {
-        return cached;
+    let asker = Asker::of(current);
+    let is_link = Url::parse(url).is_ok_and(|u| matches!(u.scheme(), "http" | "https"));
+    let refresh = refresh && may_refresh(current);
+    if is_link && (refresh || !state.sources.is_cached(url, asker)) {
+        let client = crate::rate_limit::client_key(current.user.as_ref().map(|u| u.id), ip);
+        state.rate_limits.check_source_lookup(&client).await?;
     }
-    let found = match find(http, &parsed, 0).await {
-        Ok(found) => found.map(Arc::new),
-        Err(error) => {
-            tracing::info!(url, error, "could not read the source");
-            None
-        }
-    };
-    cache.put(url, found.clone());
-    found
+    if refresh {
+        state.sources.cache.forget(url);
+    }
+    Ok(state.sources.lookup_as(url, asker).await)
+}
+
+/// [`lookup_for_page`] for a page that can go without what the source
+/// says: nothing, rather than `TooManyRequests`, once `current`'s lookups
+/// are used up for now.
+pub(crate) async fn lookup_for_panel(
+    state: &AppState,
+    current: &CurrentUser,
+    ip: Option<IpAddr>,
+    url: &str,
+    refresh: bool,
+) -> Result<Option<Arc<SourceInfo>>, AppError> {
+    match lookup_for_page(state, current, ip, url, refresh).await {
+        Err(AppError::TooManyRequests { .. }) => Ok(None),
+        found => found,
+    }
 }
 
 /// The artist entries (not deleted) of a source's work: those with its
@@ -676,7 +1165,10 @@ pub(crate) fn decode_entities(text: &str) -> String {
     while let Some(start) = rest.find('&') {
         out.push_str(&rest[..start]);
         let after = &rest[start + 1..];
-        let end = after.find(';').filter(|&e| e <= 10);
+        // An entity is at most 10 bytes before its `;`: looking further
+        // would read the rest of the text for every `&`.
+        let window = &after.as_bytes()[..after.len().min(11)];
+        let end = window.iter().position(|&b| b == b';');
         let decoded = end.and_then(|end| {
             let entity = &after[..end];
             let c = match entity {
@@ -710,6 +1202,30 @@ pub(crate) fn decode_entities(text: &str) -> String {
     out
 }
 
+/// `id` if it's a number (ASCII digits), as a work's id in a link should
+/// be before it goes into a request's address.
+pub(crate) fn number(id: &str) -> Result<&str, String> {
+    (!id.is_empty() && id.len() <= 32 && id.bytes().all(|b| b.is_ascii_digit()))
+        .then_some(id)
+        .ok_or_else(|| "the link's id isn't a number".into())
+}
+
+/// `id` if it's a plain name or key (ASCII letters and digits, `-`, `_`
+/// and `.`, not starting with a dot), as an id or a user's name in a link
+/// should be before it goes into a request's address. Those characters
+/// stand for themselves there, so it stays one path segment or query
+/// value.
+pub(crate) fn key(id: &str) -> Result<&str, String> {
+    (!id.is_empty()
+        && id.len() <= 128
+        && !id.starts_with('.')
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')))
+    .then_some(id)
+    .ok_or_else(|| "the link's id isn't one".into())
+}
+
 /// A JSON string field, or empty.
 pub(crate) fn text_of(value: &serde_json::Value) -> String {
     value.as_str().unwrap_or_default().to_owned()
@@ -724,12 +1240,14 @@ pub(crate) fn id_of(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// Tags from a list of names.
+/// Tags from a list of names, no more than are kept (see
+/// [`SourceInfo::clamped`]).
 pub(crate) fn tags_named<S: AsRef<str>>(names: impl IntoIterator<Item = S>) -> Vec<SourceTag> {
     names
         .into_iter()
         .map(|n| n.as_ref().trim().to_owned())
         .filter(|n| !n.is_empty())
+        .take(MAX_TAGS)
         .map(|name| SourceTag {
             name,
             translation: None,
@@ -799,6 +1317,33 @@ mod tests {
         assert_eq!(which("https://example.com/a"), "none");
     }
 
+    /// A local server for `app`, and its address.
+    async fn serve(app: axum::Router) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        addr
+    }
+
+    /// Sources that may read a local server, with `logins`.
+    fn local_sources(logins: SourcesConfig) -> Arc<Sources> {
+        Arc::new(Sources::new(true, logins))
+    }
+
+    /// A login with a cookie and an API key for `domain`.
+    fn login_for(domain: &str) -> SourcesConfig {
+        let mut config = SourcesConfig::default();
+        config.logins.insert(
+            domain.to_owned(),
+            moekura_core::config::SiteLogin {
+                cookie: "session=secret".into(),
+                query: [("api_key".to_owned(), "key".to_owned())].into(),
+                headers: [("X-Api-Key".to_owned(), "key".to_owned())].into(),
+            },
+        );
+        config
+    }
+
     #[tokio::test]
     async fn opengraph_pages_and_the_cache() {
         use axum::Router;
@@ -809,38 +1354,510 @@ mod tests {
             <meta property="og:image" content="/big.png">
             <meta name="description" content="Drawn today">
             </head></html>"#;
-        let app = Router::new().route(
+        let addr = serve(Router::new().route(
             "/work",
             get(move || async move { axum::response::Html(page) }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, app).await });
+        ))
+        .await;
 
-        let fetcher = Fetcher::new(Duration::from_secs(5), true);
-        let logins = SourcesConfig::default();
-        let http = Http {
-            fetcher: &fetcher,
-            logins: &logins,
-        };
-        let cache = SourceCache::default();
+        let sources = local_sources(SourcesConfig::default());
         let url = format!("http://{addr}/work");
-        let info = lookup(&http, &cache, &url).await.unwrap();
+        let info = sources.lookup(&url).await.unwrap();
         assert_eq!(info.files, [format!("http://{addr}/big.png")]);
         assert_eq!(info.title, "A cat & a dog");
         assert_eq!(info.description, "Drawn today");
         assert_eq!(info.page_url, url);
         // Cached: the same answer without asking.
-        assert!(Arc::ptr_eq(
-            &info,
-            &lookup(&http, &cache, &url).await.unwrap()
-        ));
+        assert!(sources.is_cached(&url, Asker::Visitor));
+        assert!(Arc::ptr_eq(&info, &sources.lookup(&url).await.unwrap()));
         // Files aren't pages.
         assert!(
-            lookup(&http, &cache, &format!("http://{addr}/a.png"))
+            sources
+                .lookup(&format!("http://{addr}/a.png"))
                 .await
                 .is_none()
         );
+    }
+
+    #[test]
+    fn entities_decode_in_one_pass() {
+        assert_eq!(
+            decode_entities("&amp;&lt;&#x3042;&#12354;&nbsp;&bogus; & ; &#xffffffff;"),
+            "&<ああ &bogus; & ; &#xffffffff;"
+        );
+        // An entity is at most 10 bytes before its `;`.
+        assert_eq!(decode_entities("&#000000065;"), "A");
+        assert_eq!(decode_entities("&#0000000065;"), "&#0000000065;");
+        // Every `&` used to look for a `;` to the end of the text.
+        let text = "&".repeat(4 * 1024 * 1024);
+        let started = Instant::now();
+        assert_eq!(decode_entities(&text), text);
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn lookups_are_clamped() {
+        let long = "x".repeat(MAX_URL + 1);
+        let info = SourceInfo {
+            page_url: "https://example.com/work".into(),
+            files: [long.clone()]
+                .into_iter()
+                .chain((0..MAX_FILES + 50).map(|i| format!("https://example.com/{i}.png")))
+                .collect(),
+            artist_name: Some("n".repeat(MAX_NAME + 1)),
+            artist_account: Some("artist".into()),
+            profile_urls: vec![long.clone(), "https://example.com/artist".into()],
+            tags: (0..MAX_TAGS * 2)
+                .map(|i| SourceTag {
+                    name: format!("tag{i}"),
+                    translation: Some("t".repeat(MAX_NAME + 1)),
+                })
+                .collect(),
+            title: "t".repeat(crate::commentary::TITLE_MAX_LEN * 2),
+            description: "猫".repeat(crate::commentary::DESCRIPTION_MAX_LEN * 2),
+            ugoira_frames: Some(vec![("0.jpg".into(), 100); MAX_FRAMES + 1]),
+            ..SourceInfo::default()
+        };
+        let kept = info.clamped().unwrap();
+        assert_eq!(kept.files.len(), MAX_FILES);
+        assert_eq!(kept.files[0], "https://example.com/0.png");
+        assert_eq!(kept.artist_name, None);
+        assert_eq!(kept.artist_account.as_deref(), Some("artist"));
+        assert_eq!(kept.profile_urls, ["https://example.com/artist"]);
+        assert_eq!(kept.tags.len(), MAX_TAGS);
+        assert!(kept.tags.iter().all(|t| t.translation.is_none()));
+        assert_eq!(kept.title.chars().count(), crate::commentary::TITLE_MAX_LEN);
+        assert_eq!(
+            kept.description.chars().count(),
+            crate::commentary::DESCRIPTION_MAX_LEN
+        );
+        assert_eq!(kept.ugoira_frames, None);
+        assert!(kept.size() < 1024 * 1024, "{}", kept.size());
+        // A page that long isn't one.
+        let info = SourceInfo {
+            page_url: long,
+            ..SourceInfo::default()
+        };
+        assert_eq!(info.clamped(), None);
+    }
+
+    #[test]
+    fn the_cache_forgets_and_keeps_to_its_budget() {
+        let cache = SourceCache::default();
+        let big = SourceInfo {
+            description: "x".repeat(CACHE_BYTES / 4),
+            ..SourceInfo::default()
+        };
+        for i in 0..10 {
+            cache.put(
+                &format!("https://example.com/{i}"),
+                Some(Arc::new(big.clone())),
+                false,
+            );
+        }
+        {
+            let entries = cache.entries.lock().unwrap();
+            assert!(entries.bytes <= CACHE_BYTES);
+            assert!(entries.by_url.len() < 4);
+            assert_eq!(
+                entries.bytes,
+                entries.by_url.values().map(|e| e.bytes).sum::<usize>()
+            );
+        }
+        // The newest stay.
+        assert!(cache.get("https://example.com/9", Asker::Visitor).is_some());
+        assert!(cache.get("https://example.com/0", Asker::Visitor).is_none());
+
+        // An expired entry is dropped when it's asked for.
+        let old = Instant::now().checked_sub(CACHE_TTL + Duration::from_secs(1));
+        if let Some(old) = old {
+            cache
+                .entries
+                .lock()
+                .unwrap()
+                .by_url
+                .get_mut("https://example.com/9")
+                .unwrap()
+                .at = old;
+            assert!(cache.get("https://example.com/9", Asker::Visitor).is_none());
+            assert!(
+                !cache
+                    .entries
+                    .lock()
+                    .unwrap()
+                    .by_url
+                    .contains_key("https://example.com/9")
+            );
+        }
+
+        // What a visitor was told without the X login is no answer for an
+        // uploader.
+        cache.put("https://x.com/a/status/1", None, true);
+        assert!(
+            cache
+                .get("https://x.com/a/status/1", Asker::Visitor)
+                .is_some()
+        );
+        assert!(
+            cache
+                .get("https://x.com/a/status/1", Asker::Uploader)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn links_hiding_separators_are_refused() {
+        let hides = |u: &str| hides_path(&Url::parse(u).unwrap());
+        for fine in [
+            "https://www.pixiv.net/en/artworks/123",
+            "https://x.com/artist/status/1?s=20",
+            "https://fantia.jp/posts/2245222",
+            "https://example.com/wiki/100%25_Orange",
+            "https://example.com/%E7%8C%AB",
+            "https://pixiv.net/?url=https://example.com/a/b.png",
+        ] {
+            assert!(!hides(fine), "{fine}");
+        }
+        for crafted in [
+            "https://fantia.jp/posts/..%5C..%5Clogout",
+            "https://fantia.jp/posts/1%2F..%2F..%2Flogout",
+            "https://fantia.jp/posts/1%3Fa%3Db",
+            "https://fantia.jp/posts/1%23x",
+            "https://fantia.jp/posts/%252e%252e",
+            "https://fantia.jp/posts/.%09.",
+            "https://blog.naver.com/PostView.naver?blogId=..%2F..%2Flogout&logNo=1",
+            "https://example.com/a?u=%5Clogout",
+        ] {
+            assert!(hides(crafted), "{crafted}");
+        }
+    }
+
+    #[tokio::test]
+    async fn strategies_check_ids_before_asking() {
+        assert_eq!(number("123"), Ok("123"));
+        assert!(number("12a").is_err() && number("").is_err());
+        assert_eq!(key("cat-art_1.x"), Ok("cat-art_1.x"));
+        for bad in [
+            "", ".", "..", ".hidden", "a/b", "a\\b", "a?b", "a#b", "a%2fb", "a b",
+        ] {
+            assert!(key(bad).is_err(), "{bad}");
+        }
+
+        // Pages a strategy is given that name no valid work are refused
+        // before any request (nothing listens on these).
+        let sources = local_sources(SourcesConfig::default());
+        let http = Http::new(&sources, Asker::Uploader);
+        let known = |page: &str| moekura_core::sites::parse(page).unwrap();
+        let fails = |result: Result<SourceInfo, String>| {
+            let error = result.unwrap_err();
+            assert!(error.contains("isn't") || error.contains("not "), "{error}");
+        };
+        let page = "https://fantia.jp/posts/1/../../logout";
+        fails(fantia::fetch(&http, &known("https://fantia.jp/posts/1"), page).await);
+        let page = "https://pawoo.net/@a/1x";
+        fails(fediverse::mastodon(&http, &known("https://pawoo.net/@a/1"), page).await);
+        let page = "https://arca.live/b/x/1&a=b";
+        fails(arca_live::fetch(&http, &known("https://arca.live/b/x/1"), page).await);
+        let page = "https://boards.4chan.org/a%2Fb/thread/1";
+        fails(four_chan::fetch(&http, &known("https://boards.4chan.org/a/thread/1"), page).await);
+        let tumblr = "https://artist.tumblr.com/post/1";
+        fails(tumblr::fetch(&http, &known(tumblr), "https://artist.tumblr.com/post/1?x").await);
+        let dc = "https://gall.dcinside.com/mgallery/board/view/?id=cat&no=1";
+        fails(
+            dc_inside::fetch(
+                &http,
+                &known(dc),
+                "https://gall.dcinside.com/mgallery/board/view/?id=cat&x=1&no=1",
+            )
+            .await,
+        );
+        let hf = "https://www.hentai-foundry.com/pictures/user/a/1";
+        fails(
+            hentai_foundry::fetch(&http, &known(hf), "https://www.hentai-foundry.com/pic-1/x")
+                .await,
+        );
+        let naver = "https://blog.naver.com/cat/123";
+        fails(naver::blog(&http, &known(naver), "https://blog.naver.com/logout?a=/123").await);
+        let galleria = "https://galleria.emotionflow.com/1/2.html";
+        fails(
+            galleria::fetch(
+                &http,
+                &known(galleria),
+                "https://galleria.emotionflow.com/logout?x=/2.html",
+            )
+            .await,
+        );
+        let note = "https://www.xiaohongshu.com/explore/65880524000000000700a643";
+        fails(xiaohongshu::fetch(&http, &known(note), &format!("{note}?xsec_token=a&b=c")).await);
+        let post = "https://www.youtube.com/post/Ugkx1";
+        fails(
+            youtube::fetch(
+                &http,
+                &known(post),
+                "https://www.youtube.com/post/logout?x=1",
+            )
+            .await,
+        );
+        // A crafted link is refused as a whole.
+        assert!(
+            sources
+                .lookup("https://fantia.jp/posts/..%5C..%5Clogout")
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn logins_go_only_over_https_and_stay_on_their_site() {
+        use axum::Router;
+        use axum::response::Redirect;
+        use axum::routing::get;
+
+        let sources = local_sources(login_for("example.com"));
+        let http = Http::new(&sources, Asker::Uploader);
+        let sent = http
+            .logged_in("https://www.example.com/a", &[("Accept", "x")])
+            .unwrap();
+        assert!(sent.logged_in);
+        assert_eq!(sent.url.as_str(), "https://www.example.com/a?api_key=key");
+        assert!(
+            sent.headers
+                .contains(&("Cookie".into(), "session=secret".into()))
+        );
+        assert!(sent.headers.contains(&("X-Api-Key".into(), "key".into())));
+        // Never in the clear.
+        let sent = http.logged_in("http://example.com/a", &[]).unwrap();
+        assert!(!sent.logged_in);
+        assert_eq!(sent.url.as_str(), "http://example.com/a");
+        assert!(sent.headers.is_empty());
+
+        let logins = login_for("example.com");
+        let url = |u: &str| Url::parse(u).unwrap();
+        let first = url("https://example.com/a");
+        assert!(same_login(
+            &logins,
+            &first,
+            &url("https://www.example.com/b")
+        ));
+        assert!(!same_login(&logins, &first, &url("http://example.com/b")));
+        assert!(!same_login(
+            &logins,
+            &first,
+            &url("https://elsewhere.net/b")
+        ));
+
+        // A request kept on its site isn't sent where a redirect leads
+        // elsewhere (127.0.0.1 and localhost are different hosts), but
+        // can still say where that is.
+        let addr = serve(Router::new().route(
+            "/go",
+            get(|axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>| async move {
+                Redirect::temporary(&q["to"])
+            }),
+        ))
+        .await;
+        let fetcher = Fetcher::with_redirects(Duration::from_secs(5), true, |first, next| {
+            first.host_str() == next.host_str()
+        });
+        let away = format!("http://localhost:{}/elsewhere", addr.port());
+        let go = url(&format!("http://{addr}/go?to={away}"));
+        let error = fetcher.get(&go, &[], 1024).await.unwrap_err();
+        assert!(error.contains("307"), "{error}");
+        assert_eq!(fetcher.final_url(&go, &[]).await.unwrap().as_str(), away);
+    }
+
+    #[tokio::test]
+    async fn probes_have_a_budget() {
+        use std::sync::atomic::AtomicUsize;
+
+        use axum::Router;
+        use axum::routing::head;
+
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        let addr = serve(Router::new().route(
+            "/{file}",
+            head(move || {
+                let counter = Arc::clone(&counter);
+                async move {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    axum::http::StatusCode::NOT_FOUND
+                }
+            }),
+        ))
+        .await;
+        let sources = local_sources(SourcesConfig::default());
+        let http = Http::new(&sources, Asker::Uploader);
+        let files: Vec<String> = (0..MAX_PROBES * 2)
+            .map(|i| format!("http://{addr}/{i}.jpg"))
+            .collect();
+        assert_eq!(http.first_existing(&files, &[]).await, None);
+        assert_eq!(http.first_existing(&files, &[]).await, None);
+        assert_eq!(asked.load(Ordering::Relaxed), MAX_PROBES);
+    }
+
+    #[tokio::test]
+    async fn lookups_take_turns() {
+        use axum::Router;
+        use axum::routing::get;
+
+        let page = r#"<meta property="og:image" content="/art.png">"#;
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        let addr = serve(Router::new().route(
+            "/{work}",
+            get(move || {
+                let counter = Arc::clone(&counter);
+                async move {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    axum::response::Html(page)
+                }
+            }),
+        ))
+        .await;
+        let sources = local_sources(SourcesConfig::default());
+        let taken = Arc::clone(&sources.in_flight)
+            .acquire_many_owned(IN_FLIGHT as u32)
+            .await
+            .unwrap();
+        let waiting = tokio::spawn({
+            let sources = Arc::clone(&sources);
+            let url = format!("http://{addr}/1");
+            async move { sources.lookup(&url).await }
+        });
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(!waiting.is_finished());
+        assert_eq!(asked.load(Ordering::Relaxed), 0);
+        drop(taken);
+        assert!(waiting.await.unwrap().is_some());
+        assert_eq!(asked.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn the_x_login_is_for_uploaders_within_its_allowance() {
+        let sources = Sources::new(true, login_for("x.com"));
+        let visitor = Http::new(&sources, Asker::Visitor);
+        assert_eq!(visitor.may_use_x_login(), Err("only for uploaders"));
+        assert!(visitor.partial.load(Ordering::Relaxed));
+        let uploader = Http::new(&sources, Asker::Uploader);
+        for _ in 0..X_LOGIN_BURST {
+            assert_eq!(uploader.may_use_x_login(), Ok(()));
+        }
+        assert!(!uploader.partial.load(Ordering::Relaxed));
+        assert_eq!(
+            uploader.may_use_x_login(),
+            Err("its allowance is used up for now")
+        );
+        assert!(uploader.partial.load(Ordering::Relaxed));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn page_lookups_count_against_an_allowance(pool: sqlx::PgPool) {
+        use axum::Router;
+        use axum::http::StatusCode;
+        use axum::routing::get;
+        use moekura_core::permissions::SystemRole;
+
+        use crate::test_support::{TestApp, current_user, session_for, test_state};
+
+        let page = r#"<meta property="og:image" content="/art.png">"#;
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&asked);
+        let addr = serve(Router::new().route(
+            "/{work}",
+            get(move || {
+                let counter = Arc::clone(&counter);
+                async move {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    axum::response::Html(page)
+                }
+            }),
+        ))
+        .await;
+        let mut state = test_state(&pool).await;
+        state.sources = local_sources(SourcesConfig::default());
+        let visitor = crate::auth::tests_support_visitor(&state);
+        let ip = Some(IpAddr::from([198, 51, 100, 9]));
+
+        // A visitor's lookups that ask the site count; cached ones don't.
+        for i in 0..10 {
+            let url = format!("http://{addr}/{i}");
+            let found = lookup_for_page(&state, &visitor, ip, &url, false).await;
+            assert!(found.unwrap().is_some());
+            let again = lookup_for_page(&state, &visitor, ip, &url, true).await;
+            assert!(again.unwrap().is_some(), "refreshing isn't for visitors");
+        }
+        assert_eq!(asked.load(Ordering::Relaxed), 10);
+        let url = format!("http://{addr}/10");
+        let refused = lookup_for_page(&state, &visitor, ip, &url, false).await;
+        assert!(matches!(refused, Err(AppError::TooManyRequests { .. })));
+        assert_eq!(asked.load(Ordering::Relaxed), 10);
+        // Another address has its own allowance; what isn't a link is free.
+        let other = Some(IpAddr::from([198, 51, 100, 10]));
+        let url = format!("http://{addr}/11");
+        assert!(
+            lookup_for_page(&state, &visitor, other, &url, false)
+                .await
+                .is_ok()
+        );
+        for _ in 0..20 {
+            let none = lookup_for_page(&state, &visitor, ip, "not a link", false).await;
+            assert!(none.unwrap().is_none());
+        }
+
+        // Members look again only when their uploads skip the queue.
+        let member = current_user(
+            &state,
+            &session_for(&pool, "alice", SystemRole::Member).await,
+        )
+        .await;
+        let contributor = current_user(
+            &state,
+            &session_for(&pool, "bob", SystemRole::Contributor).await,
+        )
+        .await;
+        assert_eq!(Asker::of(&visitor), Asker::Visitor);
+        assert_eq!(Asker::of(&member), Asker::Uploader);
+        let url = format!("http://{addr}/0");
+        let before = asked.load(Ordering::Relaxed);
+        lookup_for_page(&state, &member, None, &url, false)
+            .await
+            .unwrap();
+        lookup_for_page(&state, &member, None, &url, true)
+            .await
+            .unwrap();
+        assert_eq!(asked.load(Ordering::Relaxed), before);
+        lookup_for_page(&state, &contributor, None, &url, true)
+            .await
+            .unwrap();
+        assert_eq!(asked.load(Ordering::Relaxed), before + 1);
+
+        // Through the pages: the finder says so, the related tags go
+        // without the source's.
+        let app = TestApp::new(
+            state.clone(),
+            crate::artists::routes().merge(crate::related_tags::routes()),
+        );
+        let mut finder = Vec::new();
+        for i in 20..32 {
+            let query: String =
+                url::form_urlencoded::byte_serialize(format!("http://{addr}/{i}").as_bytes())
+                    .collect();
+            finder.push(
+                app.get_json(&format!("/artists/finder?url={query}"), None)
+                    .await
+                    .status,
+            );
+            let related = app
+                .get_json(&format!("/tags/related?tags=cat&source={query}"), None)
+                .await;
+            assert_eq!(related.status, StatusCode::OK, "{}", related.body);
+        }
+        assert!(
+            finder[..10].iter().all(|s| *s == StatusCode::OK),
+            "{finder:?}"
+        );
+        assert_eq!(finder[11], StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

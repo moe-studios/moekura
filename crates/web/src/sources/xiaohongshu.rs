@@ -5,21 +5,27 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, strings, tags_named, text_of};
+use super::{Http, SourceInfo, key, strings, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let body = http.page(page, &[]).await?;
-    let id = page
+    let id = key(page
         .split('?')
         .next()
         .unwrap_or(page)
         .rsplit('/')
         .next()
-        .unwrap_or_default();
+        .unwrap_or_default())?;
+    // The token is the link's, where anything could be: it mustn't bring
+    // more of a query with it.
+    let url = url::Url::parse(page).map_err(|e| e.to_string())?;
+    if url.fragment().is_some() || url.query_pairs().any(|(k, _)| k != "xsec_token") {
+        return Err("Xiaohongshu: not a note".into());
+    }
+    let body = http.page(page, &[]).await?;
     let state = state_of(&body).ok_or("Xiaohongshu: no note in the page")?;
     note_info(known, page, &state["note"]["noteDetailMap"][id]["note"])
         .ok_or_else(|| "Xiaohongshu: no such note".into())

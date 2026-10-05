@@ -4,7 +4,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, strings, text_of};
+use super::{Http, SourceInfo, key, strings, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -12,7 +12,7 @@ pub(super) async fn fetch(
     page: &str,
 ) -> Result<SourceInfo, String> {
     let (profile, listing) = page.split_once('#').ok_or("Artistree: not a listing")?;
-    let name = profile.rsplit('/').next().unwrap_or_default();
+    let name = key(profile.rsplit('/').next().unwrap_or_default())?;
     let api = http
         .json(
             &format!("https://api.artifyc.com/commission/request?artist={name}"),

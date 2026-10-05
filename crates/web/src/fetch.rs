@@ -90,6 +90,38 @@ impl Fetcher {
         }
     }
 
+    /// [`Self::new`], but only following the redirects `follow` allows,
+    /// given the first URL and the next: for requests carrying a site's
+    /// login, which another site mustn't be sent. Other redirects are
+    /// answered as they are (a failure, but for [`Self::final_url`]).
+    pub fn with_redirects(
+        timeout: Duration,
+        allow_private: bool,
+        follow: impl Fn(&Url, &Url) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        let policy = redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= MAX_REDIRECTS {
+                return attempt.error("too many redirects");
+            }
+            if !attempt
+                .previous()
+                .first()
+                .is_some_and(|first| follow(first, attempt.url()))
+            {
+                return attempt.stop();
+            }
+            match check_url(attempt.url(), allow_private) {
+                Ok(()) => attempt.follow(),
+                Err(reason) => attempt.error(reason),
+            }
+        });
+        let client = moekura_net::client(timeout, allow_private, policy);
+        Self {
+            client,
+            allow_private,
+        }
+    }
+
     /// Downloads `url` into a temporary upload, at most `limit` bytes.
     pub async fn fetch(
         &self,
@@ -175,6 +207,17 @@ impl Fetcher {
             .send()
             .await
             .map_err(|e| short_reason(&e).to_owned())?;
+        // A redirect not followed (see `with_redirects`) still says where
+        // it leads.
+        if response.status().is_redirection()
+            && let Some(next) = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|location| response.url().join(location).ok())
+        {
+            return Ok(next);
+        }
         Ok(response.url().clone())
     }
 

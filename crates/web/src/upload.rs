@@ -91,6 +91,9 @@ pub struct UploadFields {
     /// A file the uploader sent before and was warned about, to post
     /// instead of a new one.
     pub staged: Option<i64>,
+    /// Who `url` is looked up for: an uploader, but for image searches
+    /// (see [`crate::sources::Asker`]).
+    pub asker: crate::sources::Asker,
 }
 
 /// An uploaded file on local disk, removed when dropped.
@@ -339,7 +342,7 @@ pub(crate) async fn fetch_url(
 ) -> Result<TempUpload, UploadError> {
     let found = state
         .sources
-        .lookup_from(&fields.url, &fields.referer)
+        .lookup_from_as(&fields.url, &fields.referer, fields.asker)
         .await;
     check_found(&fields.url, found.as_deref())?;
     let file_url = match found.as_deref() {

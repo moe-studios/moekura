@@ -60,7 +60,7 @@ fn content_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo>
             .map(|(_, list)| {
                 html::tags(list, "a")
                     .into_iter()
-                    .map(|a| html_to_text(html::inner(list, &a)))
+                    .filter_map(|a| html::label(list, &a))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),

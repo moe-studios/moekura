@@ -1180,7 +1180,14 @@ async fn post_asset(
     {
         let mut fields = fields;
         if !fields.fetch_source.is_empty() && is_web_link(fields.source.trim()) {
-            state.sources.refresh(fields.source.trim()).await;
+            crate::sources::lookup_for_panel(
+                state,
+                &page.current,
+                None,
+                fields.source.trim(),
+                true,
+            )
+            .await?;
         }
         let added = std::mem::take(&mut fields.add);
         if !added.trim().is_empty() {
@@ -1308,7 +1315,8 @@ async fn source_data(state: &AppState, info: &SourceInfo) -> Result<Value, AppEr
 #[serde(default)]
 struct SourceDataQuery {
     url: String,
-    /// Look the source up again rather than reuse what was found.
+    /// Look the source up again rather than reuse what was found (see
+    /// [`crate::sources::may_refresh`]).
     refresh: String,
 }
 
@@ -1322,10 +1330,9 @@ async fn source_data_fragment(
     let state = page.state();
     let info = if !is_web_link(query.url.trim()) {
         None
-    } else if query.refresh.is_empty() {
-        state.sources.lookup(&query.url).await
     } else {
-        state.sources.refresh(&query.url).await
+        let refresh = !query.refresh.is_empty();
+        crate::sources::lookup_for_page(state, &page.current, None, &query.url, refresh).await?
     };
     let source = match info {
         Some(info) => Some(source_data(state, &info).await?),
@@ -1646,7 +1653,7 @@ async fn asset_page(
     };
     let source_url = fields.source.trim();
     let info = if open && is_web_link(source_url) {
-        state.sources.lookup(source_url).await
+        crate::sources::lookup_for_panel(state, &page.current, None, source_url, false).await?
     } else {
         None
     };

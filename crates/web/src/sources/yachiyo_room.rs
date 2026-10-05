@@ -43,7 +43,7 @@ fn oekaki_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo> 
                 a.attr("href")
                     .is_some_and(|h| h.starts_with("/gallery?tag="))
             })
-            .map(|a| html_to_text(html::inner(body, a)))
+            .filter_map(|a| html::label(body, a))
             .collect::<Vec<_>>(),
     );
     Some(info)

@@ -5,7 +5,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html, html_to_text, id_of, tags_named, text_of};
+use super::{Http, SourceInfo, html, html_to_text, id_of, key, tags_named, text_of};
 
 /// A visitor's cookies.
 async fn visitor(http: &Http<'_>) -> Option<String> {
@@ -34,7 +34,7 @@ pub(super) async fn fetch(
     page: &str,
 ) -> Result<SourceInfo, String> {
     // The mobile page: …/detail/<id> or …/status/<base 62 id>.
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = key(page.rsplit('/').next().unwrap_or_default())?;
     let mobile = if page.starts_with("https://m.weibo.cn/") {
         page.to_owned()
     } else {
@@ -90,7 +90,7 @@ fn status_info(known: &SourceUrl, page: &str, status: &Value) -> Option<SourceIn
         html::tags(&text, "span")
             .into_iter()
             .filter(|s| s.has_class("surl-text"))
-            .map(|s| html_to_text(html::inner(&text, &s)))
+            .filter_map(|s| html::label(&text, &s))
             .filter(|t| t.starts_with('#') && t.ends_with('#') && t.len() > 2)
             .map(|t| t.trim_matches('#').to_owned())
             .collect::<Vec<_>>(),

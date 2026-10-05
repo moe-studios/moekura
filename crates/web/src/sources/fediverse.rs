@@ -5,7 +5,7 @@ use moekura_core::sites::{MISSKEY, SourceUrl};
 use serde_json::{Value, json};
 use url::Url;
 
-use super::{Http, SourceInfo, SourceTag, html_to_text, text_of};
+use super::{Http, MAX_TAGS, SourceInfo, SourceTag, html_to_text, key, number, text_of};
 
 /// `:emoji:` codes out of a display name.
 fn without_emoji(name: &str) -> String {
@@ -41,7 +41,7 @@ pub(super) async fn misskey(
 ) -> Result<SourceInfo, String> {
     let url = Url::parse(page).map_err(|e| e.to_string())?;
     let origin = url.origin().ascii_serialization();
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = key(page.rsplit('/').next().unwrap_or_default())?;
     let note = http
         .post_json(
             &format!("{origin}/api/notes/show"),
@@ -91,6 +91,7 @@ fn misskey_note(
         .map(|tags| {
             tags.iter()
                 .filter_map(|t| t.as_str())
+                .take(MAX_TAGS)
                 .map(|t| SourceTag {
                     name: t.to_owned(),
                     translation: None,
@@ -129,7 +130,7 @@ pub(super) async fn mastodon(
 ) -> Result<SourceInfo, String> {
     let url = Url::parse(page).map_err(|e| e.to_string())?;
     let origin = url.origin().ascii_serialization();
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = number(page.rsplit('/').next().unwrap_or_default())?;
     let status = http
         .json(&format!("{origin}/api/v1/statuses/{id}"), &[])
         .await?;
@@ -167,6 +168,7 @@ fn mastodon_status(known: &SourceUrl, origin: &str, status: &Value) -> Option<So
         .map(|tags| {
             tags.iter()
                 .filter_map(|t| t["name"].as_str())
+                .take(MAX_TAGS)
                 .map(|t| SourceTag {
                     name: t.to_owned(),
                     translation: None,

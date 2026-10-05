@@ -4,13 +4,21 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html, html_to_text, strings, tags_named, text_of};
+use super::{Http, SourceInfo, html, html_to_text, key, number, strings, tags_named, text_of};
 
 pub(super) async fn blog(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
+    // The blog's name may come from the link's query, where anything
+    // could be.
+    let (name, post) = page
+        .strip_prefix("https://blog.naver.com/")
+        .and_then(|path| path.split_once('/'))
+        .ok_or("Naver Blog: not a post")?;
+    key(name)?;
+    number(post)?;
     let mobile = page.replacen("://blog.naver.com/", "://m.blog.naver.com/", 1);
     let body = http.page(&mobile, &[]).await?;
     blog_info(known, page, &body).ok_or_else(|| "Naver Blog: no post in the page".into())
@@ -92,6 +100,7 @@ pub(super) async fn cafe(
         }
         _ => return Err("Naver Cafe: not an article".into()),
     };
+    let (club, article) = (number(&club)?.to_owned(), number(article)?);
     let answer = http
         .json(
             &format!(

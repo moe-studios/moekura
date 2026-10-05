@@ -4,7 +4,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html, html_to_text, strings, tags_named, text_of};
+use super::{Http, SourceInfo, html, html_to_text, key, strings, tags_named, text_of};
 
 /// ArtStation answers crawlers it knows, not unknown programs.
 const AGENT: (&str, &str) = (
@@ -17,7 +17,7 @@ pub(super) async fn fetch(
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = key(page.rsplit('/').next().unwrap_or_default())?;
     let project = http
         .json(
             &format!("https://www.artstation.com/projects/{id}.json"),

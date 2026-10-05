@@ -9,7 +9,7 @@ use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 use url::Url;
 
-use super::{Http, SourceInfo, SourceTag, html, text_of};
+use super::{Http, SourceInfo, SourceTag, html, number, text_of};
 
 /// The booru kind and API base of a site.
 fn kind_of(key: &str) -> Option<(Kind, &'static str)> {
@@ -32,7 +32,8 @@ fn post_ref(page: &Url) -> Option<(Option<i64>, Option<String>)> {
     let md5 = page
         .query_pairs()
         .find(|(k, _)| k == "md5")
-        .map(|(_, v)| v.into_owned());
+        .map(|(_, v)| v.into_owned())
+        .filter(|md5| md5.len() == 32 && md5.bytes().all(|b| b.is_ascii_hexdigit()));
     let id = page
         .query_pairs()
         .find(|(k, _)| k == "id")
@@ -203,11 +204,12 @@ pub(super) async fn zerochan(
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let id = page
-        .trim_end_matches("#full")
-        .rsplit('/')
-        .next()
-        .unwrap_or_default();
+    let id = number(
+        page.trim_end_matches("#full")
+            .rsplit('/')
+            .next()
+            .unwrap_or_default(),
+    )?;
     let entry = http
         .json(&format!("https://www.zerochan.net/{id}?json"), &[])
         .await?;
@@ -249,8 +251,12 @@ mod tests {
         let page =
             Url::parse("https://gelbooru.com/index.php?page=post&s=view&id=7798045").unwrap();
         assert_eq!(post_ref(&page), Some((Some(7_798_045), None)));
-        let page = Url::parse("https://danbooru.donmai.us/posts?md5=abc").unwrap();
-        assert_eq!(post_ref(&page), Some((None, Some("abc".into()))));
+        let md5 = "6d1a6090ea82c2524212499797e7e53a";
+        let page = Url::parse(&format!("https://danbooru.donmai.us/posts?md5={md5}")).unwrap();
+        assert_eq!(post_ref(&page), Some((None, Some(md5.into()))));
+        // Only an MD5 goes into the API's address.
+        let page = Url::parse("https://danbooru.donmai.us/posts?md5=abc%26limit%3D1").unwrap();
+        assert_eq!(post_ref(&page), None);
         let site = known("https://danbooru.donmai.us/posts/1");
         let post = remote::parse_post(
             Kind::Danbooru,

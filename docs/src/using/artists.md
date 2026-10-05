@@ -36,7 +36,9 @@ whose URLs it falls under: `https://x.com/someone/status/123` finds the
 artist with `https://twitter.com/someone`. Addresses are compared without
 `www.`, the scheme, or anything after `?`, `x.com` counts as
 `twitter.com`, and a profile's other forms count as its canonical one
-(`someone.artstation.com` as `artstation.com/someone`).
+(`someone.artstation.com` as `artstation.com/someone`). Asking the
+work's site counts against an allowance (see
+[Lookups](sources.md#lookups)).
 
 The upload form does the same with the link you upload from and the
 source: when they belong to a known artist, their tag is offered beside

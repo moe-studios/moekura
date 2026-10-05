@@ -32,35 +32,56 @@ impl Tag {
     }
 }
 
-/// Every opening `<name …>` tag in `html`, in order.
-pub(crate) fn tags(html: &str, name: &str) -> Vec<Tag> {
-    let lower = html.to_ascii_lowercase();
-    let open = format!("<{name}");
-    let mut found = Vec::new();
+/// Most tags [`tags`] gives: pages have far fewer of any one kind, and
+/// strategies may look inside each.
+const MAX_TAGS: usize = 5000;
+/// How deeply elements of one kind may nest before [`inner`] stops
+/// counting (and gives the rest of the page).
+const MAX_DEPTH: usize = 256;
+/// The longest a [`label`] may be, in bytes of HTML.
+const MAX_LABEL: usize = 2048;
+/// Elements that end where another of their kind starts, as browsers read
+/// them: a page of unclosed ones then costs no more than closed ones.
+const NO_NESTING: &[&str] = &["a", "p", "h1", "h2", "h3", "h4", "h5", "h6"];
+
+/// Whether `html` has the tag `name` (any case) at `at`, the byte after
+/// its `<` (or `</`): the name and then a space, `>` or `/`.
+fn named_at(html: &[u8], at: usize, name: &[u8]) -> bool {
+    html.get(at..at + name.len())
+        .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        && html
+            .get(at + name.len())
+            .is_some_and(|&c| c.is_ascii_whitespace() || c == b'>' || c == b'/')
+}
+
+/// The opening `<name …>` tags in `html`, in order, read as they're asked
+/// for (`name` lowercase).
+fn opening<'a>(html: &'a str, name: &'a str) -> impl Iterator<Item = Tag> + 'a {
     let mut from = 0;
-    while let Some(at) = lower[from..].find(&open) {
-        let start = from + at;
-        let after = start + open.len();
-        // `<a` mustn't match `<abbr`.
-        if !lower[after..]
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_whitespace() || c == '>' || c == '/')
-        {
-            from = after;
-            continue;
+    std::iter::from_fn(move || {
+        loop {
+            let start = from + html.get(from..)?.find('<')?;
+            // `<a` mustn't match `<abbr`.
+            if !named_at(html.as_bytes(), start + 1, name.as_bytes()) {
+                from = start + 1;
+                continue;
+            }
+            let after = start + 1 + name.len();
+            let end = tag_end(html, after)?;
+            from = end;
+            return Some(Tag {
+                name: name.to_owned(),
+                attrs: attributes(&html[after..end - 1]),
+                end,
+            });
         }
-        let Some(end) = tag_end(html, after) else {
-            break;
-        };
-        found.push(Tag {
-            name: name.to_owned(),
-            attrs: attributes(&html[after..end - 1]),
-            end,
-        });
-        from = end;
-    }
-    found
+    })
+}
+
+/// Every opening `<name …>` tag in `html`, in order (`name` lowercase), up
+/// to [`MAX_TAGS`] of them.
+pub(crate) fn tags(html: &str, name: &str) -> Vec<Tag> {
+    opening(html, name).take(MAX_TAGS).collect()
 }
 
 /// Where the tag whose attributes start at `from` ends (past its `>`),
@@ -116,31 +137,57 @@ fn attributes(text: &str) -> Vec<(String, String)> {
 }
 
 /// The HTML inside the element whose opening tag is `tag`, up to its
-/// matching closing tag (nested ones of the same name counted).
-pub(crate) fn inner<'a>(html: &'a str, tag: &Tag) -> &'a str {
-    let lower = html.to_ascii_lowercase();
-    let (open, close) = (format!("<{}", tag.name), format!("</{}", tag.name));
+/// matching closing tag (nested ones of the same name counted), and
+/// whether that was found within `limit` bytes (else it's the rest of the
+/// page).
+fn inner_within<'a>(html: &'a str, tag: &Tag, limit: usize) -> (&'a str, bool) {
+    let bytes = html.as_bytes();
+    let name = tag.name.as_bytes();
+    let flat = NO_NESTING.contains(&tag.name.as_str());
+    let stop = tag.end.saturating_add(limit).min(html.len());
     let mut depth = 1;
     let mut at = tag.end;
-    while depth > 0 {
-        let next_close = lower[at..].find(&close).map(|i| at + i);
-        let next_open = lower[at..].find(&open).map(|i| at + i);
-        match (next_open, next_close) {
-            (Some(o), Some(c)) if o < c => {
-                depth += 1;
-                at = o + open.len();
-            }
-            (_, Some(c)) => {
+    // One pass from the tag on, never back.
+    while let Some(i) = bytes
+        .get(at..stop)
+        .and_then(|rest| rest.iter().position(|&b| b == b'<'))
+    {
+        let start = at + i;
+        let closing = bytes.get(start + 1) == Some(&b'/');
+        if named_at(bytes, start + 1 + usize::from(closing), name) {
+            if closing {
                 depth -= 1;
                 if depth == 0 {
-                    return &html[tag.end..c];
+                    return (&html[tag.end..start], true);
                 }
-                at = c + close.len();
+            } else if flat {
+                return (&html[tag.end..start], true);
+            } else {
+                depth += 1;
+                if depth > MAX_DEPTH {
+                    break;
+                }
             }
-            _ => return &html[tag.end..],
         }
+        at = start + 1;
     }
-    &html[tag.end..]
+    (&html[tag.end..], false)
+}
+
+/// The HTML inside the element whose opening tag is `tag`, up to its
+/// matching closing tag (nested ones of the same name counted).
+pub(crate) fn inner<'a>(html: &'a str, tag: &Tag) -> &'a str {
+    inner_within(html, tag, usize::MAX).0
+}
+
+/// The text of a short element (a tag's link, a name) when it ends within
+/// [`MAX_LABEL`] bytes: for reading many of them from a page, which could
+/// otherwise each be the rest of it.
+pub(crate) fn label(html: &str, tag: &Tag) -> Option<String> {
+    match inner_within(html, tag, MAX_LABEL) {
+        (inner, true) => Some(super::html_to_text(inner)),
+        (_, false) => None,
+    }
 }
 
 /// The first element `<name>` for which `matches` holds, and its inner HTML.
@@ -149,7 +196,7 @@ pub(crate) fn find<'a>(
     name: &str,
     matches: impl Fn(&Tag) -> bool,
 ) -> Option<(Tag, &'a str)> {
-    let tag = tags(html, name).into_iter().find(|t| matches(t))?;
+    let tag = opening(html, name).find(|t| matches(t))?;
     let inner = inner(html, &tag);
     Some((tag, inner))
 }
@@ -220,5 +267,54 @@ mod tests {
         assert_eq!(script_json(html, "__NEXT_DATA__").unwrap()["a"][1], 2);
         assert_eq!(json_after(html, "__STATE__").unwrap()["b"]["c"], "}");
         assert_eq!(between(html, "<abbr>", "</abbr>"), Some("x"));
+    }
+
+    #[test]
+    fn elements_end_where_browsers_end_them() {
+        let html = r#"<DIV class=a><div>x</Div><abbr>y</abbr></div>after
+            <a href=1>one<a href=2>two</a><p>p1<p>p2</p><span>open"#;
+        let (_, inner) = find(html, "div", |t| t.has_class("a")).unwrap();
+        assert_eq!(inner, "<div>x</Div><abbr>y</abbr>");
+        let links = tags(html, "a");
+        assert_eq!(links.len(), 2);
+        assert_eq!(super::inner(html, &links[0]), "one");
+        assert_eq!(super::inner(html, &links[1]), "two");
+        assert_eq!(find(html, "p", |_| true).unwrap().1, "p1");
+        // Unclosed: the rest of the page, but no label.
+        let span = &tags(html, "span")[0];
+        assert_eq!(super::inner(html, span), "open");
+        assert_eq!(label(html, span), None);
+        assert_eq!(label(html, &links[1]).as_deref(), Some("two"));
+        let long = format!("<a>{}</a>", "x".repeat(MAX_LABEL));
+        assert_eq!(label(&long, &tags(&long, "a")[0]), None);
+    }
+
+    #[test]
+    fn large_pages_read_in_one_pass() {
+        // Nested elements of one kind, never closed.
+        let nested = "<div class=x>".repeat(200_000);
+        // Many tag links, never closed either, and spans like them.
+        let links = "<a rel=tag>cat".repeat(200_000);
+        let spans = "<span class=hashtag>#cat".repeat(200_000);
+        let started = std::time::Instant::now();
+        let (_, inner) = find(&nested, "div", |_| true).unwrap();
+        assert_eq!(inner.len(), nested.len() - "<div class=x>".len());
+        assert!(find(&nested, "div", |t| t.has_class("y")).is_none());
+        let found = tags(&links, "a");
+        assert_eq!(found.len(), MAX_TAGS);
+        let names: Vec<String> = found.iter().filter_map(|a| label(&links, a)).collect();
+        assert_eq!(names.len(), MAX_TAGS);
+        assert!(names.iter().all(|n| n == "cat"));
+        let hashtags = tags(&spans, "span")
+            .iter()
+            .filter_map(|s| label(&spans, s))
+            .count();
+        assert_eq!(hashtags, 0);
+        assert!(meta(&links, "og:image").is_none());
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
     }
 }

@@ -3,7 +3,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html_to_text, text_of};
+use super::{Http, SourceInfo, html_to_text, key, number, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -18,6 +18,7 @@ pub(super) async fn fetch(
     let [.., board, "thread", thread] = parts.as_slice() else {
         return Err("4chan: not a thread".into());
     };
+    let (board, thread) = (key(board)?, number(thread)?);
     let api = http
         .json(
             &format!("https://a.4cdn.org/{board}/thread/{thread}.json"),

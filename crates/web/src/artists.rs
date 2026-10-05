@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use crate::AppState;
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
@@ -449,6 +449,8 @@ struct FinderAnswer {
 /// artist without an entry, how to start one.
 async fn find_for_url(
     state: &AppState,
+    current: &CurrentUser,
+    request: &RequestInfo,
     db: &PgPool,
     url: &str,
 ) -> Result<(Vec<Artist>, Option<Unknown>), AppError> {
@@ -458,7 +460,9 @@ async fn find_for_url(
     }
     let mut found = artists::find_by_url(db, url).await?;
     let mut unknown = None;
-    if let Some(info) = state.sources.lookup(url).await {
+    if let Some(info) =
+        crate::sources::lookup_for_page(state, current, request.ip, url, false).await?
+    {
         for artist in crate::sources::artists_for(db, &info).await? {
             if !found.iter().any(|a| a.id == artist.id) {
                 found.push(artist);
@@ -475,13 +479,14 @@ async fn find_for_url(
 /// JSON, a list.
 async fn finder(
     page: Page,
+    request: RequestInfo,
     headers: HeaderMap,
     Query(query): Query<FinderQuery>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
     let db = state.reader(&page.current);
-    let (found, unknown) = find_for_url(state, db, &query.url).await?;
+    let (found, unknown) = find_for_url(state, &page.current, &request, db, &query.url).await?;
     let wants_json = headers
         .get(ACCEPT)
         .and_then(|v| v.to_str().ok())

@@ -74,7 +74,7 @@ fn work_info(known: &SourceUrl, page: &str, body: &str, popup: &str) -> Option<S
                 html::tags(tags, "a")
                     .into_iter()
                     .filter(|a| a.attr("href").is_some_and(|h| h.contains("search")))
-                    .map(|a| html_to_text(html::inner(tags, &a)))
+                    .filter_map(|a| html::label(tags, &a))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),

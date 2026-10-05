@@ -117,7 +117,9 @@ an image works the same way.
 What the site says is used as well, and shown under the source field:
 the site, the artist and their profiles, the site's tags, and when the
 work was published and last changed. **Fetch source data** reads the
-source again, after you change it or when the site has changed.
+source again, after you change it or when the site has changed (the
+same source is read again only for users whose uploads skip the
+approval queue; see [Lookups](sources.md#lookups)).
 
 - **The artist**: the tag of the artist whose
   [artist entry](artists.md) lists their profile there is put in the tags

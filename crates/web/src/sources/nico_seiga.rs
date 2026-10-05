@@ -5,7 +5,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html_to_text, id_of, strings, tags_named, text_of};
+use super::{Http, SourceInfo, html_to_text, id_of, number, strings, tags_named, text_of};
 
 const HEADERS: [(&str, &str); 1] = [("Cookie", "skip_fetish_warning=1")];
 
@@ -15,6 +15,7 @@ pub(super) async fn fetch(
     page: &str,
 ) -> Result<SourceInfo, String> {
     if let Some(id) = page.strip_prefix("https://manga.nicovideo.jp/watch/mg") {
+        let id = number(id)?;
         let theme = http
             .json(
                 &format!("https://seiga.nicovideo.jp/api/theme/info?id={id}"),
@@ -38,9 +39,10 @@ pub(super) async fn fetch(
         info.title = text_of(&theme["response"]["theme"]["title"]);
         return Ok(info);
     }
-    let id = page
-        .strip_prefix("https://seiga.nicovideo.jp/seiga/im")
-        .ok_or("Nico Seiga: not an illustration")?;
+    let id = number(
+        page.strip_prefix("https://seiga.nicovideo.jp/seiga/im")
+            .ok_or("Nico Seiga: not an illustration")?,
+    )?;
     let answer = http
         .json(
             &format!("https://sp.seiga.nicovideo.jp/ajax/seiga/im{id}"),

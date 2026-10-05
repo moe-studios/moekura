@@ -2,15 +2,30 @@
 
 use moekura_core::sites::SourceUrl;
 
-use super::{Http, SourceInfo, html, html_to_text, tags_named};
+use super::{Http, SourceInfo, html, html_to_text, key, number, tags_named};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
+    check_page(page)?;
     let body = http.page(&format!("{page}?enterAgree=1"), &[]).await?;
     picture_info(known, page, &body).ok_or_else(|| "Hentai Foundry: no picture in the page".into())
+}
+
+/// Refuses a picture's page unless it's a user's name and a number (a
+/// thumbnail's link names the picture in its query, where anything could
+/// be).
+fn check_page(page: &str) -> Result<(), String> {
+    let path = page
+        .strip_prefix("https://www.hentai-foundry.com/")
+        .ok_or("Hentai Foundry: not a picture")?;
+    match path.split('/').collect::<Vec<_>>().as_slice() {
+        ["pictures", "user", user, id] => key(user).and(number(id)).map(|_| ()),
+        [pic] => number(pic.strip_prefix("pic-").unwrap_or_default()).map(|_| ()),
+        _ => Err("Hentai Foundry: not a picture".into()),
+    }
 }
 
 fn picture_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo> {
@@ -34,7 +49,7 @@ fn picture_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo>
         html::tags(body, "a")
             .into_iter()
             .filter(|a| a.attr("rel") == Some("tag"))
-            .map(|a| html_to_text(html::inner(body, &a)))
+            .filter_map(|a| html::label(body, &a))
             .collect::<Vec<_>>(),
     );
     info.description = html::find(body, "div", |t| t.has_class("picDescript"))

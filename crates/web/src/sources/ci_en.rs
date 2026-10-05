@@ -47,11 +47,8 @@ fn article_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo>
             .map(|(_, list)| {
                 html::tags(list, "a")
                     .into_iter()
-                    .map(|a| {
-                        html_to_text(html::inner(list, &a))
-                            .trim_start_matches('#')
-                            .to_owned()
-                    })
+                    .filter_map(|a| html::label(list, &a))
+                    .map(|name| name.trim_start_matches('#').to_owned())
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),

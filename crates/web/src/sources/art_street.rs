@@ -4,7 +4,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html, html_to_text, strings, tags_named};
+use super::{Http, SourceInfo, html, html_to_text, key, strings, tags_named};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -14,11 +14,11 @@ pub(super) async fn fetch(
     let body = http.page(page, &[]).await?;
     let mut info = page_info(known, page, &body);
     if page.contains("/book/") {
-        let id = page
+        let id = key(page
             .trim_end_matches('/')
             .rsplit('/')
             .next()
-            .unwrap_or_default();
+            .unwrap_or_default())?;
         let book = http
             .json(
                 &format!("https://medibang.com/api/book/fixedList2/{id}/?quality=pc"),
@@ -79,7 +79,7 @@ fn page_info(known: &SourceUrl, page: &str, body: &str) -> SourceInfo {
         html::tags(body, "a")
             .into_iter()
             .filter(|t| t.has_class("tag"))
-            .map(|t| html_to_text(html::inner(body, &t)))
+            .filter_map(|t| html::label(body, &t))
             .collect::<Vec<_>>(),
     );
     info

@@ -272,6 +272,7 @@ pub(crate) async fn ban_network(
     let network: IpNet = text
         .parse()
         .or_else(|_| text.parse::<std::net::IpAddr>().map(IpNet::from))
+        .map(crate::client_ip::canonical_net)
         .map_err(|_| {
             AppError::BadRequest("Give an address or a range like 203.0.113.0/24".into())
         })?;
@@ -516,5 +517,45 @@ mod tests {
         );
         let page = moderation.get("/moderation/bans", Some(&admin)).await.body;
         assert!(page.contains("full"), "{page}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn ipv4_mapped_networks_ban_ipv4_clients(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let routes = || super::routes().merge(crate::account::routes());
+        let moderator_at: std::net::SocketAddr = "192.0.2.10:4000".parse().unwrap();
+        let visitor_at: std::net::SocketAddr = "[::ffff:198.51.100.23]:4000".parse().unwrap();
+        let moderation = TestApp::with_peer(state.clone(), routes(), moderator_at);
+        let visitor = TestApp::with_peer(state, routes(), visitor_at);
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        // As a dual-stack server's logs show IPv4 clients: all of IPv4 is
+        // too wide, and the moderator's own address is still theirs.
+        for bad in ["::ffff:0:0%2F96", "::ffff:192.0.2.10"] {
+            let response = moderation
+                .post_form(
+                    "/moderation/ip-bans",
+                    Some(&admin),
+                    &[],
+                    &format!("network={bad}&reason=x"),
+                )
+                .await;
+            assert_eq!(response.status, StatusCode::BAD_REQUEST, "{bad}");
+        }
+        let response = moderation
+            .post_form(
+                "/moderation/ip-bans",
+                Some(&admin),
+                &[],
+                "network=::ffff:198.51.100.0%2F120&reason=abuse",
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        let stored: String = sqlx::query_scalar("SELECT network::text FROM ip_bans")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(stored, "198.51.100.0/24");
+        let register = visitor.post_form("/register", None, &[], "name=x").await;
+        assert_eq!(register.status, StatusCode::FORBIDDEN, "{}", register.body);
     }
 }

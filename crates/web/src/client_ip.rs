@@ -7,7 +7,7 @@ use axum::extract::ConnectInfo;
 use axum::extract::connect_info::MockConnectInfo;
 use axum::http::HeaderMap;
 use axum::http::request::Parts;
-use ipnet::IpNet;
+use ipnet::{IpNet, Ipv4Net};
 
 /// The client's address: the connection's peer, unless the peer is a
 /// trusted proxy, in which case `X-Forwarded-For` is walked from the right
@@ -37,8 +37,28 @@ pub fn client_ip(parts: &Parts, trusted_proxies: &[IpNet]) -> Option<IpAddr> {
 /// Set once `X-Forwarded-For` has come from a peer that isn't trusted.
 static WARNED_UNTRUSTED: AtomicBool = AtomicBool::new(false);
 
+/// `net` in the form [`client_ip`] gives addresses in: an IPv4-mapped
+/// range (`::ffff:10.0.0.0/104`) as the IPv4 range it stands for
+/// (`10.0.0.0/8`), which is how a dual-stack listener's IPv4 clients had
+/// to be written before addresses were canonical. Wider IPv6 ranges are
+/// left as they are.
+pub(crate) fn canonical_net(net: IpNet) -> IpNet {
+    match net {
+        IpNet::V6(v6) if v6.prefix_len() >= 96 => v6
+            .addr()
+            .to_ipv4_mapped()
+            .and_then(|v4| Ipv4Net::new(v4, v6.prefix_len() - 96).ok())
+            .map_or(net, IpNet::V4),
+        _ => net,
+    }
+}
+
 fn resolve(peer: IpAddr, headers: &HeaderMap, trusted_proxies: &[IpNet]) -> IpAddr {
-    let trusted = |ip: &IpAddr| trusted_proxies.iter().any(|net| net.contains(ip));
+    let trusted = |ip: &IpAddr| {
+        trusted_proxies
+            .iter()
+            .any(|net| canonical_net(*net).contains(ip))
+    };
     if !trusted(&peer) {
         // Most likely a proxy missing from the list, which makes every
         // visitor share its address for bans and limits.
@@ -212,5 +232,30 @@ mod tests {
             ),
             Some(ip("198.51.100.9"))
         );
+        // Proxies listed the way such a listener used to need still are.
+        for listed in ["::ffff:10.0.0.0/104", "::ffff:10.0.0.2/128"] {
+            assert_eq!(
+                client_ip(
+                    &parts("[::ffff:10.0.0.2]:4000", &["198.51.100.9"]),
+                    &nets(&[listed])
+                ),
+                Some(ip("198.51.100.9")),
+                "{listed}"
+            );
+        }
+    }
+
+    #[test]
+    fn mapped_ranges_become_ipv4() {
+        let net = |s: &str| s.parse::<IpNet>().unwrap();
+        assert_eq!(canonical_net(net("::ffff:10.0.0.0/104")), net("10.0.0.0/8"));
+        assert_eq!(
+            canonical_net(net("::ffff:198.51.100.7/128")),
+            net("198.51.100.7/32")
+        );
+        assert_eq!(canonical_net(net("::ffff:0:0/96")), net("0.0.0.0/0"));
+        for unchanged in ["10.0.0.0/8", "::/64", "::ffff:0:0/95", "2001:db8::/32"] {
+            assert_eq!(canonical_net(net(unchanged)), net(unchanged));
+        }
     }
 }

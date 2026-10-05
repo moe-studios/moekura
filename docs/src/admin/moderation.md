@@ -138,8 +138,10 @@ are banned under **Moderation → Bans**, partly or fully:
 
 The range may not include your own address, or be wider than a `/8`
 (IPv4) or `/16` (IPv6). IPv4 clients are always matched (and shown) as
-IPv4, also when the server listens on IPv6 as well (`[::]`), so ban them
-with IPv4 ranges. Network bans are kept in memory on every node, so
+IPv4, also when the server listens on IPv6 as well (`[::]`). An address
+or range copied from a log that writes them IPv4-mapped
+(`::ffff:203.0.113.7`, `::ffff:203.0.113.0/120`) is banned as the IPv4
+it stands for. Network bans are kept in memory on every node, so
 checking them costs nothing per request; changes reach other nodes
 within moments.
 

@@ -557,28 +557,13 @@ async fn history(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> 
         .enumerate()
         .map(|(i, v)| {
             let previous = versions.get(i + 1);
-            let added: Vec<i64> = v
-                .post_ids
-                .iter()
-                .copied()
-                .filter(|id| previous.is_none_or(|p| !p.post_ids.contains(id)))
-                .collect();
-            let removed: Vec<i64> = previous
-                .map(|p| {
-                    p.post_ids
-                        .iter()
-                        .copied()
-                        .filter(|id| !v.post_ids.contains(id))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let same_posts = |p: &pools::Version| {
-                let mut a = p.post_ids.clone();
-                let mut b = v.post_ids.clone();
-                a.sort_unstable();
-                b.sort_unstable();
-                a == b
-            };
+            let (added, removed) = pool_names::post_changes(
+                previous.map_or(&[][..], |p| &p.post_ids),
+                &v.post_ids,
+            );
+            // Neither has duplicates, so nothing added or removed means
+            // the same posts.
+            let same_posts = added.is_empty() && removed.is_empty();
             context! {
                 version => v.version,
                 date => crate::dates::day(v.created_at),
@@ -589,7 +574,7 @@ async fn history(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> 
                 deleted => previous.is_some_and(|p| p.is_deleted != v.is_deleted).then_some(v.is_deleted),
                 added => added,
                 removed => removed,
-                reordered => previous.is_some_and(|p| p.post_ids != v.post_ids && same_posts(p)),
+                reordered => previous.is_some_and(|p| p.post_ids != v.post_ids && same_posts),
                 current => i == 0,
                 can_revert => can_revert && i > 0,
             }

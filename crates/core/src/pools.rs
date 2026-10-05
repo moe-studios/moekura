@@ -154,6 +154,25 @@ pub fn parse_post_ids(text: &str) -> Result<Vec<i64>, PostIdsError> {
     Ok(ids)
 }
 
+/// What one version of a pool's posts changed from the one before: the
+/// posts it added (in its order) and those it removed (in `before`'s).
+/// Through sets, so a full pool's history costs no more than its length.
+pub fn post_changes(before: &[i64], after: &[i64]) -> (Vec<i64>, Vec<i64>) {
+    let had: HashSet<i64> = before.iter().copied().collect();
+    let has: HashSet<i64> = after.iter().copied().collect();
+    let added = after
+        .iter()
+        .copied()
+        .filter(|id| !had.contains(id))
+        .collect();
+    let removed = before
+        .iter()
+        .copied()
+        .filter(|id| !has.contains(id))
+        .collect();
+    (added, removed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,5 +234,19 @@ mod tests {
             .take(MAX_POSTS + 1)
             .chain(std::iter::from_fn(|| panic!("read on past the cap")));
         assert_eq!(unique_post_ids(over), Err(PostIdsError::TooMany));
+    }
+
+    #[test]
+    fn changes_between_versions() {
+        assert_eq!(post_changes(&[], &[2, 1]), (vec![2, 1], vec![]));
+        assert_eq!(post_changes(&[1, 2, 3], &[4, 3, 1]), (vec![4], vec![2]));
+        // Reordering adds and removes nothing.
+        assert_eq!(post_changes(&[1, 2], &[2, 1]), (vec![], vec![]));
+        let full = MAX_POSTS as i64;
+        let before: Vec<i64> = (1..=full).collect();
+        let after: Vec<i64> = (full / 2 + 1..=full + full / 2).collect();
+        let (added, removed) = post_changes(&before, &after);
+        assert_eq!((added.len(), removed.len()), (MAX_POSTS / 2, MAX_POSTS / 2));
+        assert_eq!((added[0], removed[0]), (full + 1, 1));
     }
 }

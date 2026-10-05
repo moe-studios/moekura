@@ -8,7 +8,7 @@ use axum::response::Response;
 use axum::routing::get;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
-use moekura_core::pools::PoolName;
+use moekura_core::pools::{PoolName, post_changes};
 use moekura_db::{notes, pools, users, wiki};
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -140,17 +140,7 @@ async fn pool_changes(page: Page, Query(query): Query<ChangeQuery>) -> Result<Re
             let (date, time) = when(v.created_at);
             let created = p.previous_post_ids.is_none();
             let before = p.previous_post_ids.as_deref().unwrap_or_default();
-            let added: Vec<i64> = v
-                .post_ids
-                .iter()
-                .copied()
-                .filter(|id| !before.contains(id))
-                .collect();
-            let removed: Vec<i64> = before
-                .iter()
-                .copied()
-                .filter(|id| !v.post_ids.contains(id))
-                .collect();
+            let (added, removed) = post_changes(before, &v.post_ids);
             let reordered =
                 !created && added.is_empty() && removed.is_empty() && before != v.post_ids;
             context! {

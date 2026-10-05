@@ -7,6 +7,7 @@ use axum::extract::{Query, State};
 use axum::response::Response;
 use axum::routing::get;
 use moekura_core::permissions::Permission;
+use moekura_core::pools::post_changes;
 use moekura_db::{pools, wiki};
 use serde::{Deserialize, Serialize};
 
@@ -157,23 +158,17 @@ async fn pool_versions(
             .into_iter()
             .map(|v| {
                 let at = timestamp(v.created_at);
-                let before = v.previous_post_ids.clone().unwrap_or_default();
+                let (added_post_ids, removed_post_ids) = post_changes(
+                    v.previous_post_ids.as_deref().unwrap_or_default(),
+                    &v.post_ids,
+                );
                 let first = v.previous_name.is_none();
                 DanbooruPoolVersion {
                     id: v.id,
                     pool_id: v.pool_id,
                     version: v.version,
-                    added_post_ids: v
-                        .post_ids
-                        .iter()
-                        .filter(|p| !before.contains(p))
-                        .copied()
-                        .collect(),
-                    removed_post_ids: before
-                        .iter()
-                        .filter(|p| !v.post_ids.contains(p))
-                        .copied()
-                        .collect(),
+                    added_post_ids,
+                    removed_post_ids,
                     name_changed: first || v.previous_name.as_deref() != Some(v.name.as_str()),
                     description_changed: first
                         || v.previous_description.as_deref() != Some(v.description.as_str()),

@@ -6,6 +6,9 @@
 //! checked; its issuer, audience, expiry and nonce are. That makes TLS
 //! the guarantee, so the provider is only ever reached over https (plain
 //! http only on this machine, for development).
+//!
+//! Each login belongs to the browser that started it, through a cookie:
+//! a redirect back from someone else's login does nothing.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -15,6 +18,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
+use axum_extra::extract::cookie::{Cookie, SameSite};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use moekura_core::accounts::UserName;
@@ -30,11 +34,13 @@ use tokio::sync::Mutex;
 use url::Url;
 
 use crate::AppState;
-use crate::auth::{self, RequestInfo};
+use crate::auth::{self, CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
 
+/// Holds the token that ties logins to the browser that started them.
+const BROWSER_COOKIE: &str = "moekura_oidc";
 /// How long someone has at the provider before the login is forgotten.
 const LOGIN_TTL: Duration = Duration::from_secs(10 * 60);
 /// How long the provider's description is reused.
@@ -299,16 +305,37 @@ fn failed(error: OidcError) -> AppError {
     AppError::BadRequest("Logging in through the provider didn't work. Please try again.".into())
 }
 
-/// Sends the browser to the provider; `link_user_id` when linking.
+/// The browser's token: Lax, since the provider sends it back with a
+/// top-level GET.
+fn browser_cookie(state: &AppState, token: String) -> Cookie<'static> {
+    Cookie::build((BROWSER_COOKIE, token))
+        .path("/login/oidc")
+        .http_only(true)
+        .same_site(SameSite::Lax)
+        .secure(state.config.server.public_url.scheme() == "https")
+        .max_age(time::Duration::seconds(LOGIN_TTL.as_secs() as i64))
+        .build()
+}
+
+/// Sends the browser to the provider; `link_user_id` when linking. The
+/// login is tied to the token in the browser's cookie.
 async fn redirect_to_provider(
     state: &AppState,
+    jar: CookieJar,
     next: Option<&str>,
     link_user_id: Option<i64>,
 ) -> Result<Response, AppError> {
     let oidc = provider(state)?;
+    // One token per browser, so logins started in two tabs both finish.
+    let browser = jar
+        .get(BROWSER_COOKIE)
+        .map(|c| c.value().to_owned())
+        .filter(|t| t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit()))
+        .unwrap_or_else(|| NewToken::generate().token);
     let nonce = NewToken::generate().token;
     let verifier = NewToken::generate().token;
     let login = NewLogin {
+        browser: &browser,
         nonce: &nonce,
         code_verifier: &verifier,
         next,
@@ -319,7 +346,8 @@ async fn redirect_to_provider(
         .authorize_url(&token, &nonce, &verifier)
         .await
         .map_err(failed)?;
-    Ok(Redirect::to(url.as_str()).into_response())
+    let jar = jar.add(browser_cookie(state, browser));
+    Ok((jar, Redirect::to(url.as_str())).into_response())
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -330,13 +358,14 @@ struct StartQuery {
 async fn start(
     State(state): State<AppState>,
     page: Page,
+    jar: CookieJar,
     Query(query): Query<StartQuery>,
 ) -> Result<Response, AppError> {
     let next = crate::account::safe_next(query.next.as_deref());
     if page.current.is_logged_in() {
         return Ok(Redirect::to(next).into_response());
     }
-    redirect_to_provider(&state, Some(next), None).await
+    redirect_to_provider(&state, jar, Some(next), None).await
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -351,21 +380,37 @@ struct CallbackQuery {
 
 async fn callback(
     State(state): State<AppState>,
+    current: CurrentUser,
     jar: CookieJar,
     info: RequestInfo,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, AppError> {
     let oidc = provider(&state)?;
     let db = state.db.primary();
-    let login = identities::finish_login(db, &query.state)
+    let expired = || AppError::BadRequest("This login has expired. Please start again.".into());
+    // Only in the browser that started it: otherwise anyone could send
+    // someone the link back from their own login, and log them in as
+    // themselves (or link the victim's provider account to theirs).
+    let browser = jar
+        .get(BROWSER_COOKIE)
+        .map(|c| c.value().to_owned())
+        .ok_or_else(expired)?;
+    let login = identities::finish_login(db, &query.state, &browser)
         .await?
-        .ok_or_else(|| {
-            AppError::BadRequest("This login has expired. Please start again.".into())
-        })?;
+        .ok_or_else(expired)?;
     if let Some(error) = &query.error {
         tracing::info!(error, description = ?query.error_description, "provider refused the login");
         return Err(AppError::BadRequest(
             "The provider didn't log you in. Please try again.".into(),
+        ));
+    }
+    // A link finishes for the user who started it, still logged in.
+    if let Some(user_id) = login.link_user_id
+        && current.user.as_ref().map(|u| u.id) != Some(user_id)
+    {
+        return Err(AppError::BadRequest(
+            "You're no longer logged in as the account you were linking. Log in and link it again."
+                .into(),
         ));
     }
     let claims = oidc.exchange(&query.code, &login).await.map_err(failed)?;
@@ -522,20 +567,30 @@ struct PasswordForm {
     password: String,
 }
 
-/// Links a provider account to the logged-in user, after checking their
-/// password: a link is a way in.
-async fn link(page: Page, Form(form): Form<PasswordForm>) -> Result<Response, AppError> {
+/// Links a provider account to the logged-in user. A link is a way in
+/// that outlives sessions, keys and password changes, so it takes a
+/// session (not an API key) and the password. Accounts without one (made
+/// through the provider, and already linked) can't confirm it's them, so
+/// they set a password first.
+async fn link(
+    page: Page,
+    jar: CookieJar,
+    Form(form): Form<PasswordForm>,
+) -> Result<Response, AppError> {
     let user = page.current.require_session()?.clone();
     let state = page.state();
     provider(state)?;
     state.rate_limits.check_confirm(user.id).await?;
     let db = state.db.primary();
-    if users::has_password(db, user.id).await?
-        && !moekura_db::accounts::check_password_of(db, user.id, &form.password).await?
-    {
+    if !users::has_password(db, user.id).await? {
+        return Err(AppError::Unprocessable(
+            "Set a password first (with “Forgot your password?”), to confirm it's you.".into(),
+        ));
+    }
+    if !moekura_db::accounts::check_password_of(db, user.id, &form.password).await? {
         return Err(AppError::Unprocessable("Wrong password.".into()));
     }
-    redirect_to_provider(state, None, Some(user.id)).await
+    redirect_to_provider(state, jar, None, Some(user.id)).await
 }
 
 /// Unlinks a provider account. Accounts without a password keep their
@@ -571,7 +626,9 @@ mod tests {
     use sqlx::PgPool;
 
     use super::*;
-    use crate::test_support::{TestApp, member, session_for, test_config, test_state_with};
+    use crate::test_support::{
+        TestApp, TestResponse, member, session_for, test_config, test_state_with,
+    };
 
     /// A provider that logs in whoever the test says.
     #[derive(Default)]
@@ -646,7 +703,7 @@ mod tests {
         fake
     }
 
-    async fn app(pool: &PgPool, fake: &Provider) -> TestApp {
+    fn config(fake: &Provider) -> moekura_core::config::Config {
         let mut config = test_config();
         config.auth.oidc = Some(OidcConfig {
             issuer: Url::parse(&fake.base).unwrap(),
@@ -655,20 +712,25 @@ mod tests {
             button_label: "Log in with Fake".into(),
             scopes: vec!["openid".into(), "email".into()],
         });
-        TestApp::new(
-            test_state_with(pool, config).await,
-            routes()
-                .merge(crate::account::routes())
-                .merge(crate::email::routes())
-                .merge(crate::posts::routes()),
-        )
+        config
+    }
+
+    fn test_routes() -> Router<AppState> {
+        routes()
+            .merge(crate::account::routes())
+            .merge(crate::email::routes())
+            .merge(crate::posts::routes())
+    }
+
+    async fn app(pool: &PgPool, fake: &Provider) -> TestApp {
+        TestApp::new(test_state_with(pool, config(fake)).await, test_routes())
     }
 
     /// Follows a redirect to the provider: its `state`, after telling the
     /// provider to log in as `claims` (with the right nonce).
     fn at_provider(
         fake: &Provider,
-        response: &crate::test_support::TestResponse,
+        response: &TestResponse,
         mut claims: serde_json::Value,
     ) -> String {
         let location = response.location.as_deref().expect("a redirect");
@@ -705,14 +767,42 @@ mod tests {
         })
     }
 
+    /// The token of the browser `response` sent to the provider.
+    fn browser(response: &TestResponse) -> String {
+        let prefix = format!("{BROWSER_COOKIE}=");
+        response
+            .set_cookie
+            .iter()
+            .find_map(|c| c.strip_prefix(&prefix))
+            .map(|rest| rest.split(';').next().unwrap_or_default().to_owned())
+            .expect("the browser's cookie")
+    }
+
+    /// Comes back from the provider to the browser that `start` sent
+    /// there, with `session` if logged in.
     async fn back(
         app: &TestApp,
+        start: &TestResponse,
         state: &str,
         session: Option<&str>,
-    ) -> crate::test_support::TestResponse {
-        app.get(
+    ) -> TestResponse {
+        back_to(app, &browser(start), state, session).await
+    }
+
+    /// Comes back from the provider to the browser with token `browser`.
+    async fn back_to(
+        app: &TestApp,
+        browser: &str,
+        state: &str,
+        session: Option<&str>,
+    ) -> TestResponse {
+        let mut cookie = format!("{BROWSER_COOKIE}={browser}");
+        if let Some(session) = session {
+            cookie.push_str(&format!("; {}={session}", auth::SESSION_COOKIE));
+        }
+        app.get_with_cookie(
             &format!("/login/oidc/callback?code=good&state={state}"),
-            session,
+            &cookie,
         )
         .await
     }
@@ -730,7 +820,7 @@ mod tests {
 
         let start = app.get("/login/oidc?next=%2Ftags", None).await;
         let state = at_provider(&fake, &start, claims(&fake, "u1"));
-        let done = back(&app, &state, None).await;
+        let done = back(&app, &start, &state, None).await;
         assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.body);
         assert_eq!(done.location.as_deref(), Some("/tags"));
         assert!(done.session_cookie().is_some());
@@ -740,14 +830,19 @@ mod tests {
         assert!(!users::has_password(&pool, user.id).await.unwrap());
         // The state works once.
         assert_eq!(
-            back(&app, &state, None).await.status,
+            back(&app, &start, &state, None).await.status,
             StatusCode::BAD_REQUEST
         );
 
         // Next time, the same account.
         let again = app.get("/login/oidc", None).await;
         let state = at_provider(&fake, &again, claims(&fake, "u1"));
-        assert!(back(&app, &state, None).await.session_cookie().is_some());
+        assert!(
+            back(&app, &again, &state, None)
+                .await
+                .session_cookie()
+                .is_some()
+        );
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
             .fetch_one(&pool)
             .await
@@ -759,7 +854,7 @@ mod tests {
         for (sub, name) in [("u2", "alice"), ("u3", "Alice_Smith_2")] {
             let other = app.get("/login/oidc", None).await;
             let state = at_provider(&fake, &other, claims(&fake, sub));
-            let response = back(&app, &state, None).await;
+            let response = back(&app, &other, &state, None).await;
             assert_eq!(
                 response.status,
                 StatusCode::SEE_OTHER,
@@ -786,7 +881,7 @@ mod tests {
             let mut bad = claims(&fake, "u1");
             bad[claim] = value;
             let state = at_provider(&fake, &start, bad);
-            let refused = back(&app, &state, None).await;
+            let refused = back(&app, &start, &state, None).await;
             assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{claim}");
             assert!(refused.session_cookie().is_none());
         }
@@ -794,9 +889,9 @@ mod tests {
         let start = app.get("/login/oidc", None).await;
         let state = at_provider(&fake, &start, claims(&fake, "u1"));
         let wrong = app
-            .get(
+            .get_with_cookie(
                 &format!("/login/oidc/callback?code=bad&state={state}"),
-                None,
+                &format!("{BROWSER_COOKIE}={}", browser(&start)),
             )
             .await;
         assert_eq!(wrong.status, StatusCode::BAD_REQUEST);
@@ -817,7 +912,7 @@ mod tests {
         let start = closed.get("/login/oidc", None).await;
         let state = at_provider(&fake, &start, claims(&fake, "u1"));
         assert_eq!(
-            back(&closed, &state, None).await.status,
+            back(&closed, &start, &state, None).await.status,
             StatusCode::FORBIDDEN
         );
 
@@ -827,7 +922,7 @@ mod tests {
         let approval = app(&pool, &fake).await;
         let start = approval.get("/login/oidc", None).await;
         let state = at_provider(&fake, &start, claims(&fake, "u1"));
-        let waiting = back(&approval, &state, None).await;
+        let waiting = back(&approval, &start, &state, None).await;
         assert!(waiting.session_cookie().is_none());
         let user = users::by_name(&pool, "Alice_Smith").await.unwrap().unwrap();
         assert_eq!(user.status, UserStatus::Pending);
@@ -858,7 +953,7 @@ mod tests {
             )
             .await;
         let state = at_provider(&fake, &start, claims(&fake, "u1"));
-        let linked = back(&app, &state, Some(&session)).await;
+        let linked = back(&app, &start, &state, Some(&session)).await;
         assert_eq!(
             linked.location.as_deref(),
             Some("/settings/account"),
@@ -869,7 +964,12 @@ mod tests {
         // Logging in through the provider is now logging in as alice.
         let start = app.get("/login/oidc", None).await;
         let state = at_provider(&fake, &start, claims(&fake, "u1"));
-        assert!(back(&app, &state, None).await.session_cookie().is_some());
+        assert!(
+            back(&app, &start, &state, None)
+                .await
+                .session_cookie()
+                .is_some()
+        );
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM users")
             .fetch_one(&pool)
             .await
@@ -877,18 +977,24 @@ mod tests {
         assert_eq!(count, 1);
 
         // Someone else can't link the same provider account.
-        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let (_, carol) = member(&pool, "carol", "carol@example.com").await;
         let start = app
-            .post_form("/settings/oidc/link", Some(&bob), &[], "")
+            .post_form(
+                "/settings/oidc/link",
+                Some(&carol),
+                &[],
+                "password=correct+horse",
+            )
             .await;
         let state = at_provider(&fake, &start, claims(&fake, "u1"));
         assert_eq!(
-            back(&app, &state, Some(&bob)).await.status,
+            back(&app, &start, &state, Some(&carol)).await.status,
             StatusCode::BAD_REQUEST
         );
 
         // Alice has a password, so she can unlink it; bob (no password)
         // can't unlink his only way in.
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
         let id = identities::for_user(&pool, alice.id).await.unwrap()[0].id;
         let unlinked = app
             .post(&format!("/settings/oidc/unlink/{id}"), Some(&session), &[])
@@ -906,6 +1012,145 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn logins_finish_only_in_the_browser_that_started_them(pool: PgPool) {
+        let fake = provider().await;
+        let app = app(&pool, &fake).await;
+        // Mallory logs in at the provider, and instead of coming back
+        // sends the link back to someone else, with no cookie or their own.
+        let start = app.get("/login/oidc", None).await;
+        let state = at_provider(&fake, &start, claims(&fake, "mallory"));
+        let bare = app
+            .get(
+                &format!("/login/oidc/callback?code=good&state={state}"),
+                None,
+            )
+            .await;
+        assert_eq!(bare.status, StatusCode::BAD_REQUEST);
+        let theirs = app.get("/login/oidc", None).await;
+        let victim = back(&app, &theirs, &state, None).await;
+        assert_eq!(victim.status, StatusCode::BAD_REQUEST);
+        assert!(victim.session_cookie().is_none());
+        // Her own browser still can.
+        let state = at_provider(&fake, &start, claims(&fake, "mallory"));
+        assert!(
+            back(&app, &start, &state, None)
+                .await
+                .session_cookie()
+                .is_some()
+        );
+
+        // One browser keeps its token, so logins in two tabs both finish.
+        let first = app.get("/login/oidc", None).await;
+        let token = browser(&first);
+        let second = app
+            .get_with_cookie("/login/oidc", &format!("{BROWSER_COOKIE}={token}"))
+            .await;
+        assert_eq!(browser(&second), token);
+        let set = second
+            .set_cookie
+            .iter()
+            .find(|c| c.starts_with(BROWSER_COOKIE))
+            .unwrap();
+        assert!(
+            set.contains("HttpOnly") && set.contains("SameSite=Lax"),
+            "{set}"
+        );
+        assert!(set.contains("Path=/login/oidc"), "{set}");
+        for tab in [&second, &first] {
+            let state = at_provider(&fake, tab, claims(&fake, "mallory"));
+            let done = back_to(&app, &token, &state, None).await;
+            assert!(done.session_cookie().is_some(), "{}", done.body);
+        }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn links_finish_only_for_whoever_started_them(pool: PgPool) {
+        let fake = provider().await;
+        let app = app(&pool, &fake).await;
+        let (mallory, mallory_session) = member(&pool, "mallory", "mallory@example.com").await;
+        let (_, alice) = member(&pool, "alice", "alice@example.com").await;
+        // Mallory starts linking her account and sends alice the link to
+        // the provider, hoping alice's provider account gets linked.
+        let start = app
+            .post_form(
+                "/settings/oidc/link",
+                Some(&mallory_session),
+                &[],
+                "password=correct+horse",
+            )
+            .await;
+        let state = at_provider(&fake, &start, claims(&fake, "alice-at-provider"));
+        let elsewhere = back_to(&app, &"f".repeat(64), &state, Some(&alice)).await;
+        assert_eq!(elsewhere.status, StatusCode::BAD_REQUEST);
+        // Nor does it finish for anyone else in the same browser, or once
+        // logged out.
+        let other_user = back(&app, &start, &state, Some(&alice)).await;
+        assert_eq!(other_user.status, StatusCode::BAD_REQUEST);
+        let start = app
+            .post_form(
+                "/settings/oidc/link",
+                Some(&mallory_session),
+                &[],
+                "password=correct+horse",
+            )
+            .await;
+        let state = at_provider(&fake, &start, claims(&fake, "alice-at-provider"));
+        let logged_out = back(&app, &start, &state, None).await;
+        assert_eq!(logged_out.status, StatusCode::BAD_REQUEST);
+        assert!(
+            identities::for_user(&pool, mallory.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            identities::user_for(&pool, &fake.base, "alice-at-provider")
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn linking_needs_a_session_and_a_password(pool: PgPool) {
+        let fake = provider().await;
+        let app = app(&pool, &fake).await;
+        let (alice, _) = member(&pool, "alice", "alice@example.com").await;
+        // An API key isn't enough: a link would outlast it.
+        let key = moekura_db::api_keys::create(&pool, alice.id, "script", None)
+            .await
+            .unwrap();
+        let bearer = format!("Bearer {key}");
+        let by_key = app
+            .post_form(
+                "/settings/oidc/link",
+                None,
+                &[("authorization", bearer.as_str())],
+                "password=correct+horse",
+            )
+            .await;
+        assert_eq!(by_key.status, StatusCode::FORBIDDEN);
+        assert!(by_key.location.is_none());
+
+        // Without a password there's nothing to confirm it with.
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let no_password = app
+            .post_form("/settings/oidc/link", Some(&bob), &[], "")
+            .await;
+        assert_eq!(no_password.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            no_password.body.contains("Set a password first"),
+            "{}",
+            no_password.body
+        );
+        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM oidc_logins")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(pending, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn nobody_signs_up_as_the_tagger(pool: PgPool) {
         let fake = provider().await;
         let app = app(&pool, &fake).await;
@@ -913,7 +1158,7 @@ mod tests {
         let mut claims = claims(&fake, "u1");
         claims["preferred_username"] = json!("Tagger");
         let state = at_provider(&fake, &start, claims);
-        let done = back(&app, &state, None).await;
+        let done = back(&app, &start, &state, None).await;
         assert!(done.session_cookie().is_some(), "{}", done.body);
         assert!(users::by_name(&pool, "tagger").await.unwrap().is_none());
         assert!(users::by_name(&pool, "alice").await.unwrap().is_some());

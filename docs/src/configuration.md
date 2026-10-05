@@ -123,11 +123,12 @@ out to turn it off.
 
 Register the redirect URI `https://your.site/login/oidc/callback` (from
 `server.public_url`) with the provider. Logins use the authorization code
-flow with PKCE. The ID token's signature isn't checked, since it comes
-straight from the provider, so the provider is only ever reached over
-https: its description must list https:// login and token endpoints, and
-redirects to plain http are refused. Plain http is allowed only for a
-provider on the same machine, for development.
+flow with PKCE, and each one has to finish in the browser that started it
+(a short-lived cookie ties them together). The ID token's signature isn't
+checked, since it comes straight from the provider, so the provider is
+only ever reached over https: its description must list https:// login
+and token endpoints, and redirects to plain http are refused. Plain http
+is allowed only for a provider on the same machine, for development.
 
 Someone logging in through the provider for the first time gets a new
 account (with no password) when registration is `open`, or one waiting for

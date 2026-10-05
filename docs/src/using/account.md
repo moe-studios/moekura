@@ -151,10 +151,12 @@ through another service's account. The first time, that makes you an
 account here (if the site is taking new ones).
 
 To use it with an account you already have, log in with your password
-and choose **Link** under **Single sign-on**. You can unlink it later, as
-long as you have a password to log in with instead. Accounts made through
-single sign-on have no password; to set one, use **Forgot your
-password?** if the site sends mail.
+and choose **Link** under **Single sign-on**, confirming your password;
+finish at the provider in the same browser. (It can't be done with an API
+key.) You can unlink it later, as long as you have a password to log in
+with instead. Accounts made through single sign-on have no password; to
+set one, use **Forgot your password?** if the site sends mail. They need
+one to link another account at the provider, too.
 
 ## Two-factor login
 

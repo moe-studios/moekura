@@ -70,6 +70,9 @@ pub async fn unlink(db: impl PgExecutor<'_>, user_id: i64, id: i64) -> sqlx::Res
 /// A login sent to the provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewLogin<'a> {
+    /// The token in the cookie of the browser starting the login: only
+    /// that browser can finish it.
+    pub browser: &'a str,
     pub nonce: &'a str,
     pub code_verifier: &'a str,
     pub next: Option<&'a str>,
@@ -92,10 +95,12 @@ pub async fn start_login(
 ) -> sqlx::Result<String> {
     let state = NewToken::generate();
     sqlx::query(
-        "INSERT INTO oidc_logins (state_hash, nonce, code_verifier, next, link_user_id, expires_at)
-         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+        "INSERT INTO oidc_logins
+             (state_hash, browser_hash, nonce, code_verifier, next, link_user_id, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $7))",
     )
     .bind(&state.hash[..])
+    .bind(&hash_token(login.browser)[..])
     .bind(login.nonce)
     .bind(login.code_verifier)
     .bind(login.next)
@@ -106,16 +111,20 @@ pub async fn start_login(
     Ok(state.token)
 }
 
-/// The login `state` belongs to, used up, if it hasn't expired.
+/// The login `state` belongs to, used up, if it hasn't expired and
+/// `browser` (the token in the cookie) started it.
 pub async fn finish_login(
     db: impl PgExecutor<'_>,
     state: &str,
+    browser: &str,
 ) -> sqlx::Result<Option<PendingLogin>> {
     sqlx::query_as(
-        "DELETE FROM oidc_logins WHERE state_hash = $1 AND expires_at > now()
+        "DELETE FROM oidc_logins
+         WHERE state_hash = $1 AND browser_hash = $2 AND expires_at > now()
          RETURNING nonce, code_verifier, next, link_user_id",
     )
     .bind(&hash_token(state)[..])
+    .bind(&hash_token(browser)[..])
     .fetch_optional(db)
     .await
 }
@@ -167,6 +176,7 @@ mod tests {
         assert_eq!(user_for(&pool, issuer, "a1").await.unwrap(), None);
 
         let login = NewLogin {
+            browser: "b",
             nonce: "n",
             code_verifier: "v",
             next: Some("/tags"),
@@ -175,7 +185,14 @@ mod tests {
         let state = start_login(&pool, login.clone(), Duration::from_secs(600))
             .await
             .unwrap();
-        let pending = finish_login(&pool, &state).await.unwrap().unwrap();
+        assert!(
+            finish_login(&pool, &state, "someone else's")
+                .await
+                .unwrap()
+                .is_none(),
+            "another browser"
+        );
+        let pending = finish_login(&pool, &state, "b").await.unwrap().unwrap();
         assert_eq!(
             (
                 pending.nonce.as_str(),
@@ -184,9 +201,12 @@ mod tests {
             ),
             ("n", Some("/tags"), Some(alice))
         );
-        assert!(finish_login(&pool, &state).await.unwrap().is_none(), "once");
+        assert!(
+            finish_login(&pool, &state, "b").await.unwrap().is_none(),
+            "once"
+        );
         let stale = start_login(&pool, login, Duration::ZERO).await.unwrap();
-        assert!(finish_login(&pool, &stale).await.unwrap().is_none());
+        assert!(finish_login(&pool, &stale, "b").await.unwrap().is_none());
         assert_eq!(prune_logins(&pool).await.unwrap(), 1);
     }
 }

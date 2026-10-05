@@ -21,6 +21,21 @@ pub async fn record(db: impl PgExecutor<'_>, user_id: i64, ip: IpAddr) -> sqlx::
     Ok(())
 }
 
+/// Whether the account called `name` (any case) used an address in
+/// `network`.
+pub async fn name_used(db: impl PgExecutor<'_>, name: &str, network: IpNet) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (
+             SELECT 1 FROM user_ips i JOIN users u ON u.id = i.user_id
+             WHERE u.name = $1::citext AND i.ip <<= $2
+         )",
+    )
+    .bind(name)
+    .bind(network)
+    .fetch_one(db)
+    .await
+}
+
 /// An address a user used.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Seen {
@@ -98,6 +113,29 @@ mod tests {
         .fetch_one(pool)
         .await
         .unwrap()
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn finds_networks_a_name_used(pool: PgPool) {
+        let alice = user(&pool, "Alice").await;
+        user(&pool, "bob").await;
+        record(&pool, alice, "2001:db8:1:2::5".parse().unwrap())
+            .await
+            .unwrap();
+        record(&pool, alice, "198.51.100.7".parse().unwrap())
+            .await
+            .unwrap();
+        let used = async |name: &str, network: &str| {
+            name_used(&pool, name, network.parse().unwrap())
+                .await
+                .unwrap()
+        };
+        assert!(used("alice", "2001:db8:1:2::/64").await);
+        assert!(used("ALICE", "198.51.100.7/32").await);
+        assert!(!used("alice", "2001:db8:1:3::/64").await);
+        assert!(!used("alice", "198.51.100.8/32").await);
+        assert!(!used("bob", "198.51.100.7/32").await);
+        assert!(!used("carol", "198.51.100.7/32").await);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

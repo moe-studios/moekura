@@ -21,6 +21,7 @@ use governor::clock::{Clock, DefaultClock};
 use governor::middleware::StateInformationMiddleware;
 use governor::state::keyed::DefaultKeyedStateStore;
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
+use ipnet::IpNet;
 use moekura_core::accounts::EMAIL_MAX_LEN;
 use sha2::{Digest, Sha256};
 
@@ -50,7 +51,8 @@ const LOGIN_BY_NAME_AND_NET: Limit = Limit {
 };
 // Looser per account, from any network: guessing it from many at once.
 // One more every 12 seconds is more than two networks get at the tight
-// limit, so locking the owner out takes at least three working together.
+// limit. Past it, the login page still lets the owner in from a network
+// the account has used (see `check_login_ceiling`).
 const LOGIN_BY_NAME: Limit = Limit {
     name: "login_name",
     burst: 30,
@@ -297,11 +299,10 @@ impl RateLimits {
     }
 
     /// Counts a login attempt for account `name`: from the client's
-    /// network, for the account from that network, and for the account
-    /// from anywhere. Every attempt counts, before the password is
-    /// checked, so that attempts sent all at once can't slip past. `ip` is
-    /// `None` only when the connection address is unknown (in-process
-    /// tests).
+    /// network, and for the account from that network. Every attempt
+    /// counts, before the password is checked, so that attempts sent all
+    /// at once can't slip past. `ip` is `None` only when the connection
+    /// address is unknown (in-process tests).
     pub async fn check_login(&self, ip: Option<IpAddr>, name: &str) -> Result<(), AppError> {
         let net = ip.map(ip_bucket);
         if let Some(net) = net {
@@ -320,8 +321,14 @@ impl RateLimits {
             &from_net,
             &from_net,
         )
-        .await?;
-        let name = digest(&name);
+        .await
+    }
+
+    /// Counts a login attempt for account `name` from any network, against
+    /// guessing it from many at once. Counted before the password is
+    /// checked, like [`Self::check_login`].
+    pub async fn check_login_ceiling(&self, name: &str) -> Result<(), AppError> {
+        let name = digest(&fold(name));
         self.check(LOGIN_BY_NAME, &self.login_by_name, &name, &name)
             .await
     }
@@ -519,6 +526,13 @@ pub(crate) fn ip_bucket(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// [`ip_bucket`] as a range: an IPv4 address alone, or an IPv6 /64.
+pub(crate) fn ip_bucket_net(ip: IpAddr) -> IpNet {
+    let bucket = ip_bucket(ip);
+    let prefix = if bucket.is_ipv4() { 32 } else { 64 };
+    IpNet::new(bucket, prefix).unwrap_or(IpNet::from(bucket))
+}
+
 /// A key of a fixed size for text a client chose (a name or an email
 /// address), so a long one costs no more memory than a short one.
 fn digest(text: &str) -> String {
@@ -657,17 +671,17 @@ mod tests {
                 let network = Some(unique_ip());
                 for _ in 0..5 {
                     limits.check_login(network, &name).await.unwrap();
+                    limits.check_login_ceiling(&name).await.unwrap();
                 }
             }
+            // A seventh network passes its own limit, not the account's.
+            limits.check_login(Some(unique_ip()), &name).await.unwrap();
             let err = limits
-                .check_login(Some(unique_ip()), &name)
+                .check_login_ceiling(&name.to_uppercase())
                 .await
                 .unwrap_err();
             assert!(matches!(err, AppError::TooManyRequests { .. }), "{err:?}");
-            limits
-                .check_login(Some(unique_ip()), &unique("bob"))
-                .await
-                .unwrap();
+            limits.check_login_ceiling(&unique("bob")).await.unwrap();
         }
     }
 
@@ -840,6 +854,15 @@ mod tests {
         assert_eq!(
             client_key(None, Some(v6("::ffff:198.51.100.7"))),
             "ip:198.51.100.7"
+        );
+        let net = |s: &str| s.parse::<IpNet>().unwrap();
+        assert_eq!(
+            ip_bucket_net(v6("2001:db8:1:2:aaaa::1")),
+            net("2001:db8:1:2::/64")
+        );
+        assert_eq!(
+            ip_bucket_net(v6("::ffff:198.51.100.7")),
+            net("198.51.100.7/32")
         );
     }
 

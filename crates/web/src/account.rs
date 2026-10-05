@@ -11,8 +11,8 @@ use moekura_core::accounts::{NAME_MAX_LEN, NAME_MIN_LEN};
 use moekura_core::permissions::SystemRole;
 use moekura_core::settings::RegistrationMode;
 use moekura_db::accounts::{self, AuthError, CreateError, NewAccount};
-use moekura_db::invites;
 use moekura_db::users::UserStatus;
+use moekura_db::{invites, user_ips};
 use serde::Deserialize;
 
 use crate::AppState;
@@ -364,14 +364,36 @@ async fn login(
             StatusCode::UNPROCESSABLE_ENTITY,
         ));
     }
-    state
-        .rate_limits
+    let limited = || tracing::warn!(ip = ?info.ip, name = clipped(name), "login rate limited");
+    let limits = &state.rate_limits;
+    limits
         .check_login(info.ip, name)
         .await
-        .inspect_err(|_| {
-            tracing::warn!(ip = ?info.ip, name = clipped(name), "login rate limited");
-        })?;
-    let user = match accounts::authenticate(state.db.primary(), name, &form.password).await {
+        .inspect_err(|_| limited())?;
+    // Past the limit for the account from all networks together, someone
+    // is guessing from many; then only its owner gets in, with the right
+    // password from a network the account has used. Everyone else is
+    // refused alike, after the same work, so a refusal tells nothing about
+    // the password or the network.
+    let ceiling = limits.check_login_ceiling(name).await;
+    let used_network = match (&ceiling, info.ip) {
+        (Err(_), Some(ip)) => {
+            let network = crate::rate_limit::ip_bucket_net(ip);
+            user_ips::name_used(state.db.primary(), name, network).await?
+        }
+        _ => false,
+    };
+    let result = accounts::authenticate(state.db.primary(), name, &form.password).await;
+    if let Err(refused) = ceiling
+        && !(used_network && result.is_ok())
+    {
+        if let Err(AuthError::Db(error)) = result {
+            return Err(error.into());
+        }
+        limited();
+        return Err(refused);
+    }
+    let user = match result {
         Ok(user) => user,
         Err(AuthError::Db(error)) => return Err(error.into()),
         Err(error) => {
@@ -739,6 +761,47 @@ mod tests {
         let right = form(&[("name", "alice"), ("password", "correct horse")]);
         let response = app.post_form("/login", None, &owner, &right).await;
         assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn guessing_from_many_networks_lets_the_owner_in_from_theirs(pool: PgPool) {
+        let mut state = test_state(&pool).await;
+        let mut config = (*state.config).clone();
+        config.server.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        state.config = std::sync::Arc::new(config);
+        let limits = state.rate_limits.clone();
+        let proxy = "10.0.0.2:40000".parse().unwrap();
+        let app = TestApp::with_peer(state, routes(), proxy);
+        let response = app
+            .post_form(
+                "/register",
+                None,
+                &[("x-forwarded-for", "2001:db8:1:2::1")],
+                &signup("alice"),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+
+        // Each attempt follows guesses from enough networks to use up the
+        // account's allowance from all of them (used up right before, as a
+        // password check takes long enough in tests for it to refill).
+        let login = async |client: &str, password: &str| {
+            while limits.check_login_ceiling("alice").await.is_ok() {}
+            let attempt = form(&[("name", "alice"), ("password", password)]);
+            let from = [("x-forwarded-for", client)];
+            app.post_form("/login", None, &from, &attempt).await.status
+        };
+        // Other networks are refused, with the right password too.
+        for password in ["wrong horse", "correct horse"] {
+            let status = login("203.0.113.7", password).await;
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{password}");
+        }
+        // From the /64 the account used, a wrong password is refused the
+        // same way, and the right one gets in.
+        let status = login("2001:db8:1:2::abcd", "wrong horse").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        let status = login("2001:db8:1:2::abcd", "correct horse").await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

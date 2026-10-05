@@ -198,7 +198,9 @@ after they were last seen, then forgotten by a daily job; change that
 under **Admin → Settings** (**Keep the addresses accounts use**), where 0
 keeps none and stops recording them. Deleting an account deletes its
 addresses. Sessions separately keep the address they were started from
-until they end.
+until they end. The addresses also help at login: while someone guesses
+an account's password from many networks at once, its owner can still
+log in from a network (an IPv4 address or an IPv6 `/64`) it used.
 
 ## Renaming users
 

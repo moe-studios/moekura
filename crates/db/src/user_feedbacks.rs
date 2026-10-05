@@ -20,6 +20,9 @@ pub struct Feedback {
     pub category: String,
     pub body: String,
     pub is_deleted: bool,
+    /// Who deleted it and their role, while it's deleted.
+    pub deleted_by_id: Option<i64>,
+    pub deleted_by_role_id: Option<i32>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
 }
@@ -30,9 +33,11 @@ macro_rules! select_feedbacks {
         concat!(
             "SELECT f.id, f.user_id, u.name::text AS user_name, u.role_id AS user_role_id,
                     f.creator_id, c.name::text AS creator_name, c.role_id AS creator_role_id,
-                    f.category, f.body, f.is_deleted, f.created_at, f.updated_at
+                    f.category, f.body, f.is_deleted,
+                    f.deleted_by_id, d.role_id AS deleted_by_role_id, f.created_at, f.updated_at
              FROM user_feedbacks f JOIN users u ON u.id = f.user_id
-             LEFT JOIN users c ON c.id = f.creator_id ",
+             LEFT JOIN users c ON c.id = f.creator_id
+             LEFT JOIN users d ON d.id = f.deleted_by_id ",
             $rest
         )
     };
@@ -78,6 +83,14 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Feed
         .await
 }
 
+/// Feedback `id`, locked until the transaction ends.
+pub async fn lock(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Feedback>> {
+    sqlx::query_as(select_feedbacks!("WHERE f.id = $1 FOR UPDATE OF f"))
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
 pub async fn create(
     db: impl PgExecutor<'_>,
     user_id: i64,
@@ -114,14 +127,22 @@ pub async fn update(
     Ok(done.rows_affected() == 1)
 }
 
-/// Deletes or restores feedback; false if it already was.
-pub async fn set_deleted(db: impl PgExecutor<'_>, id: i64, deleted: bool) -> sqlx::Result<bool> {
-    let done =
-        sqlx::query("UPDATE user_feedbacks SET is_deleted = $2 WHERE id = $1 AND is_deleted <> $2")
-            .bind(id)
-            .bind(deleted)
-            .execute(db)
-            .await?;
+/// Deletes or restores feedback, by `actor_id`; false if it already was.
+pub async fn set_deleted(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    deleted: bool,
+    actor_id: Option<i64>,
+) -> sqlx::Result<bool> {
+    let done = sqlx::query(
+        "UPDATE user_feedbacks SET is_deleted = $2, deleted_by_id = CASE WHEN $2 THEN $3 END
+         WHERE id = $1 AND is_deleted <> $2",
+    )
+    .bind(id)
+    .bind(deleted)
+    .bind(actor_id)
+    .execute(db)
+    .await?;
     Ok(done.rows_affected() == 1)
 }
 
@@ -138,4 +159,52 @@ pub async fn counts(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<[i64;
     .fetch_one(db)
     .await?;
     Ok([positive, neutral, negative])
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlx::PgPool;
+
+    use super::*;
+
+    async fn user(pool: &PgPool, name: &str, role: &str) -> i64 {
+        sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT $1, id FROM roles WHERE system_key = $2 RETURNING id",
+        )
+        .bind(name)
+        .bind(role)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn deleting_remembers_who_did(pool: PgPool) {
+        let member = user(&pool, "member", "member").await;
+        let moderator = user(&pool, "moderator", "moderator").await;
+        let admin = user(&pool, "admin", "admin").await;
+        let id = create(&pool, member, moderator, "negative", "Rude")
+            .await
+            .unwrap();
+
+        assert!(set_deleted(&pool, id, true, Some(admin)).await.unwrap());
+        assert!(!set_deleted(&pool, id, true, Some(member)).await.unwrap());
+        let mut tx = pool.begin().await.unwrap();
+        let f = lock(&mut *tx, id).await.unwrap().unwrap();
+        tx.commit().await.unwrap();
+        assert!(f.is_deleted);
+        assert_eq!(f.deleted_by_id, Some(admin));
+        let admin_role: i32 = sqlx::query_scalar("SELECT role_id FROM users WHERE id = $1")
+            .bind(admin)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(f.deleted_by_role_id, Some(admin_role));
+
+        // Restored, nobody deleted it.
+        assert!(set_deleted(&pool, id, false, Some(admin)).await.unwrap());
+        let f = by_id(&pool, id).await.unwrap().unwrap();
+        assert!(!f.is_deleted);
+        assert_eq!((f.deleted_by_id, f.deleted_by_role_id), (None, None));
+    }
 }

@@ -11,8 +11,8 @@ use moekura_core::accounts::{NAME_MAX_LEN, NAME_MIN_LEN};
 use moekura_core::permissions::SystemRole;
 use moekura_core::settings::RegistrationMode;
 use moekura_db::accounts::{self, AuthError, CreateError, NewAccount};
-use moekura_db::{invites, user_ips};
 use moekura_db::users::{self, UserStatus};
+use moekura_db::{invites, user_ips};
 use serde::Deserialize;
 
 use crate::AppState;

@@ -71,7 +71,7 @@ pub(crate) async fn replace_file(
             "The reason can be at most 1000 characters long.".into(),
         ));
     }
-    let prepared = match crate::upload::prepare(state, replacement.file).await {
+    let prepared = match crate::upload::prepare(state, Some(current), replacement.file).await {
         Ok(prepared) => prepared,
         Err(UploadError::Duplicate(id)) if id == post.id => {
             return Err(AppError::Unprocessable(
@@ -95,7 +95,7 @@ pub(crate) async fn replace_file(
     };
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = db.begin().await?;
-    let replaced = replacements::replace(
+    let replaced = match replacements::replace(
         &mut tx,
         &new,
         actor,
@@ -103,14 +103,22 @@ pub(crate) async fn replace_file(
         replacement.source,
     )
     .await
-    .map_err(|e| match e {
-        ReplaceError::NoFile => AppError::NotFound,
-        ReplaceError::Same => {
-            AppError::Unprocessable("That's the file the post already has.".into())
+    {
+        Ok(replaced) => replaced,
+        Err(ReplaceError::NoFile) => return Err(AppError::NotFound),
+        Err(ReplaceError::Same) => {
+            return Err(AppError::Unprocessable(
+                "That's the file the post already has.".into(),
+            ));
         }
-        ReplaceError::Duplicate(id) => AppError::Duplicate(id),
-        ReplaceError::Db(e) => e.into(),
-    })?;
+        Err(ReplaceError::Duplicate(id)) => {
+            drop(tx);
+            return Err(refused(
+                crate::upload::duplicate(state, Some(current), id).await,
+            ));
+        }
+        Err(ReplaceError::Db(e)) => return Err(e.into()),
+    };
     moekura_db::media::set_facts(
         &mut *tx,
         replaced.old.id,
@@ -300,6 +308,57 @@ mod tests {
     use sqlx::PgPool;
 
     use crate::test_support::{TestApp, fixture, session_for, test_state};
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn replacing_is_uploading(pool: PgPool) {
+        use sha2::{Digest, Sha256};
+        // Members who may replace posts, but not approve them.
+        sqlx::query(
+            "UPDATE roles SET permissions = permissions | (1::bigint << 24)
+             WHERE system_key = 'member'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let state = test_state(&pool).await;
+        let app = TestApp::new(
+            state.clone(),
+            super::routes(1024 * 1024 * 10).merge(crate::danbooru::test_support::routes()),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let post = crate::danbooru::test_support::upload(&app, &alice, 20, "cat").await;
+        let url = format!("/posts/{post}/replace");
+
+        // Another's deleted post isn't named.
+        let theirs = crate::danbooru::test_support::upload(&app, &bob, 30, "dog").await;
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(theirs)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let taken = fixture::png(30, 20);
+        let refused = app
+            .post_multipart(&url, Some(&alice), &[], Some(("b.png", taken.as_slice())))
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(!refused.body.contains(&format!("/posts/{theirs}")));
+
+        // Each new file counts as an upload.
+        let id = crate::test_support::current_user(&state, &alice)
+            .await
+            .user
+            .unwrap()
+            .id;
+        while state.rate_limits.check_upload(id).await.is_ok() {}
+        let bigger = fixture::png(40, 40);
+        let limited = app
+            .post_multipart(&url, Some(&alice), &[], Some(("c.png", bigger.as_slice())))
+            .await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+        let key = moekura_storage::Key::original(&hex::encode(Sha256::digest(&bigger)), "png");
+        assert!(!state.storage.exists(&key).await.unwrap());
+    }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn replaces_files(pool: PgPool) {

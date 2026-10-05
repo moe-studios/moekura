@@ -36,7 +36,9 @@ Errors are JSON with the HTTP status:
 ```
 
 A duplicate upload is a `409` whose error also has `post_id`, the post that
-already has the file.
+already has the file. If that post is one you can't see (someone else's
+that was deleted or waits for approval), the upload is a `422` that
+doesn't name it.
 
 An upload that looks like posts already on the site (see
 [Duplicates and look-alikes](using/posts.md#duplicates-and-look-alikes))

@@ -75,7 +75,8 @@ Scripts can still send a whole post in one form to `POST /upload`
 ## Duplicates and look-alikes
 
 A file that's already a post isn't kept: its page says so, with a link
-to that post.
+to that post. When it's a post you can't see (someone else's that was
+deleted or waits for approval), it's only refused, without saying which.
 
 A file that only *looks like* posts already on the site (the same
 picture resized, recompressed or slightly edited, by

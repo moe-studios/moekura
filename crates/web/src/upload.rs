@@ -786,24 +786,25 @@ impl From<Refused> for UploadError {
 
 /// Turns a received file into a post. Returns the new post's id.
 ///
-/// With `warn_similar`, unless `fields.allow_similar` is set, a file that
-/// looks like posts the uploader can see isn't posted: it's kept as a
-/// staged upload and [`UploadError::Similar`] names the posts, so the
-/// uploader can look and then confirm with [`post_staged`].
+/// `interactive` is false only for imports run by the site's operator.
+/// Otherwise, unless `fields.allow_similar` is set, a file that looks
+/// like posts the uploader can see isn't posted: it's kept as a staged
+/// upload and [`UploadError::Similar`] names the posts, so the uploader
+/// can look and then confirm with [`post_staged`].
 pub async fn ingest(
     state: &AppState,
     uploader: &CurrentUser,
     file: &TempUpload,
     fields: &UploadFields,
-    warn_similar: bool,
+    interactive: bool,
 ) -> Result<i64, UploadError> {
     // Bad tags and fields are refused before the file is looked at.
     let tags = crate::tags::parse_field(state.db.primary(), &fields.tags).await?;
     check_fields(fields, &tags.metatags)?;
     crate::metatags::prepare(state, uploader, None, &tags.metatags).await?;
-    let prepared = prepare(state, file).await?;
+    let prepared = prepare(state, interactive.then_some(uploader), file).await?;
     // Staging needs an account to hold the file for.
-    if warn_similar
+    if interactive
         && !fields.allow_similar
         && let Some(user) = &uploader.user
     {
@@ -828,7 +829,7 @@ pub async fn ingest(
             }));
         }
     }
-    create_post(state, uploader, &prepared, fields).await
+    insert_post(state, uploader, &prepared, fields, interactive).await
 }
 
 /// The perceptual hash of `file`, as processing would make it, if it can
@@ -997,13 +998,46 @@ pub(crate) async fn check_new_uploader(
     }
 }
 
-/// Checks a received file isn't a duplicate, identifies and probes it,
-/// and stores the original (without its metadata, if the site strips
-/// it).
-pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, UploadError> {
+/// The refusal of a file post `post_id` already has: an
+/// [`UploadError::Duplicate`] naming the post if `uploader` may see it
+/// (or it's their own, deleted), else one that doesn't say which post,
+/// or whether it was deleted or waits for approval. Without an uploader
+/// (the site's operator importing), the post is named.
+pub(crate) async fn duplicate(
+    state: &AppState,
+    uploader: Option<&CurrentUser>,
+    post_id: i64,
+) -> UploadError {
+    let Some(uploader) = uploader else {
+        return UploadError::Duplicate(post_id);
+    };
+    let post = match posts::by_id(state.db.primary(), post_id).await {
+        Ok(post) => post,
+        Err(error) => return error.into(),
+    };
+    let me = uploader.user.as_ref().map(|u| u.id);
+    let named = post.is_some_and(|p| {
+        crate::posts::visibility(uploader).allows(&p)
+            || (p.status == PostStatus::Deleted && me.is_some() && p.uploader_id == me)
+    });
+    if named {
+        UploadError::Duplicate(post_id)
+    } else {
+        UploadError::Invalid("This file can't be uploaded.".into())
+    }
+}
+
+/// Checks a received file isn't a duplicate (as `uploader` may be told,
+/// see [`duplicate`]), identifies and probes it, and stores the original
+/// (without its metadata, if the site strips it).
+pub async fn prepare(
+    state: &AppState,
+    uploader: Option<&CurrentUser>,
+    file: &TempUpload,
+) -> Result<Prepared, UploadError> {
     let db = state.db.primary();
     if let Some(existing) = media::post_with_sha256(db, &file.sha256).await? {
-        return Err(UploadError::Duplicate(existing));
+        return Err(duplicate(state, uploader, existing).await);
     }
     let media_type = state
         .media
@@ -1022,7 +1056,7 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
     let file = match &stripped {
         Some(stripped) => {
             if let Some(existing) = media::post_with_sha256(db, &stripped.sha256).await? {
-                return Err(UploadError::Duplicate(existing));
+                return Err(duplicate(state, uploader, existing).await);
             }
             stripped
         }
@@ -1181,6 +1215,18 @@ pub async fn create_post(
     prepared: &Prepared,
     fields: &UploadFields,
 ) -> Result<i64, UploadError> {
+    insert_post(state, uploader, prepared, fields, true).await
+}
+
+/// [`create_post`]; `interactive` is false for imports, which are told of
+/// any duplicate.
+async fn insert_post(
+    state: &AppState,
+    uploader: &CurrentUser,
+    prepared: &Prepared,
+    fields: &UploadFields,
+    interactive: bool,
+) -> Result<i64, UploadError> {
     let db = state.db.primary();
     let tags = crate::tags::parse_field(db, &fields.tags).await?;
     let Chosen {
@@ -1267,7 +1313,7 @@ pub async fn create_post(
             let existing = media::post_with_sha256(db, &prepared.sha256)
                 .await?
                 .unwrap_or_default();
-            return Err(UploadError::Duplicate(existing));
+            return Err(duplicate(state, interactive.then_some(uploader), existing).await);
         }
         Err(InsertAssetError::Db(error)) => return Err(error.into()),
     };
@@ -2120,6 +2166,72 @@ mod tests {
             )
             .await;
         assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn duplicates_name_only_posts_the_uploader_can_see(pool: PgPool) {
+        let (app, _) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let png = fixture::png(64, 64);
+        let first = app
+            .post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", &png)))
+            .await;
+        let id = post_in(first.location.as_deref());
+        let named = |body: &str| {
+            body.contains(&format!("href=\"/posts/{id}\"")) || body.contains(&format!("post #{id}"))
+        };
+        let send = async |session: &str| {
+            app.post_multipart(
+                "/upload",
+                Some(session),
+                &fields("g"),
+                Some(("b.png", &png)),
+            )
+            .await
+        };
+
+        for status in ["deleted", "pending"] {
+            sqlx::query("UPDATE posts SET status = $2::text WHERE id = $1")
+                .bind(id)
+                .bind(status)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let theirs = send(&bob).await;
+            assert_eq!(theirs.status, StatusCode::UNPROCESSABLE_ENTITY, "{status}");
+            assert!(
+                theirs.body.contains("This file can&#x27;t be uploaded."),
+                "{status}: {}",
+                theirs.body
+            );
+            assert!(!named(&theirs.body), "{status}: {}", theirs.body);
+            // Staff who see such posts are told which.
+            let staff = send(&janitor).await;
+            assert!(named(&staff.body), "{status}: {}", staff.body);
+            // So is the uploader, who sees their own.
+            let own = send(&alice).await;
+            assert!(named(&own.body), "{status}: {}", own.body);
+        }
+
+        // Files sent to be posted later say no more.
+        let sent = app
+            .post_multipart("/uploads", Some(&bob), &[], Some(("b.png", &png)))
+            .await;
+        let staged: (Option<i64>, Option<String>) = sqlx::query_as(
+            "SELECT duplicate_of, error FROM staged_uploads s JOIN users u ON u.id = s.uploader_id
+             WHERE u.name = 'bob'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(staged, (None, Some("This file can't be uploaded.".into())));
+        let page = app
+            .get(sent.location.as_deref().unwrap(), Some(&bob))
+            .await
+            .body;
+        assert!(!named(&page), "{page}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

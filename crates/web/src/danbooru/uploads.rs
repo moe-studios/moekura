@@ -216,7 +216,9 @@ async fn create(
             ));
         }
     };
-    let prepared = prepare(&state, &file).await.map_err(upload_error)?;
+    let prepared = prepare(&state, Some(&current), &file)
+        .await
+        .map_err(upload_error)?;
     let hash = crate::upload::phash(&state, &file).await;
     let origin = crate::upload::Origin {
         link: &link,
@@ -324,6 +326,7 @@ pub(super) async fn create_post(
         }
     };
     let id = staged.id;
+    // Made from this file by its uploader, so theirs to know of.
     if let Some(post) = staged.post_id {
         return Err(AppError::Duplicate(post));
     }

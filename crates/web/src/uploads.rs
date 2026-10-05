@@ -290,13 +290,13 @@ async fn create(
     }
     let id = if !files.is_empty() {
         // A link sent with files says where they're from.
-        stage_files(&state, user.id, &sent.url, &files).await?
+        stage_files(&state, &page.current, user.id, &sent.url, &files).await?
     } else if is_web_link(&sent.url) {
         let info = state.sources.lookup_from(&sent.url, &sent.referer).await;
         if let Err(error) = upload::check_found(&sent.url, info.as_deref()) {
             return Ok(refuse(sent.link(), error));
         }
-        stage_link(&state, user.id, sent.link(), info, room).await?
+        stage_link(&state, &page.current, user.id, sent.link(), info, room).await?
     } else if sent.url.is_empty() {
         let error = UploadError::Invalid("Choose files to upload, or paste a link.".into());
         return Ok(refuse(sent.link(), error));
@@ -391,10 +391,11 @@ async fn unpack_archives(
     Ok(out)
 }
 
-/// Makes an upload of files sent from `source`, storing each. Returns the
-/// upload's id.
+/// Makes an upload of files sent from `source` by `current`, storing each.
+/// Returns the upload's id.
 async fn stage_files(
     state: &AppState,
+    current: &CurrentUser,
     uploader_id: i64,
     source: &str,
     files: &[TempUpload],
@@ -410,7 +411,7 @@ async fn stage_files(
             source,
         };
         let prepared = async {
-            let prepared = upload::prepare(state, file).await?;
+            let prepared = upload::prepare(state, Some(current), file).await?;
             Ok((prepared, upload::phash(state, file).await))
         }
         .await;
@@ -443,7 +444,8 @@ fn failure(error: &UploadError) -> (String, Option<i64>) {
     }
 }
 
-/// Makes an upload of the files at `link` (at most `room`): a work's files
+/// Makes an upload of the files at `link` (at most `room`) for
+/// `current`: a work's files
 /// when a source strategy read its page (or the page it was found on,
 /// for a bare file) and said `info`, else the link itself. Each file's
 /// source is its [canonical one](upload::file_source). They're
@@ -451,6 +453,7 @@ fn failure(error: &UploadError) -> (String, Option<i64>) {
 /// the upload's id.
 async fn stage_link(
     state: &AppState,
+    current: &CurrentUser,
     uploader_id: i64,
     link: Link<'_>,
     info: Option<Arc<SourceInfo>>,
@@ -487,17 +490,24 @@ async fn stage_link(
     }
     tx.commit().await?;
     let (first, first_done) = tokio::sync::oneshot::channel();
-    tokio::spawn(download_pending(state.clone(), id, info, first));
+    tokio::spawn(download_pending(
+        state.clone(),
+        current.clone(),
+        id,
+        info,
+        first,
+    ));
     // The page follows the rest (and one that takes long).
     let _ = tokio::time::timeout(WAIT_FOR_DOWNLOADS, first_done).await;
     Ok(id)
 }
 
-/// Downloads and stores upload `upload_id`'s pending files, one at a
-/// time, saying on `first` when the first is done. `info` is what the
-/// link's page said, if a strategy read it.
+/// Downloads and stores upload `upload_id`'s pending files for `current`,
+/// one at a time, saying on `first` when the first is done. `info` is
+/// what the link's page said, if a strategy read it.
 async fn download_pending(
     state: AppState,
+    current: CurrentUser,
     upload_id: i64,
     info: Option<Arc<SourceInfo>>,
     first: tokio::sync::oneshot::Sender<()>,
@@ -517,7 +527,7 @@ async fn download_pending(
             staged_uploads::started(db, file.id).await?;
             let fetched = async {
                 let temp = upload::download(&state, url, info.as_deref()).await?;
-                let prepared = upload::prepare(&state, &temp).await?;
+                let prepared = upload::prepare(&state, Some(&current), &temp).await?;
                 Ok::<_, UploadError>((prepared, upload::phash(&state, &temp).await))
             }
             .await;

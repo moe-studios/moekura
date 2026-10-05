@@ -561,9 +561,9 @@ fn upload_error(error: UploadError) -> AppError {
     request_body(content = UploadRequest, content_type = "multipart/form-data"),
     responses(
         (status = 201, body = ApiPost, headers(("Location" = String, description = "The new post"))),
-        (status = 409, body = ErrorBody, description = "The file was already uploaded, and `post_id` names that post; or it looks like posts already here, named in `similar`, and waits as `staged` until you confirm"),
+        (status = 409, body = ErrorBody, description = "The file was already uploaded as a post you can see, and `post_id` names that post; or it looks like posts already here, named in `similar`, and waits as `staged` until you confirm"),
         (status = 413, body = ErrorBody, description = "The request is larger than the site allows"),
-        (status = 422, body = ErrorBody, description = "A field or the file isn't acceptable"),
+        (status = 422, body = ErrorBody, description = "A field or the file isn't acceptable, or the file is a post you can't see"),
         (status = 429, body = ErrorBody, description = "Too many uploads in a short time; wait and try again"),
     ),
 )]
@@ -1115,6 +1115,52 @@ mod tests {
             .post_multipart("/api/v1/posts", None, &fields, Some(("d.png", &png)))
             .await;
         assert_eq!(visitor.status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn api_uploads_are_limited_and_dont_name_hidden_posts(pool: PgPool) {
+        let state = crate::test_support::test_state(&pool).await;
+        let app = crate::test_support::TestApp::new(
+            state.clone(),
+            super::super::routes(10 * 1024 * 1024).merge(crate::upload::routes(10 * 1024 * 1024)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let png = fixture::png(40, 30);
+        let id = upload(&app, &alice, &png, "cat").await;
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let fields = vec![("rating", "s".to_owned()), ("tags", "cat".to_owned())];
+
+        // A deleted post isn't named to others.
+        let refused = app
+            .post_multipart("/api/v1/posts", Some(&bob), &fields, Some(("a.png", &png)))
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let error = &json(&refused.body)["error"];
+        assert_eq!(error["message"], json!("This file can't be uploaded."));
+        assert_eq!(error.get("post_id"), None);
+
+        // Too many in a short time.
+        let bob_id = crate::test_support::current_user(&state, &bob)
+            .await
+            .user
+            .unwrap()
+            .id;
+        while state.rate_limits.check_upload(bob_id).await.is_ok() {}
+        let limited = app
+            .post_multipart(
+                "/api/v1/posts",
+                Some(&bob),
+                &fields,
+                Some(("b.png", &fixture::png(44, 30))),
+            )
+            .await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(limited.retry_after.is_some());
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

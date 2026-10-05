@@ -395,6 +395,10 @@ async fn reset(
     moekura_db::accounts::set_password(&mut *tx, user.id, &form.password)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    // A provider account linked since sign-up could be someone else's,
+    // linked with the old password. The one the account was made through
+    // stays: it's the owner's, and how it logs in.
+    moekura_db::identities::unlink_added(&mut *tx, user.id).await?;
     // Following the link proved they read mail at the address.
     if user.email_verified_at.is_none() {
         users::set_email(&mut *tx, user.id, Some(&redeemed.email), true)

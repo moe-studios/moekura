@@ -130,9 +130,11 @@ refused.
 
 **Forgot your password?** on the login page emails you a link to choose
 a new one. The link works for an hour, and only while that's still your
-address. Using it logs you out everywhere and revokes your API keys and
-feed token, in case someone else had got in. Single sign-on links stay:
-check them under **Single sign-on** and unlink any you don't recognise.
+address. Using it logs you out everywhere, revokes your API keys and
+feed token, and unlinks any [single sign-on](#single-sign-on) account
+linked since you signed up, in case someone else had got in (link yours
+again afterwards). An account made through single sign-on keeps the one
+it was made with.
 
 Logging in is limited, against password guessing: five tries at an
 account from one network (an IPv4 address, or an IPv6 `/64`), then one
@@ -153,7 +155,8 @@ account here (if the site is taking new ones).
 To use it with an account you already have, log in with your password
 and choose **Link** under **Single sign-on**, confirming your password;
 finish at the provider in the same browser. (It can't be done with an API
-key.) You can unlink it later, as long as you have a password to log in
+key.) If your address is confirmed, you're emailed when an account is
+linked. You can unlink it later, as long as you have a password to log in
 with instead. Accounts made through single sign-on have no password; to
 set one, use **Forgot your password?** if the site sends mail. They need
 one to link another account at the provider, too.

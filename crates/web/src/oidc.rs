@@ -433,11 +433,17 @@ async fn callback(
     let claims = oidc.exchange(&query.code, &login).await.map_err(failed)?;
 
     if let Some(user_id) = login.link_user_id {
-        if !identities::link(db, user_id, &claims.iss, &claims.sub).await? {
+        let mut tx = db.begin().await?;
+        if !identities::link(&mut *tx, user_id, &claims.iss, &claims.sub).await? {
             return Err(AppError::BadRequest(
                 "That account is already linked to a user here.".into(),
             ));
         }
+        // Checked above: the user who started the link.
+        if let Some(user) = &current.user {
+            send_linked(&mut tx, &state, user, &claims.iss).await?;
+        }
+        tx.commit().await?;
         tracing::info!(user_id, "single sign-on linked");
         let jar = flash::set(jar, Flash::Saved);
         return Ok((jar, Redirect::to("/settings/account")).into_response());
@@ -614,6 +620,47 @@ async fn create_account(
     tracing::info!(user_id = user.id, name = %user.name, ?status, "account created through single sign-on");
     crate::webhooks::emit_user(state, &user).await;
     Ok(user)
+}
+
+/// Emails `user`, if they have a confirmed address, that a provider
+/// account was linked to theirs: a link outlasts the session that made
+/// it, so if it wasn't them, they should hear of it. Call it in the
+/// transaction that links.
+async fn send_linked(
+    conn: &mut sqlx::PgConnection,
+    state: &AppState,
+    user: &User,
+    issuer: &str,
+) -> sqlx::Result<()> {
+    if !crate::email::mail_enabled(state) || user.email_verified_at.is_none() {
+        return Ok(());
+    }
+    let Some(email) = user.email.as_deref() else {
+        return Ok(());
+    };
+    let site = state.site.get().settings.site_name.clone();
+    let provider = Url::parse(issuer)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned))
+        .unwrap_or_else(|| issuer.to_owned());
+    let url = crate::email::link(state, "/settings/account");
+    let body = format!(
+        "Hi {name},\n\n\
+         An account at {provider} was linked to your account on {site}, so it can log \
+         in as you now.\n\n\
+         If that was you, you can ignore this message. If it wasn't, someone knows your \
+         password: reset it with \"Forgot your password?\" on the login page, which also \
+         unlinks that account and logs everyone out. Your linked accounts are listed at\n\n\
+         {url}\n",
+        name = user.name,
+    );
+    crate::email::queue(
+        conn,
+        email,
+        format!("Single sign-on linked on {site}"),
+        body,
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -1203,6 +1250,104 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(pending, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn a_password_reset_undoes_links_made_since_sign_up(pool: PgPool) {
+        let fake = provider().await;
+        let mut config = config(&fake);
+        config.mail.host = "localhost".into();
+        config.mail.from = "Moekura <noreply@example.com>".into();
+        let app = TestApp::new(test_state_with(&pool, config).await, test_routes());
+        let last_mail = async || -> (String, String) {
+            sqlx::query_as(
+                "SELECT payload->>'to', payload->>'body' FROM jobs
+                 WHERE kind = 'mail.send' ORDER BY id DESC LIMIT 1",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // Someone with alice's password links their provider account to
+        // hers; she's told.
+        let (alice, session) = member(&pool, "alice", "alice@example.com").await;
+        users::set_email(&pool, alice.id, Some("alice@example.com"), true)
+            .await
+            .unwrap();
+        let start = app
+            .post_form(
+                "/settings/oidc/link",
+                Some(&session),
+                &[],
+                "password=correct+horse",
+            )
+            .await;
+        let state = at_provider(&fake, &start, claims(&fake, "mallory"));
+        let linked = back(&app, &start, &state, Some(&session)).await;
+        assert_eq!(
+            linked.location.as_deref(),
+            Some("/settings/account"),
+            "{}",
+            linked.body
+        );
+        let (to, body) = last_mail().await;
+        assert_eq!(to, "alice@example.com");
+        assert!(
+            body.contains("127.0.0.1") && body.contains("Forgot your password?"),
+            "{body}"
+        );
+
+        // Bob signed up through the provider, and had another provider
+        // account linked later (as a session alone once could).
+        let start = app.get("/login/oidc", None).await;
+        let mut bobs = claims(&fake, "bob");
+        bobs["preferred_username"] = json!("bob");
+        bobs["email"] = json!("bob@example.com");
+        let state = at_provider(&fake, &start, bobs);
+        let done = back(&app, &start, &state, None).await;
+        assert!(done.session_cookie().is_some(), "{}", done.body);
+        let bob = users::by_name(&pool, "bob").await.unwrap().unwrap();
+        identities::link(&pool, bob.id, &fake.base, "mallory-2")
+            .await
+            .unwrap();
+
+        // Resetting the password unlinks what was added, and keeps the
+        // provider account bob was made through.
+        for (user, email) in [(&alice, "alice@example.com"), (&bob, "bob@example.com")] {
+            let mut conn = pool.acquire().await.unwrap();
+            let token = moekura_db::account_tokens::issue(
+                &mut conn,
+                user.id,
+                moekura_db::account_tokens::Purpose::ResetPassword,
+                email,
+                Duration::from_secs(600),
+            )
+            .await
+            .unwrap();
+            let fields =
+                format!("token={token}&password=battery+staple&password_confirm=battery+staple");
+            let done = app.post_form("/reset-password", None, &[], &fields).await;
+            assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.body);
+        }
+        assert!(
+            identities::for_user(&pool, alice.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            identities::user_for(&pool, &fake.base, "bob")
+                .await
+                .unwrap(),
+            Some(bob.id)
+        );
+        assert_eq!(
+            identities::user_for(&pool, &fake.base, "mallory-2")
+                .await
+                .unwrap(),
+            None
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

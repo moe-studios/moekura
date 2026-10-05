@@ -67,6 +67,20 @@ pub async fn unlink(db: impl PgExecutor<'_>, user_id: i64, id: i64) -> sqlx::Res
     Ok(deleted.rows_affected() == 1)
 }
 
+/// Unlinks the provider accounts linked to `user_id` after it was made,
+/// keeping the one it was made through, if any: that one is linked in
+/// the same transaction, so at the same `now()`. Returns how many.
+pub async fn unlink_added(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<u64> {
+    let deleted = sqlx::query(
+        "DELETE FROM user_identities i USING users u
+         WHERE i.user_id = $1 AND u.id = i.user_id AND i.created_at > u.created_at",
+    )
+    .bind(user_id)
+    .execute(db)
+    .await?;
+    Ok(deleted.rows_affected())
+}
+
 /// A login sent to the provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewLogin<'a> {
@@ -208,5 +222,29 @@ mod tests {
         let stale = start_login(&pool, login, Duration::ZERO).await.unwrap();
         assert!(finish_login(&pool, &stale, "b").await.unwrap().is_none());
         assert_eq!(prune_logins(&pool).await.unwrap(), 1);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn unlinks_what_was_added_after_sign_up(pool: PgPool) {
+        let issuer = "https://sso.example.com";
+        // Made through the provider: the account and its link together.
+        let mut tx = pool.begin().await.unwrap();
+        let carol: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'carol', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        assert!(link(&mut *tx, carol, issuer, "c1").await.unwrap());
+        tx.commit().await.unwrap();
+        assert!(link(&pool, carol, issuer, "c2").await.unwrap());
+        let alice = user(&pool, "alice").await;
+        assert!(link(&pool, alice, issuer, "a1").await.unwrap());
+
+        assert_eq!(unlink_added(&pool, carol).await.unwrap(), 1);
+        assert_eq!(user_for(&pool, issuer, "c1").await.unwrap(), Some(carol));
+        assert_eq!(user_for(&pool, issuer, "c2").await.unwrap(), None);
+        assert_eq!(unlink_added(&pool, alice).await.unwrap(), 1);
+        assert!(for_user(&pool, alice).await.unwrap().is_empty());
     }
 }

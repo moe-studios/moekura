@@ -120,6 +120,7 @@ pub(crate) async fn list(
         &visibility(&current),
         &filter,
         params.before,
+        0,
         PAGE_SIZE + 1,
     )
     .await?;

@@ -306,7 +306,7 @@ pub async fn backlog(db: impl PgExecutor<'_>, all: bool, limit: i64) -> sqlx::Re
 }
 
 /// Which suggestions [`list`] finds; every condition given must hold.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SuggestionFilter<'a> {
     pub post_ids: &'a [i64],
     pub tag_ids: &'a [i32],
@@ -315,9 +315,8 @@ pub struct SuggestionFilter<'a> {
     pub posted: Option<bool>,
     /// Confidence in percent, inclusive.
     pub score: (i32, i32),
-    /// Posts with these statuses, or pending ones uploaded by `viewer`.
-    pub statuses: &'a [&'a str],
-    pub viewer: Option<i64>,
+    /// Only on posts the viewer may see.
+    pub visibility: &'a crate::posts::Visibility,
 }
 
 /// A suggestion on some post.
@@ -347,6 +346,8 @@ pub async fn list(
          JOIN tags t ON t.id = s.tag_id
          JOIN posts p ON p.id = s.post_id
          WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
+           AND p.rating = ANY($11)
+           AND NOT p.tag_ids && $12::int[]
            AND (cardinality($3::int8[]) = 0 OR s.post_id = ANY($3))
            AND (cardinality($4::int4[]) = 0 OR s.tag_id = ANY($4))
            AND (cardinality($5::text[]) = 0 OR t.name = ANY($5))
@@ -355,8 +356,8 @@ pub async fn list(
          ORDER BY s.post_id DESC, s.confidence DESC, t.name
          OFFSET $9 LIMIT $10",
     )
-    .bind(filter.statuses)
-    .bind(filter.viewer)
+    .bind(filter.visibility.status_names())
+    .bind(filter.visibility.viewer)
     .bind(filter.post_ids)
     .bind(filter.tag_ids)
     .bind(filter.tag_names)
@@ -365,6 +366,8 @@ pub async fn list(
     .bind(filter.score.1)
     .bind(offset)
     .bind(limit)
+    .bind(filter.visibility.rating_codes())
+    .bind(&filter.visibility.hidden_tags)
     .fetch_all(db)
     .await
 }

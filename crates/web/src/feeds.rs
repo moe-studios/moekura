@@ -332,6 +332,7 @@ async fn comments_feed(
         &visibility(&current),
         &Filter::default(),
         None,
+        0,
         i64::from(ENTRIES),
     )
     .await?;

@@ -113,6 +113,9 @@ struct CommentParams {
     list: ListParams,
 }
 
+/// How far numbered pages of comments go; `b<id>` pages go on from there.
+const MAX_COMMENT_ROWS: i64 = 20_000;
+
 /// Comments, newest first, on posts the requester can see. Only numbered
 /// pages of `b<id>` for comments before one.
 async fn list_comments(
@@ -138,13 +141,18 @@ async fn list_comments(
         Some(id) => (id.parse().ok(), 0),
         None => (None, (page_number(&params.list) - 1) * limit),
     };
-    let mut found =
-        comments::list(db, &visibility(&current), &filter, before, skip + limit).await?;
-    let found: Vec<DanbooruComment> = found
-        .drain(..)
-        .skip(skip as usize)
-        .map(DanbooruComment::from)
-        .collect();
+    if skip + limit > MAX_COMMENT_ROWS {
+        return Err(AppError::BadRequest(format!(
+            "Numbered pages go only as far as the newest {MAX_COMMENT_ROWS} comments; \
+             go on with `page=b<id>`"
+        )));
+    }
+    let found: Vec<DanbooruComment> =
+        comments::list(db, &visibility(&current), &filter, before, skip, limit)
+            .await?
+            .into_iter()
+            .map(DanbooruComment::from)
+            .collect();
     json(found, &params.list.only)
 }
 
@@ -645,6 +653,39 @@ mod tests {
         );
         let post_json = parse(&app.get(&format!("/posts/{post}.json"), None).await.body);
         assert!(post_json["last_commented_at"].is_string());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn numbered_pages_stop_short(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let post = upload(&app, &alice, 20, "cat").await;
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for body in ["one", "two", "three"] {
+            ids.push(
+                moekura_db::comments::create(&pool, post, alice_id, body, true)
+                    .await
+                    .unwrap(),
+            );
+        }
+
+        // Numbered pages skip in the database, as far as they go.
+        let second = parse(&app.get("/comments.json?limit=1&page=2", None).await.body);
+        assert_eq!(second[0]["body"], json!("two"));
+        assert_eq!(second.as_array().unwrap().len(), 1);
+        let deep = app.get("/comments.json?limit=1000&page=21", None).await;
+        assert_eq!(deep.status, StatusCode::BAD_REQUEST, "{}", deep.body);
+        assert!(deep.body.contains("page=b"), "{}", deep.body);
+        let before = parse(
+            &app.get(&format!("/comments.json?page=b{}", ids[1]), None)
+                .await
+                .body,
+        );
+        assert_eq!(before[0]["body"], json!("one"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

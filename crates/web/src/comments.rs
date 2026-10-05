@@ -778,6 +778,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
         &visibility(&page.current),
         &filter,
         query.before,
+        0,
         PAGE_SIZE + 1,
     )
     .await?;

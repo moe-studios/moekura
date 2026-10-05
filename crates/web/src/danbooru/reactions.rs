@@ -93,7 +93,12 @@ struct FavoriteParams {
     list: ListParams,
 }
 
-/// Favorites, newest first; by default the requester's.
+/// How far numbered pages of everyone's favorites (no user or post asked
+/// for) go: each page walks the favorites before it.
+const MAX_ALL_ROWS: i64 = 20_000;
+
+/// Favorites of posts the requester can see, newest first; by default the
+/// requester's.
 async fn favorites(
     State(state): State<AppState>,
     current: CurrentUser,
@@ -107,17 +112,32 @@ async fn favorites(
     let post_ids = ids(&params.post_id);
     let limit = i64::from(params.list.limit(1000));
     let page: i64 = params.list.page.trim().parse().unwrap_or(1).clamp(1, 1000);
+    let offset = (page - 1) * limit;
+    if user_id.is_none() && post_ids.is_empty() && offset + limit > MAX_ALL_ROWS {
+        return Err(AppError::BadRequest(format!(
+            "Everyone's favorites are listed only as far as the newest {MAX_ALL_ROWS}; \
+             give `search[user_id]` or `search[post_id]` to go further"
+        )));
+    }
+    let visibility = crate::posts::visibility(&current);
     let found: Vec<Favorite> = sqlx::query_as(
         "SELECT f.post_id AS id, f.user_id, f.post_id FROM favorites f
-         JOIN posts p ON p.id = f.post_id AND p.status IN ('active', 'flagged')
-         WHERE ($1::bigint IS NULL OR f.user_id = $1)
+         JOIN posts p ON p.id = f.post_id
+         WHERE (p.status = ANY($5) OR (p.status = 'pending' AND p.uploader_id = $6))
+           AND p.rating = ANY($7)
+           AND NOT p.tag_ids && $8::int[]
+           AND ($1::bigint IS NULL OR f.user_id = $1)
            AND (cardinality($2::bigint[]) = 0 OR f.post_id = ANY($2))
-         ORDER BY f.created_at DESC OFFSET $3 LIMIT $4",
+         ORDER BY f.created_at DESC, f.post_id DESC OFFSET $3 LIMIT $4",
     )
     .bind(user_id)
     .bind(&post_ids)
-    .bind((page - 1) * limit)
+    .bind(offset)
     .bind(limit)
+    .bind(visibility.status_names())
+    .bind(visibility.viewer)
+    .bind(visibility.rating_codes())
+    .bind(&visibility.hidden_tags)
     .fetch_all(state.reader(&current))
     .await?;
     json(found, &params.list.only)
@@ -375,5 +395,64 @@ mod tests {
         assert_eq!(taken_back.status, StatusCode::NO_CONTENT);
         let post = body(&app.get(&format!("/posts/{id}.json"), None).await);
         assert_eq!(post["score"], json!(0));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn favorites_of_hidden_posts_stay_hidden(pool: PgPool) {
+        moekura_db::settings::set(&pool, "visitor_ratings", json!(["g"]))
+            .await
+            .unwrap();
+        let banned: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('banned_artist') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('banned_artist', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mut posts = Vec::new();
+        for (rating, tag_ids) in [("g", vec![]), ("e", vec![]), ("g", vec![banned])] {
+            let post: i64 = sqlx::query_scalar(
+                "INSERT INTO posts (rating, tag_ids) VALUES ($1, $2) RETURNING id",
+            )
+            .bind(rating)
+            .bind(tag_ids)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            moekura_db::favorites::add(&pool, alice_id, post)
+                .await
+                .unwrap();
+            posts.push(post);
+        }
+        let app = app(&pool).await;
+        let listed = async |path: &str, session: Option<&str>| -> Vec<i64> {
+            let found = body(&app.get(path, session).await);
+            found
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["post_id"].as_i64().unwrap())
+                .collect()
+        };
+        let of_alice = format!("/favorites.json?search[user_id]={alice_id}");
+        assert_eq!(listed(&of_alice, None).await, [posts[0]]);
+        assert_eq!(listed("/favorites.json", None).await, [posts[0]]);
+        // Members see every rating, but not banned artists' posts.
+        assert_eq!(listed(&of_alice, Some(&alice)).await, [posts[1], posts[0]]);
+
+        // Everyone's favorites stop short of deep pages.
+        let deep = app.get("/favorites.json?limit=1000&page=21", None).await;
+        assert_eq!(deep.status, StatusCode::BAD_REQUEST, "{}", deep.body);
+        let mine_deep = app
+            .get("/favorites.json?limit=1000&page=21", Some(&alice))
+            .await;
+        assert_eq!(body(&mine_deep), json!([]));
     }
 }

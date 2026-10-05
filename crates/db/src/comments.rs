@@ -123,12 +123,13 @@ pub struct Filter {
 }
 
 /// Comments matching `filter` on posts `visibility` allows, newest first,
-/// older than comment `before` if given.
+/// older than comment `before` if given, skipping the first `offset`.
 pub async fn list(
     db: impl PgExecutor<'_>,
     visibility: &Visibility,
     filter: &Filter,
     before: Option<i64>,
+    offset: i64,
     limit: i64,
 ) -> sqlx::Result<Vec<Comment>> {
     let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
@@ -136,11 +137,12 @@ pub async fn list(
         "JOIN posts p ON p.id = c.post_id
          WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
            AND p.rating = ANY($8)
+           AND NOT p.tag_ids && $9::int[]
            AND ($3 OR NOT c.is_deleted)
            AND ($4::bigint IS NULL OR c.post_id = $4)
            AND ($5::bigint IS NULL OR c.creator_id = $5)
            AND ($6::bigint IS NULL OR c.id < $6)
-         ORDER BY c.id DESC LIMIT $7"
+         ORDER BY c.id DESC OFFSET $10 LIMIT $7"
     ))
     .bind(statuses)
     .bind(visibility.viewer)
@@ -150,6 +152,8 @@ pub async fn list(
     .bind(before)
     .bind(limit)
     .bind(visibility.rating_codes())
+    .bind(&visibility.hidden_tags)
+    .bind(offset)
     .fetch_all(db)
     .await
 }
@@ -503,11 +507,19 @@ mod tests {
         };
         assert_eq!(
             bodies(
-                list(&pool, &public, &Filter::default(), None, 10)
+                list(&pool, &public, &Filter::default(), None, 0, 10)
                     .await
                     .unwrap()
             ),
             ["three", "one"]
+        );
+        assert_eq!(
+            bodies(
+                list(&pool, &public, &Filter::default(), None, 1, 10)
+                    .await
+                    .unwrap()
+            ),
+            ["one"]
         );
         let staff = Filter {
             with_deleted: true,
@@ -515,7 +527,7 @@ mod tests {
         };
         assert_eq!(
             bodies(
-                list(&pool, &public, &staff, Some(ids[3]), 10)
+                list(&pool, &public, &staff, Some(ids[3]), 0, 10)
                     .await
                     .unwrap()
             ),
@@ -534,7 +546,7 @@ mod tests {
             statuses: vec![PostStatus::Active, PostStatus::Pending],
         };
         assert_eq!(
-            bodies(list(&pool, &uploader, &by_bob, None, 10).await.unwrap()),
+            bodies(list(&pool, &uploader, &by_bob, None, 0, 10).await.unwrap()),
             ["hidden", "two"]
         );
 
@@ -543,5 +555,60 @@ mod tests {
         assert_eq!(edited.body, "one, edited");
         assert!(edited.edited_at.is_some());
         assert_eq!(edited.creator_name.as_deref(), Some("alice"));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn lists_only_visible_posts_comments(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let banned: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('banned_artist') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let mut ids = Vec::new();
+        for (rating, tags, body) in [
+            ("g", vec![], "general"),
+            ("e", vec![], "explicit"),
+            ("g", vec![banned], "banned"),
+        ] {
+            let post: i64 = sqlx::query_scalar(
+                "INSERT INTO posts (rating, tag_ids) VALUES ($1, $2) RETURNING id",
+            )
+            .bind(rating)
+            .bind(tags)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            ids.push(create(&pool, post, alice, body, true).await.unwrap());
+        }
+        let bodies = |found: Vec<Comment>| found.into_iter().map(|c| c.body).collect::<Vec<_>>();
+        let everyone = Visibility {
+            hidden_tags: Vec::new(),
+            statuses: vec![PostStatus::Active, PostStatus::Flagged],
+            viewer: None,
+            ratings: Vec::new(),
+            deleted_by_default: false,
+        };
+        assert_eq!(
+            bodies(
+                list(&pool, &everyone, &Filter::default(), None, 0, 10)
+                    .await
+                    .unwrap()
+            ),
+            ["banned", "explicit", "general"]
+        );
+        let visitor = Visibility {
+            hidden_tags: vec![banned],
+            ratings: vec![moekura_core::posts::Rating::General],
+            ..everyone
+        };
+        assert_eq!(
+            bodies(
+                list(&pool, &visitor, &Filter::default(), None, 0, 10)
+                    .await
+                    .unwrap()
+            ),
+            ["general"]
+        );
     }
 }

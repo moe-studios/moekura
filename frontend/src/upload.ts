@@ -6,6 +6,36 @@
 
 import { t } from "./i18n.ts";
 
+/** Where the upload form sends what it's given. */
+const UPLOADS = "/uploads";
+/** The upload page, the only one that sends a link given with it. */
+const UPLOAD_PAGE = "/uploads/new";
+
+/**
+ * Whether a form with these `action` and `method` attributes, on the page
+ * at `page`, is the upload form: one posting to this site's `/uploads`.
+ * Only that form is sent by itself, so markup slipped into some other
+ * page can't have a form of its own sent as the viewer.
+ */
+export function isUploadForm(action: string | null, method: string | null, page: string): boolean {
+  if (action === null || method?.toLowerCase() !== "post") return false;
+  try {
+    const target = new URL(action, page);
+    return target.origin === new URL(page).origin && target.pathname === UPLOADS && target.search === "";
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the upload form on the page at `page` sends its link at once. */
+export function sendsNow(sendNow: string | null, page: string): boolean {
+  try {
+    return sendNow !== null && new URL(page).pathname === UPLOAD_PAGE;
+  } catch {
+    return false;
+  }
+}
+
 /** `text` as a web link, if it is one (or is one once `https://` is added). */
 export function asLink(text: string): string | null {
   const trimmed = text.trim();
@@ -27,12 +57,21 @@ export function asLink(text: string): string | null {
 }
 
 export function enableUpload(root: Document = document): void {
-  const form = root.querySelector<HTMLFormElement>("form[data-upload]");
-  const input = form?.querySelector<HTMLInputElement>('input[type="file"]');
-  const zone = form?.querySelector<HTMLElement>("[data-upload-drop-zone]");
-  const status = form?.querySelector<HTMLElement>("[data-upload-status]");
-  const link = form?.querySelector<HTMLInputElement>('input[name="url"]');
-  if (!form || !input || !zone || !status || !link) return;
+  // A page has one upload form; another one is markup slipped in, and
+  // then neither is trusted.
+  const forms = root.querySelectorAll<HTMLFormElement>("form[data-upload]");
+  const form = forms.length === 1 ? forms[0] : undefined;
+  if (!form) return;
+  // Attributes are read through Element itself: a form's own properties
+  // can be shadowed by fields named after them.
+  const attribute = (name: string): string | null => Element.prototype.getAttribute.call(form, name);
+  const here = root.location?.href ?? "";
+  if (!isUploadForm(attribute("action"), attribute("method"), here)) return;
+  const input = form.querySelector<HTMLInputElement>('input[type="file"]');
+  const zone = form.querySelector<HTMLElement>("[data-upload-drop-zone]");
+  const status = form.querySelector<HTMLElement>("[data-upload-status]");
+  const link = form.querySelector<HTMLInputElement>('input[name="url"]');
+  if (!input || !zone || !status || !link) return;
   const max = Number(input.dataset["max"] ?? "1") || 1;
   let sending = false;
 
@@ -70,9 +109,9 @@ export function enableUpload(root: Document = document): void {
     try {
       const body = new FormData(form);
       body.delete("file");
-      const response = await fetch(form.action, { method: "POST", body, credentials: "same-origin" });
+      const response = await fetch(new URL(UPLOADS, here), { method: "POST", body, credentials: "same-origin" });
       if (response.redirected) {
-        root.defaultView?.location.replace(response.url);
+        root.location.replace(response.url);
         return;
       }
       // The form again, saying what went wrong, with the box to tick
@@ -118,7 +157,7 @@ export function enableUpload(root: Document = document): void {
     form.requestSubmit();
   });
 
-  if (form.hasAttribute("data-upload-send-now") && link.value) void sendInPlace();
+  if (sendsNow(attribute("data-upload-send-now"), here) && link.value) void sendInPlace();
 
   if (typeof DataTransfer === "undefined") return;
   zone.classList.add("enhanced");

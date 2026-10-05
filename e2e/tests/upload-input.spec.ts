@@ -114,6 +114,42 @@ test("a link given with the page is sent at once, and going back skips the form"
   await expect(page).not.toHaveURL(/url=/);
 });
 
+test("a form slipped into another page isn't sent by itself", async ({ page }) => {
+  const posted: string[] = [];
+  await page.route("**/comments", (route) => {
+    posted.push(route.request().url());
+    return route.fulfill({ contentType: "text/html", body: "<p>sent</p>" });
+  });
+  const planted = form.replace('id="url" name="url" type="url" value=""', 'id="url" name="url" type="url" value="https://example.com/work"');
+  // Posting elsewhere: not the upload form at all, so pasting a link doesn't send it either.
+  await page.route("**/artists/1", (route) => route.fulfill({ contentType: "text/html", body: planted.replace('action="/uploads"', 'action="/comments"') }));
+  await page.goto("/artists/1");
+  await page.addScriptTag({ content: script, type: "module" });
+  const pasted = await page.locator("#url").evaluate((element) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "https://example.com/other");
+    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(pasted).toBe(false);
+  await expect(page.locator("[data-upload-hint]")).toBeHidden();
+  // Posting to /uploads, but not on the upload page: the link waits for the button.
+  await page.route("**/artists/2", (route) => route.fulfill({ contentType: "text/html", body: planted }));
+  await page.goto("/artists/2");
+  await page.addScriptTag({ content: script, type: "module" });
+  await expect(page.locator("[data-upload-hint]")).toBeVisible();
+  await expect(page.locator("[data-upload-status]")).toBeEmpty();
+  // On the upload page, a form slipped in before the real one: neither is trusted.
+  await page.route("**/uploads/new?*", (route) => route.fulfill({ contentType: "text/html", body: planted + form }));
+  await page.goto("/uploads/new?token=abc&url=https%3A%2F%2Fexample.com%2Fwork");
+  await page.addScriptTag({ content: script, type: "module" });
+  await expect(page.locator("[data-upload-hint]:visible")).toHaveCount(0);
+  await expect(page.locator("[data-upload-status]:not(:empty)")).toHaveCount(0);
+  expect(posted).toEqual([]);
+  expect(links).toEqual([]);
+});
+
 test("file drag highlights the form through child transitions and clears on leave/drop", async ({ page }) => {
   const zone = page.locator("[data-upload-drop-zone]");
   await page.evaluate(() => {

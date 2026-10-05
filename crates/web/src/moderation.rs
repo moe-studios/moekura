@@ -1093,13 +1093,16 @@ pub(crate) fn parse_day(text: &str) -> Result<Option<time::Date>, AppError> {
 }
 
 /// The span of log entries from day `since` through day `until`, UTC.
+/// The last day there is has no day after it, so it leaves the span open.
 pub(crate) fn day_span(
     since: Option<time::Date>,
     until: Option<time::Date>,
 ) -> (Option<time::OffsetDateTime>, Option<time::OffsetDateTime>) {
     (
         since.map(|d| d.midnight().assume_utc()),
-        until.map(|d| d.midnight().assume_utc() + time::Duration::days(1)),
+        until
+            .and_then(time::Date::next_day)
+            .map(|d| d.midnight().assume_utc()),
     )
 }
 
@@ -1685,6 +1688,13 @@ mod tests {
         let span = format!("/moderation/log?since={today}&until={today}",);
         assert!(
             app.get(&span, Some(&moderator))
+                .await
+                .body
+                .contains("off-topic")
+        );
+        // Through the last day there is: no overflow.
+        assert!(
+            app.get("/moderation/log?until=9999-12-31", Some(&moderator))
                 .await
                 .body
                 .contains("off-topic")

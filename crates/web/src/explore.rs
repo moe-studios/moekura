@@ -269,11 +269,11 @@ impl Range {
     pub fn days(&self) -> (Date, Date) {
         match self.scale {
             Scale::Day => (self.date, self.date),
-            Scale::Week => (self.date - time::Duration::days(6), self.date),
+            Scale::Week => (self.date.saturating_sub(time::Duration::days(6)), self.date),
             Scale::Month => {
                 let first = first_of_month(self.date);
-                let last = first_of_month(first + time::Duration::days(31)) - time::Duration::DAY;
-                (first, last)
+                let length = first.month().length(first.year());
+                (first, first.replace_day(length).unwrap_or(first))
             }
         }
     }
@@ -289,11 +289,13 @@ impl Range {
         format!("date:{dates} order:score")
     }
 
+    /// The date a range before or after; past the end of the calendar
+    /// (only a typed `date` gets there), the same date.
     fn step(&self, forward: bool) -> Date {
         let sign = if forward { 1 } else { -1 };
         match self.scale {
-            Scale::Day => self.date + time::Duration::days(sign),
-            Scale::Week => self.date + time::Duration::days(7 * sign),
+            Scale::Day => self.date.saturating_add(time::Duration::days(sign)),
+            Scale::Week => self.date.saturating_add(time::Duration::days(7 * sign)),
             Scale::Month => {
                 let (year, month) = match (forward, self.date.month()) {
                     (true, Month::December) => (self.date.year() + 1, Month::January),
@@ -387,8 +389,9 @@ pub(crate) async fn popular_ids(
     exclusions: &[Exclusion],
 ) -> Result<Vec<i64>, AppError> {
     let db = state.reader(current);
+    // The search refuses dates it can't read, like the last day there is.
     let mut query = SearchQuery::parse(&range.popular_search())
-        .map_err(|e| AppError::Internal(e.to_string()))?;
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
     query.limit = Some(limit);
     let visible = crate::posts::visibility(current);
     let mut plan = match Plan::resolve(db, &query, &visible, &state.search_config()).await {
@@ -577,6 +580,18 @@ mod tests {
             Value::from(10)
         );
         assert!(day.context("/x").get_attr("next_url").unwrap().is_none());
+
+        // The last day there is doesn't overflow.
+        for scale in ["day", "week", "month"] {
+            let last = Range::parse("9999-12-31", scale, today).unwrap();
+            assert_eq!(last.step(true), date!(9999 - 12 - 31), "{scale}");
+            assert_eq!(last.days().1, date!(9999 - 12 - 31), "{scale}");
+            assert!(last.context("/x").get_attr("next_url").unwrap().is_none());
+        }
+        assert_eq!(
+            Range::parse("9999-12-15", "month", today).unwrap().days(),
+            (date!(9999 - 12 - 01), date!(9999 - 12 - 31))
+        );
     }
 
     #[test]
@@ -690,6 +705,21 @@ mod tests {
                 .status,
             StatusCode::BAD_REQUEST
         );
+        // The last day there is: no panic, and a popular search the
+        // parser can't read is a bad request.
+        for scale in ["day", "week", "month"] {
+            for (kind, status) in [
+                ("popular", StatusCode::BAD_REQUEST),
+                ("viewed", StatusCode::OK),
+                ("searches", StatusCode::OK),
+            ] {
+                for format in ["", ".json"] {
+                    let path =
+                        format!("/explore/posts/{kind}{format}?date=9999-12-31&scale={scale}");
+                    assert_eq!(app.get(&path, None).await.status, status, "{path}");
+                }
+            }
+        }
 
         // Page views and searches are counted, and saved by a flush.
         let browser = [("user-agent", "Mozilla/5.0 Firefox/140.0")];

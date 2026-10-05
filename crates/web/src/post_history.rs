@@ -345,6 +345,16 @@ mod tests {
             !theirs.contains("/post_versions/undo"),
             "members can't undo"
         );
+        // Through the last day there is: no overflow.
+        let forever = app
+            .get("/post_versions?user=vandal&until=9999-12-31", None)
+            .await;
+        assert_eq!(forever.status, StatusCode::OK);
+        assert!(
+            forever.body.contains("rating: Explicit"),
+            "{}",
+            forever.body
+        );
         let added = app.get("/post_versions?added=cat", Some(&alice)).await.body;
         assert!(
             added.contains(">alice</a>") && !added.contains(">vandal</a>"),

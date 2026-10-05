@@ -418,6 +418,15 @@ async fn stage_files(
         match prepared {
             Ok((prepared, hash)) => {
                 let mut tx = db.begin().await?;
+                if let Err(error) =
+                    upload::check_staged(state, &mut tx, uploader_id, &prepared).await
+                {
+                    drop(tx);
+                    upload::forget_original(state, &prepared).await;
+                    let (message, duplicate_of) = failure(&error);
+                    staged_uploads::create_failed(db, slot, &message, duplicate_of).await?;
+                    continue;
+                }
                 let staged = staged_uploads::create(&mut *tx, slot, prepared.stored(hash)).await?;
                 crate::suggestions::queue_staged(state, &mut tx, staged).await?;
                 tx.commit().await?;
@@ -444,8 +453,8 @@ fn failure(error: &UploadError) -> (String, Option<i64>) {
     }
 }
 
-/// Makes an upload of the files at `link` (at most `room`) for
-/// `current`: a work's files
+/// Makes an upload of the files at `link` (at most `room`, counted again
+/// as it's made) for `current`: a work's files
 /// when a source strategy read its page (or the page it was found on,
 /// for a bare file) and said `info`, else the link itself. Each file's
 /// source is its [canonical one](upload::file_source). They're
@@ -473,6 +482,12 @@ async fn stage_link(
     };
     let source: String = source.chars().take(SOURCE_MAX_LEN).collect();
     let mut tx = state.db.primary().begin().await?;
+    if let Err(error) = upload::check_room(&mut tx, uploader_id, files.len()).await {
+        return Err(match error {
+            UploadError::Limit(message) => AppError::Blocked(message),
+            error => AppError::Internal(error.to_string()),
+        });
+    }
     let id = staged_uploads::create_upload(&mut *tx, uploader_id, &source, link.referer).await?;
     for (position, file_url) in (0..).zip(&files) {
         if file_url.chars().count() > SOURCE_MAX_LEN {
@@ -534,6 +549,10 @@ async fn download_pending(
             match fetched {
                 Ok((prepared, hash)) => {
                     let mut tx = db.begin().await?;
+                    if let Err(error) = upload::keep_original(&state, &mut tx, &prepared).await {
+                        drop(tx);
+                        return staged_uploads::failed(db, file.id, &failure(&error).0, None).await;
+                    }
                     staged_uploads::stored(&mut *tx, file.id, prepared.stored(hash)).await?;
                     crate::suggestions::queue_staged(&state, &mut tx, file.id).await?;
                     tx.commit().await

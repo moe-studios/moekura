@@ -485,6 +485,16 @@ pub async fn upload_counts(
     })
 }
 
+/// Holds user `user_id`'s other uploads off until the transaction ends,
+/// so that limits counted in it still hold when it commits.
+pub async fn lock_uploads(conn: &mut sqlx::PgConnection, user_id: i64) -> sqlx::Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('uploads:' || $1::text, 0))")
+        .bind(user_id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Like [`by_id`], locking the row until the transaction ends so edits
 /// don't overwrite each other.
 pub async fn lock(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post>> {

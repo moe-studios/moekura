@@ -188,6 +188,15 @@ pub(crate) async fn allowance(
     state: &AppState,
     uploader: &CurrentUser,
 ) -> Result<Allowance, sqlx::Error> {
+    allowance_in(state, state.db.primary(), uploader).await
+}
+
+/// [`allowance`], counting `uploader`'s posts in `db`.
+async fn allowance_in(
+    state: &AppState,
+    db: impl sqlx::PgExecutor<'_>,
+    uploader: &CurrentUser,
+) -> Result<Allowance, sqlx::Error> {
     let limits = uploader.role.upload_limits;
     let Some(user) = &uploader.user else {
         return Ok(Allowance {
@@ -203,7 +212,7 @@ pub(crate) async fn allowance(
             today_left: None,
         });
     }
-    let counts = posts::upload_counts(state.db.primary(), user.id).await?;
+    let counts = posts::upload_counts(db, user.id).await?;
     let queued = queued(state, uploader);
     let scaling = state.site.get().settings.upload_limit_scaling;
     Ok(Allowance {
@@ -787,10 +796,11 @@ impl From<Refused> for UploadError {
 /// Turns a received file into a post. Returns the new post's id.
 ///
 /// `interactive` is false only for imports run by the site's operator.
-/// Otherwise, unless `fields.allow_similar` is set, a file that looks
-/// like posts the uploader can see isn't posted: it's kept as a staged
-/// upload and [`UploadError::Similar`] names the posts, so the uploader
-/// can look and then confirm with [`post_staged`].
+/// Otherwise the uploader's limits are counted again as the post is made,
+/// and unless `fields.allow_similar` is set, a file that looks like posts
+/// the uploader can see isn't posted: it's kept as a staged upload and
+/// [`UploadError::Similar`] names the posts, so the uploader can look and
+/// then confirm with [`post_staged`].
 pub async fn ingest(
     state: &AppState,
     uploader: &CurrentUser,
@@ -798,16 +808,36 @@ pub async fn ingest(
     fields: &UploadFields,
     interactive: bool,
 ) -> Result<i64, UploadError> {
-    // Bad tags and fields are refused before the file is looked at.
+    // Bad tags and fields, and anything else the post would be refused
+    // for, are refused before the file is looked at and stored.
     let tags = crate::tags::parse_field(state.db.primary(), &fields.tags).await?;
-    check_fields(fields, &tags.metatags)?;
+    let chosen = check_fields(fields, &tags.metatags)?;
     crate::metatags::prepare(state, uploader, None, &tags.metatags).await?;
+    check_parent(state, uploader, chosen.parent_id).await?;
+    refuse_banned_tags(state, uploader, &tags).await?;
     let prepared = prepare(state, interactive.then_some(uploader), file).await?;
-    // Staging needs an account to hold the file for.
-    if interactive
-        && !fields.allow_similar
-        && let Some(user) = &uploader.user
-    {
+    let posted = post_prepared(state, uploader, file, &prepared, fields, interactive).await;
+    if posted.is_err() {
+        // Kept if it waits as a staged upload, or is someone else's.
+        forget_original(state, &prepared).await;
+    }
+    posted
+}
+
+/// The rest of [`ingest`], once the file is stored.
+async fn post_prepared(
+    state: &AppState,
+    uploader: &CurrentUser,
+    file: &TempUpload,
+    prepared: &Prepared,
+    fields: &UploadFields,
+    interactive: bool,
+) -> Result<i64, UploadError> {
+    // Staging needs an account to hold the file for; imports don't wait.
+    let Some(user) = uploader.user.as_ref().filter(|_| interactive) else {
+        return insert_post(state, uploader, prepared, fields, interactive).await;
+    };
+    if !fields.allow_similar {
         let hash = phash(state, file).await;
         let close = media::SIMILAR_MAX_DISTANCE;
         let posts: Vec<i64> = lookalikes(state, uploader, hash, None, close, LOOKALIKES_SHOWN)
@@ -821,7 +851,7 @@ pub async fn ingest(
                 source: &fields.source,
                 referer: &fields.referer,
             };
-            let (upload, staged) = stage(state, user.id, file, &prepared, hash, origin).await?;
+            let (upload, staged) = stage(state, user.id, file, prepared, hash, origin).await?;
             return Err(UploadError::Similar(Lookalikes {
                 posts,
                 staged,
@@ -829,7 +859,111 @@ pub async fn ingest(
             }));
         }
     }
-    insert_post(state, uploader, &prepared, fields, interactive).await
+    insert_post(state, uploader, prepared, fields, true).await
+}
+
+/// Refuses parent post `parent` unless `uploader` can see it.
+async fn check_parent(
+    state: &AppState,
+    uploader: &CurrentUser,
+    parent: Option<i64>,
+) -> Result<(), UploadError> {
+    let Some(parent) = parent else {
+        return Ok(());
+    };
+    let visible = posts::by_id(state.db.primary(), parent)
+        .await?
+        .is_some_and(|p| crate::posts::visibility(uploader).allows(&p));
+    if !visible {
+        return Err(UploadError::Invalid(format!("There is no post #{parent}.")));
+    }
+    Ok(())
+}
+
+/// Refuses `tags` naming a banned artist, through an alias or implication
+/// too, before anything is stored: [`create_post`] checks again with the
+/// tags it makes and adds itself.
+async fn refuse_banned_tags(
+    state: &AppState,
+    uploader: &CurrentUser,
+    tags: &crate::tags::ParsedTags,
+) -> Result<(), UploadError> {
+    let db = state.db.primary();
+    let wanted = tags.wanted();
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let names: Vec<&str> = wanted.iter().map(|w| w.name).collect();
+    let aliases = moekura_db::tag_relations::aliases_of(db, &names).await?;
+    let mut resolved: Vec<&str> = names
+        .iter()
+        .map(|name| {
+            aliases
+                .iter()
+                .find(|(antecedent, _)| antecedent == name)
+                .map_or(*name, |(_, consequent)| consequent.as_str())
+        })
+        .collect();
+    let implied = moekura_db::tag_relations::implied_by(db, &resolved).await?;
+    resolved.extend(implied.iter().map(String::as_str));
+    let tag_ids: Vec<i32> = moekura_db::tags::by_names(db, &resolved)
+        .await?
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    crate::artists::refuse_banned(state, db, uploader, &tag_ids, &[])
+        .await
+        .map_err(UploadError::Invalid)
+}
+
+/// Removes `prepared`'s stored original after its upload failed, unless
+/// something uses it: a post, a file kept by a replacement, or a staged
+/// upload. Failing only leaves the file behind.
+pub(crate) async fn forget_original(state: &AppState, prepared: &Prepared) {
+    let Some(key) = Key::parse(&prepared.storage_key) else {
+        return;
+    };
+    let forgotten = async {
+        let mut tx = state.db.primary().begin().await?;
+        media::lock_file(&mut tx, key.as_str()).await?;
+        if !media::original_used(&mut *tx, &prepared.sha256, key.as_str()).await? {
+            state
+                .storage
+                .delete(&key)
+                .await
+                .map_err(|e| UploadError::Internal(e.to_string()))?;
+        }
+        tx.commit().await?;
+        Ok::<_, UploadError>(())
+    }
+    .await;
+    if let Err(error) = forgotten {
+        tracing::warn!(%error, key = key.as_str(), "couldn't remove a failed upload's file");
+    }
+}
+
+/// Makes sure `prepared`'s original is still stored before it's recorded
+/// in `conn`'s transaction, holding [`forget_original`] off until that
+/// ends: a failed upload of the same file may have removed it meanwhile.
+pub(crate) async fn keep_original(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    prepared: &Prepared,
+) -> Result<(), UploadError> {
+    media::lock_file(conn, &prepared.storage_key).await?;
+    let key = Key::parse(&prepared.storage_key)
+        .ok_or_else(|| UploadError::Internal(format!("bad key {}", prepared.storage_key)))?;
+    let stored = state
+        .storage
+        .exists(&key)
+        .await
+        .map_err(|e| UploadError::Internal(e.to_string()))?;
+    if !stored {
+        return Err(UploadError::Invalid(
+            "The file was lost before it could be posted; please send it again.".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// The perceptual hash of `file`, as processing would make it, if it can
@@ -894,8 +1028,9 @@ pub(crate) struct Origin<'a> {
 }
 
 /// Keeps a prepared file for `uploader_id` to post later, as an upload of
-/// its own. Returns the upload's id and the staged file's. Unused staged
-/// uploads expire with their files.
+/// its own, if they have room for it (see [`check_staged`]). Returns the
+/// upload's id and the staged file's. Unused staged uploads expire with
+/// their files.
 pub(crate) async fn stage(
     state: &AppState,
     uploader_id: i64,
@@ -910,6 +1045,7 @@ pub(crate) async fn stage(
         origin.link
     };
     let mut tx = state.db.primary().begin().await?;
+    check_staged(state, &mut tx, uploader_id, prepared).await?;
     let upload = staged_uploads::create_upload(&mut *tx, uploader_id, link, origin.referer).await?;
     let slot = staged_uploads::Slot {
         upload_id: upload,
@@ -922,6 +1058,46 @@ pub(crate) async fn stage(
     crate::suggestions::queue_staged(state, &mut tx, staged).await?;
     tx.commit().await?;
     Ok((upload, staged))
+}
+
+/// Refuses keeping `adding` more files for user `uploader_id` to post
+/// than [`MAX_WAITING`](crate::uploads::MAX_WAITING), counted in `conn`'s
+/// transaction, which their other uploads wait for: several sent at once
+/// all passed [`room`](crate::uploads::room) before any was kept.
+pub(crate) async fn check_room(
+    conn: &mut sqlx::PgConnection,
+    uploader_id: i64,
+    adding: usize,
+) -> Result<(), UploadError> {
+    use crate::uploads::MAX_WAITING;
+    posts::lock_uploads(&mut *conn, uploader_id).await?;
+    let waiting = staged_uploads::waiting(&mut *conn, uploader_id).await?;
+    let room = MAX_WAITING - waiting;
+    if room <= 0 {
+        return Err(UploadError::Limit(format!(
+            "You have {waiting} files waiting to be posted, the most you may have. \
+             Post some first, or wait for those you don't post to expire."
+        )));
+    }
+    if i64::try_from(adding).unwrap_or(i64::MAX) > room {
+        return Err(UploadError::Limit(format!(
+            "You may have {MAX_WAITING} files waiting to be posted, so you can send {room} more now."
+        )));
+    }
+    Ok(())
+}
+
+/// Refuses keeping `prepared`'s file for user `uploader_id` to post later
+/// without room for it ([`check_room`]), or once its original is gone
+/// ([`keep_original`]), in `conn`'s transaction, which then records it.
+pub(crate) async fn check_staged(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    uploader_id: i64,
+    prepared: &Prepared,
+) -> Result<(), UploadError> {
+    check_room(&mut *conn, uploader_id, 1).await?;
+    keep_original(state, conn, prepared).await
 }
 
 /// Posts staged upload `id`, which must be `uploader`'s and not posted
@@ -1067,23 +1243,7 @@ pub async fn prepare(
         .probe(file.path(), media_type)
         .await
         .map_err(media_error)?;
-
-    let hash = hex::encode(file.sha256);
-    let key = Key::original(&hash, media_type.extension());
-    // Content-addressed: if the bytes are already stored (e.g. an earlier
-    // attempt failed after storing), there is nothing to do.
-    let stored = state
-        .storage
-        .exists(&key)
-        .await
-        .map_err(|e| UploadError::Internal(e.to_string()))?;
-    if !stored {
-        state
-            .storage
-            .put_file(&key, file.path())
-            .await
-            .map_err(|e| UploadError::Internal(e.to_string()))?;
-    }
+    // Everything that can fail on the file is done before it's stored.
     let traits = moekura_media::traits(&metadata, media_type, probe.frames);
     let has_profile = metadata.contains_key("File:ICCProfile");
     let pixel_hash = if probe.frames == 1 {
@@ -1101,6 +1261,23 @@ pub async fn prepare(
     } else {
         None
     };
+
+    let hash = hex::encode(file.sha256);
+    let key = Key::original(&hash, media_type.extension());
+    // Content-addressed: if the bytes are already stored (e.g. an earlier
+    // attempt failed after storing), there is nothing to do.
+    let stored = state
+        .storage
+        .exists(&key)
+        .await
+        .map_err(|e| UploadError::Internal(e.to_string()))?;
+    if !stored {
+        state
+            .storage
+            .put_file(&key, file.path())
+            .await
+            .map_err(|e| UploadError::Internal(e.to_string()))?;
+    }
     let as_i32 = |n: u32| i32::try_from(n).unwrap_or(i32::MAX);
     Ok(Prepared {
         sha256: file.sha256,
@@ -1208,7 +1385,8 @@ impl Prepared {
     }
 }
 
-/// Makes a post of a prepared file. Returns the new post's id.
+/// Makes a post of a prepared file, within the uploader's limits.
+/// Returns the new post's id.
 pub async fn create_post(
     state: &AppState,
     uploader: &CurrentUser,
@@ -1218,8 +1396,8 @@ pub async fn create_post(
     insert_post(state, uploader, prepared, fields, true).await
 }
 
-/// [`create_post`]; `interactive` is false for imports, which are told of
-/// any duplicate.
+/// [`create_post`]; `interactive` is false for imports, which aren't held
+/// to the uploader's limits and are told of any duplicate.
 async fn insert_post(
     state: &AppState,
     uploader: &CurrentUser,
@@ -1235,14 +1413,7 @@ async fn insert_post(
         parent_id,
     } = check_fields(fields, &tags.metatags)?;
     let effects = crate::metatags::prepare(state, uploader, None, &tags.metatags).await?;
-    if let Some(parent) = parent_id {
-        let visible = posts::by_id(db, parent)
-            .await?
-            .is_some_and(|p| crate::posts::visibility(uploader).allows(&p));
-        if !visible {
-            return Err(UploadError::Invalid(format!("There is no post #{parent}.")));
-        }
-    }
+    check_parent(state, uploader, parent_id).await?;
     let site = state.site.get();
     let status = if fields.for_approval || queued(state, uploader) {
         PostStatus::Pending
@@ -1251,6 +1422,17 @@ async fn insert_post(
     };
 
     let mut tx = db.begin().await?;
+    if interactive
+        && let Some(user) = &uploader.user
+        && uploader.role.upload_limits != UploadLimits::default()
+    {
+        // Counted again, with the uploader's other uploads waiting: ones
+        // sent at once all passed check_limits before any was made.
+        posts::lock_uploads(&mut tx, user.id).await?;
+        if let Some(message) = allowance_in(state, &mut *tx, uploader).await?.refusal {
+            return Err(UploadError::Limit(message));
+        }
+    }
     // Credits the tags this creates; the post is the uploader's anyway.
     moekura_db::post_versions::attribute(&mut tx, uploader.user.as_ref().map(|u| u.id), None)
         .await?;
@@ -1280,6 +1462,7 @@ async fn insert_post(
     crate::artists::refuse_banned(state, &mut *tx, uploader, &tag_ids, &[])
         .await
         .map_err(UploadError::Invalid)?;
+    keep_original(state, &mut tx, prepared).await?;
     let post_id = posts::insert(
         &mut *tx,
         NewPost {
@@ -2168,6 +2351,117 @@ mod tests {
         assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
     }
 
+    /// Whether the original of PNG `bytes` is stored.
+    async fn original_stored(state: &AppState, bytes: &[u8]) -> bool {
+        let key = Key::original(&hex::encode(Sha256::digest(bytes)), "png");
+        state.storage.exists(&key).await.unwrap()
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn refused_uploads_leave_no_file_behind(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        sqlx::query(
+            "INSERT INTO artists (name, is_banned) VALUES ('meanie', true), ('newbie', true)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO tags (name, category_id) VALUES ('meanie', 1)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let png = fixture::png(40, 30);
+        let send = async |extra: (&'static str, &str)| {
+            let mut form = fields("g");
+            form.push((extra.0, extra.1.to_owned()));
+            app.post_multipart("/upload", Some(&alice), &form, Some(("a.png", &png)))
+                .await
+        };
+
+        // Refused before the file is stored.
+        let no_parent = send(("parent", "999")).await;
+        assert_eq!(no_parent.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(no_parent.body.contains("There is no post #999"));
+        let banned = send(("tags", "cat meanie")).await;
+        assert_eq!(banned.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(banned.body.contains("banned"), "{}", banned.body);
+        assert!(!original_stored(&state, &png).await);
+
+        // Refused as the post is made, the artist's tag being new: the
+        // file stored meanwhile is removed.
+        let late = send(("tags", "newbie")).await;
+        assert_eq!(late.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(late.body.contains("banned"), "{}", late.body);
+        assert!(!original_stored(&state, &png).await);
+
+        // Unless a staged upload holds the same file.
+        let staged = app
+            .post_multipart("/uploads", Some(&alice), &[], Some(("a.png", &png)))
+            .await;
+        assert_eq!(staged.status, StatusCode::SEE_OTHER, "{}", staged.body);
+        let late = send(("tags", "newbie")).await;
+        assert_eq!(late.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(original_stored(&state, &png).await);
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM posts")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn files_gone_missing_arent_posted(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let current = crate::test_support::current_user(&state, &alice).await;
+        let mut writer = TempWriter::create(&state.work_dir).await.unwrap();
+        writer.write(&fixture::png(30, 30)).await.unwrap();
+        let file = writer.finish().await.unwrap();
+        let prepared = prepare(&state, Some(&current), &file).await.unwrap();
+        // As if a failed upload of the same file removed it meanwhile.
+        let key = Key::parse(&prepared.storage_key).unwrap();
+        state.storage.delete(&key).await.unwrap();
+
+        let fields = UploadFields {
+            rating: Some(Rating::General),
+            ..UploadFields::default()
+        };
+        let refused = create_post(&state, &current, &prepared, &fields).await;
+        assert!(
+            matches!(&refused, Err(UploadError::Invalid(m)) if m.contains("send it again")),
+            "{refused:?}"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM posts")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+        // Nor kept to be posted later.
+        let origin = Origin {
+            link: "",
+            source: "",
+            referer: "",
+        };
+        let id = current.user.as_ref().unwrap().id;
+        let staged = stage(&state, id, &file, &prepared, None, origin).await;
+        assert!(
+            matches!(&staged, Err(UploadError::Invalid(m)) if m.contains("send it again")),
+            "{staged:?}"
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM staged_uploads")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            0
+        );
+    }
+
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn duplicates_name_only_posts_the_uploader_can_see(pool: PgPool) {
         let (app, _) = app(&pool).await;
@@ -2232,6 +2526,89 @@ mod tests {
             .await
             .body;
         assert!(!named(&page), "{page}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn limits_hold_for_uploads_sent_at_once(pool: PgPool) {
+        sqlx::query("UPDATE roles SET daily_upload_limit = 1 WHERE system_key = 'member'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let pngs = [24, 28, 32].map(|width| fixture::png(width, 20));
+        let send = async |png: &[u8]| {
+            app.post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", png)))
+                .await
+        };
+        let (a, b, c) = tokio::join!(send(&pngs[0]), send(&pngs[1]), send(&pngs[2]));
+        let statuses = [a.status, b.status, c.status];
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|s| **s == StatusCode::SEE_OTHER)
+                .count(),
+            1,
+            "{statuses:?}"
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|s| **s == StatusCode::TOO_MANY_REQUESTS)
+                .count(),
+            2,
+            "{statuses:?}"
+        );
+        // The refused ones' files aren't kept.
+        let mut stored = 0;
+        for png in &pngs {
+            stored += usize::from(original_stored(&state, png).await);
+        }
+        assert_eq!(stored, 1);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn waiting_files_are_counted_where_theyre_kept(pool: PgPool) {
+        use crate::uploads::MAX_WAITING;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let state = test_state(&pool).await;
+        let id = crate::test_support::current_user(&state, &alice)
+            .await
+            .user
+            .unwrap()
+            .id;
+        let upload = staged_uploads::create_upload(&pool, id, "", "")
+            .await
+            .unwrap();
+        let fill = async |count: i64| {
+            sqlx::query(
+                "INSERT INTO staged_uploads (upload_id, uploader_id, position, status, file_url)
+                 SELECT $1, $2, n, 'pending', 'https://example.com/x.png'
+                 FROM generate_series(1, $3) AS n",
+            )
+            .bind(upload)
+            .bind(id)
+            .bind(count)
+            .execute(&pool)
+            .await
+            .unwrap();
+        };
+        fill(MAX_WAITING - 1).await;
+        let mut tx = pool.begin().await.unwrap();
+        assert!(check_room(&mut tx, id, 1).await.is_ok());
+        let two = check_room(&mut tx, id, 2).await;
+        assert!(
+            matches!(&two, Err(UploadError::Limit(m)) if m.contains("send 1 more")),
+            "{two:?}"
+        );
+        drop(tx);
+        fill(1).await;
+        let mut tx = pool.begin().await.unwrap();
+        let full = check_room(&mut tx, id, 1).await;
+        assert!(
+            matches!(&full, Err(UploadError::Limit(m)) if m.contains("the most you may have")),
+            "{full:?}"
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

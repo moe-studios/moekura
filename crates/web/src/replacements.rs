@@ -80,6 +80,22 @@ pub(crate) async fn replace_file(
         }
         Err(error) => return Err(refused(error)),
     };
+    let replaced = record(state, current, &post, &replacement, &prepared).await;
+    if replaced.is_err() {
+        crate::upload::forget_original(state, &prepared).await;
+    }
+    replaced
+}
+
+/// The rest of [`replace_file`], once the new file is stored.
+async fn record(
+    state: &AppState,
+    current: &CurrentUser,
+    post: &posts::Post,
+    replacement: &Replacement<'_>,
+    prepared: &crate::upload::Prepared,
+) -> Result<(), AppError> {
+    let db = state.db.primary();
     let new = NewAsset {
         post_id: post.id,
         sha256: &prepared.sha256,
@@ -95,6 +111,9 @@ pub(crate) async fn replace_file(
     };
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = db.begin().await?;
+    crate::upload::keep_original(state, &mut tx, prepared)
+        .await
+        .map_err(refused)?;
     let replaced = match replacements::replace(
         &mut tx,
         &new,

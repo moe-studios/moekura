@@ -19,6 +19,10 @@ const KEEP_DAYS: i32 = 30;
 /// How much of a response is kept.
 const RESPONSE_KEPT: usize = 1000;
 
+/// How much of a response is read: plenty for Discord's answer, the
+/// message it made. The rest is never downloaded.
+const RESPONSE_READ: usize = 64 * 1024;
+
 /// The longest `Retry-After` honoured, in seconds; longer waits are cut
 /// to this.
 const MAX_RETRY_AFTER: f64 = 3600.0;
@@ -143,7 +147,8 @@ impl WebhookJobs {
                     .get("retry-after")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|v| v.trim().parse::<f64>().ok());
-                let mut text = response.text().await.unwrap_or_default();
+                let (body, _) = read_start(response, RESPONSE_READ).await;
+                let mut text = String::from_utf8_lossy(&body).into_owned();
                 if format == Format::Discord && status.is_success() {
                     let message: Option<serde_json::Value> = serde_json::from_str(&text).ok();
                     if let Some(id) = message.as_ref().and_then(|m| m["id"].as_str()) {
@@ -191,6 +196,27 @@ impl WebhookJobs {
     }
 }
 
+/// The first `max` bytes of `response`'s body, or as many as came before
+/// it ended or failed (with why). The connection is dropped rather than
+/// read to the end, so a receiver can't make a delivery download more.
+async fn read_start(
+    mut response: reqwest::Response,
+    max: usize,
+) -> (Vec<u8>, Option<reqwest::Error>) {
+    let mut body = Vec::new();
+    while body.len() < max {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                let room = max - body.len();
+                body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+            }
+            Ok(None) => break,
+            Err(error) => return (body, Some(error)),
+        }
+    }
+    (body, None)
+}
+
 /// What went wrong with a request, with its causes but not its URL: a
 /// Discord webhook's token is in the path, and the error is kept with the
 /// delivery and the job.
@@ -229,37 +255,60 @@ mod tests {
         let url = format!("http://{}/hook", listener.local_addr().unwrap());
         let task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.unwrap();
-            let mut received = Vec::new();
-            let mut buf = [0u8; 4096];
-            loop {
-                let n = socket.read(&mut buf).await.unwrap();
-                received.extend_from_slice(&buf[..n]);
-                let text = String::from_utf8_lossy(&received).to_string();
-                if let Some((head, body)) = text.split_once("\r\n\r\n") {
-                    let length: usize = head
-                        .lines()
-                        .find_map(|l| {
-                            l.to_lowercase()
-                                .strip_prefix("content-length: ")
-                                .map(|v| v.trim().parse().unwrap())
-                        })
-                        .unwrap_or(0);
-                    if body.len() >= length {
-                        break;
-                    }
-                }
-                if n == 0 {
-                    break;
-                }
-            }
+            let received = take_request(&mut socket).await;
             let reply = format!(
                 "HTTP/1.1 {status} X\r\n{headers}content-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             );
             socket.write_all(reply.as_bytes()).await.unwrap();
-            String::from_utf8_lossy(&received).to_string()
+            received
         });
         (url, task)
+    }
+
+    /// Reads a request from `socket`, returning it.
+    async fn take_request(socket: &mut tokio::net::TcpStream) -> String {
+        let mut received = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = socket.read(&mut buf).await.unwrap();
+            received.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&received).to_string();
+            if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                let length: usize = head
+                    .lines()
+                    .find_map(|l| {
+                        l.to_lowercase()
+                            .strip_prefix("content-length: ")
+                            .map(|v| v.trim().parse().unwrap())
+                    })
+                    .unwrap_or(0);
+                if body.len() >= length {
+                    break;
+                }
+            }
+            if n == 0 {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&received).to_string()
+    }
+
+    /// Answers one request with a 200 whose body says it's a gigabyte but
+    /// stops after `sent` bytes, keeping the connection open.
+    async fn endless(sent: usize) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/hook", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            take_request(&mut socket).await;
+            let head = "HTTP/1.1 200 OK\r\ncontent-length: 1000000000\r\n\r\n";
+            socket.write_all(head.as_bytes()).await.unwrap();
+            // The client may hang up before it all goes.
+            let _ = socket.write_all(&vec![b'a'; sent]).await;
+            tokio::time::sleep(Duration::from_secs(120)).await;
+        });
+        url
     }
 
     async fn delivery_to(pool: &PgPool, url: &str) -> i64 {
@@ -343,6 +392,21 @@ mod tests {
             refused.response.as_deref(),
             Some("the address isn't on the public internet")
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn reads_only_the_start_of_answers(pool: PgPool) {
+        let jobs = WebhookJobs::new(pool.clone(), Duration::from_secs(60), true);
+        let url = endless(4 * RESPONSE_READ).await;
+        let id = delivery_to(&pool, &url).await;
+        // Done once it has enough, not when the rest would have come.
+        tokio::time::timeout(Duration::from_secs(20), jobs.deliver(id))
+            .await
+            .expect("the rest isn't waited for")
+            .unwrap();
+        let done = webhooks::delivery(&pool, id).await.unwrap().unwrap();
+        assert_eq!(done.status, "delivered");
+        assert_eq!(done.response.unwrap(), "a".repeat(RESPONSE_KEPT));
     }
 
     /// A local address nothing listens on.

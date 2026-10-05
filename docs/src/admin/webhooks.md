@@ -66,9 +66,10 @@ def valid(secret: str, timestamp: str, body: bytes, signature: str) -> bool:
 Answer with any 2xx status. Network errors, 5xx, 408 and 429 are
 retried in the background, waiting longer each time, for about five
 hours (or, for a 429 with `Retry-After`, as long as that says, up to an
-hour); other statuses are given up at once. A webhook's page lists its
-latest deliveries with what came back, and **Send a test** sends a
-`ping` event. Deliveries are kept for 30 days.
+hour); other statuses are given up at once. Only the first 64 KiB of an
+answer are read, so keep it short. A webhook's page lists its latest
+deliveries with what came back (the first 1000 bytes), and **Send a
+test** sends a `ping` event. Deliveries are kept for 30 days.
 
 Webhooks don't follow redirects, and don't go to private or local
 addresses unless `webhooks.allow_private_addresses` is on in the

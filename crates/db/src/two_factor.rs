@@ -6,6 +6,7 @@ use std::time::Duration;
 use moekura_core::tokens::{NewToken, TokenHash, hash_token};
 use moekura_core::totp::Secret;
 use sqlx::{PgConnection, PgExecutor};
+use time::OffsetDateTime;
 
 #[derive(Debug, Clone)]
 pub struct Totp {
@@ -13,19 +14,35 @@ pub struct Totp {
     /// False while setting up.
     pub enabled: bool,
     pub last_step: i64,
+    /// Wrong codes in a row at login since the last right one.
+    pub failed_codes: i32,
+    /// Codes from the app aren't accepted before this, after too many
+    /// wrong ones (recovery codes are).
+    pub locked_until: Option<OffsetDateTime>,
 }
 
 pub async fn get(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<Option<Totp>> {
-    let row: Option<(Vec<u8>, bool, i64)> = sqlx::query_as(
-        "SELECT secret, enabled_at IS NOT NULL, last_step FROM user_totp WHERE user_id = $1",
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        secret: Vec<u8>,
+        enabled: bool,
+        last_step: i64,
+        failed_codes: i32,
+        locked_until: Option<OffsetDateTime>,
+    }
+    let row: Option<Row> = sqlx::query_as(
+        "SELECT secret, enabled_at IS NOT NULL AS enabled, last_step, failed_codes, locked_until
+         FROM user_totp WHERE user_id = $1",
     )
     .bind(user_id)
     .fetch_optional(db)
     .await?;
-    Ok(row.map(|(secret, enabled, last_step)| Totp {
-        secret: Secret::from_bytes(secret),
-        enabled,
-        last_step,
+    Ok(row.map(|r| Totp {
+        secret: Secret::from_bytes(r.secret),
+        enabled: r.enabled,
+        last_step: r.last_step,
+        failed_codes: r.failed_codes,
+        locked_until: r.locked_until,
     }))
 }
 
@@ -109,6 +126,46 @@ pub async fn use_recovery_code(
     .execute(db)
     .await?;
     Ok(updated.rows_affected() == 1)
+}
+
+/// Counts a wrong code at login; returns how many there have been in a
+/// row.
+pub async fn record_failure(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<i32> {
+    let failed: Option<i32> = sqlx::query_scalar(
+        "UPDATE user_totp SET failed_codes = failed_codes + 1
+         WHERE user_id = $1 AND enabled_at IS NOT NULL
+         RETURNING failed_codes",
+    )
+    .bind(user_id)
+    .fetch_optional(db)
+    .await?;
+    Ok(failed.unwrap_or(0))
+}
+
+/// Refuses codes from the app for `duration`, after too many wrong ones.
+pub async fn lock(db: impl PgExecutor<'_>, user_id: i64, duration: Duration) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE user_totp SET locked_until = now() + make_interval(secs => $2)
+         WHERE user_id = $1",
+    )
+    .bind(user_id)
+    .bind(duration.as_secs_f64())
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// After a right code (or a recovery code): starts counting wrong ones
+/// afresh, and lifts any lock.
+pub async fn clear_failures(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE user_totp SET failed_codes = 0, locked_until = NULL
+         WHERE user_id = $1 AND (failed_codes > 0 OR locked_until IS NOT NULL)",
+    )
+    .bind(user_id)
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 pub async fn replace_recovery_codes(
@@ -281,6 +338,29 @@ mod tests {
         assert!(disable(&mut conn, alice).await.unwrap());
         assert!(!disable(&mut conn, alice).await.unwrap());
         assert_eq!(unused_recovery_codes(&pool, alice).await.unwrap(), 0);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn wrong_codes_are_counted_until_a_right_one(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        assert_eq!(record_failure(&pool, alice).await.unwrap(), 0, "not on");
+        begin(&pool, alice, &Secret::generate()).await.unwrap();
+        assert_eq!(record_failure(&pool, alice).await.unwrap(), 0, "not yet");
+        let mut conn = pool.acquire().await.unwrap();
+        enable(&mut conn, alice, 0, &[]).await.unwrap();
+
+        assert_eq!(record_failure(&pool, alice).await.unwrap(), 1);
+        assert_eq!(record_failure(&pool, alice).await.unwrap(), 2);
+        lock(&pool, alice, Duration::from_secs(600)).await.unwrap();
+        let totp = get(&pool, alice).await.unwrap().unwrap();
+        assert_eq!(totp.failed_codes, 2);
+        let until = totp.locked_until.expect("locked");
+        assert!(until > OffsetDateTime::now_utc() + time::Duration::minutes(9));
+
+        clear_failures(&pool, alice).await.unwrap();
+        let totp = get(&pool, alice).await.unwrap().unwrap();
+        assert_eq!((totp.failed_codes, totp.locked_until), (0, None));
+        assert_eq!(record_failure(&pool, alice).await.unwrap(), 1);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

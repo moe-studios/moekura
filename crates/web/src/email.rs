@@ -63,7 +63,7 @@ fn require_mail(state: &AppState) -> Result<(), AppError> {
 }
 
 /// `path` (with its query) on the public site, for links in messages.
-fn link(state: &AppState, path: &str) -> String {
+pub(crate) fn link(state: &AppState, path: &str) -> String {
     state
         .config
         .server
@@ -72,7 +72,7 @@ fn link(state: &AppState, path: &str) -> String {
         .map_or_else(|_| path.to_owned(), String::from)
 }
 
-async fn queue(
+pub(crate) async fn queue(
     conn: &mut PgConnection,
     to: &str,
     subject: String,

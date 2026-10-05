@@ -159,6 +159,16 @@ When logging in, enter a code from the app, or a recovery code, after
 your password (or after single sign-on). If your device's clock is off by more than about half a
 minute, codes won't work; most phones set the time automatically.
 
+Wrong codes are counted until a right one, even across logins, since
+whoever types them already got past your password:
+
+- After 5 wrong codes in a row, you're emailed about it (on sites that
+  send mail, if your address is confirmed). If it wasn't you, change
+  your password.
+- After 10, codes from the app stop working for 15 minutes, and each
+  further wrong code doubles that, up to a day. Recovery codes still
+  work meanwhile, and logging in with one lifts the wait.
+
 If you've lost both your device and your recovery codes, ask the staff:
 people who can manage users can turn two-factor login off for you
 (**Admin → Users → Turn off 2FA**), which is recorded in the moderation

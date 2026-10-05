@@ -34,6 +34,16 @@ const CHALLENGE_COOKIE: &str = "moekura_login";
 const CHALLENGE_TTL: Duration = Duration::from_secs(5 * 60);
 /// Wrong codes before the login has to start over.
 const MAX_ATTEMPTS: i32 = 5;
+/// Wrong codes in a row, across logins, after which the user is emailed:
+/// whoever typed them had the password (or got through single sign-on).
+const ALERT_AFTER: i32 = 5;
+/// Wrong codes in a row after which codes from the app stop working for
+/// a while ([`lock_after`]); recovery codes still work, and lift it.
+const MAX_FAILED_CODES: i32 = 10;
+/// How long the first lock lasts. Each wrong code after it doubles it, up
+/// to [`LOCK_MAX`].
+const LOCK_BASE: Duration = Duration::from_secs(15 * 60);
+const LOCK_MAX: Duration = Duration::from_secs(24 * 3600);
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -98,22 +108,108 @@ struct CodeForm {
     code: String,
 }
 
+/// How long codes from the app stop working after `failed` wrong codes in
+/// a row: from [`MAX_FAILED_CODES`] on, [`LOCK_BASE`], doubling with each
+/// one after, up to [`LOCK_MAX`]. So someone who has the password gets a
+/// handful of guesses a day, not thousands.
+fn lock_after(failed: i32) -> Option<Duration> {
+    let over = u32::try_from(failed.checked_sub(MAX_FAILED_CODES)?).ok()?;
+    let factor = 1u32.checked_shl(over).unwrap_or(u32::MAX);
+    Some(LOCK_BASE.saturating_mul(factor).min(LOCK_MAX))
+}
+
+/// What a code typed at login turned out to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Checked {
+    Right,
+    Wrong,
+    /// Codes from the app aren't accepted until then, after too many wrong
+    /// ones; this wasn't a recovery code.
+    Locked(OffsetDateTime),
+}
+
 /// Whether `input` is `user`'s current code or one of their recovery
-/// codes, using it up either way.
-async fn check_code(state: &AppState, user_id: i64, input: &str) -> Result<bool, AppError> {
+/// codes, using it up either way. A right one starts counting wrong ones
+/// afresh.
+async fn check_code(state: &AppState, user_id: i64, input: &str) -> Result<Checked, AppError> {
     let db = state.db.primary();
     let Some(totp) = two_factor::get(db, user_id).await?.filter(|t| t.enabled) else {
-        return Ok(false);
+        return Ok(Checked::Wrong);
     };
-    let now = OffsetDateTime::now_utc().unix_timestamp();
-    if let Some(step) = totp.secret.verify(input, now, totp.last_step) {
-        return Ok(two_factor::use_step(db, user_id, step).await?);
+    let now = OffsetDateTime::now_utc();
+    let locked = totp.locked_until.filter(|until| *until > now);
+    if locked.is_none()
+        && let Some(step) = totp
+            .secret
+            .verify(input, now.unix_timestamp(), totp.last_step)
+    {
+        if !two_factor::use_step(db, user_id, step).await? {
+            return Ok(Checked::Wrong);
+        }
+        two_factor::clear_failures(db, user_id).await?;
+        return Ok(Checked::Right);
     }
-    let used = two_factor::use_recovery_code(db, user_id, &totp::hash_recovery_code(input)).await?;
-    if used {
+    if two_factor::use_recovery_code(db, user_id, &totp::hash_recovery_code(input)).await? {
         tracing::info!(user_id, "logged in with a recovery code");
+        two_factor::clear_failures(db, user_id).await?;
+        return Ok(Checked::Right);
     }
-    Ok(used)
+    Ok(locked.map_or(Checked::Wrong, Checked::Locked))
+}
+
+/// "Codes from your app work again in …", for a lock lasting until
+/// `until`.
+fn locked_message(until: OffsetDateTime) -> String {
+    let minutes = (until - OffsetDateTime::now_utc()).whole_minutes().max(0) + 1;
+    let wait = match minutes {
+        1 => "a minute".to_owned(),
+        2..120 => format!("{minutes} minutes"),
+        _ => format!("{} hours", (minutes + 59) / 60),
+    };
+    format!(
+        "Too many wrong codes. Codes from your app work again in about {wait}; \
+         a recovery code works now."
+    )
+}
+
+/// Emails `user`, if they have a confirmed address, that someone got
+/// past their password but keeps typing wrong codes. Best effort: the
+/// login goes on either way.
+async fn alert(state: &AppState, user: &User, failed: i32) {
+    if !crate::email::mail_enabled(state) || user.email_verified_at.is_none() {
+        return;
+    }
+    let Some(email) = user.email.as_deref() else {
+        return;
+    };
+    let site = state.site.get().settings.site_name.clone();
+    let url = crate::email::link(state, "/settings/account");
+    let body = format!(
+        "Hi {name},\n\n\
+         Someone got past the first step of logging in to your account on {site}, with \
+         your password (or through single sign-on), and then entered {failed} wrong \
+         two-factor codes in a row.\n\n\
+         If that was you, you can ignore this message. If it wasn't, someone may know your \
+         password: change it now, at\n\n\
+         {url}\n\n\
+         After {MAX_FAILED_CODES} wrong codes in a row, codes from your app stop working \
+         for a while; your recovery codes still work.\n",
+        name = user.name,
+    );
+    let sent = async {
+        let mut conn = state.db.primary().acquire().await?;
+        crate::email::queue(
+            &mut conn,
+            email,
+            format!("Wrong two-factor codes on {site}"),
+            body,
+        )
+        .await
+    }
+    .await;
+    if let Err(error) = sent {
+        tracing::warn!(%error, user_id = user.id, "could not queue the two-factor alert");
+    }
 }
 
 async fn code(
@@ -149,13 +245,41 @@ async fn code(
         return Ok(restart(jar));
     }
     state.rate_limits.check_code(user.id).await?;
-    if !check_code(&state, user.id, &form.code).await? {
-        tracing::info!(user_id = user.id, "wrong two-factor code");
-        return Ok(render_code(
-            &page,
-            Some("That code isn't right. Check the time on your device, or use a recovery code."),
-            StatusCode::UNPROCESSABLE_ENTITY,
-        ));
+    match check_code(&state, user.id, &form.code).await? {
+        Checked::Right => {}
+        Checked::Locked(until) => {
+            return Ok(render_code(
+                &page,
+                Some(&locked_message(until)),
+                StatusCode::TOO_MANY_REQUESTS,
+            ));
+        }
+        Checked::Wrong => {
+            // Counted across logins: starting over with the password
+            // doesn't start the count over.
+            let failed = two_factor::record_failure(db, user.id).await?;
+            tracing::info!(user_id = user.id, failed, "wrong two-factor code");
+            if failed == ALERT_AFTER {
+                alert(&state, &user, failed).await;
+            }
+            if let Some(wait) = lock_after(failed) {
+                two_factor::lock(db, user.id, wait).await?;
+                tracing::warn!(user_id = user.id, failed, ?wait, "two-factor codes locked");
+                let until = OffsetDateTime::now_utc() + wait;
+                return Ok(render_code(
+                    &page,
+                    Some(&locked_message(until)),
+                    StatusCode::TOO_MANY_REQUESTS,
+                ));
+            }
+            return Ok(render_code(
+                &page,
+                Some(
+                    "That code isn't right. Check the time on your device, or use a recovery code.",
+                ),
+                StatusCode::UNPROCESSABLE_ENTITY,
+            ));
+        }
     }
     two_factor::end_challenge(db, &token).await?;
     let jar = jar.remove(challenge_cookie(
@@ -606,6 +730,116 @@ mod tests {
         let late = enter(&app, &cookie, &key.code_at(now())).await;
         assert_eq!(late.location.as_deref(), Some("/login"));
         assert!(late.session_cookie().is_none());
+        // Starting over doesn't start the count over.
+        let totp = two_factor::get(&pool, alice.id).await.unwrap().unwrap();
+        assert_eq!(totp.failed_codes, MAX_ATTEMPTS);
+    }
+
+    #[test]
+    fn locks_grow_with_wrong_codes() {
+        let minutes = |failed| lock_after(failed).map(|d| d.as_secs() / 60);
+        assert_eq!(minutes(0), None);
+        assert_eq!(minutes(MAX_FAILED_CODES - 1), None);
+        assert_eq!(minutes(MAX_FAILED_CODES), Some(15));
+        assert_eq!(minutes(MAX_FAILED_CODES + 1), Some(30));
+        assert_eq!(minutes(MAX_FAILED_CODES + 3), Some(120));
+        assert_eq!(minutes(MAX_FAILED_CODES + 7), Some(24 * 60));
+        assert_eq!(minutes(MAX_FAILED_CODES + 40), Some(24 * 60));
+        assert_eq!(minutes(i32::MAX), Some(24 * 60));
+        assert_eq!(minutes(i32::MIN), None);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn wrong_codes_lock_app_codes_and_tell_the_user(pool: PgPool) {
+        let mut config = crate::test_support::test_config();
+        config.mail.host = "localhost".into();
+        config.mail.from = "Moekura <noreply@example.com>".into();
+        let app = TestApp::new(
+            crate::test_support::test_state_with(&pool, config).await,
+            routes()
+                .merge(crate::account::routes())
+                .merge(crate::posts::routes()),
+        );
+        let (alice, _) = member(&pool, "alice", "alice@example.com").await;
+        users::set_email(&pool, alice.id, Some("alice@example.com"), true)
+            .await
+            .unwrap();
+        let key = Secret::generate();
+        two_factor::begin(&pool, alice.id, &key).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let recovery = "aaaaa-bbbbb";
+        two_factor::enable(
+            &mut conn,
+            alice.id,
+            0,
+            &[totp::hash_recovery_code(recovery)],
+        )
+        .await
+        .unwrap();
+        let id = alice.id;
+        let set_failed = |n: i32| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("UPDATE user_totp SET failed_codes = $2 WHERE user_id = $1")
+                    .bind(id)
+                    .bind(n)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        let mails = || async {
+            let mails: Vec<serde_json::Value> =
+                sqlx::query_scalar("SELECT payload FROM jobs WHERE kind = 'mail.send' ORDER BY id")
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            mails
+        };
+
+        // As if earlier logins had got codes wrong: the next wrong one
+        // tells her, once.
+        set_failed(ALERT_AFTER - 1).await;
+        let cookie = challenge(&log_in(&app).await);
+        let wrong = enter(&app, &cookie, "000000").await;
+        assert_eq!(wrong.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let sent = mails().await;
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["to"], "alice@example.com");
+        assert!(
+            sent[0]["body"].as_str().unwrap().contains("wrong"),
+            "{}",
+            sent[0]
+        );
+
+        // Too many: codes from the app stop working, even the right one.
+        set_failed(MAX_FAILED_CODES - 1).await;
+        let locked = enter(&app, &cookie, "000000").await;
+        assert_eq!(locked.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            locked.body.contains("Too many wrong codes"),
+            "{}",
+            locked.body
+        );
+        let right = enter(&app, &cookie, &key.code_at(now())).await;
+        assert_eq!(right.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(right.session_cookie().is_none());
+        assert_eq!(mails().await.len(), 1, "told once");
+
+        // A recovery code still works, and lifts the lock.
+        let recovered = enter(&app, &cookie, recovery).await;
+        assert_eq!(
+            recovered.status,
+            StatusCode::SEE_OTHER,
+            "{}",
+            recovered.body
+        );
+        assert!(recovered.session_cookie().is_some());
+        let totp = two_factor::get(&pool, alice.id).await.unwrap().unwrap();
+        assert_eq!((totp.failed_codes, totp.locked_until), (0, None));
+        let cookie = challenge(&log_in(&app).await);
+        let again = enter(&app, &cookie, &key.code_at(now())).await;
+        assert_eq!(again.status, StatusCode::SEE_OTHER, "{}", again.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -428,13 +428,17 @@ async fn callback(
 
     let user = match identities::user_for(db, &claims.iss, &claims.sub).await? {
         Some(user_id) => users::by_id(db, user_id).await?.ok_or(AppError::NotFound)?,
-        None => create_account(&state, &claims).await?,
+        None => create_account(&state, &info, &claims).await?,
     };
     let next = crate::account::safe_next(login.next.as_deref()).to_owned();
     match user.status {
         UserStatus::Active => {}
-        UserStatus::Pending | UserStatus::Unverified => {
+        UserStatus::Pending => {
             let jar = flash::set(jar, Flash::AwaitingApproval);
+            return Ok((jar, Redirect::to("/")).into_response());
+        }
+        UserStatus::Unverified => {
+            let jar = flash::set(jar, Flash::CheckEmail);
             return Ok((jar, Redirect::to("/")).into_response());
         }
         UserStatus::Deactivated => {
@@ -495,25 +499,63 @@ fn name_candidates(claims: &Claims) -> Vec<String> {
 }
 
 /// A user for someone logging in for the first time, if the site takes
-/// new accounts.
-async fn create_account(state: &AppState, claims: &Claims) -> Result<User, AppError> {
+/// new accounts. Signing up's rules apply as on the form: the limit per
+/// address, the email domains, and a confirmed address where the site
+/// asks for one. The captcha doesn't; the provider stands in for it.
+async fn create_account(
+    state: &AppState,
+    info: &RequestInfo,
+    claims: &Claims,
+) -> Result<User, AppError> {
     let site = state.site.get();
-    let status = match site.settings.registration_mode {
-        RegistrationMode::Open => UserStatus::Active,
-        RegistrationMode::Approval => UserStatus::Pending,
-        RegistrationMode::Invite | RegistrationMode::Closed => {
-            return Err(AppError::Blocked(
-                "No account here is linked to that login, and this site isn't taking new \
-                 accounts. If you have an account, log in with your password and link it \
-                 under Settings."
-                    .into(),
-            ));
-        }
-    };
+    let mode = site.settings.registration_mode;
+    if matches!(mode, RegistrationMode::Invite | RegistrationMode::Closed) {
+        return Err(AppError::Blocked(
+            "No account here is linked to that login, and this site isn't taking new \
+             accounts. If you have an account, log in with your password and link it \
+             under Settings."
+                .into(),
+        ));
+    }
+    state
+        .rate_limits
+        .check_register(info.ip)
+        .await
+        .inspect_err(|_| {
+            tracing::warn!(ip = ?info.ip, "registration through single sign-on rate limited");
+        })?;
+    let verify = crate::email::verification_required(state);
     let member = site
         .system_role(SystemRole::Member)
         .ok_or_else(|| AppError::Internal("the Member role is missing".into()))?;
     let mut tx = state.db.primary().begin().await?;
+    // The provider's address, if the site takes addresses at its domain
+    // and nobody here uses it yet.
+    let mut email = None;
+    if let Some(address) = claims.email.as_deref().map(str::trim).filter(|e| {
+        moekura_core::accounts::check_email(e).is_ok() && site.settings.email_domains.allows(e)
+    }) && users::by_email(&mut *tx, address).await?.is_none()
+    {
+        email = Some(address);
+    }
+    // The provider's word that the address is theirs is good enough.
+    // Otherwise it's only taken where the site confirms addresses, with
+    // a link as when signing up, and the account waits for that.
+    let verified = claims.email_verified();
+    let email = email.filter(|_| verified || verify);
+    if verify && email.is_none() {
+        return Err(AppError::Blocked(
+            "New accounts here need an email address the site accepts, and the provider \
+             didn't give one that's free to use. Sign up with your address instead; you can \
+             link the provider under Settings afterwards."
+                .into(),
+        ));
+    }
+    let status = match mode {
+        _ if verify && !verified => UserStatus::Unverified,
+        RegistrationMode::Approval => UserStatus::Pending,
+        _ => UserStatus::Active,
+    };
     let mut created = None;
     let names = name_candidates(claims)
         .into_iter()
@@ -541,18 +583,14 @@ async fn create_account(state: &AppState, claims: &Claims) -> Result<User, AppEr
     }
     let mut user =
         created.ok_or_else(|| AppError::Internal("no free name for a new account".into()))?;
-    // The provider's word that the address is theirs is good enough, if
-    // the site takes addresses at its domain.
-    if let Some(email) = claims
-        .email
-        .as_deref()
-        .filter(|e| claims.email_verified() && site.settings.email_domains.allows(e))
-        && users::by_email(&mut *tx, email).await?.is_none()
-    {
-        users::set_email(&mut *tx, user.id, Some(email), true)
+    if let Some(email) = email {
+        users::set_email(&mut *tx, user.id, Some(email), verified)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
         user.email = Some(email.to_owned());
+        if status == UserStatus::Unverified {
+            crate::email::send_verification(&mut tx, state, &user, email).await?;
+        }
     }
     identities::link(&mut *tx, user.id, &claims.iss, &claims.sub).await?;
     tx.commit().await?;
@@ -1148,6 +1186,110 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(pending, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn sign_ups_are_limited_per_address(pool: PgPool) {
+        let fake = provider().await;
+        let peer = "203.0.113.9:40000".parse().unwrap();
+        let app = TestApp::with_peer(
+            test_state_with(&pool, config(&fake)).await,
+            test_routes(),
+            peer,
+        );
+        for i in 0..5 {
+            let start = app.get("/login/oidc", None).await;
+            let state = at_provider(&fake, &start, claims(&fake, &format!("u{i}")));
+            let done = back(&app, &start, &state, None).await;
+            assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.body);
+        }
+        let start = app.get("/login/oidc", None).await;
+        let state = at_provider(&fake, &start, claims(&fake, "u5"));
+        assert_eq!(
+            back(&app, &start, &state, None).await.status,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        // Logging in to an account made already isn't signing up.
+        let start = app.get("/login/oidc", None).await;
+        let state = at_provider(&fake, &start, claims(&fake, "u0"));
+        assert!(
+            back(&app, &start, &state, None)
+                .await
+                .session_cookie()
+                .is_some()
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn sign_ups_follow_the_email_rules(pool: PgPool) {
+        let fake = provider().await;
+        let person = |sub: &str, email: Option<&str>, verified: bool| {
+            let mut claims = claims(&fake, sub);
+            claims["preferred_username"] = json!(sub);
+            claims["email"] = json!(email);
+            claims["email_verified"] = json!(verified);
+            claims
+        };
+        let sign_up = async |app: &TestApp, claims: serde_json::Value| {
+            let start = app.get("/login/oidc", None).await;
+            let state = at_provider(&fake, &start, claims);
+            back(app, &start, &state, None).await
+        };
+        moekura_db::settings::set(
+            &pool,
+            "email_domains",
+            json!({ "mode": "allow", "domains": ["example.com"] }),
+        )
+        .await
+        .unwrap();
+
+        // Without confirmation, an address the site refuses isn't taken.
+        let app = app(&pool, &fake).await;
+        let done = sign_up(&app, person("dave", Some("dave@example.org"), true)).await;
+        assert!(done.session_cookie().is_some(), "{}", done.body);
+        let dave = users::by_name(&pool, "dave").await.unwrap().unwrap();
+        assert_eq!(dave.email, None);
+
+        // Where addresses are confirmed, an account needs one the site
+        // takes...
+        moekura_db::settings::set(&pool, "email_verification", json!(true))
+            .await
+            .unwrap();
+        let mut config = config(&fake);
+        config.mail.host = "localhost".into();
+        config.mail.from = "Moekura <noreply@example.com>".into();
+        let app = TestApp::new(test_state_with(&pool, config).await, test_routes());
+        for email in [None, Some("bob@example.org")] {
+            let refused = sign_up(&app, person("bob", email, true)).await;
+            assert_eq!(refused.status, StatusCode::FORBIDDEN, "{email:?}");
+            assert!(refused.session_cookie().is_none());
+        }
+        assert!(users::by_name(&pool, "bob").await.unwrap().is_none());
+
+        // ...confirmed by the provider, or with the link sent to it.
+        let waiting = sign_up(&app, person("carol", Some("carol@example.com"), false)).await;
+        assert!(waiting.session_cookie().is_none());
+        assert_eq!(waiting.location.as_deref(), Some("/"));
+        let carol = users::by_name(&pool, "carol").await.unwrap().unwrap();
+        assert_eq!(carol.status, UserStatus::Unverified);
+        assert_eq!(carol.email.as_deref(), Some("carol@example.com"));
+        assert!(carol.email_verified_at.is_none());
+        let to: String = sqlx::query_scalar(
+            "SELECT payload->>'to' FROM jobs WHERE kind = 'mail.send' ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(to, "carol@example.com");
+        // Coming back before confirming doesn't log her in.
+        let again = sign_up(&app, person("carol", Some("carol@example.com"), false)).await;
+        assert!(again.session_cookie().is_none());
+
+        let done = sign_up(&app, person("erin", Some("erin@example.com"), true)).await;
+        assert!(done.session_cookie().is_some(), "{}", done.body);
+        let erin = users::by_name(&pool, "erin").await.unwrap().unwrap();
+        assert_eq!(erin.status, UserStatus::Active);
+        assert!(erin.email_verified_at.is_some());
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

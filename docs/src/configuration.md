@@ -136,7 +136,14 @@ approval when it's `approval`; with `invite` or `closed`, only people who
 [linked](using/account.md#single-sign-on) an existing account can. A new
 account takes its name from the provider (the next free one if it's
 taken), and the provider's email address if it says it's verified,
-nobody here uses it yet, and the site accepts its domain.
+nobody here uses it yet, and the site accepts its domain. Signing up this
+way counts towards the limit of new accounts per address, like the sign-up
+form. Where new accounts confirm their address (**Admin → Settings →
+Registration**), they need an address the site accepts: one the provider
+says is verified is good enough; otherwise a confirmation link is sent to
+it first, and without one, signing up through the provider is refused. The
+captcha isn't asked for, as the provider has already checked who is
+logging in.
 
 ### `[auth.captcha]`
 

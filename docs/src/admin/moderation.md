@@ -222,11 +222,15 @@ Settings → Spam** keep spam accounts out:
 - **Email domains**: a list of domains whose addresses are refused (such
   as disposable-mail services), or the only ones accepted (such as a
   school's). Each domain covers its subdomains. It applies when signing up
-  and changing an address; accounts made through single sign-on simply
-  don't take a refused address.
+  and changing an address; accounts made through single sign-on don't
+  take a refused address, and where new accounts confirm their address,
+  can't be made without one the site accepts.
 - **Captcha**: with a service set up (see
   [`[auth.captcha]`](../configuration.md#authcaptcha)), ask for it when
   signing up, and on comments by accounts younger than a number of days.
+  It isn't asked for when signing up through single sign-on, where the
+  provider has checked who is logging in; the limit of new accounts per
+  address still applies.
   Logging in to an account asks for it, whatever these say, while
   someone guesses its password from many networks at once.
 

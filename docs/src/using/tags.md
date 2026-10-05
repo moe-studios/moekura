@@ -147,10 +147,11 @@ An **implication** adds a tag: with `cat` implying `animal`, every post
 tagged `cat` is also tagged `animal`.
 
 Anyone who can edit posts can request them under **Tags → Aliases** and
-**Implications**; people who can manage tags approve them. Once approved,
-they're applied to existing posts in the background, and to every edit
-after. Each post's history shows which changes came from an alias or
-implication.
+**Implications**; people who can manage tags approve them. You can
+withdraw your own request while it's pending; after that, only they can
+end it. Once approved, they're applied to existing posts in the
+background, and to every edit after. Each post's history shows which
+changes came from an alias or implication.
 
 ### Voting and discussion
 

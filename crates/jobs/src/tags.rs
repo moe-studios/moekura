@@ -337,7 +337,7 @@ impl TagJobs {
                         b = b.as_str()
                     ))
                 })?;
-                tag_relations::remove(&self.db, relation.id, approver).await?;
+                tag_relations::remove(&self.db, relation.id, approver, &[Status::Active]).await?;
                 Ok(())
             }
             Command::Update { query, add, remove } => {
@@ -711,7 +711,9 @@ mod tests {
         assert_eq!(names, ["animal", "cat"]);
 
         // A removed relation's job does nothing.
-        tag_relations::remove(&pool, implication, 1).await.unwrap();
+        tag_relations::remove(&pool, implication, 1, &[Status::Active])
+            .await
+            .unwrap();
         let third = post(&pool, &["cat"]).await;
         jobs.apply(implication).await.unwrap();
         assert_eq!(tag_names(&pool, third).await, ["cat"]);

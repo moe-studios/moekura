@@ -556,7 +556,11 @@ pub(crate) async fn reject_relation(
     operation_id = "remove_tag_relation",
     tag = "moderation",
     params(("id" = i32, Path, description = "Relation id")),
-    responses((status = 200, body = ApiRelation), (status = 403, body = ErrorBody)),
+    responses(
+        (status = 200, body = ApiRelation),
+        (status = 403, body = ErrorBody),
+        (status = 422, body = ErrorBody, description = "Your request was decided before you could withdraw it"),
+    ),
 )]
 pub(crate) async fn remove_relation(
     State(state): State<AppState>,

@@ -471,16 +471,24 @@ pub async fn reject(db: &PgPool, id: i32, by: i64) -> Result<(), RelationError> 
     Ok(())
 }
 
-/// Withdraws a pending request or retires an active relation. Posts
+/// Withdraws a pending request or retires an active relation, if its
+/// status is one of `from`: a requester withdrawing passes only
+/// [`Status::Pending`], so a request approved meanwhile stays. Posts
 /// already rewritten stay as they are. Returns false if there was nothing
 /// to remove.
-pub async fn remove(db: &PgPool, id: i32, by: i64) -> sqlx::Result<bool> {
+pub async fn remove(db: &PgPool, id: i32, by: i64, from: &[Status]) -> sqlx::Result<bool> {
+    let from: Vec<&str> = from
+        .iter()
+        .filter(|s| matches!(s, Status::Pending | Status::Active))
+        .map(|s| s.as_str())
+        .collect();
     let result = sqlx::query(
         "UPDATE tag_relations SET status = 'deleted', approver_id = $2, updated_at = now()
-         WHERE id = $1 AND status IN ('pending', 'active')",
+         WHERE id = $1 AND status = ANY($3)",
     )
     .bind(id)
     .bind(by)
+    .bind(from)
     .execute(db)
     .await?;
     Ok(result.rows_affected() == 1)
@@ -665,8 +673,17 @@ mod tests {
         let rejected = by_id(&pool, second).await.unwrap().unwrap();
         assert_eq!(rejected.status, Status::Rejected);
         assert_eq!(rejected.approver_name.as_deref(), Some("admin"));
-        assert!(remove(&pool, first, by).await.unwrap());
-        assert!(!remove(&pool, first, by).await.unwrap());
+        // Withdrawing a request leaves it be once it's approved.
+        assert!(!remove(&pool, first, by, &[Status::Pending]).await.unwrap());
+        assert_eq!(
+            by_id(&pool, first).await.unwrap().unwrap().status,
+            Status::Active
+        );
+        let open = [Status::Pending, Status::Active];
+        assert!(remove(&pool, first, by, &open).await.unwrap());
+        assert!(!remove(&pool, first, by, &open).await.unwrap());
+        // Nor does it delete a rejected one.
+        assert!(!remove(&pool, second, by, &Status::ALL).await.unwrap());
         assert!(implied_by(&pool, &["a"]).await.unwrap().is_empty());
 
         let jobs: i64 =

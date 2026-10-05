@@ -10,12 +10,16 @@ pub struct Category {
     pub id: i16,
     pub name: String,
     pub description: String,
+    /// Only staff start topics here or move topics here.
+    pub staff_only: bool,
 }
 
 pub async fn categories(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<Category>> {
-    sqlx::query_as("SELECT id, name, description FROM forum_categories ORDER BY position, id")
-        .fetch_all(db)
-        .await
+    sqlx::query_as(
+        "SELECT id, name, description, staff_only FROM forum_categories ORDER BY position, id",
+    )
+    .fetch_all(db)
+    .await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -559,6 +563,18 @@ mod tests {
         .fetch_one(pool)
         .await
         .unwrap()
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn site_news_is_for_staff(pool: PgPool) {
+        let staff_only: Vec<String> = categories(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|c| c.staff_only)
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(staff_only, ["Site news"]);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

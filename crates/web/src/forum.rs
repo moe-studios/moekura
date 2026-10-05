@@ -87,6 +87,28 @@ pub(crate) fn clean_body(body: &str) -> Result<String, AppError> {
     Ok(body)
 }
 
+/// Whether `current` may start topics in `category`, or move topics to it:
+/// staff-only ones (such as the staff's announcements) are for staff.
+pub(crate) fn may_post_in(current: &CurrentUser, category: &forum::Category) -> bool {
+    !category.staff_only || moderates(current)
+}
+
+/// Checks `current` may put a topic in category `id`.
+async fn check_category(state: &AppState, current: &CurrentUser, id: i16) -> Result<(), AppError> {
+    let categories = forum::categories(state.db.primary()).await?;
+    let category = categories
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| AppError::Unprocessable("Choose a category.".into()))?;
+    if !may_post_in(current, category) {
+        return Err(AppError::Unprocessable(format!(
+            "Only staff can put topics in {}.",
+            category.name
+        )));
+    }
+    Ok(())
+}
+
 /// Topic `id`, if `current` may see it.
 pub(crate) async fn visible_topic(
     state: &AppState,
@@ -146,13 +168,7 @@ pub(crate) async fn start_topic(
     let title = clean_title(title)?;
     let body = clean_body(body)?;
     let db = state.db.primary();
-    if !forum::categories(db)
-        .await?
-        .iter()
-        .any(|c| c.id == category_id)
-    {
-        return Err(AppError::Unprocessable("Choose a category.".into()));
-    }
+    check_category(state, current, category_id).await?;
     state.rate_limits.check_comment(me).await?;
     let held = crate::held::check(state, current, &body).await?;
     let (topic, post) =
@@ -243,7 +259,11 @@ pub(crate) async fn open_request_topic(
 ) {
     let opened = async {
         let db = state.db.primary();
-        let categories = forum::categories(db).await?;
+        let categories: Vec<_> = forum::categories(db)
+            .await?
+            .into_iter()
+            .filter(|c| may_post_in(current, c))
+            .collect();
         let category = categories
             .iter()
             .find(|c| c.name == "Tags")
@@ -306,15 +326,21 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
         q.append_pair("page", &n.to_string());
         url_value(&format!("/forum_topics?{}", q.finish()))
     };
+    let categories = forum::categories(db).await?;
+    // No "New topic" in a category kept for staff, unless staff.
+    let may_post_here = categories
+        .iter()
+        .find(|c| Some(c.id) == query.category)
+        .is_none_or(|c| may_post_in(&page.current, c));
     Ok(page.render(
         "forum_topics.html",
         context! {
             topics => found.iter().map(topic_context).collect::<Vec<_>>(),
-            categories => forum::categories(db).await?.iter().map(|c| context! {
+            categories => categories.iter().map(|c| context! {
                 id => c.id, name => c.name, description => c.description,
             }).collect::<Vec<_>>(),
             query => context! { category => query.category, title => query.title },
-            can_post => page.current.is_logged_in() && page.current.can(Permission::Comment),
+            can_post => page.current.is_logged_in() && page.current.can(Permission::Comment) && may_post_here,
             logged_in => page.current.is_logged_in(),
             previous_url => (number > 1).then(|| list_url(number - 1)),
             next_url => more.then(|| list_url(number + 1)),
@@ -328,6 +354,7 @@ struct NewTopicQuery {
 }
 
 fn new_topic_context(
+    current: &CurrentUser,
     categories: &[forum::Category],
     category: Option<i16>,
     title: &str,
@@ -335,7 +362,11 @@ fn new_topic_context(
     error: Option<String>,
 ) -> Value {
     context! {
-        categories => categories.iter().map(|c| context! { id => c.id, name => c.name }).collect::<Vec<_>>(),
+        categories => categories
+            .iter()
+            .filter(|c| may_post_in(current, c))
+            .map(|c| context! { id => c.id, name => c.name })
+            .collect::<Vec<_>>(),
         category => category,
         title => title,
         body => body,
@@ -348,7 +379,7 @@ async fn new_topic(page: Page, Query(query): Query<NewTopicQuery>) -> Result<Res
     let categories = forum::categories(page.state().db.primary()).await?;
     Ok(page.render(
         "forum_topic_new.html",
-        new_topic_context(&categories, query.category, "", "", None),
+        new_topic_context(&page.current, &categories, query.category, "", "", None),
     ))
 }
 
@@ -388,6 +419,7 @@ async fn create_topic(
                 axum::http::StatusCode::UNPROCESSABLE_ENTITY,
                 "forum_topic_new.html",
                 new_topic_context(
+                    &page.current,
                     &categories,
                     Some(form.category),
                     &form.title,
@@ -482,7 +514,12 @@ async fn show(
             can_reply => can_post && !topic.is_deleted && (!topic.is_locked || staff),
             can_moderate => staff,
             can_edit_topic => staff || (me.is_some() && topic.creator_id == me && !topic.is_locked),
-            categories => forum::categories(db).await?.iter().map(|c| context! { id => c.id, name => c.name }).collect::<Vec<_>>(),
+            // Where the topic may move; it can stay where it is.
+            categories => forum::categories(db).await?
+                .iter()
+                .filter(|c| c.id == topic.category_id || may_post_in(&page.current, c))
+                .map(|c| context! { id => c.id, name => c.name })
+                .collect::<Vec<_>>(),
             previous_url => (number > 1).then(|| page_url(number - 1)),
             next_url => more.then(|| page_url(number + 1)),
         },
@@ -502,15 +539,10 @@ async fn update_topic(
         return Err(AppError::Forbidden);
     }
     let title = clean_title(&form.title)?;
-    let db = page.state().db.primary();
-    if !forum::categories(db)
-        .await?
-        .iter()
-        .any(|c| c.id == form.category)
-    {
-        return Err(AppError::Unprocessable("Choose a category.".into()));
+    if form.category != topic.category_id {
+        check_category(page.state(), &page.current, form.category).await?;
     }
-    forum::update_topic(db, id, &title, form.category).await?;
+    forum::update_topic(page.state().db.primary(), id, &title, form.category).await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&topic_url(id))).into_response())
 }
 
@@ -1107,6 +1139,114 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(body, "More casino");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn only_staff_post_news(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes().merge(crate::danbooru::test_support::routes()),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let staff = session_for(&pool, "staff", SystemRole::Moderator).await;
+        let categories = moekura_db::forum::categories(&pool).await.unwrap();
+        let general = categories[0].id;
+        let news = categories
+            .iter()
+            .find(|c| c.name == "Site news")
+            .unwrap()
+            .id;
+
+        let form = app.get("/forum_topics/new", Some(&alice)).await.body;
+        assert!(
+            form.contains(&format!("<option value=\"{general}\"")),
+            "{form}"
+        );
+        assert!(
+            !form.contains(&format!("<option value=\"{news}\"")),
+            "{form}"
+        );
+        let refused = app
+            .post_form(
+                "/forum_topics",
+                Some(&alice),
+                &[],
+                &format!("category={news}&title=Re-verify+your+account&body=Here"),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            refused
+                .body
+                .contains("Only staff can put topics in Site news."),
+            "{}",
+            refused.body
+        );
+        let danbooru = serde_json::json!({ "forum_topic": {
+            "title": "Hello", "category_id": news,
+            "original_post_attributes": { "body": "First" }
+        }});
+        let refused = app
+            .json("POST", "/forum_topics.json", Some(&alice), Some(danbooru))
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        // Nor can members move their topics there.
+        let created = app
+            .post_form(
+                "/forum_topics",
+                Some(&alice),
+                &[],
+                &format!("category={general}&title=Hello&body=Hi"),
+            )
+            .await;
+        let topic = id_after(&created.location.unwrap(), "/forum_topics/");
+        let moved = app
+            .post_form(
+                &format!("/forum_topics/{topic}"),
+                Some(&alice),
+                &[],
+                &format!("category={news}&title=Hello"),
+            )
+            .await;
+        assert_eq!(moved.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        // Staff can, and the topic's own category stays on offer.
+        let moved = app
+            .post_form(
+                &format!("/forum_topics/{topic}"),
+                Some(&staff),
+                &[],
+                &format!("category={news}&title=Hello"),
+            )
+            .await;
+        assert_eq!(moved.status, StatusCode::SEE_OTHER, "{}", moved.body);
+        let shown = app
+            .get(&format!("/forum_topics/{topic}"), Some(&alice))
+            .await
+            .body;
+        assert!(
+            shown.contains(&format!("<option value=\"{news}\" selected>Site news")),
+            "{shown}"
+        );
+        let renamed = app
+            .post_form(
+                &format!("/forum_topics/{topic}"),
+                Some(&alice),
+                &[],
+                &format!("category={news}&title=Hello+again"),
+            )
+            .await;
+        assert_eq!(renamed.status, StatusCode::SEE_OTHER, "{}", renamed.body);
+        let started = app
+            .post_form(
+                "/forum_topics",
+                Some(&staff),
+                &[],
+                &format!("category={news}&title=News&body=Hi"),
+            )
+            .await;
+        assert_eq!(started.status, StatusCode::SEE_OTHER, "{}", started.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

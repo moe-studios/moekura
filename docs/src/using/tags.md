@@ -191,8 +191,9 @@ own history.
 
 ## Deprecated tags
 
-A deprecated tag can't be added to posts any more, but stays on the posts
-that already have it until someone takes it off.
+A deprecated tag can't be added to posts any more, not even by
+reverting a post to a version that had it, but stays on the posts that
+already have it until someone takes it off.
 
 ## Tag scripts
 

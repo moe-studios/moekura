@@ -53,7 +53,7 @@ at the artist's request). What that does is a site setting, under
 - **Hide their posts** (on by default): posts with the artist's tag are
   left out of searches, and their pages aren't found.
 - **Refuse uploads** (on by default): uploads with the tag, and edits
-  adding it, are refused.
+  adding it (reverting to a version that had it, too), are refused.
 
 Staff who approve posts still see the posts and can post them. Bans are
 recorded in the moderation log.

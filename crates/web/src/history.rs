@@ -119,12 +119,23 @@ async fn revert(
     if !visibility(&page.current).allows(&post) {
         return Err(AppError::NotFound);
     }
-    // Through aliases and implications, as if tagged again today.
-    let names: Vec<String> = tags::by_ids(&mut *tx, &old.tag_ids)
-        .await?
-        .into_iter()
-        .map(|t| t.name)
+    let old_tags = tags::by_ids(&mut *tx, &old.tag_ids).await?;
+    // As the edit form refuses them: deprecated tags the post doesn't
+    // have now can't come back.
+    let mut deprecated: Vec<String> = old_tags
+        .iter()
+        .filter(|t| t.is_deprecated && !post.tag_ids.contains(&t.id))
+        .map(|t| format!("`{}`", t.name))
         .collect();
+    if !deprecated.is_empty() {
+        deprecated.sort();
+        return Err(AppError::Unprocessable(format!(
+            "That version has tags that are deprecated now and can't be added back: {}.",
+            deprecated.join(", ")
+        )));
+    }
+    // Through aliases and implications, as if tagged again today.
+    let names: Vec<String> = old_tags.into_iter().map(|t| t.name).collect();
     let wanted: Vec<WantedTag<'_>> = names
         .iter()
         .map(|name| WantedTag {
@@ -138,6 +149,15 @@ async fn revert(
         .iter()
         .map(|t| t.id)
         .collect();
+    crate::artists::refuse_banned(
+        page.state(),
+        &mut *tx,
+        &page.current,
+        &tag_ids,
+        &post.tag_ids,
+    )
+    .await
+    .map_err(AppError::Unprocessable)?;
     // A parent deleted since then is dropped rather than failing.
     let parent_id = match old.parent_id {
         Some(parent) if posts::by_id(&mut *tx, parent).await?.is_some() => Some(parent),
@@ -237,5 +257,87 @@ mod tests {
                 .status,
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn reverting_brings_back_no_banned_or_deprecated_tags(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::edit::routes())
+                .merge(crate::upload::routes(max)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        // Each uploaded, then edited to the second set of tags.
+        let posts = [
+            ("cat someone", "cat"),
+            ("dog old", "dog"),
+            ("bird old cute", "bird old"),
+        ];
+        let mut ids = Vec::new();
+        for (i, (tags, edited)) in posts.into_iter().enumerate() {
+            let fields = vec![("rating", "s".to_owned()), ("tags", tags.to_owned())];
+            let png = fixture::png(20 + 4 * i as u32, 20);
+            let response = app
+                .post_multipart("/upload", Some(&alice), &fields, Some(("a.png", &png)))
+                .await;
+            let id: i64 = response.location.unwrap()["/posts/".len()..]
+                .split('?')
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap();
+            let form = format!("old_tags={tags}&tags={edited}&rating=s");
+            let edit = app
+                .post_form(&format!("/posts/{id}/edit"), Some(&alice), &[], &form)
+                .await;
+            assert_eq!(edit.status, StatusCode::SEE_OTHER, "{}", edit.body);
+            ids.push(id);
+        }
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('someone', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE tags SET is_deprecated = true WHERE name = 'old'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let tags = async |id: i64| -> Vec<String> {
+            sqlx::query_scalar(
+                "SELECT t.name::text FROM posts p JOIN tags t ON t.id = ANY(p.tag_ids)
+                 WHERE p.id = $1 ORDER BY t.name",
+            )
+            .bind(id)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        let revert = async |id: i64| {
+            app.post(&format!("/posts/{id}/revert/1"), Some(&alice), &[])
+                .await
+        };
+
+        let banned = revert(ids[0]).await;
+        assert_eq!(banned.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            banned.body.contains("the artist is banned"),
+            "{}",
+            banned.body
+        );
+        assert_eq!(tags(ids[0]).await, ["cat"]);
+        let deprecated = revert(ids[1]).await;
+        assert_eq!(deprecated.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            deprecated.body.contains("deprecated now"),
+            "{}",
+            deprecated.body
+        );
+        assert_eq!(tags(ids[1]).await, ["dog"]);
+        // A deprecated tag the post still has doesn't stand in the way.
+        let kept = revert(ids[2]).await;
+        assert_eq!(kept.status, StatusCode::SEE_OTHER, "{}", kept.body);
+        assert_eq!(tags(ids[2]).await, ["bird", "cute", "old"]);
     }
 }

@@ -1059,7 +1059,7 @@ pub async fn prepare(state: &AppState, file: &TempUpload) -> Result<Prepared, Up
 /// `file` without its metadata, when `media.strip_metadata` asks for it
 /// and there was some to remove. `require` refuses types it can't be
 /// removed from.
-async fn strip_metadata(
+pub(crate) async fn strip_metadata(
     state: &AppState,
     file: &TempUpload,
     media_type: moekura_media::MediaType,
@@ -1283,7 +1283,7 @@ pub async fn create_post(
     Ok(post_id)
 }
 
-fn media_error(error: MediaError) -> UploadError {
+pub(crate) fn media_error(error: MediaError) -> UploadError {
     if error.is_internal() {
         UploadError::Internal(error.to_string())
     } else {

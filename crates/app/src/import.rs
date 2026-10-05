@@ -1,6 +1,7 @@
 //! `moekura admin import`: a folder of files, with tags from sidecar
 //! files, as posts.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
@@ -128,6 +129,10 @@ pub async fn run(config: Config, db: &Db, args: ImportArgs) -> anyhow::Result<()
     let mut counts = Counts::default();
     // Posts and their parents' files, linked once every file is in.
     let mut parents: Vec<(i64, String, [u8; 32])> = Vec::new();
+    // The post each file became, by the file's own SHA-256, which is what
+    // sidecars name parents by: a post stored without metadata has
+    // another.
+    let mut posts: HashMap<[u8; 32], i64> = HashMap::new();
     for path in &files {
         let name = path.strip_prefix(&args.dir).unwrap_or(path).display();
         let mut fail = |message: &str| {
@@ -172,23 +177,30 @@ pub async fn run(config: Config, db: &Db, args: ImportArgs) -> anyhow::Result<()
             source: sidecar.source.as_deref().unwrap_or_default(),
             description: sidecar.description.as_deref().unwrap_or_default(),
         };
-        match import_file(&state, &uploader, file).await {
-            Ok(Imported::Created(id)) => {
+        let outcome = match import_file(&state, &uploader, file).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                fail(&error);
+                continue;
+            }
+        };
+        posts.insert(outcome.file_sha256, outcome.imported.post());
+        match outcome.imported {
+            Imported::Created(id) => {
                 counts.imported += 1;
                 println!("imported   {name} as post #{id}");
                 if let Some(parent) = sidecar.parent_sha256 {
                     parents.push((id, name.to_string(), parent));
                 }
             }
-            Ok(Imported::Duplicate(id)) => {
+            Imported::Duplicate(id) => {
                 counts.duplicates += 1;
                 println!("duplicate  {name}: already post #{id}");
             }
-            Err(error) => fail(&error),
         }
     }
     for (child, name, parent) in &parents {
-        match link_parent(&state, &uploader, *child, parent).await {
+        match link_parent(&state, &uploader, *child, parent, &posts).await {
             Ok(Some(parent)) => println!("parent     {name}: post #{parent}"),
             Ok(None) => println!("           {name}: its parent's file isn't here"),
             Err(error) => println!("           {name}: parent not set: {error}"),
@@ -262,5 +274,78 @@ mod tests {
                 .contains("b.json")
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A JPEG made by ffmpeg, which writes a comment into it.
+    fn jpeg(path: &Path, size: u32) {
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-y", "-f", "lavfi"])
+            .arg("-i")
+            .arg(format!("testsrc2=size={size}x{size}:duration=1"))
+            .args(["-frames:v", "1"])
+            .arg(path)
+            .status()
+            .expect("ffmpeg is needed for import tests");
+        assert!(status.success());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn finds_parents_by_the_files_they_were_imported_from(pool: sqlx::PgPool) {
+        use sha2::Digest;
+
+        let root =
+            std::env::temp_dir().join(format!("moekura-import-parents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("files");
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut config = Config::default();
+        config.storage.path = root.join("storage");
+        config.media.work_dir = Some(root.join("work"));
+        let db = Db::from_pools(pool.clone(), vec![]);
+        crate::admin::create_user(&pool, "boss", "admin", None, "correct horse")
+            .await
+            .unwrap();
+        // As an export from a site that keeps originals as uploaded has
+        // them: the parent's comment is removed here, so its post gets
+        // another SHA-256 than the one its child's sidecar names.
+        let parent = dir.join("a.jpg");
+        jpeg(&parent, 40);
+        jpeg(&dir.join("b.jpg"), 44);
+        let parent_sha256: String = sha2::Sha256::digest(std::fs::read(&parent).unwrap())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        std::fs::write(dir.join("a.jpg.json"), r#"{"rating": "s"}"#).unwrap();
+        std::fs::write(
+            dir.join("b.jpg.json"),
+            format!(r#"{{"rating": "g", "parent_sha256": "{parent_sha256}"}}"#),
+        )
+        .unwrap();
+
+        let args = ImportArgs {
+            dir: dir.clone(),
+            uploader: "boss".into(),
+            rating: None,
+            tags: String::new(),
+            recursive: false,
+            dry_run: false,
+        };
+        run(config, &db, args).await.unwrap();
+        let posts: Vec<(i64, Option<i64>)> =
+            sqlx::query_as("SELECT id, parent_id FROM posts ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(posts.len(), 2, "{posts:?}");
+        assert_eq!(posts[0].1, None);
+        assert_eq!(posts[1].1, Some(posts[0].0), "the child has its parent");
+        let unchanged: Option<i64> =
+            sqlx::query_scalar("SELECT post_id FROM media_assets WHERE sha256 = decode($1, 'hex')")
+                .bind(&parent_sha256)
+                .fetch_optional(&pool)
+                .await
+                .unwrap();
+        assert_eq!(unchanged, None, "the parent was stored without its comment");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

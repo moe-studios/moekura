@@ -376,7 +376,8 @@ mod tests {
                 source: "https://example.com/art",
                 description: "a test pattern",
             };
-            let Imported::Created(id) = import_file(&state, &admin, file).await.unwrap() else {
+            let Imported::Created(id) = import_file(&state, &admin, file).await.unwrap().imported
+            else {
                 panic!("not created");
             };
             made.push(id);

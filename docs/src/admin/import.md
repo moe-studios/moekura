@@ -66,8 +66,13 @@ like `user:`) are left out with a note; the rest of the file is still
 imported.
 
 Once every file is in, posts whose sidecar names a parent's file get that
-post as their parent, if it's here (imported now or before). Pixiv ugoira
-are imported from their `.zip`.
+post as their parent, if it's here. A parent imported in the same run is
+found by the file it was imported from, even when its metadata was
+[removed](../using/posts.md#removing-metadata-from-originals) as it was
+stored, which gives its post another SHA-256. One imported before is
+found by the file it's stored as; if that lost its metadata, import the
+parent again with its children (it's skipped as a duplicate, and found).
+Pixiv ugoira are imported from their `.zip`.
 
 ## From other boorus
 

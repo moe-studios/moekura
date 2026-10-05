@@ -11,11 +11,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::header::CACHE_CONTROL;
+use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
+use hmac::{Hmac, KeyInit, Mac};
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::{Rating, SOURCE_MAX_LEN};
@@ -23,6 +25,7 @@ use moekura_db::posts;
 use moekura_db::staged_uploads::{self, Slot, Staged, Status, Upload};
 use moekura_db::users::User;
 use serde::Deserialize;
+use sha2::Sha256;
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -99,45 +102,99 @@ fn uploader(current: &CurrentUser) -> Result<&User, AppError> {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct NewQuery {
-    /// A link to upload from, filled in (by the bookmarklet), which
-    /// scripts send straight away.
+    /// A link to upload from, filled in (by the bookmarklet).
     url: String,
     /// The page the link is from (the bookmarklet sends
     /// `document.referrer`).
     #[serde(rename = "ref")]
     referer: String,
+    /// The user's [bookmarklet token](bookmarklet_token), with which
+    /// scripts send the link straight away. Without it the link waits for
+    /// the button: any site can link here with one.
+    token: String,
 }
 
 async fn new(page: Page, Query(query): Query<NewQuery>) -> Result<Response, AppError> {
     let user = uploader(&page.current)?;
-    let allowance = upload::allowance(page.state(), &page.current).await?;
-    let (new_uploader, _) = guidance(page.state(), user).await?;
+    let state = page.state();
+    let allowance = upload::allowance(state, &page.current).await?;
+    let (new_uploader, _) = guidance(state, user).await?;
     let link = Link {
         url: &query.url,
         referer: &query.referer,
     };
-    Ok(new_form(
-        &page,
-        link,
-        None,
-        StatusCode::OK,
-        Some(&allowance),
+    let send_now =
+        !query.url.is_empty() && is_bookmarklet_token(state, user.id, &query.token).await?;
+    let notes = FormNotes {
+        send_now,
+        allowance: Some(&allowance),
         new_uploader,
-    ))
+        many_files: None,
+    };
+    Ok(form_page(&page, link, None, StatusCode::OK, &notes))
+}
+
+/// What bookmarklet tokens are made with, in `moekura_db::secrets`.
+const BOOKMARKLET_KEY: &str = "bookmarklet";
+
+/// The MAC behind user `user_id`'s bookmarklet token.
+async fn bookmarklet_mac(state: &AppState, user_id: i64) -> Result<Hmac<Sha256>, AppError> {
+    let key = moekura_db::secrets::get_or_create(
+        state.db.primary(),
+        BOOKMARKLET_KEY,
+        moekura_core::tokens::NewToken::generate().hash,
+    )
+    .await?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(&key).expect("HMAC takes keys of any length");
+    mac.update(b"bookmarklet\n");
+    mac.update(user_id.to_string().as_bytes());
+    Ok(mac)
+}
+
+/// User `user_id`'s bookmarklet token. Their bookmarklet carries it, so
+/// the upload page it opens may send the link straight away.
+async fn bookmarklet_token(state: &AppState, user_id: i64) -> Result<String, AppError> {
+    let mac = bookmarklet_mac(state, user_id).await?;
+    Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
+/// Whether `token` is user `user_id`'s [bookmarklet token](bookmarklet_token).
+async fn is_bookmarklet_token(
+    state: &AppState,
+    user_id: i64,
+    token: &str,
+) -> Result<bool, AppError> {
+    let Ok(token) = hex::decode(token) else {
+        return Ok(false);
+    };
+    if token.is_empty() {
+        return Ok(false);
+    }
+    let mac = bookmarklet_mac(state, user_id).await?;
+    Ok(mac.verify_slice(&token).is_ok())
 }
 
 /// The bookmarklet to drag to the toolbar, and the sites whose works'
-/// pages are read.
-async fn bookmarklet(page: Page) -> Response {
-    let new_url = page
-        .state()
+/// pages are read. An uploader's carries their bookmarklet token.
+async fn bookmarklet(page: Page) -> Result<Response, AppError> {
+    let state = page.state();
+    let new_url = state
         .config
         .server
         .public_url
         .join("/uploads/new")
         .map_or_else(|_| "/uploads/new".to_owned(), String::from);
+    let token = match &page.current.user {
+        Some(user) if page.current.can(Permission::Upload) => {
+            Some(bookmarklet_token(state, user.id).await?)
+        }
+        _ => None,
+    };
+    let query = token
+        .as_deref()
+        .map_or_else(String::new, |token| format!("token={token}&"));
     let script = format!(
-        "javascript:location.href='{new_url}?url='+encodeURIComponent(location.href)\
+        "javascript:location.href='{new_url}?{query}url='+encodeURIComponent(location.href)\
          +'&ref='+encodeURIComponent(document.referrer)"
     );
     let mut sites: Vec<&moekura_core::sites::Site> = moekura_core::sites::ALL
@@ -147,16 +204,24 @@ async fn bookmarklet(page: Page) -> Response {
         .collect();
     sites.sort_by_cached_key(|site| site.name.to_lowercase());
     sites.dedup_by_key(|site| site.name);
-    page.render(
+    let mut response = page.render(
         "upload_bookmarklet.html",
         context! {
             script => script,
+            personal => token.is_some(),
             sites => sites.iter().map(|site| context! {
                 name => site.name,
                 url => site.url,
             }).collect::<Vec<_>>(),
         },
-    )
+    );
+    if token.is_some() {
+        // The token is the user's own: keep it out of every cache.
+        response
+            .headers_mut()
+            .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    Ok(response)
 }
 
 /// The link on the upload form, and the page it was found on.
@@ -169,6 +234,9 @@ pub(crate) struct Link<'a> {
 /// What the upload form says besides the link and what went wrong.
 #[derive(Default)]
 struct FormNotes<'a> {
+    /// Scripts send the link straight away: the user's bookmarklet opened
+    /// the page with it.
+    send_now: bool,
     allowance: Option<&'a Allowance>,
     /// The rules are pointed out to those who've posted little.
     new_uploader: bool,
@@ -214,8 +282,7 @@ fn form_page(
         context! {
             url => link.url,
             referer => link.referer,
-            // A link given before the page was asked for is sent at once.
-            send_now => error.is_none() && !link.url.is_empty(),
+            send_now => error.is_none() && notes.send_now,
             error => message,
             duplicate_of => duplicate_of,
             many_files => notes.many_files,
@@ -2107,18 +2174,39 @@ mod tests {
         let app = TestApp::new(state.clone(), routes(max).merge(upload::routes(max)));
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
 
-        // The bookmarklet opens the form with the link, which scripts send.
-        let query = url::form_urlencoded::Serializer::new(String::new())
-            .append_pair("url", &file)
-            .append_pair("ref", &work)
-            .finish();
-        let form = app
-            .get(&format!("/uploads/new?{query}"), Some(&alice))
-            .await;
+        // The bookmarklet opens the form with the link, which scripts send
+        // when it carries the user's token.
+        let token = bookmarklet_token(&state, current_user(&state, &alice).await.user.unwrap().id)
+            .await
+            .unwrap();
+        let opened = |token: &str| {
+            let query = url::form_urlencoded::Serializer::new(String::new())
+                .append_pair("token", token)
+                .append_pair("url", &file)
+                .append_pair("ref", &work)
+                .finish();
+            format!("/uploads/new?{query}")
+        };
+        let form = app.get(&opened(&token), Some(&alice)).await;
         assert!(form.body.contains("data-upload-send-now"), "{}", form.body);
         assert!(form.body.contains("name=\"ref\""), "{}", form.body);
         let plain = app.get("/uploads/new", Some(&alice)).await;
         assert!(!plain.body.contains("data-upload-send-now"));
+        // Any other site can link here with a link, which then waits for
+        // the button.
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let bobs = bookmarklet_token(&state, current_user(&state, &bob).await.user.unwrap().id)
+            .await
+            .unwrap();
+        for token in ["", "00", &bobs, &token[..32]] {
+            let form = app.get(&opened(token), Some(&alice)).await;
+            assert_eq!(form.status, StatusCode::OK);
+            assert!(!form.body.contains("data-upload-send-now"), "{token}");
+            assert!(
+                form.body
+                    .contains(&format!("value=\"http:&#x2f;&#x2f;{addr}"))
+            );
+        }
 
         // The bare image's work is the page it was found on.
         let sent = app
@@ -2161,7 +2249,7 @@ mod tests {
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn the_bookmarklet_page_lists_the_sites_read(pool: PgPool) {
-        let (app, _) = app(&pool).await;
+        let (app, state) = app(&pool).await;
         let page = app.get("/uploads/bookmarklet", None).await;
         assert_eq!(page.status, StatusCode::OK);
         assert!(
@@ -2177,6 +2265,31 @@ mod tests {
         for site in ["Pixiv", "X", "Fantia"] {
             assert!(page.body.contains(&format!(">{site}</a>")), "{site}");
         }
+        // Logged out, it carries no token, and says to log in first.
+        assert!(!page.body.contains("token="), "{}", page.body);
+        assert!(page.body.contains("Log in before"), "{}", page.body);
+
+        // An uploader's carries theirs, and is kept out of caches.
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let page = app.get("/uploads/bookmarklet", Some(&alice)).await;
+        let token = bookmarklet_token(&state, current_user(&state, &alice).await.user.unwrap().id)
+            .await
+            .unwrap();
+        assert!(
+            page.body
+                .contains(&format!("&#x2f;uploads&#x2f;new?token={token}&amp;url=")),
+            "{}",
+            page.body
+        );
+        let request = axum::http::Request::get("/uploads/bookmarklet")
+            .header(
+                axum::http::header::COOKIE,
+                format!("{}={alice}", crate::auth::SESSION_COOKIE),
+            )
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = app.raw(request).await;
+        assert_eq!(response.headers()[CACHE_CONTROL], "no-store");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

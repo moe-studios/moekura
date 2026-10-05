@@ -97,7 +97,8 @@ test("a typed link is sent with the button", async ({ page }) => {
   expect(links).toEqual(["https://example.com/image.png"]);
 });
 
-test("a link given with the page is sent at once, and going back skips the form", async ({ page }) => {
+test("a link the bookmarklet gives with the page is sent at once, and going back skips the form", async ({ page }) => {
+  // The server marks the form to be sent only when the bookmarklet's token is right.
   const prefilled = form.replace('id="url" name="url" type="url" value=""', 'id="url" name="url" type="url" value="https://example.com/work"');
   await page.route("**/uploads/new?*", (route) => route.fulfill({ contentType: "text/html", body: prefilled }));
   await page.route("**/uploads", (route) => {
@@ -105,7 +106,7 @@ test("a link given with the page is sent at once, and going back skips the form"
     // Requests following a redirect aren't routed: this page is the site's.
     return route.fulfill({ status: 303, headers: { Location: "/wiki" } });
   });
-  await page.goto("/uploads/new?url=https%3A%2F%2Fexample.com%2Fwork");
+  await page.goto("/uploads/new?token=abc&url=https%3A%2F%2Fexample.com%2Fwork");
   await page.addScriptTag({ content: script, type: "module" });
   await expect(page).toHaveURL(/\/wiki$/);
   expect(links).toEqual(["https://example.com/work"]);

@@ -1,8 +1,8 @@
 // The upload form sends files as soon as they're chosen, as Danbooru's
 // does: from the picker, the clipboard or a drop anywhere on the page, all
 // through the same native multipart field. A link is sent as soon as it's
-// pasted anywhere on the page, or when the page was opened with one (the
-// bookmarklet); a typed one is sent with the button.
+// pasted anywhere on the page, or when the user's bookmarklet opened the
+// page with one; a typed one is sent with the button.
 
 import { t } from "./i18n.ts";
 
@@ -99,9 +99,9 @@ export function enableUpload(root: Document = document): void {
     form.requestSubmit();
   };
 
-  // A link given with the page (`?url=`) is sent in the background, and
-  // the upload replaces this page in the history, so going back skips
-  // a form that would only send it again.
+  // A link the bookmarklet gave with the page (`?url=`) is sent in the
+  // background, and the upload replaces this page in the history, so
+  // going back skips a form that would only send it again.
   const sendInPlace = async (): Promise<void> => {
     const error = form.querySelector<HTMLElement>("[data-upload-error]");
     busy(true);

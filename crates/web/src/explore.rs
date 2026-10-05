@@ -42,6 +42,12 @@ const SEARCHES_SHOWN: i64 = 100;
 /// Most tags in a search that is counted.
 const MAX_COUNTED_TERMS: usize = 6;
 
+/// Most searches that found nothing one visitor adds to the missed
+/// searches a day, and most different ones counted a day: the list is
+/// for finding misspellings, not for anyone to fill with made-up tags.
+const MISSES_PER_VISITOR: u32 = 10;
+const MAX_MISSED: usize = 2_000;
+
 /// Views and searches counted since the last flush.
 #[derive(Default)]
 pub struct Tallies {
@@ -51,9 +57,13 @@ pub struct Tallies {
 
 #[derive(Default)]
 struct Counts {
-    /// The day `seen` is for.
+    /// The day `seen`, `misses_by` and `missed` are for.
     day: Option<Date>,
     seen: HashSet<u64>,
+    /// Searches that found nothing counted today, by visitor.
+    misses_by: HashMap<u64, u32>,
+    /// The different searches that found nothing counted today.
+    missed: HashSet<u64>,
     views: HashMap<(Date, i64), i32>,
     searches: HashMap<(Date, String), (i32, i32)>,
 }
@@ -61,11 +71,34 @@ struct Counts {
 impl Counts {
     /// Whether `key` wasn't seen yet today.
     fn first_today(&mut self, today: Date, key: u64) -> bool {
-        if self.day != Some(today) || self.seen.len() >= MAX_SEEN {
+        if self.day != Some(today) {
             self.day = Some(today);
+            self.seen.clear();
+            self.misses_by.clear();
+            self.missed.clear();
+        }
+        if self.seen.len() >= MAX_SEEN {
             self.seen.clear();
         }
         self.seen.insert(key)
+    }
+
+    /// Whether `visitor`'s search `query`, which found nothing, may still
+    /// be counted today (see [`MISSES_PER_VISITOR`] and [`MAX_MISSED`]).
+    fn may_miss(&mut self, visitor: u64, query: u64) -> bool {
+        if !self.missed.contains(&query) && self.missed.len() >= MAX_MISSED {
+            return false;
+        }
+        if !self.misses_by.contains_key(&visitor) && self.misses_by.len() >= MAX_SEEN {
+            return false;
+        }
+        let made = self.misses_by.entry(visitor).or_default();
+        if *made >= MISSES_PER_VISITOR {
+            return false;
+        }
+        *made += 1;
+        self.missed.insert(query);
+        true
     }
 }
 
@@ -80,11 +113,13 @@ fn is_bot(info: &RequestInfo) -> bool {
         .any(|word| agent.contains(word))
 }
 
-/// Who is looking: their account, or else their address.
+/// Who is looking: their account, or else their address (IPv6 by its
+/// /64, which one person usually has, so they can't count again by
+/// moving within it).
 fn visitor(current: &CurrentUser, info: &RequestInfo) -> Option<String> {
     match (&current.user, info.ip) {
         (Some(user), _) => Some(format!("u{}", user.id)),
-        (None, Some(ip)) => Some(format!("a{ip}")),
+        (None, Some(ip)) => Some(format!("a{}", crate::rate_limit::ip_bucket(ip))),
         (None, None) => None,
     }
 }
@@ -141,15 +176,19 @@ impl Tallies {
         let today = Self::today();
         let key = self.hasher.hash_one(("search", &who, query));
         let mut counts = self.counts.lock().unwrap_or_else(|e| e.into_inner());
-        if counts.first_today(today, key) {
-            let entry = counts
-                .searches
-                .entry((today, query.to_owned()))
-                .or_default();
-            entry.0 += 1;
-            if !found {
-                entry.1 += 1;
-            }
+        if !counts.first_today(today, key) {
+            return;
+        }
+        if !found && !counts.may_miss(self.hasher.hash_one(&who), self.hasher.hash_one(query)) {
+            return;
+        }
+        let entry = counts
+            .searches
+            .entry((today, query.to_owned()))
+            .or_default();
+        entry.0 += 1;
+        if !found {
+            entry.1 += 1;
         }
     }
 
@@ -429,8 +468,8 @@ pub(crate) async fn viewed_ids(
         .collect())
 }
 
-/// The searches made most in the range, or with `missed`, those that
-/// most often found nothing.
+/// The searches that most often found posts in the range, or with
+/// `missed`, those that most often found nothing.
 pub(crate) async fn top_searches(
     state: &AppState,
     current: &CurrentUser,
@@ -632,6 +671,69 @@ mod tests {
         let dgo = searches.iter().find(|s| s.query == "dgo").unwrap();
         assert_eq!((dgo.searches, dgo.misses), (1, 1));
         assert!(tallies.take().0.is_empty());
+
+        // Addresses in one IPv6 /64 are one visitor; IPv4-mapped ones are
+        // IPv4.
+        let from = |ip: &str| RequestInfo {
+            user_agent: Some(firefox.into()),
+            ip: Some(ip.parse().unwrap()),
+        };
+        for ip in [
+            "2001:db8:1:2::1",
+            "2001:db8:1:2::ffff",
+            "2001:db8:1:2:ab::9",
+        ] {
+            tallies.view(&alice, &from(ip), 7);
+            tallies.search(&alice, &from(ip), "cat", true);
+        }
+        tallies.view(&alice, &from("2001:db8:1:3::1"), 7);
+        tallies.view(&alice, &from("198.51.100.7"), 7);
+        tallies.view(&alice, &from("::ffff:198.51.100.7"), 7);
+        let (views, searches) = tallies.take();
+        assert_eq!((views[0].1, views[0].2), (7, 3));
+        assert_eq!(searches[0].searches, 1);
+    }
+
+    #[test]
+    fn caps_searches_that_found_nothing() {
+        let tallies = Tallies::default();
+        let nobody = CurrentUser::anonymous(&moekura_db::site_cache::SiteSnapshot::new(
+            Default::default(),
+            Vec::new(),
+        ));
+        let person = |n: u32| RequestInfo {
+            user_agent: Some("Mozilla/5.0 Firefox/140.0".into()),
+            ip: Some(std::net::IpAddr::from(n.to_be_bytes())),
+        };
+        // One visitor's misses count up to a point; what found posts
+        // still counts.
+        for i in 0..20 {
+            tallies.search(&nobody, &person(1), &format!("made_up_{i}"), false);
+        }
+        tallies.search(&nobody, &person(1), "cat", true);
+        let (_, searches) = tallies.take();
+        let misses = searches.iter().filter(|s| s.misses > 0).count();
+        assert_eq!(misses, MISSES_PER_VISITOR as usize);
+        assert!(searches.iter().any(|s| s.query == "cat" && s.misses == 0));
+
+        // However many visitors, so are the different misses a day; ones
+        // already counted keep counting.
+        let tallies = Tallies::default();
+        let mut made = 0;
+        for visitor in 0.. {
+            for _ in 0..MISSES_PER_VISITOR {
+                tallies.search(&nobody, &person(visitor), &format!("junk_{made}"), false);
+                made += 1;
+            }
+            if made > MAX_MISSED {
+                break;
+            }
+        }
+        tallies.search(&nobody, &person(u32::MAX), "junk_0", false);
+        let (_, searches) = tallies.take();
+        assert_eq!(searches.len(), MAX_MISSED);
+        let junk = searches.iter().find(|s| s.query == "junk_0").unwrap();
+        assert_eq!(junk.misses, 2);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
@@ -725,8 +827,10 @@ mod tests {
         let browser = [("user-agent", "Mozilla/5.0 Firefox/140.0")];
         let post = format!("/posts/{}", ids[1]);
         app.get_with_headers(&post, &browser).await;
-        app.get_with_headers("/posts?tags=nothing_here", &browser)
-            .await;
+        for search in ["nothing_here", "cat", "cat+-made_up"] {
+            app.get_with_headers(&format!("/posts?tags={search}"), &browser)
+                .await;
+        }
         flush(&state).await;
         let top = explore::most_viewed(&pool, today, today, 10).await.unwrap();
         assert!(top.contains(&(ids[1], 3)), "{top:?}");
@@ -737,5 +841,11 @@ mod tests {
             missed.contains(&("nothing_here".to_owned(), 1)),
             "{missed:?}"
         );
+        // Made-up tags aren't among the popular searches, even when the
+        // rest of the search found posts.
+        let made = app.get("/explore/posts/searches", None).await;
+        assert!(made.body.contains("/posts?tags=cat\""), "{}", made.body);
+        assert!(!made.body.contains("made_up"), "{}", made.body);
+        assert!(!made.body.contains("nothing_here"), "{}", made.body);
     }
 }

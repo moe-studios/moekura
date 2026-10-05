@@ -63,10 +63,19 @@
   {% if can_invite %}<p>{{ t("settings-invites") }}</p>{% endif %}
   <h2>{{ t("settings-feeds") }}</h2>
   <p class="hint">{{ t("settings-feeds-hint") }}</p>
-  <form class="inline" method="post" action="/settings/feed-token">
-    <button type="submit" name="action" value="new" class="secondary">{% if has_feed_token %}{{ t("settings-feed-token-new") }}{% else %}{{ t("settings-feed-token-make") }}{% endif %}</button>
-    {% if has_feed_token %}<button type="submit" name="action" value="revoke" class="secondary" data-confirm="{{ t('settings-feed-token-revoke-confirm') }}">{{ t("settings-feed-token-revoke") }}</button>{% endif %}
+  <form method="post" action="/settings/feed-token">
+    <input type="hidden" name="action" value="new">
+    {% if has_password %}
+    <label for="feed-password">{{ t("your-password") }}</label>
+    <input id="feed-password" name="password" type="password" autocomplete="current-password" required>
+    {% endif %}
+    <button type="submit" class="secondary">{% if has_feed_token %}{{ t("settings-feed-token-new") }}{% else %}{{ t("settings-feed-token-make") }}{% endif %}</button>
   </form>
+  {% if has_feed_token %}
+  <form class="inline" method="post" action="/settings/feed-token">
+    <button type="submit" name="action" value="revoke" class="secondary" data-confirm="{{ t('settings-feed-token-revoke-confirm') }}">{{ t("settings-feed-token-revoke") }}</button>
+  </form>
+  {% endif %}
   <p>{{ t("settings-saved-searches") }}</p>
 </section>
 {% endblock %}

@@ -307,20 +307,25 @@ async fn settings_form(page: Page) -> Result<Response, AppError> {
     let settings = UserSettings::from_json(&user.settings);
     let blacklist = crate::blacklist::text_for(page.state(), &page.current);
     let has_feed_token = moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
+    let has_password = users::has_password(page.state().db.primary(), user.id).await?;
     Ok(render_settings(
         &page,
         &settings,
         &blacklist,
         has_feed_token,
+        has_password,
         None,
     ))
 }
 
+/// `has_password`: whether the user has one to confirm a new feed token
+/// with.
 fn render_settings(
     page: &Page,
     settings: &UserSettings,
     blacklist: &str,
     has_feed_token: bool,
+    has_password: bool,
     error: Option<String>,
 ) -> Response {
     let max = page.state().search_config().max_per_page;
@@ -336,6 +341,7 @@ fn render_settings(
             error => error,
             blacklist => blacklist,
             has_feed_token => has_feed_token,
+            has_password => has_password,
             can_invite => crate::invites::may_invite(&page.current),
             per_page => settings.per_page,
             default_per_page => page.state().search_config().per_page,
@@ -476,11 +482,13 @@ async fn save_settings(
     if let Some(error) = error {
         let has_feed_token =
             moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
+        let has_password = users::has_password(page.state().db.primary(), user.id).await?;
         return Ok(render_settings(
             &page,
             &settings,
             &blacklist,
             has_feed_token,
+            has_password,
             Some(error),
         ));
     }

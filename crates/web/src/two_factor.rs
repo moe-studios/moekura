@@ -295,8 +295,10 @@ async fn code(
 
 // ---- settings -------------------------------------------------------------
 
+/// The user, logged in on the site: an API key (which skips two-factor
+/// login) can't change it.
 fn logged_in(page: &Page) -> Result<User, AppError> {
-    page.current.user.clone().ok_or(AppError::Unauthorized)
+    page.current.require_session().cloned()
 }
 
 /// The two-factor page in one of its states.
@@ -840,6 +842,32 @@ mod tests {
         let cookie = challenge(&log_in(&app).await);
         let again = enter(&app, &cookie, &key.code_at(now())).await;
         assert_eq!(again.status, StatusCode::SEE_OTHER, "{}", again.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn api_keys_cant_change_two_factor_login(pool: PgPool) {
+        let app = app(&pool).await;
+        let (alice, _) = member(&pool, "alice", "alice@example.com").await;
+        two_factor::begin(&pool, alice.id, &Secret::generate())
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        two_factor::enable(&mut conn, alice.id, 0, &[])
+            .await
+            .unwrap();
+        let key = moekura_db::api_keys::create(&pool, alice.id, "bot", None)
+            .await
+            .unwrap();
+        let off = app
+            .post_form(
+                "/settings/two-factor/disable",
+                None,
+                &[("authorization", &format!("Bearer {key}"))],
+                "password=correct+horse",
+            )
+            .await;
+        assert_eq!(off.status, StatusCode::FORBIDDEN);
+        assert!(two_factor::is_enabled(&pool, alice.id).await.unwrap());
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

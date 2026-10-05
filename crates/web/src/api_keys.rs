@@ -37,6 +37,9 @@ struct CreateForm {
     name: String,
     #[serde(default)]
     expires: String,
+    /// A key is a way in, so making one takes the password.
+    #[serde(default)]
+    password: String,
 }
 
 /// The page. `created` is a key just made, shown this once; `failed` a
@@ -46,9 +49,11 @@ async fn render(
     created: Option<(&str, &str)>,
     failed: Option<(&CreateForm, String)>,
 ) -> Result<Response, AppError> {
-    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let user = page.current.require_session()?;
+    let db = page.state().db.primary();
     let now = OffsetDateTime::now_utc();
-    let keys: Vec<Value> = api_keys::list(page.state().db.primary(), user.id)
+    let has_password = moekura_db::users::has_password(db, user.id).await?;
+    let keys: Vec<Value> = api_keys::list(db, user.id)
         .await?
         .into_iter()
         .map(|k| {
@@ -87,6 +92,7 @@ async fn render(
                 .collect::<Vec<_>>(),
             name_max => NAME_MAX_LEN,
             docs_url => crate::api::DOCS,
+            has_password => has_password,
         },
     );
     // The page may show a new key: keep it out of every cache.
@@ -100,10 +106,15 @@ async fn index(page: Page) -> Result<Response, AppError> {
     render(&page, None, None).await
 }
 
+/// Makes a key, after the password: whoever briefly had someone's session
+/// mustn't be able to leave with a key that outlives it.
 async fn create(page: Page, Form(form): Form<CreateForm>) -> Result<Response, AppError> {
-    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let user = page.current.require_session()?;
     let name = form.name.trim();
     let invalid = |message: &str| render(&page, None, Some((&form, message.to_owned())));
+    if !crate::auth::confirm_password(page.state(), user.id, &form.password).await? {
+        return invalid("Wrong password.").await;
+    }
     if name.is_empty() {
         return invalid("Give the key a name.").await;
     }
@@ -128,7 +139,7 @@ async fn create(page: Page, Form(form): Form<CreateForm>) -> Result<Response, Ap
 }
 
 async fn revoke(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let user = page.current.require_session()?;
     if !api_keys::revoke(page.state().db.primary(), user.id, id).await? {
         return Err(AppError::NotFound);
     }
@@ -146,7 +157,7 @@ mod tests {
     use moekura_core::permissions::SystemRole;
     use sqlx::PgPool;
 
-    use crate::test_support::{TestApp, session_for, test_state};
+    use crate::test_support::{TestApp, member, session_for, test_state};
 
     async fn app(pool: &PgPool) -> TestApp {
         let routes = super::routes().merge(crate::api::routes(1024));
@@ -258,6 +269,87 @@ mod tests {
             app.get_with_headers("/api/v1/posts", &auth).await.status,
             StatusCode::FORBIDDEN
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn making_a_key_takes_the_password_and_a_session(pool: PgPool) {
+        let app = app(&pool).await;
+        let (alice, session) = member(&pool, "alice", "alice@example.com").await;
+        let page = app.get("/settings/api-keys", Some(&session)).await;
+        assert!(page.body.contains("name=\"password\""), "{}", page.body);
+
+        let wrong = app
+            .post_form(
+                "/settings/api-keys",
+                Some(&session),
+                &[],
+                "name=bot&expires=never&password=nope",
+            )
+            .await;
+        assert_eq!(wrong.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(wrong.body.contains("Wrong password."), "{}", wrong.body);
+        let missing = app
+            .post_form(
+                "/settings/api-keys",
+                Some(&session),
+                &[],
+                "name=bot&expires=never",
+            )
+            .await;
+        assert_eq!(missing.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let none: i64 = sqlx::query_scalar("SELECT count(*) FROM api_keys")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(none, 0);
+
+        let made = app
+            .post_form(
+                "/settings/api-keys",
+                Some(&session),
+                &[],
+                "name=bot&expires=never&password=correct+horse",
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::OK, "{}", made.body);
+        let key = shown_key(&made.body);
+
+        // A key can't make (or see, or revoke) keys, even with the password.
+        let bearer = format!("Bearer {key}");
+        let by_key = app
+            .post_form(
+                "/settings/api-keys",
+                None,
+                &[("authorization", &bearer)],
+                "name=more&expires=never&password=correct+horse",
+            )
+            .await;
+        assert_eq!(by_key.status, StatusCode::FORBIDDEN, "{}", by_key.body);
+        assert!(by_key.body.contains("an API key can"), "{}", by_key.body);
+        assert_eq!(
+            app.get_with_headers("/settings/api-keys", &[("authorization", &bearer)])
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        let id: i64 = sqlx::query_scalar("SELECT id FROM api_keys WHERE user_id = $1")
+            .bind(alice.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let revoke = app
+            .post(
+                &format!("/settings/api-keys/{id}/revoke"),
+                None,
+                &[("authorization", &bearer)],
+            )
+            .await;
+        assert_eq!(revoke.status, StatusCode::FORBIDDEN);
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM api_keys")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

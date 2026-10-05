@@ -30,6 +30,7 @@
     <label for="password_confirm">{{ t("account-repeat-new") }}</label>
     <input id="password_confirm" name="password_confirm" type="password" autocomplete="new-password" required>
     <p class="hint">{{ t("account-password-hint") }}</p>
+    <label class="choice"><input type="checkbox" name="revoke_keys" value="1" checked> {{ t("account-revoke-keys") }}</label>
     <button type="submit">{{ t("password-change") }}</button>
   </form>
 </section>

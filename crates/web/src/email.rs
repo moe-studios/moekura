@@ -19,7 +19,7 @@ use moekura_core::settings::RegistrationMode;
 use moekura_db::account_tokens::{self, Purpose};
 use moekura_db::accounts::PasswordChangeError;
 use moekura_db::users::{self, InsertError, User, UserStatus};
-use moekura_db::{jobs, sessions};
+use moekura_db::{api_keys, jobs, sessions};
 use serde::Deserialize;
 use sqlx::PgConnection;
 
@@ -330,7 +330,8 @@ struct ResetForm {
 }
 
 /// Sets the new password and, in case someone else had got in, ends every
-/// session and drops other links mailed to the account.
+/// session and revokes what else lets them back in: API keys, the feed
+/// token and other links mailed to the account.
 async fn reset(
     State(state): State<AppState>,
     page: Page,
@@ -366,9 +367,16 @@ async fn reset(
         finish_signup(&mut tx, &state, &user).await?;
     }
     let ended = sessions::delete_all_for_user(&mut *tx, user.id).await?;
+    let keys = api_keys::delete_all_for_user(&mut *tx, user.id).await?;
+    moekura_db::feeds::set_token(&mut *tx, user.id, None).await?;
     account_tokens::delete_for_user(&mut *tx, user.id).await?;
     tx.commit().await?;
-    tracing::info!(user_id = user.id, sessions_ended = ended, "password reset");
+    tracing::info!(
+        user_id = user.id,
+        sessions_ended = ended,
+        keys_revoked = keys,
+        "password reset"
+    );
     Ok((
         flash::set(jar, Flash::PasswordChanged),
         Redirect::to("/login"),
@@ -425,8 +433,10 @@ fn render_account(
     )
 }
 
+/// The user, logged in on the site: an API key can't change how the
+/// account is logged in to.
 fn logged_in(page: &Page) -> Result<User, AppError> {
-    page.current.user.clone().ok_or(AppError::Unauthorized)
+    page.current.require_session().cloned()
 }
 
 async fn account(page: Page) -> Result<Response, AppError> {
@@ -534,10 +544,14 @@ struct PasswordChange {
     current: String,
     password: String,
     password_confirm: String,
+    /// Ticked (the form's default): also revoke the API keys and the feed
+    /// token, which would otherwise outlast the old password.
+    revoke_keys: Option<String>,
 }
 
 /// Changes the password, logs out every other session and drops reset
-/// links already mailed.
+/// links already mailed; with `revoke_keys`, revokes the API keys and the
+/// feed token too.
 async fn change_password(
     page: Page,
     jar: CookieJar,
@@ -578,10 +592,17 @@ async fn change_password(
         None => 0,
     };
     account_tokens::delete_for_user(&mut *tx, user.id).await?;
+    let keys = if form.revoke_keys.is_some() {
+        moekura_db::feeds::set_token(&mut *tx, user.id, None).await?;
+        api_keys::delete_all_for_user(&mut *tx, user.id).await?
+    } else {
+        0
+    };
     tx.commit().await?;
     tracing::info!(
         user_id = user.id,
         sessions_ended = ended,
+        keys_revoked = keys,
         "password changed"
     );
     Ok((
@@ -1109,6 +1130,104 @@ mod tests {
             .post_form("/reset-password", None, &[], &reset_fields(&link))
             .await;
         assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    }
+
+    async fn ways_in(pool: &PgPool, user_id: i64) -> (i64, bool) {
+        let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM api_keys WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        (
+            keys,
+            moekura_db::feeds::has_token(pool, user_id).await.unwrap(),
+        )
+    }
+
+    async fn give_ways_in(pool: &PgPool, user_id: i64) {
+        moekura_db::api_keys::create(pool, user_id, "bot", None)
+            .await
+            .unwrap();
+        let token = moekura_core::tokens::NewToken::generate();
+        moekura_db::feeds::set_token(pool, user_id, Some(&token.hash))
+            .await
+            .unwrap();
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn resetting_the_password_revokes_keys_and_feed_tokens(pool: PgPool) {
+        let app = app(&pool, true).await;
+        let (alice, _) = member(&pool, "alice", "alice@example.com").await;
+        give_ways_in(&pool, alice.id).await;
+        assert_eq!(ways_in(&pool, alice.id).await, (1, true));
+        let link = reset_link(&app, &pool, "alice@example.com").await;
+        let done = app
+            .post_form("/reset-password", None, &[], &reset_fields(&link))
+            .await;
+        assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.body);
+        assert_eq!(ways_in(&pool, alice.id).await, (0, false));
+
+        // Changing it does too, unless told not to.
+        let login = form(&[("name", "alice"), ("password", "battery staple")]);
+        let session = app
+            .post_form("/login", None, &[], &login)
+            .await
+            .session_cookie()
+            .unwrap();
+        assert!(
+            app.get("/settings/account", Some(&session))
+                .await
+                .body
+                .contains("name=\"revoke_keys\" value=\"1\" checked")
+        );
+        let change = |current: &str, new: &str, revoke: bool| {
+            let mut fields = vec![
+                ("current", current),
+                ("password", new),
+                ("password_confirm", new),
+            ];
+            if revoke {
+                fields.push(("revoke_keys", "1"));
+            }
+            form(&fields)
+        };
+        give_ways_in(&pool, alice.id).await;
+        app.post_form(
+            "/settings/account/password",
+            Some(&session),
+            &[],
+            &change("battery staple", "horse battery", false),
+        )
+        .await;
+        assert_eq!(ways_in(&pool, alice.id).await, (1, true));
+        app.post_form(
+            "/settings/account/password",
+            Some(&session),
+            &[],
+            &change("horse battery", "staple horse", true),
+        )
+        .await;
+        assert_eq!(ways_in(&pool, alice.id).await, (0, false));
+        accounts::authenticate(&pool, "alice", "staple horse")
+            .await
+            .unwrap();
+
+        // An API key can't change it, even with the password.
+        let key = moekura_db::api_keys::create(&pool, alice.id, "bot", None)
+            .await
+            .unwrap();
+        let by_key = app
+            .post_form(
+                "/settings/account/password",
+                None,
+                &[("authorization", &format!("Bearer {key}"))],
+                &change("staple horse", "a new horse", false),
+            )
+            .await;
+        assert_eq!(by_key.status, StatusCode::FORBIDDEN);
+        accounts::authenticate(&pool, "alice", "staple horse")
+            .await
+            .unwrap();
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

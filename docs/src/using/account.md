@@ -111,6 +111,8 @@ moderation log.
 
 Changing either needs your current password. Changing the password logs
 you out everywhere else, and reset links already emailed stop working.
+**Also revoke my API keys and feed token**, ticked unless you untick it,
+revokes those too: do that if you think someone else got in.
 
 An address is written plainly, as `name@example.com`, without a name
 in front or angle brackets.
@@ -120,7 +122,9 @@ you follow the link sent to it.
 
 **Forgot your password?** on the login page emails you a link to choose
 a new one. The link works for an hour, and only while that's still your
-address. Using it logs you out everywhere.
+address. Using it logs you out everywhere and revokes your API keys and
+feed token, in case someone else had got in. Single sign-on links stay:
+check them under **Single sign-on** and unlink any you don't recognise.
 
 Logging in is limited, against password guessing: five tries at an
 account from one network (an IPv4 address, or an IPv6 `/64`), then one
@@ -177,7 +181,8 @@ people who can manage users can turn two-factor login off for you
 log.
 
 [API keys](../api.md) don't need a code: keep them secret, and revoke any
-you no longer use.
+you no longer use. Making one asks for your password, and a key can't
+make more keys or change your login settings.
 
 ## Saved searches
 

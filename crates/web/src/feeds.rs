@@ -364,19 +364,25 @@ async fn comments_feed(
 struct TokenForm {
     /// `new` or `revoke`.
     action: String,
+    /// Needed for a new token, which is a way in.
+    #[serde(default)]
+    password: String,
 }
 
 /// Makes a new feed token (replacing any other), shown once, or revokes
-/// it.
+/// it. Making one takes the password and a session, not an API key.
 async fn feed_token(
     page: Page,
     jar: CookieJar,
     Form(form): Form<TokenForm>,
 ) -> Result<Response, AppError> {
-    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let user = page.current.require_session()?;
     let db = page.state().db.primary();
     match form.action.as_str() {
         "new" => {
+            if !crate::auth::confirm_password(page.state(), user.id, &form.password).await? {
+                return Err(AppError::Unprocessable("Wrong password.".into()));
+            }
             let token = NewToken::generate();
             feeds::set_token(db, user.id, Some(&token.hash)).await?;
             let q = url::form_urlencoded::Serializer::new(String::new())
@@ -549,5 +555,60 @@ mod tests {
                 .status,
             StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn new_tokens_take_the_password_and_a_session(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            routes().merge(crate::users::routes()),
+        );
+        let (bob, session) = crate::test_support::member(&pool, "bob", "bob@example.com").await;
+        assert!(
+            app.get("/settings", Some(&session))
+                .await
+                .body
+                .contains("id=\"feed-password\"")
+        );
+        let has_token = || async { feeds::has_token(&pool, bob.id).await.unwrap() };
+        let wrong = app
+            .post_form(
+                "/settings/feed-token",
+                Some(&session),
+                &[],
+                "action=new&password=nope",
+            )
+            .await;
+        assert_eq!(wrong.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(!has_token().await);
+
+        let key = moekura_db::api_keys::create(&pool, bob.id, "bot", None)
+            .await
+            .unwrap();
+        let by_key = app
+            .post_form(
+                "/settings/feed-token",
+                None,
+                &[("authorization", &format!("Bearer {key}"))],
+                "action=new&password=correct+horse",
+            )
+            .await;
+        assert_eq!(by_key.status, StatusCode::FORBIDDEN, "{}", by_key.body);
+        assert!(!has_token().await);
+
+        let made = app
+            .post_form(
+                "/settings/feed-token",
+                Some(&session),
+                &[],
+                "action=new&password=correct+horse",
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::OK, "{}", made.body);
+        assert!(has_token().await);
+        // Revoking needs no password.
+        app.post_form("/settings/feed-token", Some(&session), &[], "action=revoke")
+            .await;
+        assert!(!has_token().await);
     }
 }

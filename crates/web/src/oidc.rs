@@ -510,7 +510,7 @@ struct PasswordForm {
 /// Links a provider account to the logged-in user, after checking their
 /// password: a link is a way in.
 async fn link(page: Page, Form(form): Form<PasswordForm>) -> Result<Response, AppError> {
-    let user = page.current.user.clone().ok_or(AppError::Unauthorized)?;
+    let user = page.current.require_session()?.clone();
     let state = page.state();
     provider(state)?;
     state.rate_limits.check_confirm(user.id).await?;
@@ -526,7 +526,7 @@ async fn link(page: Page, Form(form): Form<PasswordForm>) -> Result<Response, Ap
 /// Unlinks a provider account. Accounts without a password keep their
 /// last one, or they couldn't log in any more.
 async fn unlink(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    let user = page.current.user.clone().ok_or(AppError::Unauthorized)?;
+    let user = page.current.require_session()?.clone();
     let db = page.state().db.primary();
     let linked = identities::for_user(db, user.id).await?;
     if linked.len() <= 1 && !users::has_password(db, user.id).await? {

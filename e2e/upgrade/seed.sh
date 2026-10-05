@@ -31,7 +31,8 @@ $moekura admin settings set site_name '"Upgrade test"'
 say an API key
 curl -fsS -c "$work/jar" -b "$work/jar" -H "$origin" -o /dev/null \
   --data-urlencode "name=$admin" --data-urlencode "password=$password" "$base/login"
-key=$(curl -fsS -b "$work/jar" -H "$origin" -d "name=upgrade test&expires=never" "$base/settings/api-keys" \
+key=$(curl -fsS -b "$work/jar" -H "$origin" -d "name=upgrade test&expires=never" \
+  --data-urlencode "password=$password" "$base/settings/api-keys" \
   | grep -o 'mka_[0-9a-f]\{64\}' | head -n 1)
 [ -n "$key" ] || { echo "could not create an API key" >&2; exit 1; }
 

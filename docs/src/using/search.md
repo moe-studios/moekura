@@ -239,6 +239,7 @@ user's uploads), or anything else you can search for. `/comments.atom`
 follows the newest comments.
 
 On a private site, feed readers can't log in; make a feed token under
-**Settings → Feeds** and add `&token=…` to the feed's address. The token
-reads feeds as you (with your blacklist) and does nothing else; making a
-new one or revoking it stops the old one working.
+**Settings → Feeds** (which asks for your password) and add `&token=…`
+to the feed's address. The token reads feeds as you (with your
+blacklist) and does nothing else; making a new one or revoking it stops
+the old one working, and so does resetting your password.

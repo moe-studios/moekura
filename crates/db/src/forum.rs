@@ -267,18 +267,25 @@ pub async fn create_post(
     .await
 }
 
+/// Replaces a post's text. When `held` (for review, with why), the post is
+/// hidden until the staff approve it, as a new one would be.
 pub async fn update_post(
     db: impl PgExecutor<'_>,
     id: i64,
     body: &str,
     updater_id: Option<i64>,
+    held: Option<&str>,
 ) -> sqlx::Result<bool> {
     let done = sqlx::query(
-        "UPDATE forum_posts SET body = $2, updater_id = $3, updated_at = now() WHERE id = $1",
+        "UPDATE forum_posts SET body = $2, updater_id = $3, updated_at = now(),
+                is_hidden = is_hidden OR $4::text IS NOT NULL,
+                held_reason = coalesce($4, held_reason)
+         WHERE id = $1",
     )
     .bind(id)
     .bind(body)
     .bind(updater_id)
+    .bind(held)
     .execute(db)
     .await?;
     Ok(done.rows_affected() > 0)
@@ -608,6 +615,30 @@ mod tests {
         .unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].id, reply);
+
+        // A held edit hides the post until the staff approve it.
+        update_post(&pool, reply, "Spam now", Some(bob), Some("links"))
+            .await
+            .unwrap();
+        let held: (String, bool, Option<String>) =
+            sqlx::query_as("SELECT body, is_hidden, held_reason FROM forum_posts WHERE id = $1")
+                .bind(reply)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(held, ("Spam now".into(), true, Some("links".into())));
+        assert_eq!(
+            super::topic(&pool, None, topic)
+                .await
+                .unwrap()
+                .unwrap()
+                .post_count,
+            1
+        );
+        update_post(&pool, first, "First post, edited", Some(alice), None)
+            .await
+            .unwrap();
+        assert!(!post(&pool, first).await.unwrap().unwrap().is_hidden);
         set_post_hidden(&pool, reply, true).await.unwrap();
         assert_eq!(
             super::topic(&pool, None, topic)

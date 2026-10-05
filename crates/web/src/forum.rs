@@ -717,17 +717,41 @@ async fn edit_post(
     Form(form): Form<PostForm>,
 ) -> Result<Response, AppError> {
     let state = page.state();
-    editable_post(state, &page.current, id).await?;
+    let p = editable_post(state, &page.current, id).await?;
     let body = clean_body(&form.body)?;
-    forum::update_post(
-        state.db.primary(),
-        id,
-        &body,
-        page.current.user.as_ref().map(|u| u.id),
-    )
-    .await?;
+    if save_edit(state, &page.current, &p, &body).await? {
+        return Ok((
+            flash::set(jar, Flash::Held),
+            Redirect::to(&topic_url(p.topic_id)),
+        )
+            .into_response());
+    }
     let location = post_location(state, &page.current, id).await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
+}
+
+/// Saves `body` (already cleaned) as the new text of post `p`, which
+/// [`editable_post`] let `current` change. Like a new post, a changed text
+/// counts against the rate limit and goes through the spam filter, which
+/// can hold the post again; returns whether it did.
+async fn save_edit(
+    state: &AppState,
+    current: &CurrentUser,
+    p: &forum::Post,
+    body: &str,
+) -> Result<bool, AppError> {
+    let me = require_poster(current)?;
+    let held = if body == p.body {
+        None
+    } else {
+        state.rate_limits.check_comment(me).await?;
+        crate::held::check(state, current, body).await?
+    };
+    forum::update_post(state.db.primary(), p.id, body, Some(me), held.as_deref()).await?;
+    if held.is_some() {
+        tracing::info!(forum_post = p.id, "forum post edit held");
+    }
+    Ok(held.is_some())
 }
 
 #[derive(Debug, Deserialize)]
@@ -1013,6 +1037,76 @@ mod tests {
         );
         let found = app.get("/forum_posts?body=same", None).await.body;
         assert!(found.contains("Same thing"), "{found}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn edits_go_through_the_spam_filter(pool: PgPool) {
+        moekura_db::settings::set(
+            &pool,
+            "spam_filter",
+            serde_json::json!({ "words": ["casino"] }),
+        )
+        .await
+        .unwrap();
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let staff = session_for(&pool, "staff", SystemRole::Moderator).await;
+        let general = moekura_db::forum::categories(&pool).await.unwrap()[0].id;
+        let created = app
+            .post_form(
+                "/forum_topics",
+                Some(&alice),
+                &[],
+                &format!("category={general}&title=Hello&body=Harmless"),
+            )
+            .await;
+        let topic = id_after(&created.location.unwrap(), "/forum_topics/");
+        let post: i64 = sqlx::query_scalar("SELECT id FROM forum_posts WHERE topic_id = $1")
+            .bind(topic)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        let edited = app
+            .post_form(
+                &format!("/forum_posts/{post}"),
+                Some(&alice),
+                &[],
+                "body=Best+casino+deals",
+            )
+            .await;
+        assert_eq!(edited.status, StatusCode::SEE_OTHER, "{}", edited.body);
+        assert_eq!(
+            edited.location.as_deref(),
+            Some(&*format!("/forum_topics/{topic}"))
+        );
+        let shown = app
+            .get(&format!("/forum_topics/{topic}"), Some(&alice))
+            .await
+            .body;
+        assert!(!shown.contains("casino"), "{shown}");
+        let held: Option<String> =
+            sqlx::query_scalar("SELECT held_reason FROM forum_posts WHERE id = $1")
+                .bind(post)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(held.as_deref(), Some("contains “casino”"));
+
+        // Staff edits are never held.
+        app.post_form(
+            &format!("/forum_posts/{post}"),
+            Some(&staff),
+            &[],
+            "body=More+casino",
+        )
+        .await;
+        let body: String = sqlx::query_scalar("SELECT body FROM forum_posts WHERE id = $1")
+            .bind(post)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(body, "More casino");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

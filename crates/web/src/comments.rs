@@ -182,6 +182,29 @@ pub(crate) fn check_author(current: &CurrentUser, comment: &Comment) -> Result<(
     Ok(())
 }
 
+/// Saves `body` (already cleaned) as the new text of `comment`, which
+/// [`check_author`] let `current` change. Like a new comment, a changed
+/// text counts against the rate limit and goes through the spam filter,
+/// which can hold the comment again; returns whether it did.
+pub(crate) async fn save_edit(
+    state: &AppState,
+    current: &CurrentUser,
+    comment: &Comment,
+    body: &str,
+) -> Result<bool, AppError> {
+    if body == comment.body {
+        return Ok(false);
+    }
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    state.rate_limits.check_comment(user.id).await?;
+    let held = crate::held::check(state, current, body).await?;
+    comments::update_held(state.db.primary(), comment.id, body, held.as_deref()).await?;
+    if held.is_some() {
+        tracing::info!(comment = comment.id, "comment edit held");
+    }
+    Ok(held.is_some())
+}
+
 /// Comments for templates, with the viewer's votes.
 async fn comment_contexts(
     state: &AppState,
@@ -304,6 +327,17 @@ pub(crate) async fn reply_draft(
     }))
 }
 
+/// What to tell someone whose comment or edit was refused, beside the
+/// text they wrote.
+fn refusal(error: &AppError) -> String {
+    match error {
+        AppError::TooManyRequests { retry_after_secs } => {
+            format!("You're commenting too quickly. Try again in {retry_after_secs} seconds.")
+        }
+        other => other.public_message().to_owned(),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct CommentForm {
     body: String,
@@ -323,17 +357,9 @@ async fn create(
 ) -> Result<Response, AppError> {
     let state = page.state();
     let post = visible_post(state, &page.current, id).await?;
-    let refused = |error: AppError| {
-        let message = match &error {
-            AppError::TooManyRequests { retry_after_secs } => {
-                format!("You're commenting too quickly. Try again in {retry_after_secs} seconds.")
-            }
-            other => other.public_message().to_owned(),
-        };
-        CommentDraft {
-            body: form.body.clone(),
-            error: Some(message),
-        }
+    let refused = |error: AppError| CommentDraft {
+        body: form.body.clone(),
+        error: Some(refusal(&error)),
     };
     let result = async {
         let body = clean_body(&form.body)?;
@@ -414,22 +440,32 @@ async fn edit(
 ) -> Result<Response, AppError> {
     let (comment, _) = visible_comment(page.state(), &page.current, id).await?;
     check_author(&page.current, &comment)?;
-    let body = match clean_body(&form.body) {
-        Ok(body) => body,
-        Err(error) => {
-            return Ok(page.render_with_status(
-                error.status(),
-                "comment_edit.html",
-                edit_context(
-                    &comment,
-                    &form.body,
-                    Some(error.public_message().to_owned()),
-                ),
-            ));
+    let saved = async {
+        let body = clean_body(&form.body)?;
+        save_edit(page.state(), &page.current, &comment, &body).await
+    }
+    .await;
+    match saved {
+        Ok(true) => Ok((
+            flash::set(jar, Flash::Held),
+            Redirect::to(&format!("/posts/{}#comments", comment.post_id)),
+        )
+            .into_response()),
+        Ok(false) => {
+            Ok((flash::set(jar, Flash::Saved), Redirect::to(&url(&comment))).into_response())
         }
-    };
-    comments::update(page.state().db.primary(), id, &body).await?;
-    Ok((flash::set(jar, Flash::Saved), Redirect::to(&url(&comment))).into_response())
+        Err(
+            error @ (AppError::Unauthorized
+            | AppError::Forbidden
+            | AppError::Blocked(_)
+            | AppError::Internal(_)),
+        ) => Err(error),
+        Err(error) => Ok(page.render_with_status(
+            error.status(),
+            "comment_edit.html",
+            edit_context(&comment, &form.body, Some(refusal(&error))),
+        )),
+    }
 }
 
 async fn delete(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
@@ -1247,6 +1283,73 @@ mod tests {
             "{}",
             refused.body
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn edits_go_through_the_spam_filter_and_rate_limit(pool: PgPool) {
+        moekura_db::settings::set(
+            &pool,
+            "spam_filter",
+            serde_json::json!({ "words": ["casino"] }),
+        )
+        .await
+        .unwrap();
+        let app = app(&pool).await;
+        let post = post(&pool, "active").await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let id = comments::create(&pool, post, user_id(&pool, "alice").await, "Nice", true)
+            .await
+            .unwrap();
+        let edit = format!("/comments/{id}/edit");
+
+        let held = app
+            .post_form(&edit, Some(&alice), &[], "body=Best+casino+deals")
+            .await;
+        assert_eq!(held.status, StatusCode::SEE_OTHER, "{}", held.body);
+        assert_eq!(
+            held.location.as_deref(),
+            Some(&*format!("/posts/{post}#comments"))
+        );
+        let stored: (bool, Option<String>) =
+            sqlx::query_as("SELECT is_deleted, held_reason FROM comments WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, (true, Some("contains “casino”".to_owned())));
+        assert!(
+            !app.get(&format!("/posts/{post}"), None)
+                .await
+                .body
+                .contains("casino")
+        );
+
+        // Edits count against the comment rate limit like new comments.
+        let other = comments::create(&pool, post, user_id(&pool, "alice").await, "Hi", true)
+            .await
+            .unwrap();
+        let edit = format!("/comments/{other}/edit");
+        for i in 0..4 {
+            let body = format!("body=Hi+{i}");
+            let saved = app.post_form(&edit, Some(&alice), &[], &body).await;
+            assert_eq!(saved.status, StatusCode::SEE_OTHER, "{i}: {}", saved.body);
+        }
+        let refused = app
+            .post_form(&edit, Some(&alice), &[], "body=Hi+again")
+            .await;
+        assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            refused.body.contains("You&#x27;re commenting too quickly"),
+            "{}",
+            refused.body
+        );
+        assert_eq!(
+            comments::by_id(&pool, other).await.unwrap().unwrap().body,
+            "Hi 3"
+        );
+        // Saving the same text again changes nothing, so counts for nothing.
+        let unchanged = app.post_form(&edit, Some(&alice), &[], "body=Hi+3").await;
+        assert_eq!(unchanged.status, StatusCode::SEE_OTHER);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

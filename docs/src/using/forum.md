@@ -4,7 +4,9 @@
 *General*, *Tags*, *Bugs and features* and *Site news*. Anyone who can
 comment can start a topic (**New topic**) or reply, in the same markup as
 comments; you can edit your own posts while the topic is open, and vote
-other people's posts up or down.
+other people's posts up or down. Posts and edits go through the same
+rate limit and [spam filter](../admin/moderation.md#spam-filter) as
+comments.
 
 Topics you haven't read since someone last posted in them are marked
 *unread*; opening a topic reads it, and **Mark all read** reads them all.

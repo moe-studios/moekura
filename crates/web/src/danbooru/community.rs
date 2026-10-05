@@ -206,9 +206,10 @@ async fn update_comment(
     let (comment, _) = crate::comments::visible_comment(&state, &current, id).await?;
     crate::comments::check_author(&current, &comment)?;
     let body = crate::comments::clean_body(fields.get("comment[body]").unwrap_or_default())?;
-    let db = state.db.primary();
-    comments::update(db, id, &body).await?;
-    let comment = comments::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    crate::comments::save_edit(&state, &current, &comment, &body).await?;
+    let comment = comments::by_id(state.db.primary(), id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     json(DanbooruComment::from(comment), "")
 }
 
@@ -686,6 +687,36 @@ mod tests {
                 .body,
         );
         assert_eq!(before[0]["body"], json!("one"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn changes_go_through_the_spam_filter(pool: PgPool) {
+        moekura_db::settings::set(&pool, "spam_filter", json!({ "words": ["casino"] }))
+            .await
+            .unwrap();
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let post = upload(&app, &alice, 20, "cat").await;
+        let created = app
+            .post_form(
+                "/comments.json",
+                Some(&alice),
+                &[],
+                &format!("comment[post_id]={post}&comment[body]=Nice"),
+            )
+            .await;
+        let id = parse(&created.body)["id"].as_i64().unwrap();
+        let changed = app
+            .json(
+                "PUT",
+                &format!("/comments/{id}.json"),
+                Some(&alice),
+                Some(json!({ "comment": { "body": "casino" } })),
+            )
+            .await;
+        assert_eq!(changed.status, StatusCode::OK, "{}", changed.body);
+        assert_eq!(parse(&changed.body)["is_deleted"], json!(true));
+        assert_eq!(parse(&app.get("/comments.json", None).await.body), json!([]));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

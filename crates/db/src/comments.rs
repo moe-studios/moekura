@@ -160,11 +160,28 @@ pub async fn list(
 
 /// Replaces a comment's text, marking it edited.
 pub async fn update(db: impl PgExecutor<'_>, id: i64, body: &str) -> sqlx::Result<()> {
-    sqlx::query("UPDATE comments SET body = $2, edited_at = now() WHERE id = $1 AND body <> $2")
-        .bind(id)
-        .bind(body)
-        .execute(db)
-        .await?;
+    update_held(db, id, body, None).await
+}
+
+/// [`update`], but when `held` (for review, with why) the comment is
+/// deleted until the staff approve it, as a new one would be.
+pub async fn update_held(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    body: &str,
+    held: Option<&str>,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE comments SET body = $2, edited_at = now(),
+                is_deleted = is_deleted OR $3::text IS NOT NULL,
+                held_reason = coalesce($3, held_reason)
+         WHERE id = $1 AND body <> $2",
+    )
+    .bind(id)
+    .bind(body)
+    .bind(held)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
@@ -555,6 +572,19 @@ mod tests {
         assert_eq!(edited.body, "one, edited");
         assert!(edited.edited_at.is_some());
         assert_eq!(edited.creator_name.as_deref(), Some("alice"));
+
+        // A held edit hides the comment until the staff approve it.
+        update_held(&pool, ids[3], "three, spam", Some("links"))
+            .await
+            .unwrap();
+        let held: (String, bool, Option<String>) =
+            sqlx::query_as("SELECT body, is_deleted, held_reason FROM comments WHERE id = $1")
+                .bind(ids[3])
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(held, ("three, spam".into(), true, Some("links".into())));
+        assert_eq!(counts(&pool, active).await.0, 1);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

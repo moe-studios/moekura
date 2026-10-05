@@ -258,7 +258,9 @@ holds:
 - anything containing one of the **spam words**, one word or phrase per
   line, whatever the case.
 
-Set a number to 0 to stop holding for it. People who can *Hide comments
+Set a number to 0 to stop holding for it. Changing a comment or forum
+post is checked the same way: a change that would be held as a new text
+hides it again until the staff approve it. People who can *Hide comments
 and handle reports about them* are never held, and review what is under
 **Moderation → Held for review**, oldest first, with why each was held.
 **Approve** lets it through as if just posted (mentions, replies and

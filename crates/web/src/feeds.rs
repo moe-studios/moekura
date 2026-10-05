@@ -122,7 +122,8 @@ fn refused(message: &'static str) -> Response {
         .into_response()
 }
 
-/// Escapes text for XML.
+/// Escapes text for XML, dropping characters XML 1.0 doesn't allow, any
+/// one of which would make the whole document unreadable.
 pub(crate) fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -132,12 +133,19 @@ pub(crate) fn escape(text: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
-            // Not allowed in XML 1.0.
-            c if c.is_control() && !matches!(c, '\n' | '\r' | '\t') => {}
+            c if !xml_char(c) => {}
             c => out.push(c),
         }
     }
     out
+}
+
+/// Whether `c` may be in an XML 1.0 document (its `Char` production),
+/// leaving out the control characters it merely discourages too.
+fn xml_char(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r')
+        || (matches!(c, '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..)
+            && !c.is_control())
 }
 
 fn rfc3339(at: OffsetDateTime) -> String {
@@ -516,6 +524,10 @@ mod tests {
         moekura_db::comments::create(&pool, cat, alice, "So [b]fluffy[/b]", true)
             .await
             .unwrap();
+        // XML has no place for these, and one would spoil the whole feed.
+        moekura_db::comments::create(&pool, cat, alice, "Odd\u{FFFF}\u{FFFE} one", true)
+            .await
+            .unwrap();
         let comments = app.get("/comments.atom", None).await;
         assert!(
             comments.body.contains("<title>alice on post #"),
@@ -527,6 +539,21 @@ mod tests {
                 .body
                 .contains("So &lt;strong&gt;fluffy&lt;/strong&gt;")
         );
+        assert!(comments.body.contains("Odd one"), "{}", comments.body);
+    }
+
+    #[test]
+    fn escapes_for_xml() {
+        assert_eq!(
+            escape("<a href=\"x\">Tom & Jerry's</a>"),
+            "&lt;a href=&quot;x&quot;&gt;Tom &amp; Jerry&apos;s&lt;/a&gt;"
+        );
+        // Only what XML 1.0 allows is kept.
+        assert_eq!(
+            escape("a\u{0}b\u{1F}c\u{7F}\u{85}d\u{FFFE}\u{FFFF}e\u{D7FF}\u{E000}\u{FFFD}\u{10000}"),
+            "abcde\u{D7FF}\u{E000}\u{FFFD}\u{10000}"
+        );
+        assert_eq!(escape("line\r\n\tend"), "line\r\n\tend");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

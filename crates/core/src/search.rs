@@ -1575,10 +1575,15 @@ fn write_dates(
     until: Option<Date>,
 ) -> fmt::Result {
     let last = |d: Date| d.previous_day().unwrap_or(d);
+    // The last day there is doesn't read back (it has no day after), so
+    // it is written through the day before.
+    let end = |d: Date| d.next_day().is_none();
     match (from, until) {
         (Some(a), Some(b)) if a == last(b) => write!(f, "{name}:{a}"),
         (Some(a), Some(b)) => write!(f, "{name}:{a}..{}", last(b)),
+        (Some(a), None) if end(a) => write!(f, "{name}:>{}", last(a)),
         (Some(a), None) => write!(f, "{name}:>={a}"),
+        (None, Some(b)) if end(b) => write!(f, "{name}:<={}", last(b)),
         (None, Some(b)) => write!(f, "{name}:<{b}"),
         (None, None) => write!(f, "{name}:>=0001-01-01"),
     }
@@ -1882,6 +1887,21 @@ mod tests {
         }
         assert!(error("updated:9999-12-31").contains("expected an age"));
         assert!(error("-updated:<=9999-12-31").contains("expected an age"));
+        // Ranges ending on the last day print as searches that read back.
+        assert_eq!(
+            range("date:>9999-12-30"),
+            (Some(date!(9999 - 12 - 31)), None)
+        );
+        for input in [
+            "date:>9999-12-30",
+            "date:<=9999-12-30",
+            "-updated:>9999-12-30",
+            "updated:<=9999-12-30",
+        ] {
+            let printed = parse(input).to_string();
+            assert_eq!(printed, input);
+            assert_eq!(parse(&printed), parse(input));
+        }
     }
 
     #[test]

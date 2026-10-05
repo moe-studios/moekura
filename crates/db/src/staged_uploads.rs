@@ -326,6 +326,24 @@ pub async fn waiting(db: impl PgExecutor<'_>, uploader_id: i64) -> sqlx::Result<
     .await
 }
 
+/// The newest of `uploader_id`'s stored files with this content that
+/// isn't a post yet, if any.
+pub async fn waiting_copy(
+    db: impl PgExecutor<'_>,
+    uploader_id: i64,
+    sha256: &[u8; 32],
+) -> sqlx::Result<Option<i64>> {
+    sqlx::query_scalar(
+        "SELECT id FROM staged_uploads
+         WHERE uploader_id = $1 AND sha256 = $2 AND status = 'ready' AND post_id IS NULL
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(uploader_id)
+    .bind(&sha256[..])
+    .fetch_optional(db)
+    .await
+}
+
 /// Upload `upload_id`'s files, in order.
 pub async fn of_upload(db: impl PgExecutor<'_>, upload_id: i64) -> sqlx::Result<Vec<Staged>> {
     sqlx::query_as("SELECT * FROM staged_uploads WHERE upload_id = $1 ORDER BY position, id")

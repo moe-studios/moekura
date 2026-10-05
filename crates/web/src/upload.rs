@@ -797,10 +797,12 @@ impl From<Refused> for UploadError {
 ///
 /// `interactive` is false only for imports run by the site's operator.
 /// Otherwise the uploader's limits are counted again as the post is made,
-/// and unless `fields.allow_similar` is set, a file that looks like posts
-/// the uploader can see isn't posted: it's kept as a staged upload and
-/// [`UploadError::Similar`] names the posts, so the uploader can look and
-/// then confirm with [`post_staged`].
+/// and the file may wait as a staged upload instead of being posted:
+/// unless `fields.allow_similar` is set, a file that looks like posts the
+/// uploader can see isn't posted, and [`UploadError::Similar`] names the
+/// posts, so the uploader can look and then confirm with [`post_staged`];
+/// and a new uploader's file waits for the tagger (see
+/// [`check_new_uploader`]).
 pub async fn ingest(
     state: &AppState,
     uploader: &CurrentUser,
@@ -837,8 +839,18 @@ async fn post_prepared(
     let Some(user) = uploader.user.as_ref().filter(|_| interactive) else {
         return insert_post(state, uploader, prepared, fields, interactive).await;
     };
+    let held = new_uploader_held(state, uploader).await?;
+    let hash = if held || !fields.allow_similar {
+        phash(state, file).await
+    } else {
+        None
+    };
+    let origin = || Origin {
+        link: &fields.url,
+        source: &fields.source,
+        referer: &fields.referer,
+    };
     if !fields.allow_similar {
-        let hash = phash(state, file).await;
         let close = media::SIMILAR_MAX_DISTANCE;
         let posts: Vec<i64> = lookalikes(state, uploader, hash, None, close, LOOKALIKES_SHOWN)
             .await?
@@ -846,18 +858,27 @@ async fn post_prepared(
             .map(|(id, _)| id)
             .collect();
         if !posts.is_empty() {
-            let origin = Origin {
-                link: &fields.url,
-                source: &fields.source,
-                referer: &fields.referer,
-            };
-            let (upload, staged) = stage(state, user.id, file, prepared, hash, origin).await?;
+            let (upload, staged) = stage(state, user.id, file, prepared, hash, origin()).await?;
             return Err(UploadError::Similar(Lookalikes {
                 posts,
                 staged,
                 upload,
             }));
         }
+    }
+    if held {
+        // The tagger looks at staged files. Sending the file again once
+        // it has posts the copy it looked at.
+        let db = state.db.primary();
+        let staged = match staged_uploads::waiting_copy(db, user.id, &prepared.sha256).await? {
+            Some(staged) => staged,
+            None => {
+                stage(state, user.id, file, prepared, hash, origin())
+                    .await?
+                    .1
+            }
+        };
+        return post_staged(state, uploader, staged, fields).await;
     }
     insert_post(state, uploader, prepared, fields, true).await
 }
@@ -1126,6 +1147,26 @@ pub async fn post_staged(
     Ok(post_id)
 }
 
+/// Whether `uploader`'s files wait for the tagger before they're posted:
+/// the site blocks some of what it finds for uploaders without an active
+/// post yet (`tagger.new_uploader_blocked`), and they have none.
+async fn new_uploader_held(state: &AppState, uploader: &CurrentUser) -> Result<bool, UploadError> {
+    let Some(user) = &uploader.user else {
+        return Ok(false);
+    };
+    let blocks = !state
+        .site
+        .get()
+        .settings
+        .tagger
+        .new_uploader_blocked
+        .is_empty();
+    if !blocks || !state.config.tagger.enabled {
+        return Ok(false);
+    }
+    Ok(!posts::has_active_upload(state.db.primary(), user.id).await?)
+}
+
 /// Refuses posting staged file `staged_id` for an uploader without an
 /// active post yet when the tagger found something the site blocks for
 /// them (`tagger.new_uploader_blocked`, as Danbooru's
@@ -1136,18 +1177,15 @@ pub(crate) async fn check_new_uploader(
     uploader: &CurrentUser,
     staged_id: i64,
 ) -> Result<(), UploadError> {
-    let site = state.site.get();
-    let blocked = &site.settings.tagger.new_uploader_blocked;
     let Some(user) = &uploader.user else {
         return Ok(());
     };
-    if blocked.is_empty() || !state.config.tagger.enabled {
+    if !new_uploader_held(state, uploader).await? {
         return Ok(());
     }
+    let site = state.site.get();
+    let blocked = &site.settings.tagger.new_uploader_blocked;
     let db = state.db.primary();
-    if posts::has_active_upload(db, user.id).await? {
-        return Ok(());
-    }
     let refused = || UploadError::Invalid("Post failed, try again later.".into());
     let Some(found) = moekura_db::tag_suggestions::staged_result(db, staged_id).await? else {
         return Err(refused());
@@ -2609,6 +2647,106 @@ mod tests {
             matches!(&full, Err(UploadError::Limit(m)) if m.contains("the most you may have")),
             "{full:?}"
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn new_uploaders_files_wait_for_the_tagger(pool: PgPool) {
+        settings::set(
+            &pool,
+            "tagger",
+            json!({ "new_uploader_blocked": [{ "tag": "ai-generated", "confidence": 50 }] }),
+        )
+        .await
+        .unwrap();
+        let mut config = crate::test_support::test_config();
+        config.tagger.enabled = true;
+        let state = crate::test_support::test_state_with(&pool, config).await;
+        let max = max_bytes(&state);
+        let routes = routes(max)
+            .merge(crate::uploads::routes(max))
+            .merge(crate::api::routes(max));
+        let app = TestApp::new(state.clone(), routes);
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let ai: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('ai-generated') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let staged_copies = async |png: &[u8]| -> Vec<i64> {
+            sqlx::query_scalar("SELECT id FROM staged_uploads WHERE sha256 = $1 ORDER BY id")
+                .bind(Sha256::digest(png).to_vec())
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        };
+        let tagged = async |staged: i64, confidence: f32| {
+            moekura_db::tag_suggestions::save_staged(
+                &pool,
+                staged,
+                "test",
+                Rating::General,
+                0.9,
+                &[(ai, confidence)],
+            )
+            .await
+            .unwrap();
+        };
+        let send = async |png: &[u8]| {
+            app.post_multipart("/upload", Some(&alice), &fields("g"), Some(("a.png", png)))
+                .await
+        };
+        let posts = async || -> i64 {
+            sqlx::query_scalar("SELECT count(*) FROM posts")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+
+        // Not looked at yet: kept for the tagger, and refused without
+        // saying why. Through the API too.
+        let png = fixture::png(40, 30);
+        let refused = send(&png).await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            refused.body.contains("Post failed, try again later."),
+            "{}",
+            refused.body
+        );
+        let api = app
+            .post_multipart(
+                "/api/v1/posts",
+                Some(&alice),
+                &fields("g"),
+                Some(("a.png", &png)),
+            )
+            .await;
+        assert_eq!(api.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", api.body);
+        let copies = staged_copies(&png).await;
+        assert_eq!(copies.len(), 1, "sending it again uses the same copy");
+        // Found AI-generated: still refused.
+        tagged(copies[0], 0.8).await;
+        assert_eq!(send(&png).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(posts().await, 0);
+
+        // Not sure enough: sending it again posts the copy.
+        let other = fixture::png(44, 30);
+        assert_eq!(send(&other).await.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let copy = staged_copies(&other).await[0];
+        tagged(copy, 0.3).await;
+        let posted = send(&other).await;
+        assert_eq!(posted.status, StatusCode::SEE_OTHER, "{}", posted.body);
+        let post = post_in(posted.location.as_deref());
+        let used: Option<i64> =
+            sqlx::query_scalar("SELECT post_id FROM staged_uploads WHERE id = $1")
+                .bind(copy)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(used, Some(post));
+
+        // With an active post, files are posted at once.
+        let third = send(&fixture::png(48, 30)).await;
+        assert_eq!(third.status, StatusCode::SEE_OTHER, "{}", third.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

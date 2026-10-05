@@ -80,7 +80,9 @@ moekura admin tag-backlog --limit 1000
   line, `ai-generated 50`, as Danbooru's `new_uploader_blocked_ai_tags`.
   It applies to users without an active post yet, who are told only that
   the post failed and to try again later; a file the tagger hasn't looked
-  at yet can't be posted by them until it has.
+  at yet can't be posted by them until it has. A file they send in one
+  step (`POST /upload`, the API) waits as an upload for the tagger too,
+  and sending it again once the tagger has looked posts it.
 
 The model's tag names are Danbooru's. They're matched to the site's tags
 through aliases; tags the site doesn't have yet are created, in the

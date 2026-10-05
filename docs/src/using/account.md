@@ -110,15 +110,17 @@ moderation log.
 ## Email address and password
 
 Changing either needs your current password. Changing the password logs
-you out everywhere else.
+you out everywhere else, and reset links already emailed stop working.
 
 An address is written plainly, as `name@example.com`, without a name
 in front or angle brackets.
 
 On sites that send mail, a new address only replaces the old one once
-you follow the link sent to it, and **Forgot your password?** on the
-login page emails you a link to choose a new one. The link works for an
-hour, and using it logs you out everywhere.
+you follow the link sent to it.
+
+**Forgot your password?** on the login page emails you a link to choose
+a new one. The link works for an hour, and only while that's still your
+address. Using it logs you out everywhere.
 
 Logging in is limited, against password guessing: five tries at an
 account from one network (an IPv4 address, or an IPv6 `/64`), then one

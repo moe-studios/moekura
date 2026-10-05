@@ -90,7 +90,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `updated:` | `updated:<1d`, `updated:2026-01` | last changed (tags, rating, source, status, …) this long ago, or on these days |
 | `md5:` | `md5:d41d8cd9…` | the file's MD5 hash |
 | `pixelhash:` | `pixelhash:9e107d9d…` | the MD5 of the image's decoded pixels: the same picture in any file |
-| `similar:` | `similar:123` | looks like post 123 (the post included); found once files are processed |
+| `similar:` | `similar:123` | looks like post 123 (the post included), if you can see it; found once files are processed |
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
 | `child:` | `child:any`, `child:none` | posts with children (that aren't deleted), or without |
 | `tagcount:` | `tagcount:<5` | number of tags |

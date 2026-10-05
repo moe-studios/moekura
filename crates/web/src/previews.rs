@@ -9,7 +9,8 @@ use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use minijinja::{Value, context};
-use moekura_core::posts::{PostStatus, Rating};
+use moekura_core::posts::Rating;
+use moekura_db::posts::Visibility;
 use moekura_db::{media, posts, users};
 use serde::Deserialize;
 use serde_json::json;
@@ -28,6 +29,13 @@ pub fn routes() -> Router<AppState> {
 /// Whether link previews are shown at all: not on private sites.
 pub(crate) fn enabled(state: &AppState) -> bool {
     !state.is_private()
+}
+
+/// The posts previews may show: what a logged-out visitor sees (status,
+/// the site's visitor ratings, banned artists), as link scrapers and
+/// oEmbed consumers aren't logged in.
+pub(crate) fn visitors(state: &AppState) -> Visibility {
+    crate::posts::visibility(&crate::auth::CurrentUser::anonymous(&state.site.get()))
 }
 
 /// Whether a post of `rating` may show its image or video in a preview.
@@ -200,10 +208,9 @@ async fn oembed(
         .filter(|_| ours)
         .ok_or(AppError::NotFound)?;
     let db = state.db.read();
-    // What visitors may see: oEmbed consumers aren't logged in.
     let post = posts::by_id(db, id)
         .await?
-        .filter(|p| matches!(p.status, PostStatus::Active | PostStatus::Flagged))
+        .filter(|p| visitors(&state).allows(p))
         .ok_or(AppError::NotFound)?;
     let author = match post.uploader_id {
         Some(user) => users::by_id(db, user).await?.map(|u| u.name),
@@ -531,6 +538,80 @@ mod tests {
         let page = app.get(&format!("/posts/{id}"), Some(&admin)).await;
         assert_eq!(page.status, StatusCode::OK, "{}", page.body);
         assert!(!page.body.contains("og:video"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn posts_hidden_from_visitors_have_no_previews(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let banned = upload(&app, &alice, "g", 20).await;
+        let sensitive = upload(&app, &alice, "s", 22).await;
+        let artist = moekura_db::artists::Contents {
+            name: "bad_artist".into(),
+            group_name: String::new(),
+            other_names: Vec::new(),
+            urls: Vec::new(),
+            is_banned: true,
+            is_deleted: false,
+        };
+        moekura_db::artists::create(&pool, &artist, None)
+            .await
+            .unwrap();
+        let tag: i32 = sqlx::query_scalar(
+            "INSERT INTO tags (name) VALUES ('bad_artist')
+             ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE posts SET tag_ids = array_append(tag_ids, $1) WHERE id = $2")
+            .bind(tag)
+            .bind(banned)
+            .execute(&pool)
+            .await
+            .unwrap();
+        moekura_db::settings::set(&pool, "visitor_ratings", serde_json::json!(["g"]))
+            .await
+            .unwrap();
+        let series = moekura_db::pools::create(
+            &pool,
+            &moekura_db::pools::Contents {
+                name: "Series".into(),
+                description: String::new(),
+                category: "series".into(),
+                is_deleted: false,
+                post_ids: vec![banned, sensitive],
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let state = test_state(&pool).await;
+        let app = TestApp::new(
+            state,
+            super::routes()
+                .merge(crate::posts::routes())
+                .merge(crate::pools::routes()),
+        );
+
+        for id in [banned, sensitive] {
+            let oembed = app
+                .get(
+                    &format!("/oembed?url=http%3A%2F%2Flocalhost%3A8080%2Fposts%2F{id}"),
+                    None,
+                )
+                .await;
+            assert_eq!(oembed.status, StatusCode::NOT_FOUND, "{}", oembed.body);
+            // Staff see the post, but its page offers no preview.
+            let page = app.get(&format!("/posts/{id}"), Some(&admin)).await;
+            assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+            assert!(!page.body.contains("og:title"), "{id}");
+        }
+        let page = app.get(&format!("/pools/{series}"), None).await;
+        assert_eq!(page.status, StatusCode::OK, "{}", page.body);
+        assert!(page.body.contains("og:title"), "{}", page.body);
+        assert!(!page.body.contains("og:image"), "{}", page.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

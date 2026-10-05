@@ -239,18 +239,15 @@ async fn show(
     let preview = if pool.is_deleted {
         None
     } else {
-        let public = moekura_db::posts::Visibility {
-            hidden_tags: Vec::new(),
-            statuses: vec![PostStatus::Active, PostStatus::Flagged],
-            viewer: None,
-            ratings: Vec::new(),
-            deleted_by_default: false,
-        };
-        let image = match pools::visible_post_ids(db, id, &public, 0, 1)
+        let visitors = crate::previews::visitors(state);
+        let image = match pools::visible_post_ids(db, id, &visitors, 0, 1)
             .await?
             .first()
         {
-            Some(&first) => match posts::by_id(db, first).await? {
+            Some(&first) => match posts::by_id(db, first)
+                .await?
+                .filter(|p| visitors.allows(p))
+            {
                 Some(post) => crate::previews::post_image(state, db, first, post.rating).await?,
                 None => None,
             },

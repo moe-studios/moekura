@@ -1159,7 +1159,7 @@ pub(crate) async fn render_post(
     .await?;
     let favorite_groups = crate::favorite_groups::for_post(state, &page.current, post.id).await?;
     // Link previews only for posts visitors may see.
-    let preview = if matches!(post.status, PostStatus::Active | PostStatus::Flagged) {
+    let preview = if crate::previews::visitors(state).allows(&post) {
         let description = if post.description.is_empty() {
             tag_string.replace('_', " ")
         } else {

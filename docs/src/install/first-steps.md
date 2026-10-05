@@ -141,7 +141,10 @@ WebM file. Previews show a post's image or video only for general and
 sensitive posts, unless you tick
 **Link previews … show questionable and explicit posts' images too** in
 the site settings (or `moekura admin settings set preview_all_ratings
-true`). Private sites show no previews at all.
+true`). Previews only show what visitors may see: pending and deleted
+posts, posts outside the ratings visitors see and banned artists' posts
+have none, and oEmbed answers 404 for them. Private sites show no
+previews at all.
 
 ## Reviewing uploads
 

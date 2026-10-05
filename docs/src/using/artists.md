@@ -11,7 +11,9 @@ default) can start or change an entry: **New artist** on the list, or
 is its tag; a tag that doesn't exist yet, or that no post uses yet,
 becomes an artist tag. Every change is kept under **History**, and
 **Recent changes** (`/artist_versions`) lists every entry's changes,
-filterable by user. Entries can be deleted and restored.
+filterable by user. Entries can be deleted and restored; deleted ones,
+and their changes, are left out for visitors and others without that
+permission or *See deleted posts*.
 
 The entry's page shows the URLs, the first paragraph of the tag's wiki
 page (the longer description lives there), and the artist's newest

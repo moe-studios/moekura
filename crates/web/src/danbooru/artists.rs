@@ -143,7 +143,9 @@ async fn index(
         name: exact.as_deref().unwrap_or(name),
         url: &params.url_matches,
         banned: flag(&params.is_banned),
-        with_deleted: deleted.unwrap_or(false),
+        // Deleted entries only for those who see them on the site; for
+        // others, asking for them finds nothing.
+        with_deleted: deleted.unwrap_or(false) && crate::artists::sees_deleted(&current),
         ids: ids.as_deref(),
     };
     let mut found = artists::list(db, &filter, offset, limit).await?;
@@ -170,7 +172,10 @@ async fn show(
     current.require(Permission::ViewPosts)?;
     let db = state.reader(&current);
     let id: i32 = id.parse().map_err(|_| AppError::NotFound)?;
-    let artist = artists::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    let artist = artists::by_id(db, id)
+        .await?
+        .filter(|a| !a.is_deleted || crate::artists::sees_deleted(&current))
+        .ok_or(AppError::NotFound)?;
     let urls = artists::urls(db, &[id]).await?;
     json(danbooru_artist(artist, &urls), "")
 }
@@ -276,9 +281,23 @@ async fn versions(
         before: None,
         offset,
     };
-    let list: Vec<DanbooruArtistVersion> = artists::versions(db, filter, limit)
-        .await?
+    let found = artists::versions(db, filter, limit).await?;
+    // Deleted artists' changes stay out for those who can't see them, as
+    // on the site.
+    let hidden: Vec<i32> = if crate::artists::sees_deleted(&current) {
+        Vec::new()
+    } else {
+        let ids: Vec<i32> = found.iter().map(|v| v.artist_id).collect();
+        artists::by_ids(db, &ids)
+            .await?
+            .into_iter()
+            .filter(|a| a.is_deleted)
+            .map(|a| a.id)
+            .collect()
+    };
+    let list: Vec<DanbooruArtistVersion> = found
         .into_iter()
+        .filter(|v| !hidden.contains(&v.artist_id))
         .map(|v| {
             let at = timestamp(v.created_at);
             DanbooruArtistVersion {
@@ -301,6 +320,7 @@ async fn versions(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::StatusCode;
     use moekura_core::permissions::SystemRole;
     use serde_json::Value;
     use sqlx::PgPool;
@@ -372,5 +392,66 @@ mod tests {
         );
         assert_eq!(versions.as_array().unwrap().len(), 2);
         assert_eq!(versions[0]["name"], "dog_artist");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn deleted_artists_only_for_those_who_see_them(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            crate::artists::routes().merge(crate::danbooru::test_support::routes()),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        app.post_form(
+            "/artists",
+            Some(&alice),
+            &[],
+            "name=gone_artist&other_names=goneart",
+        )
+        .await;
+        let id: i32 = sqlx::query_scalar("SELECT id FROM artists WHERE name = 'gone_artist'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        app.post_form(&format!("/artists/{id}/delete"), Some(&alice), &[], "")
+            .await;
+        let deleted: bool = sqlx::query_scalar("SELECT is_deleted FROM artists WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(deleted);
+        let lists = [
+            "/artists.json?search[is_deleted]=true".to_owned(),
+            "/artists.json?search[name]=gone_artist&search[is_deleted]=true".to_owned(),
+            format!("/artist_versions.json?search[artist_id]={id}"),
+            "/artist_versions.json".to_owned(),
+        ];
+
+        // Visitors (and banned users) don't see them, as on the site.
+        assert_eq!(
+            app.get(&format!("/artists/{id}.json"), None).await.status,
+            StatusCode::NOT_FOUND
+        );
+        for path in &lists {
+            let response = app.get(path, None).await;
+            assert_eq!(response.status, StatusCode::OK, "{path}");
+            assert_eq!(response.body, "[]", "{path}");
+        }
+
+        // Members, who may restore them, do.
+        let one = app.get(&format!("/artists/{id}.json"), Some(&alice)).await;
+        assert_eq!(one.status, StatusCode::OK);
+        for path in &lists {
+            let found: Value =
+                serde_json::from_str(&app.get(path, Some(&alice)).await.body).unwrap();
+            assert!(
+                found
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|a| a["other_names"][0] == "goneart"),
+                "{path}: {found}"
+            );
+        }
     }
 }

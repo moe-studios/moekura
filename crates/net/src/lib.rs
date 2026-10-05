@@ -100,7 +100,9 @@ impl Resolve for PublicResolver {
 
 /// A client whose connections only go to public addresses (unless
 /// `allow_private`, for tests against a local server), following
-/// redirects as `redirects` says and never through a proxy.
+/// redirects as `redirects` says and never through a proxy. It sends no
+/// `Referer` on redirects, which would carry the previous URL's query
+/// (an API key, say) to the next host.
 pub fn client(
     timeout: Duration,
     allow_private: bool,
@@ -110,6 +112,7 @@ pub fn client(
     reqwest::Client::builder()
         .dns_resolver(Arc::new(PublicResolver { allow_private }))
         .redirect(redirects)
+        .referer(false)
         // A proxy would do the resolving and connecting for us.
         .no_proxy()
         .connect_timeout(Duration::from_secs(10))

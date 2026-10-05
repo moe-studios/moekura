@@ -361,6 +361,17 @@ mod tests {
         let app = Router::new()
             .route("/a.png", get(move || async move { png }))
             .route("/redirect", get(|| async { Redirect::temporary("/a.png") }))
+            .route("/keyed", get(|| async { Redirect::temporary("/referer") }))
+            .route(
+                "/referer",
+                get(|headers: axum::http::HeaderMap| async move {
+                    headers
+                        .get(axum::http::header::REFERER)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("none")
+                        .to_owned()
+                }),
+            )
             .route("/big", get(|| async { vec![0u8; 2 * 1024 * 1024] }))
             .route(
                 "/missing",
@@ -425,5 +436,16 @@ mod tests {
             .err()
             .unwrap();
         assert!(err.to_string().contains("404"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn sends_no_referer_on_redirects() {
+        // It would carry the first URL's query (an API key, a login's
+        // parameters) to wherever the redirect goes.
+        let addr = serve_fixtures().await;
+        let fetcher = Fetcher::new(Duration::from_secs(10), true);
+        let url = Url::parse(&format!("http://{addr}/keyed?api_key=secret")).unwrap();
+        let (_, body) = fetcher.get(&url, &[], 1024).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "none");
     }
 }

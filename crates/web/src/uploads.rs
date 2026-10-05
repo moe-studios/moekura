@@ -6,8 +6,10 @@
 //! gallery) downloads them in the background, and the upload's page
 //! shows how far that got. `/uploads` lists the user's files.
 
+use std::collections::HashMap;
 use std::path::{Path as FsPath, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::Duration;
 
 use axum::extract::{Multipart, Path, Query, State};
@@ -26,6 +28,7 @@ use moekura_db::staged_uploads::{self, Slot, Staged, Status, Upload};
 use moekura_db::users::User;
 use serde::Deserialize;
 use sha2::Sha256;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, SemaphorePermit};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -45,7 +48,14 @@ const MAX_LINK_FILES: usize = 100;
 /// wait their turn.
 const MAX_DOWNLOADS: usize = 8;
 /// The turns to download, [`MAX_DOWNLOADS`] of them.
-static DOWNLOADS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MAX_DOWNLOADS);
+static DOWNLOADS: Semaphore = Semaphore::const_new(MAX_DOWNLOADS);
+/// Of those, the most one user's uploads take at once, so others' get
+/// turns too.
+const MAX_USER_DOWNLOADS: usize = 2;
+/// Each user's turns, [`MAX_USER_DOWNLOADS`] of them, while their
+/// downloads go on.
+static USER_DOWNLOADS: LazyLock<Mutex<HashMap<i64, Arc<Semaphore>>>> =
+    LazyLock::new(Mutex::default);
 /// How often files waiting for a turn to download are marked as still
 /// wanted, so they aren't taken for abandoned (see [`ABANDONED_AFTER`]).
 const STILL_WAITING: Duration = Duration::from_secs(60);
@@ -727,14 +737,16 @@ async fn stage_link(
     let budget =
         (state.media.config().max_upload_mb * 1024 * 1024).saturating_mul(MAX_FILES as u64);
     let (first, first_done) = tokio::sync::oneshot::channel();
-    tokio::spawn(download_pending(
+    let downloads = download_pending(
         state.clone(),
         current.clone(),
         id,
+        uploader_id,
         info,
         budget,
         first,
-    ));
+    );
+    tokio::spawn(downloads);
     // The page follows the rest (and one that takes long).
     let _ = tokio::time::timeout(WAIT_FOR_DOWNLOADS, first_done).await;
     Ok(id)
@@ -743,11 +755,12 @@ async fn stage_link(
 /// Downloads and stores upload `upload_id`'s pending files for `current`,
 /// one at a time, saying on `first` when the first is done. `info` is
 /// what the link's page said, if a strategy read it. Once `budget` bytes
-/// were downloaded, the rest fail.
+/// were received (by downloads that failed too), the rest fail.
 async fn download_pending(
     state: AppState,
     current: CurrentUser,
     upload_id: i64,
+    uploader_id: i64,
     info: Option<Arc<SourceInfo>>,
     budget: u64,
     first: tokio::sync::oneshot::Sender<()>,
@@ -761,25 +774,32 @@ async fn download_pending(
             return;
         }
     };
-    let mut downloaded = 0;
+    let mine = user_turns(uploader_id);
+    let received = Arc::new(AtomicU64::new(0));
     for file in pending.iter().filter(|f| f.status == Status::Pending) {
         let url = file.file_url.as_deref().unwrap_or_default();
-        let _turn = take_turn(db, upload_id).await;
+        // Those past the budget fail without waiting for a turn.
+        let spent = received.load(Ordering::Relaxed) >= budget;
+        let _turn = if spent {
+            None
+        } else {
+            Some(take_turn(db, upload_id, &mine).await)
+        };
         let done = async {
             // Given up on while it waited (see `find_upload`).
             if !staged_uploads::claim(db, file.id).await? {
                 return Ok(());
             }
             let fetched = async {
-                if downloaded >= budget {
+                if spent {
                     return Err(UploadError::Invalid(format!(
                         "The upload's files reached the {} MB it may download, \
                          so this one wasn't downloaded.",
                         budget.div_ceil(1024 * 1024)
                     )));
                 }
-                let temp = upload::download(&state, url, info.as_deref()).await?;
-                downloaded += temp.size;
+                let temp =
+                    upload::download_counted(&state, url, info.as_deref(), Some(&received)).await?;
                 let prepared = upload::prepare(&state, Some(&current), &temp).await?;
                 Ok::<_, UploadError>((prepared, upload::phash(&state, &temp).await))
             }
@@ -827,16 +847,41 @@ async fn download_pending(
     }
 }
 
-/// Waits for a turn to download, one of [`MAX_DOWNLOADS`]. Upload
-/// `upload_id`'s files waiting are marked as still wanted meanwhile, so
-/// a long wait doesn't have them taken for abandoned.
-async fn take_turn(db: &sqlx::PgPool, upload_id: i64) -> tokio::sync::SemaphorePermit<'static> {
+/// User `user_id`'s turns to download (see [`MAX_USER_DOWNLOADS`]).
+fn user_turns(user_id: i64) -> Arc<Semaphore> {
+    let mut users = USER_DOWNLOADS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    // Users whose downloads have all ended are forgotten.
+    users.retain(|_, turns| Arc::strong_count(turns) > 1);
+    users
+        .entry(user_id)
+        .or_insert_with(|| Arc::new(Semaphore::new(MAX_USER_DOWNLOADS)))
+        .clone()
+}
+
+/// Waits for a turn to download: one of the uploader's turns `mine`, then
+/// one of [`MAX_DOWNLOADS`]. Upload `upload_id`'s files waiting are
+/// marked as still wanted meanwhile, so a long wait doesn't have them
+/// taken for abandoned.
+async fn take_turn(
+    db: &sqlx::PgPool,
+    upload_id: i64,
+    mine: &Arc<Semaphore>,
+) -> (OwnedSemaphorePermit, SemaphorePermit<'static>) {
+    let turn = async {
+        let closed = "the semaphores are never closed";
+        let own = mine.clone().acquire_owned().await.expect(closed);
+        (own, DOWNLOADS.acquire().await.expect(closed))
+    };
+    // One wait throughout, which keeps its place in the queues.
+    let mut turn = std::pin::pin!(turn);
     loop {
         if let Err(error) = staged_uploads::still_pending(db, upload_id).await {
             tracing::warn!(upload_id, %error, "upload's files waiting not marked as wanted");
         }
-        if let Ok(turn) = tokio::time::timeout(STILL_WAITING, DOWNLOADS.acquire()).await {
-            return turn.expect("the semaphore is never closed");
+        if let Ok(turn) = tokio::time::timeout(STILL_WAITING, &mut turn).await {
+            return turn;
         }
     }
 }
@@ -3172,6 +3217,10 @@ mod tests {
         state
     }
 
+    /// Held by tests that keep download turns taken a while: two at once
+    /// could each wait for turns the other holds.
+    static HOLDING_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// Waits until upload `upload`'s downloads are done; its files then.
     async fn downloaded(pool: &PgPool, upload: i64) -> Vec<Staged> {
         for _ in 0..200 {
@@ -3319,7 +3368,7 @@ mod tests {
             .unwrap();
 
         let (first, _) = tokio::sync::oneshot::channel();
-        download_pending(state.clone(), upload, None, budget, first).await;
+        download_pending(state.clone(), upload, alice, None, budget, first).await;
         let files = files_of(&pool, upload).await;
         assert_eq!(asked_first.load(Ordering::Relaxed), 0);
         assert_eq!(
@@ -3378,6 +3427,7 @@ mod tests {
             .unwrap();
 
         // Every turn is taken, by other uploads' downloads say.
+        let _alone = HOLDING_TURNS.lock().await;
         let taken = DOWNLOADS
             .acquire_many(u32::try_from(MAX_DOWNLOADS).unwrap())
             .await
@@ -3386,6 +3436,7 @@ mod tests {
         let downloading = tokio::spawn(download_pending(
             state.clone(),
             upload,
+            alice,
             None,
             u64::MAX,
             first,
@@ -3402,6 +3453,155 @@ mod tests {
         drop(taken);
         downloading.await.unwrap();
         assert_eq!(files_of(&pool, upload).await[0].status, Status::Ready);
+    }
+
+    /// Makes an upload by `uploader` of a pending file for each of `files`;
+    /// returns its id.
+    async fn pending_upload(pool: &PgPool, uploader: i64, files: &[String]) -> i64 {
+        let upload = staged_uploads::create_upload(pool, uploader, "", "")
+            .await
+            .unwrap();
+        for (position, file) in (0..).zip(files) {
+            let slot = Slot {
+                upload_id: upload,
+                uploader_id: uploader,
+                position,
+                file_name: file,
+                source: "",
+            };
+            staged_uploads::create_pending(pool, slot, file)
+                .await
+                .unwrap();
+        }
+        upload
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn downloads_that_fail_count_toward_the_budget(pool: PgPool) {
+        // A file that goes on past the size limit, without saying its
+        // length first.
+        let endless = || async {
+            let chunk = axum::body::Bytes::from(vec![0; 64 * 1024]);
+            let chunks = (0..64).map(move |_| Ok::<_, std::io::Error>(chunk.clone()));
+            axum::body::Body::from_stream(futures_util::stream::iter(chunks))
+        };
+        let origin = Router::new()
+            .route("/endless", get(endless))
+            .route("/1.png", get(|| async { fixture::png(40, 30) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, origin).await });
+
+        let mut config = crate::test_support::test_config();
+        config.media.max_upload_mb = 1;
+        let mut state = crate::test_support::test_state_with(&pool, config).await;
+        state.fetcher = crate::fetch::Fetcher::new(Duration::from_secs(10), true);
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let alice = current_user(&state, &alice).await.user.unwrap().id;
+        let files = [
+            format!("http://{addr}/endless"),
+            format!("http://{addr}/1.png"),
+        ];
+        let upload = pending_upload(&pool, alice, &files).await;
+
+        // The first fails once past the limit, having taken up the budget
+        // all the same.
+        let (first, _) = tokio::sync::oneshot::channel();
+        download_pending(state.clone(), upload, alice, None, 512 * 1024, first).await;
+        let files = files_of(&pool, upload).await;
+        assert_eq!(
+            files.iter().map(|f| f.status).collect::<Vec<_>>(),
+            [Status::Failed, Status::Failed]
+        );
+        assert!(
+            files[0]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("larger than 1 MB")),
+            "{:?}",
+            files[0].error
+        );
+        assert!(
+            files[1]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("it may download")),
+            "{:?}",
+            files[1].error
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn one_users_downloads_leave_turns_for_others(pool: PgPool) {
+        use std::sync::atomic::AtomicUsize;
+
+        // Answers once let through, counting who asked meanwhile.
+        let (gate, asked) = (Arc::new(Semaphore::new(0)), Arc::new(AtomicUsize::new(0)));
+        let slow = {
+            let (gate, asked) = (gate.clone(), asked.clone());
+            move || async move {
+                asked.fetch_add(1, Ordering::Relaxed);
+                let _through = gate.acquire().await.unwrap();
+                fixture::png(40, 30)
+            }
+        };
+        let origin = Router::new()
+            .route("/slow.png", get(slow))
+            .route("/1.png", get(|| async { fixture::png(44, 30) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, origin).await });
+
+        let _alone = HOLDING_TURNS.lock().await;
+        let state = local_state(&pool).await;
+        // Turns are kept by user id for the whole process: these are ids
+        // no other test's users have.
+        sqlx::query("SELECT setval(pg_get_serial_sequence('users', 'id'), 1000000)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let user = async |name: &str| {
+            let session = session_for(&pool, name, SystemRole::Member).await;
+            current_user(&state, &session).await.user.unwrap().id
+        };
+        let (alice, bob) = (user("alice").await, user("bob").await);
+        // Alice sends more slow links than the whole site has turns.
+        let mut alices = Vec::new();
+        let mut downloads = Vec::new();
+        for _ in 0..=MAX_DOWNLOADS {
+            let upload = pending_upload(&pool, alice, &[format!("http://{addr}/slow.png")]).await;
+            let (first, _) = tokio::sync::oneshot::channel();
+            let downloading = download_pending(state.clone(), upload, alice, None, u64::MAX, first);
+            downloads.push(tokio::spawn(downloading));
+            alices.push(upload);
+        }
+        for _ in 0..200 {
+            if asked.load(Ordering::Relaxed) == MAX_USER_DOWNLOADS {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        // Bob's is downloaded meanwhile, while the rest of Alice's wait for
+        // her own turns.
+        let bobs = pending_upload(&pool, bob, &[format!("http://{addr}/1.png")]).await;
+        let (first, _) = tokio::sync::oneshot::channel();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            download_pending(state.clone(), bobs, bob, None, u64::MAX, first),
+        )
+        .await
+        .expect("Bob's download waited for Alice's");
+        assert_eq!(files_of(&pool, bobs).await[0].status, Status::Ready);
+        assert_eq!(asked.load(Ordering::Relaxed), MAX_USER_DOWNLOADS);
+
+        gate.add_permits(MAX_DOWNLOADS + 1);
+        for downloading in downloads {
+            downloading.await.unwrap();
+        }
+        assert_eq!(asked.load(Ordering::Relaxed), MAX_DOWNLOADS + 1);
+        for upload in alices {
+            assert_eq!(files_of(&pool, upload).await[0].status, Status::Ready);
+        }
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

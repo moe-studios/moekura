@@ -10,6 +10,8 @@
 //! takes a whole post in one form, for scripts, through [`ingest`].
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use axum::Router;
 use axum::extract::multipart::{Field, MultipartError};
@@ -388,15 +390,28 @@ pub(crate) async fn download(
     file_url: &str,
     info: Option<&SourceInfo>,
 ) -> Result<TempUpload, UploadError> {
-    download_within(state, file_url, info, max_bytes(state)).await
+    download_within(state, file_url, info, max_bytes(state), None).await
 }
 
-/// [`download`], refusing files over `limit` bytes.
+/// [`download`], adding the bytes received to `received` as they arrive,
+/// so they count whether or not the download succeeds.
+pub(crate) async fn download_counted(
+    state: &AppState,
+    file_url: &str,
+    info: Option<&SourceInfo>,
+    received: Option<&Arc<AtomicU64>>,
+) -> Result<TempUpload, UploadError> {
+    download_within(state, file_url, info, max_bytes(state), received).await
+}
+
+/// [`download`], refusing files over `limit` bytes, and adding the bytes
+/// received to `received` as they arrive.
 pub(crate) async fn download_within(
     state: &AppState,
     file_url: &str,
     info: Option<&SourceInfo>,
     limit: u64,
+    received: Option<&Arc<AtomicU64>>,
 ) -> Result<TempUpload, UploadError> {
     let url = url::Url::parse(file_url).map_err(|_| match info {
         Some(info) => {
@@ -405,7 +420,8 @@ pub(crate) async fn download_within(
         None => UploadError::Invalid("That isn't a valid link.".into()),
     })?;
     let headers = info.map(|i| i.header_pairs()).unwrap_or_default();
-    let writer = TempWriter::create(&state.work_dir).await?;
+    let mut writer = TempWriter::create(&state.work_dir).await?;
+    writer.received = received.cloned();
     let mut file = state
         .fetcher
         .fetch_with(&url, &headers, writer, limit)
@@ -673,6 +689,8 @@ pub struct TempWriter {
     file: tokio::fs::File,
     sha256: Sha256,
     md5: Md5,
+    /// Also counts what's written, for a caller that outlives the writer.
+    received: Option<Arc<AtomicU64>>,
 }
 
 impl TempUpload {
@@ -736,6 +754,7 @@ impl TempWriter {
             file,
             sha256: Sha256::new(),
             md5: Md5::new(),
+            received: None,
         })
     }
 
@@ -747,6 +766,9 @@ impl TempWriter {
         self.sha256.update(chunk);
         self.md5.update(chunk);
         self.upload.size += chunk.len() as u64;
+        if let Some(received) = &self.received {
+            received.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+        }
         self.file
             .write_all(chunk)
             .await

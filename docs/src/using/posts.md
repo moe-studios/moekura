@@ -104,16 +104,16 @@ Moekura asks the site for the work's best (original) files and downloads
 them, every page of a work of several, each file once. A work of more
 than 20 files asks first: tick **Download all N files** and upload it
 again to take them all (up to 100). Together they may come to 20 times
-the upload size limit; files past that fail. The upload's page
-shows as soon as the first is ready (with scripts, the post form
-follows the moment it is). Each post's source is
-the file's own link when that names its work (Pixiv's
+the upload size limit, counting what downloads that failed received;
+files past that fail. The upload's page shows as soon as the first is
+ready (with scripts, the post form follows the moment it is). Each
+post's source is the file's own link when that names its work (Pixiv's
 `i.pximg.net/…_p3.png`, so the post says which of the work's images it
-is), else the work's page. They download in the background, a few
-at a time for the whole site (the rest wait their turn): the
-upload's page follows them, and a file that can't be downloaded says
-why. Any other
-page whose preview tags (OpenGraph) name an image works the same way.
+is), else the work's page. They download in the background, a few at a
+time for the whole site and two at a time of each user's (the rest wait
+their turn): the upload's page follows them, and a file that can't be
+downloaded says why. Any other page whose preview tags (OpenGraph) name
+an image works the same way.
 What the site says is used as well, and shown under the source field:
 the site, the artist and their profiles, the site's tags, and when the
 work was published and last changed. **Fetch source data** reads the

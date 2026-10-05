@@ -179,7 +179,7 @@ async fn fetch(state: &AppState, url: &str) -> Result<TempUpload, AppError> {
         _ => url,
     };
     let limit = MAX_DOWNLOAD_BYTES.min(state.media.config().max_upload_mb * 1024 * 1024);
-    crate::upload::download_within(state, file_url, found.as_deref(), limit)
+    crate::upload::download_within(state, file_url, found.as_deref(), limit, None)
         .await
         .map_err(upload_error)
 }

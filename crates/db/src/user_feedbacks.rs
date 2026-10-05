@@ -12,8 +12,11 @@ pub struct Feedback {
     pub id: i64,
     pub user_id: i64,
     pub user_name: String,
+    /// The roles of whom it's on and who wrote it, for rank checks.
+    pub user_role_id: i32,
     pub creator_id: Option<i64>,
     pub creator_name: Option<String>,
+    pub creator_role_id: Option<i32>,
     pub category: String,
     pub body: String,
     pub is_deleted: bool,
@@ -25,9 +28,9 @@ pub struct Feedback {
 macro_rules! select_feedbacks {
     ($rest:literal) => {
         concat!(
-            "SELECT f.id, f.user_id, u.name::text AS user_name, f.creator_id,
-                    c.name::text AS creator_name, f.category, f.body, f.is_deleted,
-                    f.created_at, f.updated_at
+            "SELECT f.id, f.user_id, u.name::text AS user_name, u.role_id AS user_role_id,
+                    f.creator_id, c.name::text AS creator_name, c.role_id AS creator_role_id,
+                    f.category, f.body, f.is_deleted, f.created_at, f.updated_at
              FROM user_feedbacks f JOIN users u ON u.id = f.user_id
              LEFT JOIN users c ON c.id = f.creator_id ",
             $rest

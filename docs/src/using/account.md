@@ -93,8 +93,9 @@ contributors and up, by default) can leave **positive**, **neutral** or
 feedback** on their profile. Profiles count it, linking to the whole
 list at `/user_feedbacks?user=name`; anyone can read it, and the person
 it's about is notified. Its writer can edit it. Staff who can ban users
-can delete and restore it, which goes in the moderation log. Negative
-feedback can keep a member from [automatic
+can delete and restore it, which goes in the moderation log, if they
+outrank the person it's about and, unless they wrote it, its writer.
+Negative feedback can keep a member from [automatic
 promotion](../admin/roles.md#automatic-promotion).
 
 ## Your name

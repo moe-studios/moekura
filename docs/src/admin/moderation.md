@@ -288,7 +288,10 @@ alone. Deleted posts are only changed if the search asks for them
 
 Bulk update requests (**Tags → Requests**) bundle several alias,
 implication, category and mass edit changes; approving one applies them
-in order, and approving or rejecting it is logged. See
+in order, and approving or rejecting it is logged. One with mass edit
+(`update`) lines needs *Mass edit tags* to approve, from someone other
+than its requester, and each of its mass edits is logged as the
+approver's. See
 [Tags](../using/tags.md#bulk-update-requests).
 
 ## Post changes and undoing vandalism

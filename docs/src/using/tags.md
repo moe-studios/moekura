@@ -176,7 +176,9 @@ Lines starting with `#` are ignored. Mistakes are pointed out, by line,
 when you send the request. Members vote and discuss as for single
 requests; staff who manage tags approve (which applies the lines in
 order, in the background) or reject it, and you can withdraw your own
-while it's pending. If a line can't be applied (say, it would make an
+while it's pending. A request with `update` lines is approved only by
+staff who can also mass edit tags, and not by whoever requested it. If
+a line can't be applied (say, it would make an
 implication loop), the request stops there, marked failed with the
 reason; the lines before it stay applied.
 

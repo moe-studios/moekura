@@ -7,8 +7,10 @@
 use moekura_core::bulk::{self, Command};
 use moekura_core::config::SearchConfig;
 use moekura_core::jobs::{ApplyBulkUpdate, ApplyTagRelation, MassUpdate, NormalizeArtistUrls};
+use moekura_core::moderation::ActionKind;
 use moekura_core::posts::{PostStatus, Rating};
 use moekura_core::search::Query;
+use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::posts::Visibility;
 use moekura_db::search::{PageRef, Plan, SearchError};
 use moekura_db::tag_relations::{self, Kind, Status};
@@ -341,8 +343,24 @@ impl TagJobs {
             Command::Update { query, add, remove } => {
                 let add: Vec<String> = add.iter().map(|t| t.as_str().to_owned()).collect();
                 let remove: Vec<String> = remove.iter().map(|t| t.as_str().to_owned()).collect();
-                let id = mass_updates::create(&self.db, Some(approver), query, &add, &remove, None)
+                let mut tx = self.db.begin().await?;
+                let id = mass_updates::create(&mut *tx, Some(approver), query, &add, &remove, None)
                     .await?;
+                // Logged as the approver's, as a mass edit started by hand is.
+                mod_actions::record(
+                    &mut *tx,
+                    NewAction::new(Some(approver), ActionKind::MassUpdate).details(
+                        serde_json::json!({
+                            "id": id,
+                            "query": query,
+                            "add": add,
+                            "remove": remove,
+                            "request_id": request.id,
+                        }),
+                    ),
+                )
+                .await?;
+                tx.commit().await?;
                 self.mass_update(id).await?;
                 Ok(())
             }
@@ -594,6 +612,18 @@ mod tests {
         );
         let artist = tags::by_name(&pool, "someone").await.unwrap().unwrap();
         assert_eq!(artist.category_id, 1);
+        // The mass edit is logged as the approver's.
+        let (actor, details): (Option<i64>, serde_json::Value) = sqlx::query_as(
+            "SELECT actor_id, details FROM mod_actions WHERE action = 'tag.mass_update'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(actor, Some(admin));
+        assert_eq!(
+            (details["query"].as_str(), details["request_id"].as_i64()),
+            (Some("cat cat_ears"), Some(i64::from(id)))
+        );
         // Applying again is harmless.
         requests::set_status(&pool, id, "applied", "applying", None)
             .await

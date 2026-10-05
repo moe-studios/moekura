@@ -92,10 +92,13 @@ someone was promoted.
 ## Rank
 
 Staff act only on people below them: a moderator can ban members and
-janitors, but not other moderators or admins. The same goes for changing
+janitors, but not other moderators or admins, nor ban a network one of
+them used, or see their addresses. The same goes for changing
 roles: you can give or take away only roles ranked below your own that
 grant nothing you lack, and never change your own role or status. That keeps a mistake, or a
 compromised account, from locking out the people above it.
 
 From the shell, `moekura admin set-role NAME ROLE` changes anyone's role,
-which is how you recover if the last admin loses access.
+which is how you recover if the last admin loses access, and
+`moekura admin lift-network-ban ADDRESS` lifts network bans that lock
+staff out.

@@ -255,9 +255,33 @@ async fn ban_network_form(
     Ok(saved(jar, "/moderation/bans"))
 }
 
+/// Refuses to ban `network`, or lift a ban on it, when an account
+/// `current` doesn't outrank (themselves included) was seen on it, as
+/// user bans are refused: that would act on them.
+async fn check_rank_in(
+    state: &AppState,
+    current: &CurrentUser,
+    network: IpNet,
+) -> Result<(), AppError> {
+    let top = moekura_db::user_ips::top_rank_in(state.db.primary(), network).await?;
+    if top.is_some_and(|rank| rank >= current.role.rank) {
+        return Err(AppError::Blocked(
+            "That range includes an address of someone ranked at or above you".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Whether a full ban of `network` needs `ManageUsers`: wider than a
+/// /24 (IPv4) or /48 (IPv6), it shuts out whole providers.
+fn is_wide(network: IpNet) -> bool {
+    network.prefix_len() < if network.addr().is_ipv4() { 24 } else { 48 }
+}
+
 /// Bans a network (an address or a CIDR range) from making changes, or
 /// with `full` from seeing the site at all. `own_ip` is the requester's
 /// address, which the range may not include: they couldn't lift the ban.
+/// Nor may it include an address of anyone ranked at or above them.
 pub(crate) async fn ban_network(
     state: &AppState,
     current: &CurrentUser,
@@ -286,6 +310,14 @@ pub(crate) async fn ban_network(
         ));
     }
     let reason = reason(reason_text)?;
+    if full && is_wide(network) && !current.can(Permission::ManageUsers) {
+        return Err(AppError::BadRequest(
+            "Only staff who manage users can fully ban a range wider than /24 (/48 for IPv6)"
+                .into(),
+        ));
+    }
+    // Last, so that only a ban actually made tells who was seen there.
+    check_rank_in(state, current, network).await?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
     bans::ban_network(&mut tx, network, reason, expires_at, full, actor).await?;
@@ -314,7 +346,9 @@ async fn lift_network_form(
     Ok(saved(jar, "/moderation/bans"))
 }
 
-/// Lifts network ban `id`.
+/// Lifts network ban `id`, unless it covers an address of anyone ranked
+/// at or above `current`: that's for someone above them, or for
+/// `moekura admin lift-network-ban`.
 pub(crate) async fn lift_network(
     state: &AppState,
     current: &CurrentUser,
@@ -323,6 +357,10 @@ pub(crate) async fn lift_network(
     current.require(Permission::BanUsers)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
+    let network = bans::lock_network(&mut tx, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    check_rank_in(state, current, network).await?;
     let network = bans::lift_network(&mut tx, id, actor)
         .await?
         .ok_or(AppError::NotFound)?;
@@ -557,5 +595,119 @@ mod tests {
         assert_eq!(stored, "198.51.100.0/24");
         let register = visitor.post_form("/register", None, &[], "name=x").await;
         assert_eq!(register.status, StatusCode::FORBIDDEN, "{}", register.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn network_bans_respect_rank(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let routes = super::routes().merge(crate::user_moderation::routes());
+        let app = TestApp::with_peer(state, routes, "192.0.2.10:4000".parse().unwrap());
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        session_for(&pool, "alice", SystemRole::Member).await;
+        session_for(&pool, "bob", SystemRole::Member).await;
+        for (name, ip) in [
+            ("root", "198.51.100.7"),
+            ("root", "203.0.113.5"),
+            ("alice", "198.51.100.8"),
+            ("alice", "203.0.113.5"),
+            ("bob", "203.0.113.5"),
+        ] {
+            let id = moekura_db::users::by_name(&pool, name)
+                .await
+                .unwrap()
+                .unwrap()
+                .id;
+            moekura_db::user_ips::record(&pool, id, ip.parse().unwrap())
+                .await
+                .unwrap();
+        }
+        let ban = async |who: &str, form: &str| {
+            app.post_form("/moderation/ip-bans", Some(who), &[], form)
+                .await
+                .status
+        };
+
+        // Not a range an admin was seen on, by anyone who doesn't outrank
+        // them; a member's is fine.
+        for range in ["198.51.100.0%2F24", "198.51.100.7"] {
+            let form = format!("network={range}&reason=x");
+            assert_eq!(ban(&moderator, &form).await, StatusCode::FORBIDDEN);
+            assert_eq!(ban(&admin, &form).await, StatusCode::FORBIDDEN);
+        }
+        assert_eq!(
+            ban(&moderator, "network=198.51.100.8&reason=x").await,
+            StatusCode::SEE_OTHER
+        );
+        // Invalid forms say so before anything is looked up.
+        assert_eq!(
+            ban(&moderator, "network=198.51.100.0%2F24").await,
+            StatusCode::BAD_REQUEST
+        );
+
+        // Wide full bans are for those who manage users.
+        assert_eq!(
+            ban(&moderator, "network=10.0.0.0%2F16&reason=x&kind=full").await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ban(&moderator, "network=10.0.0.0%2F16&reason=x").await,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(
+            ban(&moderator, "network=10.1.0.0%2F24&reason=x&kind=full").await,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(
+            ban(&admin, "network=10.2.0.0%2F16&reason=x&kind=full").await,
+            StatusCode::SEE_OTHER
+        );
+
+        // Nor lifting a ban that covers an admin's address.
+        let mut conn = pool.acquire().await.unwrap();
+        let covering = moekura_db::bans::ban_network(
+            &mut conn,
+            "198.51.100.0/24".parse().unwrap(),
+            "x",
+            None,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        drop(conn);
+        let lift = format!("/moderation/ip-bans/{covering}/lift");
+        assert_eq!(
+            app.post(&lift, Some(&moderator), &[]).await.status,
+            StatusCode::FORBIDDEN
+        );
+        let alices: i64 =
+            sqlx::query_scalar("SELECT id FROM ip_bans WHERE network = '198.51.100.8/32'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            app.post(
+                &format!("/moderation/ip-bans/{alices}/lift"),
+                Some(&moderator),
+                &[]
+            )
+            .await
+            .status,
+            StatusCode::SEE_OTHER
+        );
+
+        // Addresses show only on the records of those below the viewer,
+        // and so do the other accounts on them.
+        let root = app.get("/moderation/users/root", Some(&moderator)).await;
+        assert_eq!(root.status, StatusCode::OK);
+        assert!(!root.body.contains("198.51.100.7"), "{}", root.body);
+        let alice = app
+            .get("/moderation/users/alice", Some(&moderator))
+            .await
+            .body;
+        assert!(alice.contains("<code>203.0.113.5</code>"), "{alice}");
+        assert!(alice.contains("/moderation/users/bob"), "{alice}");
+        assert!(!alice.contains("/moderation/users/root"), "{alice}");
     }
 }

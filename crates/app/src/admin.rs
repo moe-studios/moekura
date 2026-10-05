@@ -2,6 +2,7 @@
 //! for bootstrapping an instance before anyone can log in.
 
 use std::io::{BufRead, IsTerminal};
+use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::{Context, bail};
@@ -12,7 +13,7 @@ use moekura_core::permissions::{Role, SystemRole};
 use moekura_db::accounts::{self, NewAccount};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, User, UserStatus};
-use moekura_db::{invites, roles, settings};
+use moekura_db::{bans, invites, roles, settings};
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -30,6 +31,12 @@ pub enum AdminCommand {
     },
     /// Change a user's role
     SetRole { name: String, role: String },
+    /// Lift the network bans covering an address, or overlapping a range,
+    /// e.g. when staff are locked out of the site
+    LiftNetworkBan {
+        /// An address, or a range like 203.0.113.0/24
+        network: String,
+    },
     /// Create an invite code for registration_mode = invite. The code is
     /// shown once.
     CreateInvite {
@@ -263,6 +270,15 @@ pub async fn run(
             let role = set_role(db, &name, &role).await?;
             println!("{name} is now {}", role.name);
         }
+        AdminCommand::LiftNetworkBan { network } => {
+            let lifted = lift_network_bans(db, &network).await?;
+            if lifted.is_empty() {
+                println!("no network ban in force covers {network}");
+            }
+            for network in lifted {
+                println!("lifted the ban on {network}");
+            }
+        }
         AdminCommand::CreateInvite { uses, expires_days } => {
             let invite = invites::NewInvite {
                 created_by: None,
@@ -421,6 +437,36 @@ pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Rol
     Ok(role)
 }
 
+/// Lifts the network bans in force that cover `text` (an address or a
+/// range) or lie within it, and logs each; returns their networks.
+pub async fn lift_network_bans(db: &PgPool, text: &str) -> anyhow::Result<Vec<String>> {
+    let text = text.trim();
+    // A range, or a single address as one.
+    let Some(network) = text
+        .parse()
+        .ok()
+        .or_else(|| text.parse::<IpAddr>().ok().map(Into::into))
+    else {
+        bail!("give an address or a range like 203.0.113.0/24");
+    };
+    let mut tx = db.begin().await?;
+    let lifted: Vec<String> = bans::lift_networks_overlapping(&mut tx, network, None)
+        .await?
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    for network in &lifted {
+        mod_actions::record(
+            &mut *tx,
+            NewAction::new(None, ActionKind::IpUnban)
+                .details(serde_json::json!({ "network": network, "via": "cli" })),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(lifted)
+}
+
 /// Queues processing for the given posts' files (all when `None`).
 /// Returns how many were queued.
 pub async fn regenerate_media(db: &PgPool, posts: Option<&[i64]>) -> anyhow::Result<usize> {
@@ -545,6 +591,36 @@ mod tests {
         );
         assert_eq!(regenerate_media(&pool, None).await.unwrap(), 2);
         assert_eq!(moekura_db::jobs::counts(&pool).await.unwrap().queued, 3);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn lifts_network_bans_from_the_shell(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        for range in ["203.0.113.0/24", "198.51.100.0/24"] {
+            bans::ban_network(&mut conn, range.parse().unwrap(), "x", None, true, None)
+                .await
+                .unwrap();
+        }
+        drop(conn);
+        assert!(lift_network_bans(&pool, "nonsense").await.is_err());
+        assert_eq!(
+            lift_network_bans(&pool, " 203.0.113.7 ").await.unwrap(),
+            ["203.0.113.0/24"]
+        );
+        assert!(
+            lift_network_bans(&pool, "203.0.113.7")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let in_force = bans::networks_in_force(&pool).await.unwrap();
+        assert_eq!(in_force.len(), 1);
+        let logged: serde_json::Value =
+            sqlx::query_scalar("SELECT details FROM mod_actions WHERE action = 'network.unban'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(logged["via"], json!("cli"));
     }
 
     #[test]

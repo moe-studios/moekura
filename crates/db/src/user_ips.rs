@@ -68,11 +68,12 @@ pub struct Related {
     pub last_seen_at: OffsetDateTime,
 }
 
-/// Other accounts seen on the addresses `user_id` used, most recently
-/// seen first.
+/// Other accounts ranked below `below_rank` seen on the addresses
+/// `user_id` used, most recently seen first.
 pub async fn related(
     db: impl PgExecutor<'_>,
     user_id: i64,
+    below_rank: i16,
     limit: i64,
 ) -> sqlx::Result<Vec<Related>> {
     sqlx::query_as(
@@ -80,12 +81,31 @@ pub async fn related(
          FROM user_ips mine
          JOIN user_ips o ON o.ip = mine.ip AND o.user_id <> mine.user_id
          JOIN users u ON u.id = o.user_id
-         WHERE mine.user_id = $1
-         ORDER BY o.last_seen_at DESC LIMIT $2",
+         JOIN roles r ON r.id = u.role_id
+         WHERE mine.user_id = $1 AND r.rank < $2
+         ORDER BY o.last_seen_at DESC LIMIT $3",
     )
     .bind(user_id)
+    .bind(below_rank)
     .bind(limit)
     .fetch_all(db)
+    .await
+}
+
+/// The highest rank among accounts seen on an address in `network`, as
+/// recorded here or by a session still open; `None` if nobody was.
+pub async fn top_rank_in(db: impl PgExecutor<'_>, network: IpNet) -> sqlx::Result<Option<i16>> {
+    sqlx::query_scalar(
+        "SELECT max(r.rank) FROM (
+             SELECT user_id FROM user_ips WHERE ip <<= $1
+             UNION
+             SELECT user_id FROM sessions WHERE ip <<= $1 AND expires_at > now()
+         ) seen
+         JOIN users u ON u.id = seen.user_id
+         JOIN roles r ON r.id = u.role_id",
+    )
+    .bind(network.trunc())
+    .fetch_one(db)
     .await
 }
 
@@ -151,12 +171,18 @@ mod tests {
 
         let seen = for_user(&pool, alice, 10).await.unwrap();
         assert_eq!(seen.len(), 2);
-        let related = related(&pool, alice, 10).await.unwrap();
-        assert_eq!(related.len(), 1);
+        let found = related(&pool, alice, i16::MAX, 10).await.unwrap();
+        assert_eq!(found.len(), 1);
         assert_eq!(
-            (related[0].name.as_str(), related[0].ip.addr()),
+            (found[0].name.as_str(), found[0].ip.addr()),
             ("bob", shared)
         );
+        // Not those ranked at or above whoever looks.
+        let member: i16 = sqlx::query_scalar("SELECT rank FROM roles WHERE system_key = 'member'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(related(&pool, alice, member, 10).await.unwrap().is_empty());
 
         // Addresses unseen for longer than the retention are forgotten.
         sqlx::query(
@@ -171,5 +197,61 @@ mod tests {
         assert_eq!(prune(&pool, 1).await.unwrap(), 0);
         record(&pool, alice, own).await.unwrap();
         assert_eq!(for_user(&pool, alice, 10).await.unwrap().len(), 2);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn the_highest_rank_seen_in_a_range(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let root: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'root', id FROM roles WHERE system_key = 'admin' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (member, admin): (i16, i16) = sqlx::query_as(
+            "SELECT (SELECT rank FROM roles WHERE system_key = 'member'),
+                    (SELECT rank FROM roles WHERE system_key = 'admin')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let range = |text: &str| text.parse::<IpNet>().unwrap();
+        record(&pool, alice, "203.0.113.7".parse().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            top_rank_in(&pool, range("203.0.113.0/24")).await.unwrap(),
+            Some(member)
+        );
+        assert_eq!(
+            top_rank_in(&pool, range("198.51.100.0/24")).await.unwrap(),
+            None
+        );
+        // An open session counts, though the address isn't recorded.
+        sqlx::query(
+            "INSERT INTO sessions (token_hash, user_id, expires_at, ip)
+             VALUES ($1, $2, now() + interval '1 day', '203.0.113.9')",
+        )
+        .bind(vec![1u8; 32])
+        .bind(root)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            top_rank_in(&pool, range("203.0.113.0/24")).await.unwrap(),
+            Some(admin)
+        );
+        assert_eq!(
+            top_rank_in(&pool, range("203.0.113.7/32")).await.unwrap(),
+            Some(member)
+        );
+        sqlx::query("UPDATE sessions SET expires_at = now() - interval '1 second'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            top_rank_in(&pool, range("203.0.113.0/24")).await.unwrap(),
+            Some(member)
+        );
     }
 }

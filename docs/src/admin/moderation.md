@@ -137,13 +137,21 @@ are banned under **Moderation → Bans**, partly or fully:
   page and API call answers that the network is banned, with the reason.
 
 The range may not include your own address, or be wider than a `/8`
-(IPv4) or `/16` (IPv6). IPv4 clients are always matched (and shown) as
-IPv4, also when the server listens on IPv6 as well (`[::]`). An address
-or range copied from a log that writes them IPv4-mapped
-(`::ffff:203.0.113.7`, `::ffff:203.0.113.0/120`) is banned as the IPv4
-it stands for. Network bans are kept in memory on every node, so
-checking them costs nothing per request; changes reach other nodes
-within moments.
+(IPv4) or `/16` (IPv6), and only staff who manage users can fully ban a
+range wider than a `/24` (IPv4) or `/48` (IPv6). As with banning users,
+rank counts: you can't ban a range, or lift a ban on one, that includes
+an address of anyone ranked at or above you (yourself included), as
+kept under [Addresses](#addresses) or by a session still open. If a
+network ban locks staff out anyway, lift it from the shell with
+`moekura admin lift-network-ban ADDRESS`, which lifts every ban covering
+that address (or overlapping a range) and logs it.
+
+IPv4 clients are always matched (and shown) as IPv4, also when the
+server listens on IPv6 as well (`[::]`). An address or range copied from
+a log that writes them IPv4-mapped (`::ffff:203.0.113.7`,
+`::ffff:203.0.113.0/120`) is banned as the IPv4 it stands for. Network
+bans are kept in memory on every node, so checking them costs nothing
+per request; changes reach other nodes within moments.
 
 ## A user's record
 
@@ -186,8 +194,9 @@ can ban users delete anyone's.
 
 ### Addresses
 
-For staff who can ban users, the record also lists the addresses the
-account used, when each was first and last seen, and the other accounts
+For staff who can ban users, on the record of someone ranked below them,
+the record also lists the addresses the account used, when each was
+first and last seen, and the other accounts (also ranked below them)
 seen on the same addresses, which is how ban evaders usually show. Each
 address has shortcuts to ban it, or its `/24` (IPv4) or `/64` (IPv6)
 network, under **Moderation → Bans**.

@@ -92,6 +92,9 @@ message.
   since Discord couldn't load them.
 - Nobody is pinged: messages turn off `@everyone`, role and user
   mentions, whatever a comment says.
+- Comments, sources, tags and reasons show as written: Discord markdown
+  in them is escaped, so a link can't pose as another. A source that is
+  a web address shows as that address, linked.
 - **Name** and **Avatar URL** replace the webhook's own name and avatar
   in the messages. Discord doesn't allow names containing "discord" or
   "clyde".

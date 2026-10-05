@@ -72,8 +72,10 @@ for example:
 ```
 
 Every setting is listed under [Configuration](../configuration.md). Put
-the site behind a [reverse proxy](reverse-proxy.md) for HTTPS, then
-continue with [First steps](first-steps.md).
+the site behind a [reverse proxy](reverse-proxy.md) for HTTPS, which
+also means [pinning the network and publishing the port on the loopback
+only](reverse-proxy.md#with-docker-compose), then continue with
+[First steps](first-steps.md).
 
 ## Updating
 

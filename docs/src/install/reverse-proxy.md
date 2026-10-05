@@ -15,6 +15,23 @@ public_url = "https://booru.example.com"
 trusted_proxies = ["127.0.0.1/32"]
 ```
 
+The address to list is the one the app sees the proxy connect from,
+which isn't always `127.0.0.1`: with [Docker Compose](compose.md), a
+proxy on the host reaches the app from the compose network's gateway
+(an address like `172.18.0.1`). If the header comes from an address
+that isn't listed, the app ignores it and logs a warning naming that
+address, once after each start. Trust only your proxies' addresses,
+and keep the app's port unreachable from elsewhere (for example,
+publish it as `"127.0.0.1:8080:8080"`), or anyone who can reach it
+directly can claim any address.
+
+The app reads `X-Forwarded-For` from the right: it skips the entries
+your trusted proxies added and takes the first address before them.
+Entries further left were written by the client and are ignored, and so
+is everything left of an entry that isn't an address. Both appending the
+client's address (nginx's `$proxy_add_x_forwarded_for`) and replacing
+the header (Caddy) work.
+
 The proxy must pass the `Host` and `Origin` headers through unchanged:
 they protect forms against cross-site requests.
 

@@ -137,8 +137,10 @@ are banned under **Moderation → Bans**, partly or fully:
   page and API call answers that the network is banned, with the reason.
 
 The range may not include your own address, or be wider than a `/8`
-(IPv4) or `/16` (IPv6). Network bans are kept in memory on every node,
-so checking them costs nothing per request; changes reach other nodes
+(IPv4) or `/16` (IPv6). IPv4 clients are always matched (and shown) as
+IPv4, also when the server listens on IPv6 as well (`[::]`), so ban them
+with IPv4 ranges. Network bans are kept in memory on every node, so
+checking them costs nothing per request; changes reach other nodes
 within moments.
 
 ## A user's record

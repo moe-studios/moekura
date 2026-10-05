@@ -23,7 +23,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use time::{Date, Duration, Month};
+use time::{Date, Month};
 
 use crate::posts::{PostStatus, Rating};
 use crate::tags::{RESERVED_PREFIXES, TagName, TagNameError, normalize};
@@ -280,6 +280,11 @@ impl AgeUnit {
 }
 
 impl Age {
+    /// A thousand years: older than any post. Longer ages mean the same,
+    /// and are cut to this, since times that far back are out of the
+    /// database's range.
+    const MAX_SECONDS: i64 = 1000 * 365 * 86_400;
+
     pub fn seconds(self) -> i64 {
         let unit = match self.unit {
             AgeUnit::Seconds => 1,
@@ -290,7 +295,7 @@ impl Age {
             AgeUnit::Months => 30 * 86_400,
             AgeUnit::Years => 365 * 86_400,
         };
-        self.amount.saturating_mul(unit)
+        self.amount.saturating_mul(unit).min(Self::MAX_SECONDS)
     }
 }
 
@@ -1535,7 +1540,8 @@ fn period(s: &str) -> Option<(Date, Date)> {
         }
         (Some(m), Some(d)) => {
             let start = Date::from_calendar_date(year, month_of(m)?, u8::try_from(d).ok()?).ok()?;
-            Some((start, start + Duration::days(1)))
+            // None after the last day there can be.
+            Some((start, start.next_day()?))
         }
     }
 }
@@ -1568,7 +1574,7 @@ fn write_dates(
     from: Option<Date>,
     until: Option<Date>,
 ) -> fmt::Result {
-    let last = |d: Date| d - Duration::days(1);
+    let last = |d: Date| d.previous_day().unwrap_or(d);
     match (from, until) {
         (Some(a), Some(b)) if a == last(b) => write!(f, "{name}:{a}"),
         (Some(a), Some(b)) => write!(f, "{name}:{a}..{}", last(b)),
@@ -1857,14 +1863,25 @@ mod tests {
             range("date:2026-01..2026-03"),
             (Some(date!(2026 - 01 - 01)), Some(date!(2026 - 04 - 01)))
         );
+        assert_eq!(
+            range("date:9999-12-30"),
+            (Some(date!(9999 - 12 - 30)), Some(date!(9999 - 12 - 31)))
+        );
+        // The day after the last one there can be isn't a date.
         for bad in [
             "date:2026-13",
             "date:2026-02-30",
             "date:soon",
             "date:2026,2027",
+            "date:9999-12-31",
+            "date:>9999-12-31",
+            "date:2026..9999-12-31",
+            "date:9999",
         ] {
             assert!(error(bad).contains("expected a date"), "{bad}");
         }
+        assert!(error("updated:9999-12-31").contains("expected an age"));
+        assert!(error("-updated:<=9999-12-31").contains("expected an age"));
     }
 
     #[test]
@@ -2110,6 +2127,20 @@ mod tests {
         };
         assert_eq!((a, b.unit), (days(2), AgeUnit::Months));
         assert_eq!(b.seconds(), 30 * 86_400);
+        // Older than any post: cut to a thousand years, which the
+        // database can still subtract from now.
+        let Filter::Age(Bound::Lt(huge)) = filter("age:<9223372036854775807y") else {
+            panic!()
+        };
+        assert_eq!(huge.seconds(), 1000 * 365 * 86_400);
+        assert_eq!(
+            Age {
+                amount: 999,
+                unit: AgeUnit::Years
+            }
+            .seconds(),
+            999 * 365 * 86_400
+        );
         assert_eq!(parse("age:>12MIN").to_string(), "age:>12mi");
         assert!(error("age:soon").contains("expected an age"));
         assert!(error("age:1d,2d").contains("expected an age"));

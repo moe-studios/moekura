@@ -2284,6 +2284,9 @@ mod tests {
             ("-age:<1w", by(&[1, 0])),
             ("updated:<2d", by(&[2, 1, 0])),
             ("updated:>1w", by(&[3])),
+            // Further back than times go: every post is newer.
+            ("age:<9223372036854775807y", by(&[3, 2, 1, 0])),
+            ("updated:>9223372036854775807s", by(&[])),
             ("order:change", by(&[2, 1, 0, 3])),
             ("order:change_asc", by(&[3, 0, 1, 2])),
         ];

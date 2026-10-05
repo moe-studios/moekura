@@ -39,7 +39,7 @@ title, so a tag can be found by what other sites call it.
 | `post #123`, `comment #45` | A link to a post or a comment |
 | `@name` | A link to a user, who is [notified](account.md#notifications) when it's in a comment, a forum post or a request's discussion |
 | `[quote]` and `[/quote]` on lines of their own | A quote |
-| `https://example.com` | A link to another site |
+| `https://example.com` | A link to another site (up to 2048 characters; a longer address stays text) |
 
 Everything else is shown as written; HTML isn't allowed. The syntax is a
 subset of Danbooru's DText, so pages copied from there mostly work.

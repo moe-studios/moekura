@@ -18,6 +18,7 @@
 //! it needs no sanitising: nothing in the input becomes HTML unless the
 //! renderer put it there.
 
+use std::collections::HashSet;
 use std::fmt::Write;
 
 /// Longest wiki text, in bytes.
@@ -35,6 +36,7 @@ pub fn wiki_url(title: &str) -> String {
 /// normalised like tag names, in order and without repeats.
 pub fn wiki_links(text: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut rest = text;
     while let Some(start) = rest.find("[[") {
         rest = &rest[start..];
@@ -46,7 +48,7 @@ pub fn wiki_links(text: &str) -> Vec<String> {
         });
         match (used, target.into_inner()) {
             (Some(used), Some(target)) => {
-                if !target.is_empty() && !found.contains(&target) {
+                if !target.is_empty() && seen.insert(target.clone()) {
                     found.push(target);
                 }
                 rest = &rest[used..];
@@ -294,11 +296,22 @@ fn link(
 ) -> Option<usize> {
     let inner_start = open.len();
     let body = text.strip_prefix(open)?;
-    let end = body.find(close)?;
-    let inner = &body[..end];
-    if inner.contains('\n') || inner.contains(open) {
-        return None;
+    // Up to the first `close`; a line break or another `open` before it
+    // means there's no link here, so the search stops there rather than
+    // going on through the rest of the text for each `open`.
+    let mut end = None;
+    for (at, c) in body.char_indices() {
+        let rest = &body[at..];
+        if c == '\n' || rest.starts_with(open) {
+            return None;
+        }
+        if rest.starts_with(close) {
+            end = Some(at);
+            break;
+        }
     }
+    let end = end?;
+    let inner = &body[..end];
     let (target, label) = match inner.split_once('|') {
         Some((target, label)) if !label.trim().is_empty() => (target, label.trim()),
         Some((target, _)) => (target, target.trim()),
@@ -365,13 +378,15 @@ fn unquoted(text: &str) -> Vec<&str> {
 /// order.
 pub fn mentions(text: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
+    // Lower case, as names are the same regardless of case.
+    let mut seen: HashSet<String> = HashSet::new();
     for line in unquoted(text) {
         let mut previous: Option<char> = None;
         for (at, c) in line.char_indices() {
             if c == '@'
                 && previous.is_none_or(|p| !p.is_alphanumeric())
                 && let Some((name, _)) = mention_at(&line[at..])
-                && !found.iter().any(|f| f.eq_ignore_ascii_case(name))
+                && seen.insert(name.to_ascii_lowercase())
             {
                 found.push(name.to_owned());
             }
@@ -385,6 +400,7 @@ pub fn mentions(text: &str) -> Vec<String> {
 /// blocks that start with "name said:", as [`quote`] writes them.
 pub fn quoted_authors(text: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
     let mut depth = 0usize;
     let mut opened = false;
     for line in text.lines() {
@@ -399,7 +415,7 @@ pub fn quoted_authors(text: &str) -> Vec<String> {
         } else if opened
             && let Some(author) = trimmed.strip_suffix(" said:")
             && !author.contains(' ')
-            && !found.iter().any(|f| f == author)
+            && seen.insert(author)
         {
             found.push(author.to_owned());
         }
@@ -425,28 +441,40 @@ fn id_link(out: &mut String, text: &str, word: &str, path: &str) -> Option<usize
     Some(used)
 }
 
+/// Longest bare URL that becomes a link, in characters. Longer ones stay
+/// text, so text full of URL starts takes no more than this to read at
+/// each.
+const MAX_URL_LEN: usize = 2048;
+
 /// A bare `http(s)://` URL at the start of `text`.
 fn url_link(out: &mut String, text: &str) -> Option<usize> {
     if !(text.starts_with("http://") || text.starts_with("https://")) {
         return None;
     }
-    let mut end = text
-        .find(|c: char| c.is_whitespace() || matches!(c, '<' | '>' | '"' | '[' | ']'))
-        .unwrap_or(text.len());
-    // Punctuation after a URL is usually the sentence's, and a `)` only
-    // belongs to the URL if it opened one.
-    loop {
-        let candidate = &text[..end];
-        let Some(last) = candidate.chars().next_back() else {
-            break;
-        };
-        let unbalanced =
-            last == ')' && candidate.matches('(').count() < candidate.matches(')').count();
-        if matches!(last, '.' | ',' | ';' | ':' | '!' | '?' | '\'') || unbalanced {
-            end -= last.len_utf8();
-        } else {
+    let mut end = text.len();
+    for (n, (at, c)) in text.char_indices().enumerate() {
+        if c.is_whitespace() || matches!(c, '<' | '>' | '"' | '[' | ']') {
+            end = at;
             break;
         }
+        if n >= MAX_URL_LEN {
+            return None;
+        }
+    }
+    // Punctuation after a URL is usually the sentence's, and a `)` only
+    // belongs to the URL if it opened one. Only `)` is taken off of the
+    // brackets, so the `(` stay as counted.
+    let opens = text[..end].matches('(').count();
+    let mut closes = text[..end].matches(')').count();
+    while let Some(last) = text[..end].chars().next_back() {
+        let unbalanced = last == ')' && opens < closes;
+        if !(matches!(last, '.' | ',' | ';' | ':' | '!' | '?' | '\'') || unbalanced) {
+            break;
+        }
+        if last == ')' {
+            closes -= 1;
+        }
+        end -= last.len_utf8();
     }
     let url = url::Url::parse(&text[..end]).ok()?;
     url.host_str()?;
@@ -629,6 +657,59 @@ mod tests {
         assert_eq!(render("javascript:alert(1)"), "<p>javascript:alert(1)</p>");
         assert_eq!(render("https://"), "<p>https://</p>");
         assert_eq!(render("xhttps://a.b"), "<p>xhttps://a.b</p>");
+        assert_eq!(
+            render("(see https://a.example/x_(y)_(z)))!?"),
+            "<p>(see <a rel=\"nofollow ugc noopener\" href=\"https://a.example/x_(y)_(z)\">\
+             https://a.example/x_(y)_(z)</a>))!?</p>"
+        );
+        assert_eq!(
+            render("https://a.example/((x).)"),
+            "<p><a rel=\"nofollow ugc noopener\" href=\"https://a.example/((x).)\">\
+             https://a.example/((x).)</a></p>"
+        );
+        assert_eq!(
+            render("https://a.example/é),"),
+            "<p><a rel=\"nofollow ugc noopener\" href=\"https://a.example/%C3%A9\">\
+             https://a.example/é</a>),</p>"
+        );
+    }
+
+    #[test]
+    fn long_urls_stay_text() {
+        let longest = format!("https://a.example/{}", "x".repeat(MAX_URL_LEN - 18));
+        assert_eq!(longest.len(), MAX_URL_LEN);
+        assert!(render(&format!("{longest} next")).contains("</a> next"));
+        let longer = format!("{longest}x");
+        assert_eq!(render(&longer), format!("<p>{longer}</p>"));
+        // Characters, not bytes.
+        let accented = format!("https://a.example/{}", "é".repeat(MAX_URL_LEN - 18));
+        assert!(render(&format!("{accented} next")).contains("</a> next"));
+        assert!(!render(&format!("{accented}é next")).contains("</a>"));
+    }
+
+    #[test]
+    fn hostile_bodies_render() {
+        // URL starts that never parse, each followed by all the `)`.
+        let starts = format!("{}{}", "http://(".repeat(2_000), ")".repeat(30_000));
+        assert!(render(&starts).len() >= starts.len());
+        let closes = format!("https://a.example/{}", ")".repeat(MAX_URL_LEN));
+        assert_eq!(render(&closes), format!("<p>{closes}</p>"));
+        let closes = format!("https://a.example/{}", ")".repeat(MAX_URL_LEN / 2));
+        assert!(render(&closes).starts_with(
+            "<p><a rel=\"nofollow ugc noopener\" href=\"https://a.example/\">\
+             https://a.example/</a>))"
+        ));
+        // Links that never close.
+        for open in ["[[", "{{", "[[{{"] {
+            let text = open.repeat(MAX_LEN / open.len());
+            assert_eq!(render(&text), format!("<p>{text}</p>"));
+            let text = format!("{}\n]] {}", format!("{open} a").repeat(MAX_LEN / 8), "}}");
+            assert!(!render(&text).contains("<a"), "{open}");
+            assert!(wiki_links(&text).is_empty());
+        }
+        let many: String = (0..5_000).map(|i| format!("[[t{i}]] @u{i} ")).collect();
+        assert_eq!(wiki_links(&many).len(), 5_000);
+        assert_eq!(mentions(&many).len(), 5_000);
     }
 
     #[test]

@@ -56,7 +56,7 @@ engine, then log in with your name and your API key.
 | `/tag_aliases.json`, `/tag_implications.json` | |
 | `/tag_versions.json` | by `search[tag_id]`, `search[name]`, `search[updater_id]` or `search[updater_name]` |
 | `/wiki_pages.json`, `/wiki_pages/{title or id}.json` | by `search[title]`, `search[other_names_match]` (`*` wildcards; without one, the whole name) or `search[other_names_include_any]` |
-| `/profile.json`, `/users.json`, `/users/{id}.json` | levels follow roles: Member 20, Contributor 35, Janitor 37, Moderator 40, Admin 50 |
+| `/profile.json`, `/users.json`, `/users/{id}.json` | levels follow roles: Member 20, Contributor 35, Janitor 37, Moderator 40, Admin 50; `last_logged_in_at` and `is_banned` only for yourself and staff who see moderation records (otherwise `null` and `false`) |
 | `/favorites.json`, `/favorites/{post_id}.json`, `/posts/{id}/favorites.json` | |
 | `/posts/{id}/votes.json`, `/post_votes.json` | only your own votes are listed |
 | `/artists.json`, `/artists/{id}.json`, `/artist_urls.json`, `/artist_versions.json` | read-only; artists by `search[name]`, `search[any_name_matches]`, `search[url_matches]` (any page of the artist's), `search[is_banned]`, `search[is_deleted]` or `search[id]`, each with its `urls`; URLs by `search[artist_id]` or `search[url_matches]`; versions by `search[artist_id]`, `search[updater_id]` or `search[updater_name]` |

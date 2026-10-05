@@ -144,7 +144,7 @@ async fn favorited_by(
     .await?;
     let mut users = Vec::new();
     for user in moekura_db::users::by_ids(db, &ids).await? {
-        users.push(super::users::danbooru_user(&state, db, &user).await?);
+        users.push(super::users::danbooru_user(&state, db, &current, &user).await?);
     }
     json(users, &params.only)
 }

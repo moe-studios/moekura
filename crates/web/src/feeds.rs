@@ -1,7 +1,8 @@
 //! Atom feeds: the newest posts of a search (`/posts.atom?tags=…`) and the
 //! newest comments (`/comments.atom`). Feed readers can't log in, so on
 //! private sites they pass a user's feed token (`?token=…`), which
-//! reads as that user and does nothing else.
+//! reads as that user, seeing no more than a member, and does nothing
+//! else.
 
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -15,9 +16,11 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use moekura_core::markup;
 use moekura_core::permissions::Permission;
+use moekura_core::posts::PostStatus;
 use moekura_core::search::Query as SearchQuery;
 use moekura_core::tokens::NewToken;
 use moekura_db::comments::{self, Filter};
+use moekura_db::posts::Visibility;
 use moekura_db::search::{PageRef, Plan, SearchError};
 use moekura_db::{feeds, posts, tags};
 use serde::Deserialize;
@@ -57,6 +60,12 @@ struct FeedQuery {
     token: Option<String>,
 }
 
+/// Who reads a feed, and the posts it may show them.
+struct Reader {
+    current: CurrentUser,
+    seen: Visibility,
+}
+
 /// Who a feed is read as: the token's user, or the requester, if they
 /// may see posts. Otherwise a plain 401 rather than the login page, which
 /// feed readers can't use.
@@ -64,11 +73,18 @@ async fn reader(
     state: &AppState,
     current: CurrentUser,
     token: Option<&str>,
-) -> Result<Result<CurrentUser, &'static str>, AppError> {
-    let current = match token.filter(|t| !t.is_empty()) {
-        None => current,
+) -> Result<Result<Reader, &'static str>, AppError> {
+    let (current, seen) = match token.filter(|t| !t.is_empty()) {
+        None => {
+            let seen = visibility(&current);
+            (current, seen)
+        }
         Some(token) => match feeds::user(state.db.primary(), token).await? {
-            Some((user, ban)) => CurrentUser::for_user(user, ban, &state.site.get()),
+            Some((user, ban)) => {
+                let current = CurrentUser::for_user(user, ban, &state.site.get());
+                let seen = member_visibility(state, &current);
+                (current, seen)
+            }
             None => return Ok(Err("This feed token is wrong or was revoked.")),
         },
     };
@@ -77,7 +93,23 @@ async fn reader(
             "This site is private: add a feed token (see your settings) to the feed's address.",
         ));
     }
-    Ok(Ok(current))
+    Ok(Ok(Reader { current, seen }))
+}
+
+/// What a feed read with a token may show: no more than a member sees,
+/// whatever the token's user may, since the token sits in a feed reader's
+/// list and never expires. Their own pending uploads and safe mode still
+/// count.
+fn member_visibility(state: &AppState, current: &CurrentUser) -> Visibility {
+    let mut seen = visibility(current);
+    seen.statuses
+        .retain(|s| matches!(s, PostStatus::Active | PostStatus::Flagged));
+    seen.deleted_by_default = false;
+    let site = state.site.get();
+    if site.settings.banned_artists.hide_posts {
+        seen.hidden_tags = site.banned_artist_tags().to_vec();
+    }
+    seen
 }
 
 /// A refused feed: a plain 401 with why.
@@ -213,8 +245,8 @@ async fn posts_feed(
     current: CurrentUser,
     Query(query): Query<FeedQuery>,
 ) -> Result<Response, AppError> {
-    let current = match reader(&state, current, query.token.as_deref()).await? {
-        Ok(current) => current,
+    let Reader { current, seen } = match reader(&state, current, query.token.as_deref()).await? {
+        Ok(reader) => reader,
         Err(message) => return Ok(refused(message)),
     };
     let db = state.reader(&current);
@@ -225,7 +257,7 @@ async fn posts_feed(
         per_page: ENTRIES,
         ..state.search_config()
     };
-    let mut plan = Plan::resolve(db, &parsed, &visibility(&current), &config)
+    let mut plan = Plan::resolve(db, &parsed, &seen, &config)
         .await
         .map_err(search_error)?;
     // The reader's own blacklist, when read as someone who has one.
@@ -331,14 +363,14 @@ async fn comments_feed(
     current: CurrentUser,
     Query(query): Query<FeedQuery>,
 ) -> Result<Response, AppError> {
-    let current = match reader(&state, current, query.token.as_deref()).await? {
-        Ok(current) => current,
+    let Reader { current, seen } = match reader(&state, current, query.token.as_deref()).await? {
+        Ok(reader) => reader,
         Err(message) => return Ok(refused(message)),
     };
     let db = state.reader(&current);
     let found = comments::list(
         db,
-        &visibility(&current),
+        &seen,
         &Filter::default(),
         None,
         0,
@@ -653,6 +685,106 @@ mod tests {
         assert_eq!(stale.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(stale.body.contains("log in again"), "{}", stale.body);
         assert!(!feeds::has_token(&pool, bob.id).await.unwrap());
+    }
+
+    /// The posts in a posts feed, as numbered in their titles.
+    fn entries(feed: &str) -> Vec<i64> {
+        let mut ids: Vec<i64> = feed
+            .split("<title>Post #")
+            .skip(1)
+            .filter_map(|rest| rest.split('<').next()?.parse().ok())
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn tokens_read_no_more_than_a_member(pool: PgPool) {
+        // A banned artist's post, hidden from all but staff.
+        let banned = post(&pool, &["banned_artist"], "g").await;
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('banned_artist', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = TestApp::new(test_state(&pool).await, routes());
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let root: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'root'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let active = post(&pool, &["cat"], "g").await;
+        let mut moderated = Vec::new();
+        for (status, uploader) in [
+            ("pending", None),
+            ("deleted", None),
+            ("pending", Some(root)),
+        ] {
+            let id = post(&pool, &["cat"], "g").await;
+            sqlx::query("UPDATE posts SET status = $2, uploader_id = $3 WHERE id = $1")
+                .bind(id)
+                .bind(status)
+                .bind(uploader)
+                .execute(&pool)
+                .await
+                .unwrap();
+            moderated.push(id);
+        }
+        let [pending, deleted, own] = moderated[..] else {
+            unreachable!()
+        };
+        let token = NewToken::generate();
+        feeds::set_token(&pool, root, Some(&token.hash))
+            .await
+            .unwrap();
+
+        // Logged in, an admin sees all of it...
+        let staff = app.get("/posts.atom?tags=status:any", Some(&admin)).await;
+        assert_eq!(
+            entries(&staff.body),
+            [banned, active, pending, deleted, own],
+            "{}",
+            staff.body
+        );
+        // ...but their token, whoever finds it, only what a member would,
+        // and their own upload.
+        let feed = app
+            .get(
+                &format!("/posts.atom?tags=status:any&token={}", token.token),
+                None,
+            )
+            .await;
+        assert_eq!(entries(&feed.body), [active, own], "{}", feed.body);
+        for search in ["status:pending", "status:deleted", "banned_artist"] {
+            let feed = app
+                .get(
+                    &format!("/posts.atom?tags={search}&token={}", token.token),
+                    None,
+                )
+                .await;
+            assert!(
+                entries(&feed.body).iter().all(|id| *id == own),
+                "{search}: {}",
+                feed.body
+            );
+        }
+
+        for id in [active, pending, deleted] {
+            moekura_db::comments::create(&pool, id, root, &format!("On {id}"), true)
+                .await
+                .unwrap();
+        }
+        let comments = app
+            .get(&format!("/comments.atom?token={}", token.token), None)
+            .await;
+        assert_eq!(
+            comments.body.matches("<entry>").count(),
+            1,
+            "{}",
+            comments.body
+        );
+        assert!(comments.body.contains(&format!("On {active}")));
+        let staff = app.get("/comments.atom", Some(&admin)).await;
+        assert_eq!(staff.body.matches("<entry>").count(), 3, "{}", staff.body);
     }
 
     /// `Cache-Control` and every `Vary` of a feed read with `cookie`.

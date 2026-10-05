@@ -246,6 +246,9 @@ that user may see.
 On a private site, feed readers can't log in; make a feed token under
 **Settings → Feeds** (which asks for your password, as making an
 [API key](../api.md) does) and add `&token=…` to the feed's address.
-The token reads feeds as you (with your blacklist) and does nothing
-else; making a new one or revoking it stops the old one working, and so
-does resetting your password.
+The token reads feeds as you (with your blacklist and safe mode) and
+does nothing else; making a new one or revoking it stops the old one
+working, and so does resetting your password. Since the token sits in a
+feed reader, it never shows more than a member sees, whatever your role:
+no pending or deleted posts but your own pending uploads, and no banned
+artists' posts if those are hidden.

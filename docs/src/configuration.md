@@ -167,7 +167,7 @@ server, without a restart. See [Search pages](#search-pages).
 | `per_page` | `40` | posts per page |
 | `max_per_page` | `200` | the most `limit:` may ask for |
 | `max_page` | `1000` | deepest numbered page; "next" links keep working beyond it |
-| `max_terms` | `40` | most tags and filters in one search |
+| `max_terms` | `40` | most tags and filters in one search; every search is also at most 1000 words and 10,000 characters long, whatever this is |
 | `wildcard_limit` | `100` | most tags a wildcard expands to (the most used) |
 | `count_limit` | `10000` | result counts are exact up to this, estimated above |
 | `count_cost_limit` | `25000` | counts PostgreSQL expects to cost more than this (roughly pages read) are estimated instead, so filters no index covers don't read every post |

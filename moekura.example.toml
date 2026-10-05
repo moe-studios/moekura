@@ -127,7 +127,8 @@ per_page = 40
 max_per_page = 200
 # Deepest numbered page; "next" links keep working beyond it.
 max_page = 1000
-# Most tags and filters in one search.
+# Most tags and filters in one search. Whatever this is, a search is also
+# at most 1000 words and 10,000 characters long.
 max_terms = 40
 # Most tags a wildcard like long_* expands to (the most used ones).
 wildcard_limit = 100

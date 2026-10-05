@@ -39,7 +39,8 @@ Terms side by side bind tighter than `or`, so `a b or c` means `(a b) or
 c`. `~` is shorthand for `or`: `~a ~b` is `(a or b)`, and inside a group
 the `~` terms form an `or` of that group. Groups can be nested up to 10
 deep, and every tag and filter in them counts towards the site's limit on
-terms.
+terms. Whatever that limit, a search can be at most 1000 words and 10,000
+characters long.
 
 A `(` at the start of a word opens a group, and a `)` at the end of a word
 closes one, unless it belongs to the tag: `(ganyu_(genshin_impact) or

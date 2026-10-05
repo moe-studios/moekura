@@ -84,11 +84,12 @@ pub(crate) fn clean_labels(text: &str) -> Result<Vec<String>, AppError> {
         if !labels.contains(&label) {
             labels.push(label);
         }
-    }
-    if labels.len() > MAX_LABELS {
-        return Err(AppError::Unprocessable(format!(
-            "A saved search can have at most {MAX_LABELS} labels."
-        )));
+        // As soon as there are too many, so a long list stays quick.
+        if labels.len() > MAX_LABELS {
+            return Err(AppError::Unprocessable(format!(
+                "A saved search can have at most {MAX_LABELS} labels."
+            )));
+        }
     }
     Ok(labels)
 }
@@ -287,6 +288,18 @@ mod tests {
         assert!(clean_query("").is_err());
         assert!(clean_query("cat search:all").is_err());
         assert!(clean_query("-").is_err());
+        // Refused before they're read: a form can hold a lot.
+        let many: String = (0..200_000).map(|i| format!("t{i} ")).collect();
+        assert!(matches!(
+            clean_query(&many),
+            Err(AppError::Unprocessable(m)) if m.contains("at most 1000 words")
+        ));
+        assert!(matches!(
+            clean_labels(&many),
+            Err(AppError::Unprocessable(m)) if m.contains("at most 10 labels")
+        ));
+        let ten: String = (0..10).map(|i| format!("l{i} l{i} ")).collect();
+        assert_eq!(clean_labels(&ten).unwrap().len(), 10);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

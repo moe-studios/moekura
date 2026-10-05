@@ -320,6 +320,25 @@ async fn comment_votes(
     json(votes, &params.list.only)
 }
 
+/// Most pools, favorite groups or pool versions on a page, as each lists
+/// its posts.
+pub(super) const MAX_LISTED: u32 = 100;
+
+/// Most post ids a page of pools, favorite groups or pool versions lists
+/// between them: ten full pools.
+pub(super) const MAX_LISTED_POSTS: usize = 10 * MAX_POSTS;
+
+/// Refuses a page of `what` listing more than [`MAX_LISTED_POSTS`] post
+/// ids, which would hold too much memory for one request.
+pub(super) fn check_listed(what: &str, post_ids: usize) -> Result<(), AppError> {
+    if post_ids > MAX_LISTED_POSTS {
+        return Err(AppError::BadRequest(format!(
+            "These {what} list more than {MAX_LISTED_POSTS} posts between them; ask for fewer with `limit`."
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 struct DanbooruPool {
     id: i32,
@@ -383,17 +402,15 @@ async fn list_pools(
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
     let db = state.reader(&current);
-    let limit = i64::from(params.list.limit(1000));
+    let limit = i64::from(params.list.limit(MAX_LISTED));
     let offset = (page_number(&params.list) - 1) * limit;
-    // Each pool once, and no more than a page needs.
+    // Each pool once.
     let mut seen = HashSet::new();
     let ids: Vec<i32> = params
         .id
         .split([' ', ','])
         .filter_map(|s| s.trim().parse().ok())
         .filter(|id| seen.insert(*id))
-        .skip(offset as usize)
-        .take(limit as usize)
         .collect();
     let found: Vec<Pool> = if ids.is_empty() {
         let contains = params.name_contains.trim();
@@ -411,13 +428,16 @@ async fn list_pools(
         pools::list(db, &filter, offset, limit).await?
     } else {
         let mut found = Vec::new();
-        for id in ids {
+        for id in ids.into_iter().skip(offset as usize).take(limit as usize) {
             if let Some(pool) = pools::by_id(db, id).await?.filter(|p| !p.is_deleted) {
                 found.push(pool);
             }
         }
         found
     };
+    // Every post counts here, hidden or not: the check comes before any
+    // post ids are read.
+    check_listed("pools", found.iter().map(|p| p.post_count as usize).sum())?;
     let mut out = Vec::with_capacity(found.len());
     for pool in found {
         out.push(pool_json(&state, &current, pool).await?);
@@ -503,11 +523,20 @@ async fn list_groups(
     let Some(creator) = creator else {
         return json(Vec::<DanbooruGroup>::new(), "");
     };
-    let limit = params.list.limit(1000) as usize;
+    let limit = params.list.limit(MAX_LISTED) as usize;
     let skip = (page_number(&params.list) as usize - 1) * limit;
-    let groups = favorite_groups::for_user(db, creator, me == Some(creator)).await?;
+    let groups: Vec<Group> = favorite_groups::for_user(db, creator, me == Some(creator))
+        .await?
+        .into_iter()
+        .skip(skip)
+        .take(limit)
+        .collect();
+    check_listed(
+        "favorite groups",
+        groups.iter().map(|g| g.post_count as usize).sum(),
+    )?;
     let mut out = Vec::new();
-    for group in groups.into_iter().skip(skip).take(limit) {
+    for group in groups {
         out.push(group_json(&state, &current, group).await?);
     }
     json(out, &params.list.only)
@@ -870,5 +899,95 @@ mod tests {
                 .body,
         );
         assert_eq!(groups[0]["post_ids"], json!([a]));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn pool_pages_stay_small(pool: PgPool) {
+        let app = app(&pool).await;
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // 100 pools and 100 groups of the same 1,001 posts.
+        sqlx::query("INSERT INTO posts (rating) SELECT 'g' FROM generate_series(1, 1001)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let first: i32 = sqlx::query_scalar(
+            "WITH made AS (
+                 INSERT INTO pools (name, category)
+                 SELECT 'pool_' || n, 'collection' FROM generate_series(1, 100) n
+                 RETURNING id
+             )
+             SELECT min(id) FROM made",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pool_posts (pool_id, post_id, position)
+             SELECT pl.id, p.id, row_number() OVER (PARTITION BY pl.id ORDER BY p.id) - 1
+             FROM pools pl CROSS JOIN posts p",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO favorite_groups (creator_id, name)
+             SELECT $1, 'group_' || n FROM generate_series(1, 100) n",
+        )
+        .bind(alice_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO favorite_group_posts (group_id, post_id, position)
+             SELECT g.id, p.id, row_number() OVER (PARTITION BY g.id ORDER BY p.id) - 1
+             FROM favorite_groups g CROSS JOIN posts p",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // A page past the pools asked for by id is empty, not a page of
+        // every pool.
+        let past = app
+            .get(
+                &format!("/pools.json?search[id]={first}&limit=1&page=2"),
+                None,
+            )
+            .await;
+        assert_eq!(parse(&past.body), json!([]), "{}", past.body);
+        // A page lists no more than 100,000 post ids between its pools.
+        let refused = app.get("/pools.json?limit=100", None).await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+        assert!(refused.body.contains("ask for fewer"), "{}", refused.body);
+        let listed = parse(&app.get("/pools.json?limit=10", None).await.body);
+        assert_eq!(listed[9]["post_count"], json!(1001), "{listed}");
+        let ids: Vec<String> = (first..first + 100).map(|id| id.to_string()).collect();
+        let by_id = app
+            .get(
+                &format!("/pools.json?search[id]={}&limit=100", ids.join(",")),
+                None,
+            )
+            .await;
+        assert_eq!(by_id.status, StatusCode::BAD_REQUEST, "{}", by_id.body);
+        let groups = app
+            .get(
+                "/favorite_groups.json?search[creator_name]=alice&limit=100",
+                None,
+            )
+            .await;
+        assert_eq!(groups.status, StatusCode::BAD_REQUEST, "{}", groups.body);
+        let groups = parse(
+            &app.get(
+                "/favorite_groups.json?search[creator_name]=alice&limit=10",
+                None,
+            )
+            .await
+            .body,
+        );
+        assert_eq!(groups.as_array().map(Vec::len), Some(10), "{groups}");
     }
 }

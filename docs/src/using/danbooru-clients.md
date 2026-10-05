@@ -64,15 +64,15 @@ engine, then log in with your name and your API key.
 | `/media_assets.json`, `/media_assets/{id}.json`, `/media_metadata.json` | a post's file has the post's id; files by `search[id]` or `search[md5]`; metadata by `search[media_asset_id]`, as `Group:Tag` pairs like `EXIF:Make` |
 | `/post_replacements.json` | read-only, by `search[post_id]` or `search[creator_id]` |
 | `/iqdb_queries.json` | searching by image: GET with `search[url]` or `search[post_id]`, or POST a `file` too; `[{post_id, score, post}]`, score in percent |
-| `/wiki_page_versions.json`, `/pool_versions.json` | wiki versions by `search[wiki_page_id]`, `search[title]`, `search[updater_id]` or `search[updater_name]`; pool versions by `search[pool_id]` or the updater, with `added_post_ids` and `removed_post_ids` |
+| `/wiki_page_versions.json`, `/pool_versions.json` | wiki versions by `search[wiki_page_id]`, `search[title]`, `search[updater_id]` or `search[updater_name]`; pool versions by `search[pool_id]` or the updater, with `added_post_ids` and `removed_post_ids`, up to 100 per page |
 | `/dmails.json`, `/dmails/{id}.json` | your messages, by `search[folder]` (`received`, `sent` or all) and `search[is_read]`; send with `dmail[to_name]` (or `dmail[to_id]`), `dmail[title]` and `dmail[body]` |
 | `/forum_topics.json`, `/forum_topics/{id}.json`, `/forum_posts.json`, `/forum_posts/{id}.json`, `/forum_post_votes.json` | topics by `search[title_matches]` (`*` wildcards), `search[category_id]` or `search[id]`; posts newest first by `search[topic_id]`, `search[creator_id]`, `search[creator_name]` or `search[body_matches]`; your own votes; post with `forum_post[topic_id]` and `forum_post[body]`, or start a topic with `forum_topic[title]`, `forum_topic[category_id]` (by default the first you may start topics in; *Site news* is for staff) and `forum_topic[original_post_attributes][body]` |
 | `/explore/posts/popular.json`, `/explore/posts/viewed.json` | the best-scored and most viewed posts of a `date`'s day, or with `scale`, week or month |
 | `/explore/posts/searches.json`, `/explore/posts/missed_searches.json` | `[query, count]` pairs: the searches that most often found posts, and those that most often found nothing, by `date` and `scale` like the posts |
 | `/comments.json`, `/comments/{id}.json` | listed newest first, by `search[post_id]`, `search[creator_id]` or `search[creator_name]`; `page` takes `b<id>`, and numbers as far as the newest 20,000 comments; post with `comment[post_id]` and `comment[body]` (and `captcha`, a solved captcha's token, from accounts new enough to be asked for one), and change or delete your own |
 | `/comments/{id}/votes.json`, `/comment_votes.json` | only your own votes are listed |
-| `/pools.json`, `/pools/{id}.json` | by `search[name_matches]`, `search[name_contains]`, `search[id]` (each pool once) or `search[category]`; `post_ids` lists the posts you can see |
-| `/favorite_groups.json`, `/favorite_groups/{id}.json` | by `search[creator_id]` or `search[creator_name]`, otherwise yours |
+| `/pools.json`, `/pools/{id}.json` | by `search[name_matches]`, `search[name_contains]`, `search[id]` (each pool once) or `search[category]`; `post_ids` lists the posts you can see; up to 100 per page |
+| `/favorite_groups.json`, `/favorite_groups/{id}.json` | by `search[creator_id]` or `search[creator_name]`, otherwise yours; up to 100 per page |
 | `/notes.json`, `/notes/{id}.json`, `/note_versions.json` | notes by `search[post_id]` (one or more posts); versions by `search[post_id]` or `search[note_id]`; read-only |
 | `POST /uploads.json`, `/uploads.json`, `/uploads/{id}.json` | the first step of an upload: a file as `upload[files][0]`, or a link as `upload[source]` (its first file); an upload media asset and its media asset share one id, the upload has its own. Your uploads are listed newest first |
 | `POST /posts.json` | the second step: `upload_media_asset_id` (or `upload_id` for the upload's first file not posted) with `post[tag_string]`, `post[rating]`, `post[source]` and optionally `post[parent_id]`; upload limits apply. Files not made into posts within a day are removed |
@@ -88,4 +88,7 @@ engine, then log in with your name and your API key.
   own: their `id` is the post's or comment's.
 - Pools, favorite groups and notes are read-only here; change them on
   the site or with [Moekura's API](../api.md).
+- A page of pools, favorite groups or pool versions lists at most
+  100,000 post ids between them; a page that would list more is refused
+  with 400, so ask for a smaller `limit`.
 - Responses are JSON only, not XML.

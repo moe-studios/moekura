@@ -58,6 +58,8 @@ pub enum NameError {
     AllDigits,
     #[error("is reserved")]
     Reserved,
+    #[error("may not end in .json")]
+    JsonSuffix,
 }
 
 impl UserName {
@@ -84,6 +86,11 @@ impl UserName {
         }
         if RESERVED_NAMES.iter().any(|r| r.eq_ignore_ascii_case(raw)) {
             return Err(NameError::Reserved);
+        }
+        // `/users/name.json` would be taken for a Danbooru API URL, hiding
+        // the profile.
+        if raw.to_ascii_lowercase().ends_with(".json") {
+            return Err(NameError::JsonSuffix);
         }
         Ok(Self(raw.to_owned()))
     }
@@ -210,6 +217,9 @@ mod tests {
             "x-y-z",
             "_under",
             "123abc",
+            "json",
+            "alice_json",
+            "a.jsonp",
         ] {
             assert_eq!(UserName::parse(name).unwrap().as_str(), name);
         }
@@ -229,6 +239,8 @@ mod tests {
             ("12345", NameError::AllDigits),
             ("Admin", NameError::Reserved),
             ("ME", NameError::Reserved),
+            ("alice.json", NameError::JsonSuffix),
+            ("Alice.JSON", NameError::JsonSuffix),
         ];
         for (name, expected) in cases {
             assert_eq!(UserName::parse(name), Err(expected), "{name:?}");

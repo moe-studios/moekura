@@ -7,6 +7,14 @@ releases list what they deprecate. Before 1.0, a minor release (0.2) could
 change configuration or behaviour, and said so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
+## [0.6.1] - 2026-10-06
+
+### Fixes
+
+- `sources.x.fxembed_api_url` defaults to `https://api.fxtwitter.com`;
+  the old default, `https://api.fixupx.com`, doesn't exist. A config that
+  sets it to that should change it too.
+
 ## [0.6.0] - 2026-10-06
 
 Getting ready for 1.0: what 1.0 promises, how things get renamed after

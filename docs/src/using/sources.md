@@ -87,7 +87,7 @@ all to servers. Moekura reads posts on X:
 
 1. through the API of an [FxEmbed](https://github.com/FxEmbed/FxEmbed)
    instance, which needs no account here and sees age-restricted posts
-   too. It's `https://api.fixupx.com` unless `[sources.x]` names another
+   too. It's `https://api.fxtwitter.com` unless `[sources.x]` names another
    (such as `https://api.fxtwitter.com`, or your own):
 
    ```toml

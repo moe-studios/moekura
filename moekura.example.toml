@@ -290,10 +290,10 @@ service_name = "moekura"
 # cookie = "auth_token=…; ct0=…"
 
 [sources.x]
-# An FxEmbed instance's API (fxtwitter, fixupx or your own), which reads
+# An FxEmbed instance's API (fxtwitter's or your own), which reads
 # posts on X, age-restricted ones too, without an account. Empty: don't
 # use one.
-fxembed_api_url = "https://api.fixupx.com"
+fxembed_api_url = "https://api.fxtwitter.com"
 
 [webhooks]
 # Let webhooks go to private, loopback and link-local addresses, e.g. a

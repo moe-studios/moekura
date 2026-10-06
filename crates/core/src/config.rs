@@ -429,7 +429,7 @@ pub struct SourcesConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct XSourceConfig {
-    /// The API of an FxEmbed instance (fxtwitter, fixupx or your own),
+    /// The API of an FxEmbed instance (fxtwitter's or your own),
     /// which reads posts, age-restricted ones too, without an account
     /// here. Empty: don't use one.
     pub fxembed_api_url: String,
@@ -438,7 +438,7 @@ pub struct XSourceConfig {
 impl Default for XSourceConfig {
     fn default() -> Self {
         Self {
-            fxembed_api_url: "https://api.fixupx.com".into(),
+            fxembed_api_url: "https://api.fxtwitter.com".into(),
         }
     }
 }
@@ -1466,7 +1466,7 @@ mod tests {
     fn x_reads_through_fxembed_unless_turned_off() {
         assert_eq!(
             Config::default().sources.x.fxembed_api_url,
-            "https://api.fixupx.com"
+            "https://api.fxtwitter.com"
         );
         let mut config = valid();
         config.sources.x.fxembed_api_url = String::new();
@@ -1919,7 +1919,7 @@ mod tests {
         // Unset secrets stay visibly unset, and plain addresses unchanged.
         let plain = Config::default().redacted();
         assert_eq!(plain.mail.password, "");
-        assert_eq!(plain.sources.x.fxembed_api_url, "https://api.fixupx.com");
+        assert_eq!(plain.sources.x.fxembed_api_url, "https://api.fxtwitter.com");
     }
 
     #[test]

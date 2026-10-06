@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "moekura"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1960,7 +1960,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "argon2",
  "getrandom 0.4.3",
@@ -1980,7 +1980,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-db"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "argon2",
  "futures-util",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-jobs"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hex",
  "lettre",
@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-media"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "base64 0.22.1",
  "md-5",
@@ -2039,7 +2039,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-net"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "moekura-storage",
  "reqwest",
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-storage"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "futures-util",
@@ -2065,7 +2065,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-tagger"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "futures-util",
  "hex",
@@ -2087,7 +2087,7 @@ dependencies = [
 
 [[package]]
 name = "moekura-web"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "axum-extra",

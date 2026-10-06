@@ -7,10 +7,12 @@ releases list what they deprecate. Before 1.0, a minor release (0.2) could
 change configuration or behaviour, and said so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
-## [Unreleased]
+## [0.6.0] - 2026-10-06
 
 Getting ready for 1.0: what 1.0 promises, how things get renamed after
-it, and CI that checks upgrades, backups and performance.
+it, CI that checks upgrades, backups and performance, and the fixes from
+a security review. Upgrading is recommended. Read the upgrading notes
+below: some defaults changed, and some API and webhook names.
 
 ### Stability
 
@@ -43,7 +45,52 @@ it, and CI that checks upgrades, backups and performance.
 - X posts are read through an FxEmbed API (`sources.x.fxembed_api_url`),
   with a logged-in account as the fallback.
 
+### Security
+
+A review of the whole server before 1.0 fixed these, among many smaller
+ones:
+
+- Logins, sign-ups and mail are limited per network and per account,
+  with a captcha past a looser ceiling; `X-Forwarded-For` is read from
+  the right, and IPv4-mapped addresses as IPv4. Repeated wrong
+  two-factor codes lock the account's codes for a while and warn its
+  owner.
+- Reset links end when the password or address changes, and a reset
+  revokes API keys and feed tokens; new keys and tokens are confirmed.
+  Only bare email addresses are taken and mailed to.
+- OIDC logins finish only in the browser that started them, reach the
+  provider only over https, and follow the sign-up rules and network
+  bans.
+- Uploads are rate limited per account, links start bounded downloads,
+  and refused or abandoned uploads' files are removed. Zips, ugoira and
+  the libvips tools are held to limits (`media.vips_memory_mb`,
+  `media.vips_cpu_secs`), and ffmpeg gets only re-encoded frames.
+- Source lookups, link previews, imports and webhooks are bounded and
+  confined: a site's login is sent only to a work's own page, link
+  previews see what a logged-out visitor sees, redirects carry no
+  `Referer`, and webhooks send images only of posts visitors may see,
+  escape Discord embeds and pause receivers that don't answer.
+- Posts, pools, artists and users a viewer can't see stay out of pools,
+  favorites, comments, `similar:`, feeds and the Danbooru API; personal
+  feeds stay out of shared caches.
+- Permission checks on artists, bulk update requests, flags, network
+  bans, feedback, invites and votes on one's own posts.
+- Huge searches, tag boxes and form fields are refused before they're
+  read, markup is read in linear time, and connections are limited
+  (`[server.connections]`).
+- `check-config` redacts every credential.
+
 ### Upgrading
+
+Some defaults changed (see [Changed
+defaults](docs/src/upgrading.md#changed-defaults)):
+
+- Metadata (EXIF and GPS, XMP, IPTC, comments) is removed from new JPEG,
+  PNG and WebP originals: `media.strip_metadata` is now `"strip"`. Set
+  it to `"off"` to keep originals as uploaded.
+- At most 512 connections are served at once, and idle connections are
+  closed after 10 seconds (`[server.connections]`).
+- `deploy/compose.tiny.yml` publishes port 8080 on `127.0.0.1` only.
 
 Names were made consistent before the 1.0 freeze. If you use these, update
 them:

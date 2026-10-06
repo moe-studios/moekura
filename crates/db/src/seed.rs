@@ -305,6 +305,11 @@ pub async fn batch(
     sqlx::query("SET LOCAL max_parallel_workers_per_gather = 0")
         .execute(&mut *tx)
         .await?;
+    // A batch of 50,000 posts can take longer than
+    // `database.statement_timeout_ms` on a slow machine.
+    sqlx::query("SET LOCAL statement_timeout = 0")
+        .execute(&mut *tx)
+        .await?;
     let mut post_ids: Vec<i64> = sqlx::query_scalar(
         r#"
         WITH drawn AS (

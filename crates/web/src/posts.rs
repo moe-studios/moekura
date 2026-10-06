@@ -609,17 +609,32 @@ pub(crate) async fn preview(page: &Page, tags: &str, limit: u32) -> Result<Vec<V
 }
 
 /// Grid cards for posts `ids` (their ids and contexts, in order), leaving
-/// out posts the viewer's blacklist hides, or blurring them if they chose
-/// that. `post_query` is added to the post links, as for [`card_context`].
+/// out posts the viewer may not see and those their blacklist hides, or
+/// blurring those if they chose that. `post_query` is added to the post
+/// links, as for [`card_context`].
 pub(crate) async fn grid(
     page: &Page,
     db: &sqlx::PgPool,
     ids: &[i64],
     post_query: Option<&str>,
 ) -> Result<Vec<(i64, Value)>, AppError> {
+    grid_for(page, db, ids, post_query, &visibility(&page.current)).await
+}
+
+/// [`grid`] for the posts `visible` allows, for pages that show the
+/// viewer more than they browse with (purging ignores their safe mode).
+pub(crate) async fn grid_for(
+    page: &Page,
+    db: &sqlx::PgPool,
+    ids: &[i64],
+    post_query: Option<&str>,
+    visible: &Visibility,
+) -> Result<Vec<(i64, Value)>, AppError> {
     let state = page.state();
     let thumbs = Thumbs::for_viewer(state, &page.current);
-    let cards = posts::cards(db, ids, thumbs.kinds()).await?;
+    // Whoever passed the ids, a thumbnail leads to the files.
+    let ids = posts::visible_ids(db, ids, visible).await?;
+    let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
     let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
     let blur = crate::blacklist::blurs(&page.current);
     Ok(cards
@@ -640,15 +655,17 @@ pub(crate) async fn grid(
 }
 
 /// Posts `ids` as a reader shows them: the resized sample of stills, the
-/// original of animations and videos, in order. Posts the viewer's
-/// blacklist hides come without a file.
+/// original of animations and videos, in order. Posts the viewer may not
+/// see are left out; those their blacklist hides come without a file.
 pub(crate) async fn displays(
     page: &Page,
     db: &sqlx::PgPool,
     ids: &[i64],
 ) -> Result<Vec<Value>, AppError> {
     let state = page.state();
-    let found = posts::by_ids(db, ids).await?;
+    let visible = visibility(&page.current);
+    let mut found = posts::by_ids(db, ids).await?;
+    found.retain(|post| visible.allows(post));
     let assets = media::for_posts(db, ids).await?;
     let asset_ids: Vec<i64> = assets.iter().map(|a| a.id).collect();
     let variants = media::variants_of(db, &asset_ids).await?;
@@ -702,7 +719,7 @@ fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option
     };
     context! {
         id => card.id,
-        href => Value::from_safe_string(href),
+        href => url_value(&href),
         thumb => url(&card.thumb),
         thumb_2x => url(&card.thumb_2x),
         width => width,
@@ -1009,7 +1026,9 @@ pub(crate) async fn render_post(
         favorited => favorited,
         vote => vote,
         can_favorite => me.is_some() && page.current.can(Permission::Favorite) && !limited,
-        can_vote => me.is_some() && page.current.can(Permission::Vote) && !limited,
+        // Not on their own post, unless to take back a vote from before.
+        can_vote => me.is_some() && page.current.can(Permission::Vote) && !limited
+            && (post.uploader_id != me || vote != 0),
         // Keeps the search across the form's redirect.
         query => (!search.is_empty()).then(|| url_value(&format!(
             "?{}",
@@ -1159,7 +1178,7 @@ pub(crate) async fn render_post(
     .await?;
     let favorite_groups = crate::favorite_groups::for_post(state, &page.current, post.id).await?;
     // Link previews only for posts visitors may see.
-    let preview = if matches!(post.status, PostStatus::Active | PostStatus::Flagged) {
+    let preview = if crate::previews::visitors(state).allows(&post) {
         let description = if post.description.is_empty() {
             tag_string.replace('_', " ")
         } else {
@@ -1257,17 +1276,14 @@ async fn similar_context(
     )
     .await?;
     let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
+    let ids = posts::visible_ids(db, &ids, &visibility(&page.current)).await?;
     let thumbs = Thumbs::for_viewer(state, &page.current);
-    let visible = visibility(&page.current);
     Ok(posts::cards(db, &ids, thumbs.kinds())
         .await?
         .iter()
         .filter(|card| {
-            let status: Option<PostStatus> = card.status.parse().ok();
             let rating = card.rating.parse().unwrap_or(Rating::Explicit);
-            status.is_some_and(|s| visible.statuses.contains(&s))
-                && visible.allows_rating(rating)
-                && blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
+            blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
         })
         .map(|card| card_context(state, card, thumbs.size, None))
         .collect())
@@ -2008,8 +2024,26 @@ mod tests {
         let a = upload(&app, &alice, &fixture::png(20, 20), &[]).await;
         let b = upload(&app, &alice, &fixture::png(24, 20), &[]).await;
         let c = upload(&app, &alice, &fixture::png(28, 20), &[("rating", "e")]).await;
+        // By an artist banned since, and a child of `a`.
+        let d = upload(
+            &app,
+            &alice,
+            &fixture::png(32, 20),
+            &[("tags", "bad_artist")],
+        )
+        .await;
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('bad_artist', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE posts SET parent_id = $1 WHERE id = $2")
+            .bind(a)
+            .bind(d)
+            .execute(&pool)
+            .await
+            .unwrap();
         // As if processing found them nearly identical.
-        for (post, hash) in [(a, 0x1234_i64), (b, 0x1235), (c, 0x1237)] {
+        for (post, hash) in [(a, 0x1234_i64), (b, 0x1235), (c, 0x1237), (d, 0x1236)] {
             sqlx::query(
                 "UPDATE media_assets SET phash = $2, phash_0 = ($2 >> 48)::int2,
                      phash_1 = (($2 >> 32) & 65535)::int2, phash_2 = (($2 >> 16) & 65535)::int2,
@@ -2034,6 +2068,12 @@ mod tests {
             "blacklisted"
         );
         assert!(page.contains(&format!("href=\"/posts?tags=similar%3A{a}\"")));
+        // Neither among similar posts nor in the family bar.
+        assert!(!page.contains(&format!("href=\"/posts/{d}\"")), "{page}");
+        assert!(!page.contains("class=\"family\""), "{page}");
+        let admin = session_for(&pool, "boss", SystemRole::Admin).await;
+        let staff = app.get(&format!("/posts/{a}"), Some(&admin)).await.body;
+        assert!(staff.contains(&format!("href=\"/posts/{d}\"")), "{staff}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

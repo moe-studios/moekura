@@ -5,12 +5,15 @@
 //! `/favorite_groups/{id}.json`, `/saved_searches.json` and
 //! `/saved_searches/{id}.json`.
 
+use std::collections::HashSet;
+
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use moekura_core::permissions::Permission;
+use moekura_core::pools::MAX_POSTS;
 use moekura_db::comments::{self, Comment, Filter};
 use moekura_db::favorite_groups::{self, Group};
 use moekura_db::pools::{self, Pool};
@@ -113,6 +116,9 @@ struct CommentParams {
     list: ListParams,
 }
 
+/// How far numbered pages of comments go; `b<id>` pages go on from there.
+const MAX_COMMENT_ROWS: i64 = 20_000;
+
 /// Comments, newest first, on posts the requester can see. Only numbered
 /// pages of `b<id>` for comments before one.
 async fn list_comments(
@@ -138,13 +144,18 @@ async fn list_comments(
         Some(id) => (id.parse().ok(), 0),
         None => (None, (page_number(&params.list) - 1) * limit),
     };
-    let mut found =
-        comments::list(db, &visibility(&current), &filter, before, skip + limit).await?;
-    let found: Vec<DanbooruComment> = found
-        .drain(..)
-        .skip(skip as usize)
-        .map(DanbooruComment::from)
-        .collect();
+    if skip + limit > MAX_COMMENT_ROWS {
+        return Err(AppError::BadRequest(format!(
+            "Numbered pages go only as far as the newest {MAX_COMMENT_ROWS} comments; \
+             go on with `page=b<id>`"
+        )));
+    }
+    let found: Vec<DanbooruComment> =
+        comments::list(db, &visibility(&current), &filter, before, skip, limit)
+            .await?
+            .into_iter()
+            .map(DanbooruComment::from)
+            .collect();
     json(found, &params.list.only)
 }
 
@@ -162,6 +173,7 @@ async fn show_comment(
 async fn create_comment(
     State(state): State<AppState>,
     current: CurrentUser,
+    info: crate::auth::RequestInfo,
     fields: Fields,
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
@@ -175,7 +187,8 @@ async fn create_comment(
         .filter(|p| visibility(&current).allows(p))
         .ok_or(AppError::NotFound)?;
     let body = crate::comments::clean_body(fields.get("comment[body]").unwrap_or_default())?;
-    let user = crate::comments::commenter(&state, &current, &post).await?;
+    let user =
+        crate::comments::commenter(&state, &current, &post, fields.get("captcha"), info.ip).await?;
     let bump = !fields
         .get("comment[do_not_bump_post]")
         .is_some_and(|v| matches!(v.trim(), "yes" | "true" | "1"));
@@ -198,9 +211,10 @@ async fn update_comment(
     let (comment, _) = crate::comments::visible_comment(&state, &current, id).await?;
     crate::comments::check_author(&current, &comment)?;
     let body = crate::comments::clean_body(fields.get("comment[body]").unwrap_or_default())?;
-    let db = state.db.primary();
-    comments::update(db, id, &body).await?;
-    let comment = comments::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    crate::comments::save_edit(&state, &current, &comment, &body).await?;
+    let comment = comments::by_id(state.db.primary(), id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     json(DanbooruComment::from(comment), "")
 }
 
@@ -306,6 +320,25 @@ async fn comment_votes(
     json(votes, &params.list.only)
 }
 
+/// Most pools, favorite groups or pool versions on a page, as each lists
+/// its posts.
+pub(super) const MAX_LISTED: u32 = 100;
+
+/// Most post ids a page of pools, favorite groups or pool versions lists
+/// between them: ten full pools.
+pub(super) const MAX_LISTED_POSTS: usize = 10 * MAX_POSTS;
+
+/// Refuses a page of `what` listing more than [`MAX_LISTED_POSTS`] post
+/// ids, which would hold too much memory for one request.
+pub(super) fn check_listed(what: &str, post_ids: usize) -> Result<(), AppError> {
+    if post_ids > MAX_LISTED_POSTS {
+        return Err(AppError::BadRequest(format!(
+            "These {what} list more than {MAX_LISTED_POSTS} posts between them; ask for fewer with `limit`."
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 struct DanbooruPool {
     id: i32,
@@ -330,7 +363,7 @@ async fn pool_json(
         pool.id,
         &visibility(current),
         0,
-        i64::MAX,
+        MAX_POSTS as i64,
     )
     .await?;
     Ok(DanbooruPool {
@@ -369,13 +402,16 @@ async fn list_pools(
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
     let db = state.reader(&current);
+    let limit = i64::from(params.list.limit(MAX_LISTED));
+    let offset = (page_number(&params.list) - 1) * limit;
+    // Each pool once.
+    let mut seen = HashSet::new();
     let ids: Vec<i32> = params
         .id
         .split([' ', ','])
         .filter_map(|s| s.trim().parse().ok())
+        .filter(|id| seen.insert(*id))
         .collect();
-    let limit = i64::from(params.list.limit(1000));
-    let offset = (page_number(&params.list) - 1) * limit;
     let found: Vec<Pool> = if ids.is_empty() {
         let contains = params.name_contains.trim();
         let name = if contains.is_empty() {
@@ -399,6 +435,9 @@ async fn list_pools(
         }
         found
     };
+    // Every post counts here, hidden or not: the check comes before any
+    // post ids are read.
+    check_listed("pools", found.iter().map(|p| p.post_count as usize).sum())?;
     let mut out = Vec::with_capacity(found.len());
     for pool in found {
         out.push(pool_json(&state, &current, pool).await?);
@@ -438,7 +477,7 @@ async fn group_json(
         group.id,
         &visibility(current),
         0,
-        i64::MAX,
+        MAX_POSTS as i64,
     )
     .await?;
     Ok(DanbooruGroup {
@@ -484,11 +523,20 @@ async fn list_groups(
     let Some(creator) = creator else {
         return json(Vec::<DanbooruGroup>::new(), "");
     };
-    let limit = params.list.limit(1000) as usize;
+    let limit = params.list.limit(MAX_LISTED) as usize;
     let skip = (page_number(&params.list) as usize - 1) * limit;
-    let groups = favorite_groups::for_user(db, creator, me == Some(creator)).await?;
+    let groups: Vec<Group> = favorite_groups::for_user(db, creator, me == Some(creator))
+        .await?
+        .into_iter()
+        .skip(skip)
+        .take(limit)
+        .collect();
+    check_listed(
+        "favorite groups",
+        groups.iter().map(|g| g.post_count as usize).sum(),
+    )?;
     let mut out = Vec::new();
-    for group in groups.into_iter().skip(skip).take(limit) {
+    for group in groups {
         out.push(group_json(&state, &current, group).await?);
     }
     json(out, &params.list.only)
@@ -648,6 +696,72 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn numbered_pages_stop_short(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let post = upload(&app, &alice, 20, "cat").await;
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let mut ids = Vec::new();
+        for body in ["one", "two", "three"] {
+            ids.push(
+                moekura_db::comments::create(&pool, post, alice_id, body, true)
+                    .await
+                    .unwrap(),
+            );
+        }
+
+        // Numbered pages skip in the database, as far as they go.
+        let second = parse(&app.get("/comments.json?limit=1&page=2", None).await.body);
+        assert_eq!(second[0]["body"], json!("two"));
+        assert_eq!(second.as_array().unwrap().len(), 1);
+        let deep = app.get("/comments.json?limit=1000&page=21", None).await;
+        assert_eq!(deep.status, StatusCode::BAD_REQUEST, "{}", deep.body);
+        assert!(deep.body.contains("page=b"), "{}", deep.body);
+        let before = parse(
+            &app.get(&format!("/comments.json?page=b{}", ids[1]), None)
+                .await
+                .body,
+        );
+        assert_eq!(before[0]["body"], json!("one"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn changes_go_through_the_spam_filter(pool: PgPool) {
+        moekura_db::settings::set(&pool, "spam_filter", json!({ "words": ["casino"] }))
+            .await
+            .unwrap();
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let post = upload(&app, &alice, 20, "cat").await;
+        let created = app
+            .post_form(
+                "/comments.json",
+                Some(&alice),
+                &[],
+                &format!("comment[post_id]={post}&comment[body]=Nice"),
+            )
+            .await;
+        let id = parse(&created.body)["id"].as_i64().unwrap();
+        let changed = app
+            .json(
+                "PUT",
+                &format!("/comments/{id}.json"),
+                Some(&alice),
+                Some(json!({ "comment": { "body": "casino" } })),
+            )
+            .await;
+        assert_eq!(changed.status, StatusCode::OK, "{}", changed.body);
+        assert_eq!(parse(&changed.body)["is_deleted"], json!(true));
+        assert_eq!(
+            parse(&app.get("/comments.json", None).await.body),
+            json!([])
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn pools_groups_and_saved_searches(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
@@ -673,6 +787,13 @@ mod tests {
         );
         assert_eq!(listed[0]["post_ids"], json!([b, a]));
         assert_eq!(listed[0]["category"], json!("series"));
+        // Each pool once, however often it's asked for.
+        let listed = parse(
+            &app.get(&format!("/pools.json?search[id]={id},{id}+{id}"), None)
+                .await
+                .body,
+        );
+        assert_eq!(listed.as_array().map(Vec::len), Some(1), "{listed}");
         assert_eq!(
             parse(&app.get(&format!("/pools/{id}.json"), None).await.body)["name"],
             json!("My_Comic")
@@ -718,5 +839,155 @@ mod tests {
             app.get("/saved_searches.json", None).await.status,
             StatusCode::UNAUTHORIZED
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn pools_and_groups_leave_out_hidden_posts(pool: PgPool) {
+        let uploads = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let a = upload(&uploads, &alice, 20, "cat").await;
+        let banned = upload(&uploads, &alice, 24, "bad_artist").await;
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('bad_artist', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let id = moekura_db::pools::create(
+            &pool,
+            &moekura_db::pools::Contents {
+                name: "My_Comic".into(),
+                description: String::new(),
+                category: "series".into(),
+                is_deleted: false,
+                post_ids: vec![banned, a],
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        moekura_db::favorite_groups::create(
+            &pool,
+            alice_id,
+            &moekura_db::favorite_groups::Contents {
+                name: "Best".into(),
+                is_public: true,
+                post_ids: vec![a, banned],
+            },
+        )
+        .await
+        .unwrap();
+        // The banned artist's post is hidden once the site knows of the
+        // ban.
+        let app = app(&pool).await;
+        let shown = parse(&app.get(&format!("/pools/{id}.json"), None).await.body);
+        assert_eq!(shown["post_ids"], json!([a]));
+        let listed = parse(
+            &app.get(&format!("/pools.json?search[id]={id}"), None)
+                .await
+                .body,
+        );
+        assert_eq!(
+            (&listed[0]["post_ids"], &listed[0]["post_count"]),
+            (&json!([a]), &json!(1))
+        );
+        let groups = parse(
+            &app.get("/favorite_groups.json?search[creator_name]=alice", None)
+                .await
+                .body,
+        );
+        assert_eq!(groups[0]["post_ids"], json!([a]));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn pool_pages_stay_small(pool: PgPool) {
+        let app = app(&pool).await;
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let alice_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        // 100 pools and 100 groups of the same 1,001 posts.
+        sqlx::query("INSERT INTO posts (rating) SELECT 'g' FROM generate_series(1, 1001)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let first: i32 = sqlx::query_scalar(
+            "WITH made AS (
+                 INSERT INTO pools (name, category)
+                 SELECT 'pool_' || n, 'collection' FROM generate_series(1, 100) n
+                 RETURNING id
+             )
+             SELECT min(id) FROM made",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO pool_posts (pool_id, post_id, position)
+             SELECT pl.id, p.id, row_number() OVER (PARTITION BY pl.id ORDER BY p.id) - 1
+             FROM pools pl CROSS JOIN posts p",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO favorite_groups (creator_id, name)
+             SELECT $1, 'group_' || n FROM generate_series(1, 100) n",
+        )
+        .bind(alice_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO favorite_group_posts (group_id, post_id, position)
+             SELECT g.id, p.id, row_number() OVER (PARTITION BY g.id ORDER BY p.id) - 1
+             FROM favorite_groups g CROSS JOIN posts p",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // A page past the pools asked for by id is empty, not a page of
+        // every pool.
+        let past = app
+            .get(
+                &format!("/pools.json?search[id]={first}&limit=1&page=2"),
+                None,
+            )
+            .await;
+        assert_eq!(parse(&past.body), json!([]), "{}", past.body);
+        // A page lists no more than 100,000 post ids between its pools.
+        let refused = app.get("/pools.json?limit=100", None).await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+        assert!(refused.body.contains("ask for fewer"), "{}", refused.body);
+        let listed = parse(&app.get("/pools.json?limit=10", None).await.body);
+        assert_eq!(listed[9]["post_count"], json!(1001), "{listed}");
+        let ids: Vec<String> = (first..first + 100).map(|id| id.to_string()).collect();
+        let by_id = app
+            .get(
+                &format!("/pools.json?search[id]={}&limit=100", ids.join(",")),
+                None,
+            )
+            .await;
+        assert_eq!(by_id.status, StatusCode::BAD_REQUEST, "{}", by_id.body);
+        let groups = app
+            .get(
+                "/favorite_groups.json?search[creator_name]=alice&limit=100",
+                None,
+            )
+            .await;
+        assert_eq!(groups.status, StatusCode::BAD_REQUEST, "{}", groups.body);
+        let groups = parse(
+            &app.get(
+                "/favorite_groups.json?search[creator_name]=alice&limit=10",
+                None,
+            )
+            .await
+            .body,
+        );
+        assert_eq!(groups.as_array().map(Vec::len), Some(10), "{groups}");
     }
 }

@@ -439,6 +439,8 @@ pub(crate) async fn make_request(
         return Err(invalid("The reason is too long.".into()));
     }
     let commands = bulk::parse(&script).map_err(|e| invalid(format!("In the script, {e}.")))?;
+    // Each lands in the queue and opens a forum topic.
+    state.rate_limits.check_request(user.id).await?;
     // Stored as the parser reads it, one command a line.
     let normalized: Vec<String> = commands.iter().map(bulk::Command::line).collect();
     let id = requests::create(
@@ -514,6 +516,7 @@ async fn show(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> {
                 .then(|| Value::from_safe_string(markup::render(&request.reason))),
             error => request.error,
             can_decide => manage && pending,
+            can_approve => pending && may_approve(&page.current, &request),
             can_withdraw => pending && me.is_some() && request.creator_id == me,
             discussion => discussion,
         },
@@ -524,6 +527,24 @@ async fn show(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> {
 struct DecideForm {
     /// `approve`, `reject` or `withdraw`.
     decision: String,
+}
+
+/// Whether `current` may approve `request`: with `ManageTags`, and if it
+/// has `update` lines (mass edits, by search), with `MassEditTags` too
+/// and only someone else's request.
+fn may_approve(current: &CurrentUser, request: &BulkRequest) -> bool {
+    let mass_edits = bulk::parse(&request.script).is_ok_and(|commands| {
+        commands
+            .iter()
+            .any(|c| matches!(c, bulk::Command::Update { .. }))
+    });
+    current.can(Permission::ManageTags)
+        && (!mass_edits
+            || (current.can(Permission::MassEditTags)
+                && current
+                    .user
+                    .as_ref()
+                    .is_some_and(|me| request.creator_id != Some(me.id))))
 }
 
 /// Approves (to apply it), rejects or withdraws request `id`.
@@ -541,6 +562,9 @@ pub(crate) async fn decide_request(
         "approve" | "reject" => {
             current.require(Permission::ManageTags)?;
             let approve = decision == "approve";
+            if approve && !may_approve(current, &request) {
+                return Err(AppError::Forbidden);
+            }
             let mut tx = db.begin().await?;
             let to = if approve { "applying" } else { "rejected" };
             if !requests::set_status(&mut *tx, id, "pending", to, Some(user.id)).await? {
@@ -759,6 +783,126 @@ mod tests {
             "{}",
             list.body
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn requests_are_rate_limited(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let bulk = |n: usize| format!("title=R{n}&script=alias+a{n}+-%3E+b{n}");
+        let alias = |n: usize| format!("antecedent=c{n}&consequent=d{n}");
+        let made = async || -> (i64, i64) {
+            sqlx::query_as(
+                "SELECT (SELECT count(*) FROM bulk_update_requests),
+                        (SELECT count(*) FROM tag_relations)",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // Bulk update and single requests count together.
+        let mut statuses = Vec::new();
+        for n in 0..3 {
+            let made = app
+                .post_form("/tags/requests", Some(&alice), &[], &bulk(n))
+                .await;
+            statuses.push(made.status);
+            let made = app
+                .post_form("/tags/aliases", Some(&alice), &[], &alias(n))
+                .await;
+            statuses.push(made.status);
+        }
+        assert_eq!(
+            statuses,
+            [
+                StatusCode::SEE_OTHER,
+                StatusCode::SEE_OTHER,
+                StatusCode::SEE_OTHER,
+                StatusCode::SEE_OTHER,
+                StatusCode::SEE_OTHER,
+                StatusCode::TOO_MANY_REQUESTS,
+            ]
+        );
+        assert_eq!(
+            app.post_form("/tags/requests", Some(&alice), &[], &bulk(9))
+                .await
+                .status,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert_eq!(made().await, (3, 2));
+        // Not anyone else's, nor tag managers' own, which apply at once.
+        assert_eq!(
+            app.post_form("/tags/requests", Some(&bob), &[], &bulk(5))
+                .await
+                .status,
+            StatusCode::SEE_OTHER
+        );
+        for n in 10..17 {
+            let made = app
+                .post_form("/tags/aliases", Some(&admin), &[], &alias(n))
+                .await;
+            assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
+        }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn mass_edits_are_approved_by_someone_else_who_may_mass_edit(pool: PgPool) {
+        let app = app(&pool).await;
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let other = session_for(&pool, "other", SystemRole::Moderator).await;
+        let script = "title=Ears&script=update+cat_ears+-%3E+animal_ears";
+        let decide = async |url: &str, who: &str, decision: &str| {
+            app.post_form(
+                &format!("{url}/decide"),
+                Some(who),
+                &[],
+                &format!("decision={decision}"),
+            )
+            .await
+            .status
+        };
+
+        // A janitor's own: not without Mass edit tags.
+        let url = app
+            .post_form("/tags/requests", Some(&jan), &[], script)
+            .await
+            .location
+            .unwrap();
+        assert!(
+            !app.get(&url, Some(&jan))
+                .await
+                .body
+                .contains("Approve and apply")
+        );
+        assert_eq!(decide(&url, &jan, "approve").await, StatusCode::FORBIDDEN);
+        // A moderator's: not their own, but another's.
+        let url = app
+            .post_form("/tags/requests", Some(&moderator), &[], script)
+            .await
+            .location
+            .unwrap();
+        assert_eq!(decide(&url, &jan, "approve").await, StatusCode::FORBIDDEN);
+        assert_eq!(
+            decide(&url, &moderator, "approve").await,
+            StatusCode::FORBIDDEN
+        );
+        let shown = app.get(&url, Some(&other)).await.body;
+        assert!(shown.contains("Approve and apply"), "{shown}");
+        assert_eq!(decide(&url, &other, "approve").await, StatusCode::SEE_OTHER);
+        let id: i32 = url.rsplit('/').next().unwrap().parse().unwrap();
+        let request = requests::by_id(&pool, id).await.unwrap().unwrap();
+        assert_eq!(request.status, "applying");
+        // Rejecting needs no more than Manage tags.
+        let url = app
+            .post_form("/tags/requests", Some(&moderator), &[], script)
+            .await
+            .location
+            .unwrap();
+        assert_eq!(decide(&url, &jan, "reject").await, StatusCode::SEE_OTHER);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

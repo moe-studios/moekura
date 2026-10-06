@@ -47,6 +47,12 @@
       <option value="{{ d.value }}"{% if d.value == expires %} selected{% endif %}>{{ t("api-keys-expiry-" ~ d.value) }}</option>
       {% endfor %}
     </select>
+    {% if has_password %}
+    <label for="key-password">{{ t("your-password") }}</label>
+    <input id="key-password" name="password" type="password" autocomplete="current-password" required>
+    {% else %}
+    <p class="hint">{{ t("confirm-fresh-login", minutes=fresh_login_minutes) }}</p>
+    {% endif %}
     <button type="submit">{{ t("api-keys-create") }}</button>
   </form>
   <p><a href="/settings">{{ t("back-to-settings") }}</a></p>

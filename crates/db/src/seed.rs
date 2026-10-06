@@ -625,6 +625,13 @@ async fn community(
 /// Adds aliases and implications among the seeded tags, applies the
 /// implications, and vacuums and refreshes planner statistics.
 pub async fn finish(db: &PgPool, plan: &Plan) -> sqlx::Result<()> {
+    // Applying implications to millions of posts, and vacuuming them, takes
+    // longer than `database.statement_timeout_ms`. A connection of its own,
+    // closed afterwards, so the pool's keep their timeout.
+    let mut conn = db.acquire().await?.detach();
+    sqlx::query("SET statement_timeout = 0")
+        .execute(&mut conn)
+        .await?;
     let creator = plan.user_ids.first().copied();
     // Aliases: an old spelling for one in 50 of the 5,000 most used tags.
     sqlx::query(
@@ -637,7 +644,7 @@ pub async fn finish(db: &PgPool, plan: &Plan) -> sqlx::Result<()> {
     )
     .bind(&plan.tag_ids)
     .bind(creator)
-    .execute(db)
+    .execute(&mut conn)
     .await?;
     // Implications: characters imply a copyright, as on real sites.
     let pairs: Vec<(i32, i32, String, String)> = sqlx::query_as(
@@ -656,7 +663,7 @@ pub async fn finish(db: &PgPool, plan: &Plan) -> sqlx::Result<()> {
          WHERE c.n <= 20",
     )
     .bind(&plan.tag_ids)
-    .fetch_all(db)
+    .fetch_all(&mut conn)
     .await?;
     for (antecedent, consequent, antecedent_name, consequent_name) in pairs {
         let inserted = sqlx::query(
@@ -667,7 +674,7 @@ pub async fn finish(db: &PgPool, plan: &Plan) -> sqlx::Result<()> {
         .bind(&antecedent_name)
         .bind(&consequent_name)
         .bind(creator)
-        .execute(db)
+        .execute(&mut conn)
         .await?;
         if inserted.rows_affected() == 0 {
             continue;
@@ -678,7 +685,7 @@ pub async fn finish(db: &PgPool, plan: &Plan) -> sqlx::Result<()> {
         )
         .bind(antecedent)
         .bind(consequent)
-        .execute(db)
+        .execute(&mut conn)
         .await?;
     }
     sqlx::query(
@@ -686,7 +693,7 @@ pub async fn finish(db: &PgPool, plan: &Plan) -> sqlx::Result<()> {
              comment_votes, notes, note_versions, pools, pool_posts, favorite_groups,
              favorite_group_posts, saved_searches, tagger_results, tag_suggestions",
     )
-    .execute(db)
+    .execute(&mut conn)
     .await?;
     Ok(())
 }

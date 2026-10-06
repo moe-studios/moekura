@@ -31,13 +31,13 @@ things:
 |---|---|
 | `rating:g`, `s`, `q`, `e` (or the full name) | sets the rating |
 | `source:https://…`, `source:none` | sets or clears the source |
-| `parent:123`, `parent:none` or `-parent` | sets or clears the parent; `-parent:123` clears it only if it's 123 |
+| `parent:123`, `parent:none` or `-parent` | sets or clears the parent (a post you can see, as in the form's parent field); `-parent:123` clears it only if it's 123 |
 | `child:123`, `-child:123` | makes post 123 a child of this one, or stops it being one |
 | `pool:12`, `pool:name`, `-pool:12` | adds the post to the end of a pool, or takes it out |
 | `newpool:name` | starts a pool with the post (or adds it to the pool of that name) |
 | `fav`, `-fav` | favorites the post, or stops favoriting it |
 | `favgroup:12`, `favgroup:name`, `-favgroup:12` | adds the post to one of your favorite groups, or takes it out |
-| `upvote`, `downvote` | votes on the post |
+| `upvote`, `downvote` | votes on the post (not your own upload) |
 
 Each needs the permission it would need done by hand (editing pools to
 use `pool:`, favoriting to use `fav`, …), and is recorded where that
@@ -46,6 +46,9 @@ you can't use, or one naming something that doesn't exist, stops the
 save with the reason. Metatags in the box win over the form's own
 rating, source and parent fields. They also work in tag scripts and the
 APIs' tag fields; in a mass edit, only `-tag` and `rating:` do.
+
+A post can have at most 1000 tags, and a tag box at most 4000 words and
+256 KiB, with tags, `-tag`s and metatags together.
 
 ## Warnings after saving
 
@@ -144,10 +147,15 @@ An **implication** adds a tag: with `cat` implying `animal`, every post
 tagged `cat` is also tagged `animal`.
 
 Anyone who can edit posts can request them under **Tags → Aliases** and
-**Implications**; people who can manage tags approve them. Once approved,
-they're applied to existing posts in the background, and to every edit
-after. Each post's history shows which changes came from an alias or
-implication.
+**Implications**; people who can manage tags approve them. You can
+withdraw your own request while it's pending; after that, only they can
+end it. Once approved, they're applied to existing posts in the
+background, and to every edit after. Each post's history shows which
+changes came from an alias or implication.
+
+Requests waiting for a decision, these and [bulk update
+requests](#bulk-update-requests) alike, are rate limited: a few at once,
+then one a minute.
 
 ### Voting and discussion
 
@@ -173,7 +181,9 @@ Lines starting with `#` are ignored. Mistakes are pointed out, by line,
 when you send the request. Members vote and discuss as for single
 requests; staff who manage tags approve (which applies the lines in
 order, in the background) or reject it, and you can withdraw your own
-while it's pending. If a line can't be applied (say, it would make an
+while it's pending. A request with `update` lines is approved only by
+staff who can also mass edit tags, and not by whoever requested it. If
+a line can't be applied (say, it would make an
 implication loop), the request stops there, marked failed with the
 reason; the lines before it stay applied.
 
@@ -186,8 +196,9 @@ own history.
 
 ## Deprecated tags
 
-A deprecated tag can't be added to posts any more, but stays on the posts
-that already have it until someone takes it off.
+A deprecated tag can't be added to posts any more, not even by
+reverting a post to a version that had it, but stays on the posts that
+already have it until someone takes it off.
 
 ## Tag scripts
 

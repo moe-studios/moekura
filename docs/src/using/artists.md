@@ -11,7 +11,9 @@ default) can start or change an entry: **New artist** on the list, or
 is its tag; a tag that doesn't exist yet, or that no post uses yet,
 becomes an artist tag. Every change is kept under **History**, and
 **Recent changes** (`/artist_versions`) lists every entry's changes,
-filterable by user. Entries can be deleted and restored.
+filterable by user. Entries can be deleted and restored; deleted ones,
+and their changes, are left out for visitors and others without that
+permission or *See deleted posts*.
 
 The entry's page shows the URLs, the first paragraph of the tag's wiki
 page (the longer description lives there), and the artist's newest
@@ -24,7 +26,9 @@ of ones no longer in use (a deleted account, a site that closed): they're
 shown struck out, but still identify the artist. Profiles on the
 [sites Moekura knows](sources.md) are saved in their canonical form
 (`pixiv.net/member.php?id=1` becomes `https://www.pixiv.net/users/1`) and
-shown with the site's icon.
+shown with the site's icon. Quotes, angle brackets and spaces in an
+address are kept percent-encoded (`%22`, `%3C`, `%20`), and an address
+can be at most 2048 characters as it's kept, encoding included.
 
 **Find an artist by URL** (`/artists/finder`) takes any address, a
 profile or a page of one of the artist's works, and lists the artists
@@ -32,7 +36,9 @@ whose URLs it falls under: `https://x.com/someone/status/123` finds the
 artist with `https://twitter.com/someone`. Addresses are compared without
 `www.`, the scheme, or anything after `?`, `x.com` counts as
 `twitter.com`, and a profile's other forms count as its canonical one
-(`someone.artstation.com` as `artstation.com/someone`).
+(`someone.artstation.com` as `artstation.com/someone`). Asking the
+work's site counts against an allowance (see
+[Lookups](sources.md#lookups)).
 
 The upload form does the same with the link you upload from and the
 source: when they belong to a known artist, their tag is offered beside
@@ -51,10 +57,16 @@ at the artist's request). What that does is a site setting, under
 - **Hide their posts** (on by default): posts with the artist's tag are
   left out of searches, and their pages aren't found.
 - **Refuse uploads** (on by default): uploads with the tag, and edits
-  adding it, are refused.
+  adding it (reverting to a version that had it, too), are refused.
 
-Staff who approve posts still see the posts and can post them. Bans are
-recorded in the moderation log.
+Staff who approve posts still see the posts and can post them.
+
+The ban is on the tag with the entry's name, for as long as the entry
+isn't deleted. So renaming, deleting or restoring a banned artist's entry
+also takes the manage tags permission; anyone who can edit artists can
+still change its other names, group and URLs. Bans, unbans, and renames,
+deletions and restorations of banned entries are recorded in the
+moderation log.
 
 ## Commentary
 

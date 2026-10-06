@@ -10,12 +10,18 @@ are a link away.
 You can edit and delete your own comments; edited ones say so. Deleting
 a post's last comment takes it out of `order:comment`. Deleted posts
 can't be commented on, and comments are rate limited: a few at once,
-then one every 20 seconds.
+then one every 20 seconds. Edits count toward the same limit.
 
 On public sites, a comment that looks like spam (links from a brand-new
 account, the same text over and over, or words the staff listed) is
 held until the staff check it; the same goes for forum posts and
-messages. See [the spam filter](../admin/moderation.md#spam-filter).
+messages, and for edits, which hide a comment again until it's checked.
+See [the spam filter](../admin/moderation.md#spam-filter).
+
+If the site asks new accounts for a captcha, it does so on every new
+comment, through the [API](../api.md) too: clients send a solved
+captcha's token as `captcha`, or the comment is refused until the account
+is old enough.
 
 Tick **Don't bump the post** to comment without moving the post up in
 `order:comment_bumped`; it still counts for `order:comment`. Moderators

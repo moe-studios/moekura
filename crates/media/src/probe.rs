@@ -190,15 +190,7 @@ impl Media {
         tokio::fs::create_dir_all(&dir).await?;
         let probed = async {
             let first = self.ugoira_extract(path, &frames[..1], &dir).await?;
-            let frame_type = crate::ugoira::frame_type(&first[0]);
-            // The frame's contents must be what its name says.
-            let sniffed = self.identify_any(&first[0]).await?;
-            if sniffed != frame_type {
-                return Err(MediaError::Corrupt(
-                    "a frame isn't what its name says".into(),
-                ));
-            }
-            self.probe_image(&first[0], frame_type).await
+            self.probe_frame(&first[0]).await
         }
         .await;
         let _ = tokio::fs::remove_dir_all(&dir).await;
@@ -212,6 +204,26 @@ impl Media {
             frames: u32::try_from(frames.len()).unwrap_or(u32::MAX),
             has_audio: false,
         })
+    }
+
+    /// An ugoira frame unpacked to `path`, checked before anything decodes
+    /// it: its contents must be the type its name says, and within
+    /// `max_pixels`.
+    pub(crate) async fn probe_frame(&self, path: &Path) -> Result<Probe, MediaError> {
+        let frame_type = crate::ugoira::frame_type(path);
+        if self.identify_any(path).await? != frame_type {
+            return Err(MediaError::Corrupt(
+                "a frame isn't what its name says".into(),
+            ));
+        }
+        let probe = self.probe_image(path, frame_type).await?;
+        if u64::from(probe.width) * u64::from(probe.height) > self.config.max_pixels {
+            return Err(MediaError::TooLarge {
+                width: probe.width,
+                height: probe.height,
+            });
+        }
+        Ok(probe)
     }
 
     pub(crate) fn timeout(&self) -> Duration {
@@ -231,10 +243,15 @@ pub(crate) fn loaders_for(media_type: MediaType) -> Loaders {
 }
 
 /// A tool rejecting the file means the file is bad; a tool that is missing
-/// or timed out is our problem.
+/// or timed out is our problem. What the tool said goes to the log, not
+/// to whoever sent the file: it names paths on the server and the
+/// libraries' internals.
 pub(crate) fn corrupt_unless_missing(error: ToolError) -> MediaError {
     match error {
-        ToolError::Failed { stderr, .. } => MediaError::Corrupt(stderr),
+        ToolError::Failed { program, stderr } => {
+            tracing::info!(%program, %stderr, "a media tool couldn't read a file");
+            MediaError::Corrupt("it couldn't be decoded".into())
+        }
         other if other.is_over_limit() => MediaError::OverLimit(other),
         other => MediaError::Tool(other),
     }

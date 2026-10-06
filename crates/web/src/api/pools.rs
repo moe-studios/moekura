@@ -5,7 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use moekura_core::markup;
 use moekura_core::permissions::Permission;
-use moekura_core::pools::Category;
+use moekura_core::pools::{Category, MAX_POSTS, unique_post_ids};
 use moekura_db::pools::{self, Pool, Version};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -14,7 +14,9 @@ use utoipa::{IntoParams, ToSchema};
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, ErrorBody};
-use crate::pools::{PoolInput, append, contents, save_error, set_deleted, visible_pool};
+use crate::pools::{
+    PoolInput, append, check_added, contents, post_ids_error, save_error, set_deleted, visible_pool,
+};
 use crate::posts::visibility;
 use crate::tags::{MAX_PAGE, PAGE_SIZE};
 
@@ -140,7 +142,7 @@ async fn with_posts(
         pool.id,
         &visibility(current),
         0,
-        i64::MAX,
+        MAX_POSTS as i64,
     )
     .await?;
     Ok(ApiPoolWithPosts {
@@ -179,19 +181,9 @@ pub struct NewPool {
     /// `series` (the default) or `collection`.
     #[serde(default)]
     category: Option<String>,
-    /// In order.
+    /// In order: posts you can see that aren't deleted.
     #[serde(default)]
     post_ids: Vec<i64>,
-}
-
-fn dedup(ids: Vec<i64>) -> Vec<i64> {
-    let mut seen = Vec::with_capacity(ids.len());
-    for id in ids {
-        if !seen.contains(&id) {
-            seen.push(id);
-        }
-    }
-    seen
 }
 
 /// Create a pool.
@@ -205,7 +197,7 @@ fn dedup(ids: Vec<i64>) -> Vec<i64> {
     request_body = NewPool,
     responses(
         (status = 201, body = ApiPoolWithPosts),
-        (status = 422, body = ErrorBody, description = "A bad or taken name, or posts that don't exist"),
+        (status = 422, body = ErrorBody, description = "A bad or taken name, or posts that don't exist or can't be added"),
     ),
 )]
 pub(crate) async fn create(
@@ -220,11 +212,12 @@ pub(crate) async fn create(
             name: &new.name,
             description: &new.description,
             category: new.category.as_deref().unwrap_or("series"),
-            post_ids: dedup(new.post_ids),
+            post_ids: unique_post_ids(new.post_ids).map_err(post_ids_error)?,
         },
         false,
     )?;
     let db = state.db.primary();
+    check_added(db, &current, &[], &contents.post_ids, "pools").await?;
     let id = pools::create(db, &contents, Some(user.id))
         .await
         .map_err(save_error)?;
@@ -241,7 +234,8 @@ pub struct PoolChanges {
     name: Option<String>,
     description: Option<String>,
     category: Option<String>,
-    /// All of the pool's posts, in order.
+    /// All of the pool's posts, in order. Posts added must be ones you
+    /// can see that aren't deleted; those already in the pool may stay.
     post_ids: Option<Vec<i64>>,
     /// The version the changes were based on. If someone has changed the
     /// pool since, the save is refused with 409. Leave it out to save over
@@ -276,15 +270,20 @@ pub(crate) async fn update(
     let db = state.db.primary();
     let pool = visible_pool(db, &current, id).await?;
     let now = pools::contents(db, id).await?.ok_or(AppError::NotFound)?;
+    let post_ids = match changes.post_ids {
+        Some(ids) => unique_post_ids(ids).map_err(post_ids_error)?,
+        None => now.post_ids.clone(),
+    };
     let contents = contents(
         &PoolInput {
             name: changes.name.as_deref().unwrap_or(&now.name),
             description: changes.description.as_deref().unwrap_or(&now.description),
             category: changes.category.as_deref().unwrap_or(&now.category),
-            post_ids: dedup(changes.post_ids.unwrap_or(now.post_ids)),
+            post_ids,
         },
         pool.is_deleted,
     )?;
+    check_added(db, &current, &now.post_ids, &contents.post_ids, "pools").await?;
     pools::save(db, id, &contents, Some(user.id), changes.base_version)
         .await
         .map_err(save_error)?;
@@ -454,6 +453,22 @@ mod tests {
         assert_eq!(body["category"], json!("series"));
         assert_eq!(body["post_ids"], json!([b, a]));
 
+        // Too many is refused before anything is looked up.
+        let many: Vec<i64> = (1..=10_001).chain(1..=10_001).collect();
+        let refused = app
+            .json(
+                "PUT",
+                &format!("/api/v1/pools/{id}"),
+                Some(&alice),
+                Some(json!({ "post_ids": many })),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            json(&refused.body)["error"]["message"],
+            json!("A pool can have at most 10000 posts.")
+        );
+
         let stale = app
             .json(
                 "PUT",
@@ -507,5 +522,54 @@ mod tests {
             app.get(&format!("/api/v1/pools/{id}"), None).await.status,
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn refused_posts(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let a = upload(&app, &jan, &fixture::png(20, 20), "cat").await;
+        let gone = upload(&app, &jan, &fixture::png(24, 20), "dog").await;
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(gone)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        // A deleted post reads as one that doesn't exist.
+        for id in [gone, gone + 1000] {
+            let refused = app
+                .json(
+                    "POST",
+                    "/api/v1/pools",
+                    Some(&alice),
+                    Some(json!({ "name": "Comic", "post_ids": [a, id] })),
+                )
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+            assert_eq!(
+                json(&refused.body)["error"]["message"],
+                json!(format!("These posts don't exist: #{id}."))
+            );
+        }
+        let created = app
+            .json(
+                "POST",
+                "/api/v1/pools",
+                Some(&alice),
+                Some(json!({ "name": "Comic", "post_ids": [a] })),
+            )
+            .await;
+        let id = json(&created.body)["id"].as_i64().unwrap();
+        let refused = app
+            .json(
+                "PUT",
+                &format!("/api/v1/pools/{id}"),
+                Some(&alice),
+                Some(json!({ "post_ids": [gone, a] })),
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

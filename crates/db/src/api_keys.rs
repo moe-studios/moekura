@@ -97,6 +97,16 @@ pub async fn revoke(db: impl PgExecutor<'_>, user_id: i64, id: i64) -> sqlx::Res
     Ok(result.rows_affected() > 0)
 }
 
+/// Deletes all of `user_id`'s keys, after their password is reset (or
+/// on request when it's changed). Returns how many there were.
+pub async fn delete_all_for_user(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<u64> {
+    let result = sqlx::query("DELETE FROM api_keys WHERE user_id = $1")
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 /// A usable key and its (active) user.
 #[derive(Debug, Clone)]
 pub struct KeyUser {
@@ -218,6 +228,13 @@ mod tests {
         let expired = create(&pool, alice.id, "old", Some(past)).await.unwrap();
         assert!(lookup(&pool, &expired).await.unwrap().is_none());
         assert!(lookup(&pool, "mka_nonsense").await.unwrap().is_none());
+
+        // Deleting all of one user's keys leaves others'.
+        let first = create(&pool, alice.id, "one", None).await.unwrap();
+        let bobs = create(&pool, bob.id, "his", None).await.unwrap();
+        assert_eq!(delete_all_for_user(&pool, alice.id).await.unwrap(), 2);
+        assert!(lookup(&pool, &first).await.unwrap().is_none());
+        assert!(lookup(&pool, &bobs).await.unwrap().is_some());
 
         let key = create(&pool, bob.id, "bot", None).await.unwrap();
         users::set_status(&pool, bob.id, UserStatus::Deactivated)

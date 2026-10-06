@@ -57,6 +57,32 @@ searching, the wiki, favorites, moderation and private mode. CI runs them
 against `deploy/compose.tiny.yml`; to run them yourself, see
 [`e2e/README.md`](https://github.com/moe-studios/moekura/blob/main/e2e/README.md).
 
+## Renaming something public
+
+What [Stability](stability.md) promises can't be renamed outright within a
+major version: the old name keeps working, with a warning, until the next
+one. Each kind has its shim:
+
+- **Config keys**: rename the field, then add the old and new dotted paths
+  to `CONFIG_KEYS` in `crates/app/src/deprecated.rs`. The old key, in the
+  file or as its `MOEKURA_*` variable, is moved to the new one before the
+  configuration is read, and startup logs a warning naming the new key.
+  Setting both is an error.
+- **CLI flags and subcommands**: rename it, then add it to `CLI_NAMES` in
+  the same file (`"admin seed --batch"` → `"--batch-size"`). Old spellings
+  are rewritten before parsing, so they stay out of `--help`, and print a
+  warning.
+- **API operations**: add the method and path to `DEPRECATED` in
+  `crates/web/src/api/mod.rs`. The OpenAPI description marks it
+  `deprecated` and says what to use instead, and its responses carry a
+  `Deprecation` header ([RFC 9745](https://www.rfc-editor.org/rfc/rfc9745)).
+- **API fields**: keep sending the old field beside the new one, and mark
+  it with `#[schema(deprecated)]`.
+
+Tests check that each old config key and CLI name leads to one that exists.
+Say what was renamed in the changelog's upgrading notes, and remove the
+shims in the next major release.
+
 ## This book
 
 The documentation is an [mdBook](https://rust-lang.github.io/mdBook/) in

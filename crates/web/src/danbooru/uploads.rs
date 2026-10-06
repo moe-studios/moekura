@@ -39,6 +39,7 @@ fn upload_error(error: UploadError) -> AppError {
             staged: found.staged,
         },
         UploadError::Limit(message) => AppError::Blocked(message),
+        UploadError::TooFast(retry_after_secs) => AppError::TooManyRequests { retry_after_secs },
         UploadError::Internal(detail) => AppError::Internal(detail),
     }
 }
@@ -166,10 +167,7 @@ async fn receive(state: &AppState, request: Request) -> Result<Sent, AppError> {
             name.as_str(),
             "upload[source]" | "upload[source_url]" | "upload[referer_url]"
         ) {
-            let text = field
-                .text()
-                .await
-                .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            let text = crate::upload::text_field(field, crate::upload::LINK_FIELD_MAX).await?;
             if name == "upload[referer_url]" {
                 sent.referer = clean(&text);
             } else {
@@ -215,16 +213,23 @@ async fn create(
             ));
         }
     };
-    let prepared = prepare(&state, &file).await.map_err(upload_error)?;
+    let prepared = prepare(&state, Some(&current), &file)
+        .await
+        .map_err(upload_error)?;
     let hash = crate::upload::phash(&state, &file).await;
     let origin = crate::upload::Origin {
         link: &link,
         source: &source,
         referer: &referer,
     };
-    let (id, _) = crate::upload::stage(&state, user.id, &file, &prepared, hash, origin)
-        .await
-        .map_err(upload_error)?;
+    let (id, _) = match crate::upload::stage(&state, user.id, &file, &prepared, hash, origin).await
+    {
+        Ok(staged) => staged,
+        Err(error) => {
+            crate::upload::forget_original(&state, &prepared).await;
+            return Err(upload_error(error));
+        }
+    };
     let (upload, files) = own_upload(&state, &current, id).await?;
     tracing::info!(id, user = user.name, "upload staged");
     Ok((
@@ -323,6 +328,7 @@ pub(super) async fn create_post(
         }
     };
     let id = staged.id;
+    // Made from this file by its uploader, so theirs to know of.
     if let Some(post) = staged.post_id {
         return Err(AppError::Duplicate(post));
     }
@@ -385,10 +391,73 @@ mod tests {
     use sqlx::PgPool;
 
     use crate::danbooru::test_support::app;
-    use crate::test_support::{fixture, session_for};
+    use crate::test_support::{TestApp, fixture, session_for, test_state};
 
     fn parse(body: &str) -> Value {
         serde_json::from_str(body).unwrap_or_else(|e| panic!("{e}: {body}"))
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn staged_files_hold_to_the_limits(pool: PgPool) {
+        use crate::uploads::MAX_WAITING;
+        let state = test_state(&pool).await;
+        let app = TestApp::new(state.clone(), crate::danbooru::test_support::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let stage = async |session: &str, png: &[u8]| {
+            app.post_multipart_as(
+                "/uploads.json",
+                Some(session),
+                &[],
+                "upload[files][0]",
+                Some(("a.png", png)),
+            )
+            .await
+        };
+
+        // A deleted post isn't named to others.
+        let post = crate::danbooru::test_support::upload(&app, &alice, 40, "cat").await;
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(post)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let refused = stage(&bob, &fixture::png(40, 20)).await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(
+            parse(&refused.body)["message"],
+            json!("This file can't be uploaded.")
+        );
+
+        // Files sent at once stay within the most that may wait.
+        let first = stage(&bob, &fixture::png(44, 20)).await;
+        let upload = parse(&first.body)["id"].as_i64().unwrap();
+        sqlx::query(
+            "INSERT INTO staged_uploads (upload_id, uploader_id, position, status, file_url)
+             SELECT upload_id, uploader_id, n, 'pending', 'https://example.com/x.png'
+             FROM staged_uploads, generate_series(1, $1 - 2) AS n WHERE upload_id = $2",
+        )
+        .bind(MAX_WAITING)
+        .bind(upload)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let (a, b) = (fixture::png(48, 20), fixture::png(52, 20));
+        let (a, b) = tokio::join!(stage(&bob, &a), stage(&bob, &b));
+        let mut statuses = [a.status, b.status];
+        statuses.sort();
+        assert_eq!(statuses, [StatusCode::CREATED, StatusCode::FORBIDDEN]);
+
+        // And uploads in quick succession are limited.
+        let alice_id = crate::test_support::current_user(&state, &alice)
+            .await
+            .user
+            .unwrap()
+            .id;
+        while state.rate_limits.check_upload(alice_id).await.is_ok() {}
+        let limited = stage(&alice, &fixture::png(56, 20)).await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(limited.retry_after.is_some());
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

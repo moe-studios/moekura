@@ -4,7 +4,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, strings, tags_named, text_of};
+use super::{Http, SourceInfo, key, strings, tags_named, text_of};
 
 const CLIENT_ID: &str = "546c25a59c58ad7";
 
@@ -18,7 +18,7 @@ pub(super) async fn fetch(
         None => ("media", page.trim_start_matches("https://imgur.com/")),
     };
     // `title-<id>`: the id follows the last dash.
-    let id = id.rsplit('-').next().unwrap_or(id);
+    let id = key(id.rsplit('-').next().unwrap_or(id))?;
     let v1 = http
         .json(
             &format!("https://api.imgur.com/post/v1/{kind}/{id}?include=media,tags,account&client_id={CLIENT_ID}"),

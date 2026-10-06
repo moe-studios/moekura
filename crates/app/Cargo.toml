@@ -48,6 +48,7 @@ tagger = ["dep:moekura-tagger"]
 
 [dev-dependencies]
 figment = { workspace = true, features = ["test"] }
+serde.workspace = true
 tower.workspace = true
 sha2.workspace = true
 

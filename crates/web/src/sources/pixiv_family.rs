@@ -6,7 +6,7 @@ use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::{Http, SourceInfo, SourceTag, html, html_to_text, id_of, text_of};
+use super::{Http, SourceInfo, SourceTag, html, html_to_text, id_of, key, number, text_of};
 
 fn tags_from(values: &[&Value]) -> Vec<SourceTag> {
     values
@@ -24,7 +24,7 @@ pub(super) async fn sketch(
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = number(page.rsplit('/').next().unwrap_or_default())?;
     let item = http
         .json(
             &format!("https://sketch.pixiv.net/api/items/{id}.json"),
@@ -96,7 +96,7 @@ pub(super) async fn comic(
         .and_then(|d| d["props"]["pageProps"]["salt"].as_str().map(str::to_owned))
         .unwrap_or_default();
     let path = page.trim_start_matches("https://comic.pixiv.net/");
-    let id = path.rsplit('/').next().unwrap_or_default();
+    let id = number(path.rsplit('/').next().unwrap_or_default())?;
     let api = "https://comic.pixiv.net/api/app";
     let (url, pick): (String, fn(&Value) -> &Value) = if path.starts_with("viewer/stories/") {
         (
@@ -183,7 +183,7 @@ pub(super) async fn factory(
         Some((collection, image)) => (collection, image.parse::<u64>().ok()),
         None => (page, None),
     };
-    let name = collection.rsplit('/').next().unwrap_or_default();
+    let name = key(collection.rsplit('/').next().unwrap_or_default())?;
     let images = http
         .json(
             &format!("https://factory.pixiv.net/api/v1/palette/collections/{name}/images"),

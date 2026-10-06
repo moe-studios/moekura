@@ -5,7 +5,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html, html_to_text, strings, tags_named, text_of};
+use super::{Http, SourceInfo, html, html_to_text, key, number, strings, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -17,7 +17,8 @@ pub(super) async fn fetch(
         .strip_prefix("https://")
         .and_then(|p| p.split(".tumblr.com").next())
         .ok_or("Tumblr: not a post")?;
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let blog = key(blog)?;
+    let id = number(page.rsplit('/').next().unwrap_or_default())?;
     if http.has_login("api.tumblr.com") {
         let answer = http
             .json(

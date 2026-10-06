@@ -36,7 +36,7 @@ impl ArtistUrl {
     /// (by their [`normalize_url`] form, the first staying).
     pub fn parse_list(input: &str) -> Result<Vec<Self>, UrlError> {
         let mut out: Vec<Self> = Vec::new();
-        let mut seen: Vec<String> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for word in input.split_whitespace() {
             let (raw, is_active) = match word.strip_prefix('-') {
                 Some(rest) => (rest, false),
@@ -59,15 +59,17 @@ impl ArtistUrl {
                 .filter(|u| matches!(u.scheme(), "http" | "https") && u.has_host())
                 .ok_or_else(|| UrlError::NotWeb(raw.to_owned()))?;
             let normalized = normalize_url(url.as_str()).unwrap_or_default();
-            if seen.contains(&normalized) {
+            if !seen.insert(normalized) {
                 continue;
             }
-            seen.push(normalized);
-            // A profile on a site we know is kept in its canonical form.
-            out.push(Self {
-                url: crate::sites::canonical_artist_url(url.as_str()),
-                is_active,
-            });
+            // A profile on a site we know is kept in its canonical form,
+            // which encoding can make longer than what was typed (`'`
+            // becomes `%27`), so the limit applies to it too.
+            let url = crate::sites::canonical_artist_url(url.as_str());
+            if url.len() > URL_MAX_LEN {
+                return Err(UrlError::TooLong);
+            }
+            out.push(Self { url, is_active });
         }
         if out.len() > MAX_URLS {
             return Err(UrlError::TooMany);
@@ -221,5 +223,37 @@ mod tests {
             ArtistUrl::parse_list("javascript:alert(1)"),
             Err(UrlError::NotWeb(_))
         ));
+    }
+
+    #[test]
+    fn long_url_lists() {
+        let urls = |n: usize, m: usize| -> String {
+            (0..n)
+                .map(|i| format!("https://a.example/{} ", i % m))
+                .collect()
+        };
+        assert_eq!(
+            ArtistUrl::parse_list(&urls(50_000, MAX_URLS))
+                .unwrap()
+                .len(),
+            MAX_URLS
+        );
+        assert_eq!(
+            ArtistUrl::parse_list(&urls(50_000, 50_000)),
+            Err(UrlError::TooMany)
+        );
+    }
+
+    #[test]
+    fn the_kept_form_is_held_to_the_limit() {
+        // Short enough as typed, three times as long once encoded.
+        let quotes = "'".repeat(1000);
+        assert_eq!(
+            ArtistUrl::parse_list(&format!("https://example.com/{quotes}")),
+            Err(UrlError::TooLong)
+        );
+        let urls =
+            ArtistUrl::parse_list(&format!("https://example.com/{}", &quotes[..600])).unwrap();
+        assert_eq!(urls[0].url.len(), "https://example.com/".len() + 3 * 600);
     }
 }

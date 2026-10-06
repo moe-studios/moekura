@@ -5,7 +5,7 @@
 {% block content %}
 <h1>{{ t("upload-title", id=upload.id) }}</h1>
 {% include "upload_nav.html" %}
-{% if upload.source %}<p class="source">{{ t("source") }}: {{ site_icon(upload.source) }}<a href="{{ upload.source }}" rel="noopener noreferrer nofollow">{{ upload.source }}</a></p>{% endif %}
+{% if upload.source %}<p class="source">{{ t("source") }}: {% if upload.source_link %}{{ site_icon(upload.source) }}<a href="{{ upload.source }}" rel="noopener noreferrer nofollow">{{ upload.source }}</a>{% else %}{{ upload.source }}{% endif %}</p>{% endif %}
 <p class="hint" role="status">{{ t("upload-summary", count=upload.count, posted=posted) }}{% if pending %} {{ t("upload-downloading", count=pending) }}{% endif %}</p>
 {% if refresh %}<div data-upload-follow="{{ upload.url }}/status" data-pending="{{ pending }}" data-ready="{{ ready }}" hidden></div>{% endif %}
 {% if files %}

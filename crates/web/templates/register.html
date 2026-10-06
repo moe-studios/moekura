@@ -14,7 +14,7 @@
     {{ field_error(errors.name) }}
     <label for="email">{{ t("account-email") }}{% if not email_required %} <span class="optional">{{ t("optional") }}</span>{% endif %}</label>
     <input id="email" name="email" type="email" value="{{ form.email }}" autocomplete="email"{% if email_required %} required{% endif %}>
-    {% if email_required %}<p class="hint">{{ t("register-email-hint") }}</p>{% endif %}
+    {% if email_required %}<p class="hint">{{ t("register-email-hint") }}</p>{% elif mail_enabled %}<p class="hint">{{ t("register-email-confirm-hint") }}</p>{% endif %}
     {{ field_error(errors.email) }}
     <label for="password">{{ t("account-password") }}</label>
     <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" maxlength="256">

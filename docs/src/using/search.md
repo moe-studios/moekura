@@ -39,7 +39,8 @@ Terms side by side bind tighter than `or`, so `a b or c` means `(a b) or
 c`. `~` is shorthand for `or`: `~a ~b` is `(a or b)`, and inside a group
 the `~` terms form an `or` of that group. Groups can be nested up to 10
 deep, and every tag and filter in them counts towards the site's limit on
-terms.
+terms. Whatever that limit, a search can be at most 1000 words and 10,000
+characters long.
 
 A `(` at the start of a word opens a group, and a `)` at the end of a word
 closes one, unless it belongs to the tag: `(ganyu_(genshin_impact) or
@@ -58,8 +59,8 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `rating:` | `rating:e,q` | rating `g`eneral, `s`ensitive, `q`uestionable or `e`xplicit (letters or names, comma-separated) |
 | `score:` | `score:>=10` | score |
 | `favcount:` | `favcount:>5` | number of favourites |
-| `commentcount:` | `commentcount:>0` | number of comments |
-| `notecount:` | `notecount:>0` | number of notes |
+| `commentcount:`, `comment_count:` | `commentcount:>0` | number of comments |
+| `notecount:`, `note_count:` | `notecount:>0` | number of notes |
 | `note:` | `note:good_morning` | notes contain these words (underscores for spaces) |
 | `id:` | `id:1000..2000` | post number |
 | `user:` | `user:alice` | uploaded by this user |
@@ -89,7 +90,7 @@ matches (`-rating:e`); `order:` and `limit:` can't be excluded.
 | `updated:` | `updated:<1d`, `updated:2026-01` | last changed (tags, rating, source, status, …) this long ago, or on these days |
 | `md5:` | `md5:d41d8cd9…` | the file's MD5 hash |
 | `pixelhash:` | `pixelhash:9e107d9d…` | the MD5 of the image's decoded pixels: the same picture in any file |
-| `similar:` | `similar:123` | looks like post 123 (the post included); found once files are processed |
+| `similar:` | `similar:123` | looks like post 123 (the post included), if you can see it; found once files are processed |
 | `parent:` | `parent:123`, `parent:none`, `parent:any` | a post and its children, posts without a parent, or posts with one |
 | `child:` | `child:any`, `child:none` | posts with children (that aren't deleted), or without |
 | `tagcount:` | `tagcount:<5` | number of tags |
@@ -168,7 +169,7 @@ none.
 | `order:rank` | hot posts: from the last two days with a positive score, highest score first, discounted by age (the **Hot** link) |
 | `order:upvotes`, `order:downvotes` (and `_asc`) | most / fewest up or down votes |
 | `order:comment_bumped`, `order:comment_bumped_asc` | like `order:comment`, leaving out comments posted with **Don't bump the post** |
-| `order:comment_count`, `order:note_count` (and `_asc`) | most / fewest comments or notes |
+| `order:comment_count`, `order:note_count` (and `_asc`; `commentcount` and `notecount` work too) | most / fewest comments or notes |
 | `order:custom` | in the order of the search's `id:` list: `id:3,1,2 order:custom` |
 | `order:md5`, `order:md5_asc` | by the file's MD5, for a stable order that isn't upload order |
 | `order:random` | shuffled |
@@ -197,9 +198,13 @@ work's page on a site Moekura reads works too), or a post, and lists the
 posts that look most like it, with how alike they are, without uploading
 anything. Matches are found by the same perceptual hash as `similar:`,
 so a resized or recompressed copy is found, but a crop or an edit may
-not be. Each search compares the picture with every post, so they're
-limited to a few a minute. The API has it as `POST /api/v1/posts/similar`,
-and Danbooru clients as `/iqdb_queries.json`.
+not be. A video searches by its poster frame; zips, ugoira included,
+can't be searched with (search with the ugoira's post instead). Each
+search compares the picture with every post, so they're limited to a few
+a minute, counted before a link is looked up. A linked picture may be up
+to 20 MB (or the upload limit, if that's lower). The API has it as
+`POST /api/v1/posts/similar`, and Danbooru clients as
+`/iqdb_queries.json`.
 
 ## Popular posts and searches
 
@@ -209,15 +214,21 @@ later ones:
 
 - **Popular**: the best-scored posts posted then.
 - **Most viewed**: the posts whose pages were looked at most.
-- **Searches**: the tag searches made most.
+- **Searches**: the tag searches that found posts most often. Searches
+  naming a tag the site doesn't have (or with a `*` pattern among the
+  tags they exclude or make optional) aren't among them, even when
+  their other tags found posts.
 - **Missed searches**: tag searches that found nothing, most often
   because of a misspelling or a name the site calls something else;
   an [alias](tags.md) can send them to the right tag.
 
-Each person counts once a day per post or search; crawlers and link
+Each person counts once a day per post or search (visitors without an
+account by their address, or their IPv6 `/64`); crawlers and link
 previews don't count. Only searches of plain tags are counted (and only
 their first page): searches with metatags such as `fav:` or `user:`,
-which may name people, are left out. Counts are kept for about a year.
+which may name people, are left out. A person adds at most ten missed
+searches a day, and each web server counts at most 2,000 different ones
+a day. Counts are kept for about a year.
 
 ## Feeds
 
@@ -227,7 +238,17 @@ reader to follow new posts of a tag, an artist (`user:alice` for a
 user's uploads), or anything else you can search for. `/comments.atom`
 follows the newest comments.
 
+Feeds may be kept for five minutes. A proxy or CDN in front of the site
+may keep only those read by visitors who aren't logged in: a feed read
+while logged in, or with a token, is marked private, since it shows what
+that user may see.
+
 On a private site, feed readers can't log in; make a feed token under
-**Settings → Feeds** and add `&token=…` to the feed's address. The token
-reads feeds as you (with your blacklist) and does nothing else; making a
-new one or revoking it stops the old one working.
+**Settings → Feeds** (which asks for your password, as making an
+[API key](../api.md) does) and add `&token=…` to the feed's address.
+The token reads feeds as you (with your blacklist and safe mode) and
+does nothing else; making a new one or revoking it stops the old one
+working, and so does resetting your password. Since the token sits in a
+feed reader, it never shows more than a member sees, whatever your role:
+no pending or deleted posts but your own pending uploads, and no banned
+artists' posts if those are hidden.

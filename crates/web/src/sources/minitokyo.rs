@@ -38,7 +38,7 @@ fn entry_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo> {
             .map(|(_, cloud)| {
                 html::tags(cloud, "a")
                     .into_iter()
-                    .map(|a| html_to_text(html::inner(cloud, &a)))
+                    .filter_map(|a| html::label(cloud, &a))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),

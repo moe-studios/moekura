@@ -45,7 +45,7 @@ fn post_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo> {
         html::tags(body, "a")
             .into_iter()
             .filter(|a| a.attr("rel") == Some("tag"))
-            .map(|a| html_to_text(html::inner(body, &a)))
+            .filter_map(|a| html::label(body, &a))
             .collect::<Vec<_>>(),
     );
     info.description = html_to_text(post);

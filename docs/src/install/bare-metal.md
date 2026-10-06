@@ -2,13 +2,14 @@
 
 You need:
 
-- PostgreSQL 16 or newer, and a database the app owns.
+- PostgreSQL 16 or newer, and a database the app owns (see
+  [Requirements](../upgrading.md#requirements) for every version).
 - The media tools, which `serve` and `worker` check for at startup:
 
 | Tool | Used for | Fedora | Debian / Ubuntu |
 |---|---|---|---|
 | libvips 8.15+ (`vips`, `vipsheader`, `vipsthumbnail`) | reading images, thumbnails, perceptual hashes | `vips-tools` (AVIF: `vips-heif`, JPEG XL: `vips-jxl`) | `libvips-tools libheif-plugin-dav1d libheif-plugin-aomenc` |
-| ffmpeg (`ffmpeg`, `ffprobe`) | reading videos, poster frames, and videos of ugoira (with libvpx for VP9) | `ffmpeg` (RPM Fusion) or `ffmpeg-free` | `ffmpeg` |
+| ffmpeg 7.0+ (`ffmpeg`, `ffprobe`) | reading videos, poster frames, and videos of ugoira (with libvpx for VP9) | `ffmpeg` (RPM Fusion) or `ffmpeg-free` | `ffmpeg` |
 
 Download a release binary (see [Upgrading](../upgrading.md)), or build one
 with Rust 1.94 or newer:
@@ -31,6 +32,9 @@ Then write `/etc/moekura/moekura.toml` (start from
 ```toml
 [server]
 public_url = "https://booru.example.com"
+# Only the reverse proxy on this machine connects.
+bind = "127.0.0.1:8080"
+trusted_proxies = ["127.0.0.1/32"]
 
 [database]
 url = "postgres://moekura:PASSWORD@localhost/moekura"

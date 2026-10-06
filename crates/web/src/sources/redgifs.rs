@@ -4,14 +4,14 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, strings, tags_named, text_of};
+use super::{Http, SourceInfo, key, strings, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = key(page.rsplit('/').next().unwrap_or_default())?;
     let token = http
         .json("https://api.redgifs.com/v2/auth/temporary", &[])
         .await?;
@@ -23,7 +23,7 @@ pub(super) async fn fetch(
             &headers,
         )
         .await?;
-    let gallery = match answer["gif"]["gallery"].as_str() {
+    let gallery = match answer["gif"]["gallery"].as_str().filter(|g| key(g).is_ok()) {
         Some(gallery) => http
             .json(
                 &format!("https://api.redgifs.com/v2/gallery/{gallery}"),

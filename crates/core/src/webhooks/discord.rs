@@ -4,7 +4,7 @@
 use std::str::FromStr;
 
 use serde_json::{Map, Value, json};
-use url::Url;
+use url::{Position, Url};
 
 use super::Event;
 use crate::posts::Rating;
@@ -178,7 +178,7 @@ fn post_embed(event: Event, data: &Value, options: &Options) -> Map<String, Valu
         ));
     }
     if let Some(source) = str_of(data, "source").filter(|s| !s.is_empty()) {
-        fields.push(field("Source", source, false));
+        fields.push(field("Source", &source_text(source), false));
     }
     if let Some(reason) = str_of(data, "reason").filter(|s| !s.is_empty()) {
         fields.push(field("Reason", &escape(reason), false));
@@ -198,11 +198,32 @@ fn comment_embed(data: &Value) -> Map<String, Value> {
         .map(Value::to_string)
         .unwrap_or_default();
     let mut embed = base_embed(&format!("Comment on post #{post}"), data);
-    author(&mut embed, data, "author", "author_url");
+    author(&mut embed, data, "creator", "creator_url");
+    // Escaped, so a comment can't dress a link up as something else.
     if let Some(body) = str_of(data, "body") {
-        embed.insert("description".into(), json!(cut(body, DESCRIPTION_LEN)));
+        embed.insert(
+            "description".into(),
+            json!(cut(&escape(body), DESCRIPTION_LEN)),
+        );
     }
     embed
+}
+
+/// A post's source as the embed shows it. A web address is written out
+/// in full, a plain link Discord reads no markdown inside (escaping it
+/// would break the link), with brackets after the host encoded besides;
+/// anything else is escaped. Either way a source can't dress a link up as
+/// something else.
+fn source_text(source: &str) -> String {
+    match Url::parse(source.trim()) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") => {
+            let rest = url[Position::AfterPort..]
+                .replace('[', "%5B")
+                .replace(']', "%5D");
+            format!("{}{rest}", &url[..Position::AfterPort])
+        }
+        _ => escape(source),
+    }
 }
 
 fn user_embed(data: &Value) -> Map<String, Value> {
@@ -396,8 +417,8 @@ mod tests {
             "comment_id": 3,
             "post_id": 12,
             "url": "https://booru.example/posts/12#comment-3",
-            "author": "bob",
-            "author_url": "https://booru.example/users/bob",
+            "creator": "bob",
+            "creator_url": "https://booru.example/users/bob",
             "body": body,
         });
         let options = Options {
@@ -411,10 +432,44 @@ mod tests {
         assert_eq!(embed["author"]["name"], "bob");
         let description = embed["description"].as_str().unwrap();
         assert_eq!(description.chars().count(), DESCRIPTION_LEN);
-        assert!(description.starts_with("@everyone") && description.ends_with('…'));
+        assert!(description.starts_with("\\@everyone \\<\\@&123\\>") && description.ends_with('…'));
         assert_eq!(sent["allowed_mentions"], json!({ "parse": [] }));
         assert_eq!(sent["username"], "Booru");
         assert_eq!(sent["avatar_url"], "https://booru.example/icon.png");
+    }
+
+    #[test]
+    fn links_cant_be_dressed_up() {
+        let mut data = json!({
+            "post_id": 12,
+            "body": "Official art: [pixiv.net/artworks/1](https://phish.example) **now**",
+        });
+        let sent = message("comment.created", &data, AT, &Options::default());
+        assert_eq!(
+            sent["embeds"][0]["description"],
+            "Official art: \\[pixiv.net/artworks/1\\]\\(https://phish.example\\) \\*\\*now\\*\\*"
+        );
+
+        let source = |data: &Value| {
+            let sent = message("post.created", data, AT, &Options::default());
+            let fields = sent["embeds"][0]["fields"].as_array().unwrap().clone();
+            fields.into_iter().find(|f| f["name"] == "Source").unwrap()["value"].clone()
+        };
+        data["source"] = json!("[Original](https://phish.example)");
+        assert_eq!(source(&data), "\\[Original\\]\\(https://phish.example\\)");
+        // Web addresses stay links, as written, with nothing to hide behind.
+        data["source"] = json!("https://x.com/some_artist/status/1");
+        assert_eq!(source(&data), "https://x.com/some_artist/status/1");
+        data["source"] = json!("https://a.example/[Original](https://phish.example)");
+        assert_eq!(
+            source(&data),
+            "https://a.example/%5BOriginal%5D(https://phish.example)"
+        );
+        data["source"] = json!("https://[::1]:8080/a[1]?b=[2]#[3]");
+        assert_eq!(
+            source(&data),
+            "https://[::1]:8080/a%5B1%5D?b=%5B2%5D#%5B3%5D"
+        );
     }
 
     #[test]

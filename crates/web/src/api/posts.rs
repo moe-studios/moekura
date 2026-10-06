@@ -250,8 +250,8 @@ pub struct SearchParams {
     /// rating:g order:score`).
     #[serde(default)]
     tags: String,
-    /// A page number, or a cursor from a previous response's `next` or
-    /// `previous`. Cursors keep working however deep the results go;
+    /// A page number, or a cursor from a previous response's `next_page`
+    /// or `previous_page`. Cursors keep working however deep the results go;
     /// numbered pages stop at the site's limit.
     #[serde(default)]
     page: String,
@@ -266,9 +266,9 @@ pub struct PostPage {
     pub posts: Vec<ApiPost>,
     pub count: ApiCount,
     /// `page` for the next page; absent on the last one.
-    pub next: Option<String>,
+    pub next_page: Option<String>,
     /// `page` for the previous page; absent on the first one.
-    pub previous: Option<String>,
+    pub previous_page: Option<String>,
 }
 
 /// How many posts match. Large counts are estimated.
@@ -380,8 +380,8 @@ pub(crate) async fn search(
     Ok(Json(PostPage {
         posts: load(&state, db, found).await?,
         count: count.into(),
-        next,
-        previous,
+        next_page: next,
+        previous_page: previous,
     }))
 }
 
@@ -537,6 +537,7 @@ fn upload_error(error: UploadError) -> AppError {
             staged: found.staged,
         },
         UploadError::Limit(message) => AppError::Blocked(message),
+        UploadError::TooFast(retry_after_secs) => AppError::TooManyRequests { retry_after_secs },
         UploadError::Internal(detail) => AppError::Internal(detail),
     }
 }
@@ -560,9 +561,10 @@ fn upload_error(error: UploadError) -> AppError {
     request_body(content = UploadRequest, content_type = "multipart/form-data"),
     responses(
         (status = 201, body = ApiPost, headers(("Location" = String, description = "The new post"))),
-        (status = 409, body = ErrorBody, description = "The file was already uploaded, and `post_id` names that post; or it looks like posts already here, named in `similar`, and waits as `staged` until you confirm"),
+        (status = 409, body = ErrorBody, description = "The file was already uploaded as a post you can see, and `post_id` names that post; or it looks like posts already here, named in `similar`, and waits as `staged` until you confirm"),
         (status = 413, body = ErrorBody, description = "The request is larger than the site allows"),
-        (status = 422, body = ErrorBody, description = "A field or the file isn't acceptable"),
+        (status = 422, body = ErrorBody, description = "A field or the file isn't acceptable, or the file is a post you can't see"),
+        (status = 429, body = ErrorBody, description = "Too many uploads in a short time; wait and try again"),
     ),
 )]
 pub(crate) async fn upload(
@@ -689,14 +691,14 @@ pub(crate) async fn update(
         }
         Some(all) => all.join(" "),
         None => {
-            let removed: Vec<String> = changes
+            let removed: std::collections::HashSet<String> = changes
                 .remove_tags
                 .iter()
                 .map(|t| moekura_core::tags::normalize(t))
                 .collect();
             names
                 .iter()
-                .filter(|name| !removed.contains(name))
+                .filter(|name| !removed.contains(*name))
                 .chain(changes.add_tags.iter())
                 .map(String::as_str)
                 .collect::<Vec<_>>()
@@ -776,7 +778,8 @@ pub struct Vote {
 
 /// Vote on a post.
 ///
-/// Needs `vote`. A new vote replaces your earlier one.
+/// Needs `vote`. A new vote replaces your earlier one. You can't vote on
+/// your own uploads, only take back a vote you gave one.
 #[utoipa::path(
     put,
     path = "/posts/{id}/vote",
@@ -788,6 +791,7 @@ pub struct Vote {
         (status = 200, body = Reactions),
         (status = 400, body = ErrorBody),
         (status = 404, body = ErrorBody),
+        (status = 422, body = ErrorBody, description = "It's your own post"),
     ),
 )]
 pub(crate) async fn vote(
@@ -822,6 +826,7 @@ pub struct NewFlag {
     responses(
         (status = 204, description = "Flagged"),
         (status = 400, body = ErrorBody, description = "No reason, or the post can't be flagged now"),
+        (status = 404, body = ErrorBody, description = "No such post, or not one you can see"),
     ),
 )]
 pub(crate) async fn flag(
@@ -867,8 +872,8 @@ mod tests {
             .collect();
         assert_eq!(shown, [ids[2], ids[1]]);
         assert_eq!(first["count"], json!({"value": 3, "accuracy": "exact"}));
-        assert_eq!(first["previous"], json!(null));
-        let next = first["next"].as_str().unwrap();
+        assert_eq!(first["previous_page"], json!(null));
+        let next = first["next_page"].as_str().unwrap();
         assert_eq!(next, format!("b{}", ids[1]));
 
         let second = json(
@@ -877,8 +882,8 @@ mod tests {
                 .body,
         );
         assert_eq!(second["posts"][0]["id"], json!(ids[0]));
-        assert_eq!(second["next"], json!(null));
-        assert_eq!(second["previous"], json!(format!("a{}", ids[0])));
+        assert_eq!(second["next_page"], json!(null));
+        assert_eq!(second["previous_page"], json!(format!("a{}", ids[0])));
 
         // Numbered pages for orders without cursors.
         let by_score = json(
@@ -886,7 +891,7 @@ mod tests {
                 .await
                 .body,
         );
-        assert_eq!(by_score["next"], json!("2"));
+        assert_eq!(by_score["next_page"], json!("2"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
@@ -906,14 +911,14 @@ mod tests {
 
         let first = json(&app.get("/api/v1/posts?tags=order:score", None).await.body);
         assert_eq!(first["posts"].as_array().unwrap().len(), 2);
-        assert_eq!(first["next"], json!("2"));
+        assert_eq!(first["next_page"], json!("2"));
         // The deepest numbered page has no next one.
         let second = json(
             &app.get("/api/v1/posts?tags=order:score&page=2", None)
                 .await
                 .body,
         );
-        assert_eq!(second["next"], json!(null));
+        assert_eq!(second["next_page"], json!(null));
         let deeper = app.get("/api/v1/posts?tags=order:score&page=3", None).await;
         assert_eq!(deeper.status, StatusCode::BAD_REQUEST, "{}", deeper.body);
 
@@ -1113,6 +1118,52 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn api_uploads_are_limited_and_dont_name_hidden_posts(pool: PgPool) {
+        let state = crate::test_support::test_state(&pool).await;
+        let app = crate::test_support::TestApp::new(
+            state.clone(),
+            super::super::routes(10 * 1024 * 1024).merge(crate::upload::routes(10 * 1024 * 1024)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let png = fixture::png(40, 30);
+        let id = upload(&app, &alice, &png, "cat").await;
+        sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let fields = vec![("rating", "s".to_owned()), ("tags", "cat".to_owned())];
+
+        // A deleted post isn't named to others.
+        let refused = app
+            .post_multipart("/api/v1/posts", Some(&bob), &fields, Some(("a.png", &png)))
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let error = &json(&refused.body)["error"];
+        assert_eq!(error["message"], json!("This file can't be uploaded."));
+        assert_eq!(error.get("post_id"), None);
+
+        // Too many in a short time.
+        let bob_id = crate::test_support::current_user(&state, &bob)
+            .await
+            .user
+            .unwrap()
+            .id;
+        while state.rate_limits.check_upload(bob_id).await.is_ok() {}
+        let limited = app
+            .post_multipart(
+                "/api/v1/posts",
+                Some(&bob),
+                &fields,
+                Some(("b.png", &fixture::png(44, 30))),
+            )
+            .await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(limited.retry_after.is_some());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn api_uploads_confirm_look_alikes(pool: PgPool) {
         let state = crate::test_support::test_state(&pool).await;
         let app = crate::test_support::TestApp::new(
@@ -1270,6 +1321,7 @@ mod tests {
     async fn reactions_and_flags(pool: PgPool) {
         let app = app(&pool).await;
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
         let id = upload(&app, &alice, &fixture::png(20, 20), "cat").await;
         let path = |rest: &str| format!("/api/v1/posts/{id}/{rest}");
 
@@ -1283,16 +1335,21 @@ mod tests {
             json!({"fav_count": 1, "favorited": true, "score": 0, "vote": 0})
         );
         let voted = json(
-            &app.json(
+            &app.json("PUT", &path("vote"), Some(&bob), Some(json!({"score": -1})))
+                .await
+                .body,
+        );
+        assert_eq!((&voted["score"], &voted["vote"]), (&json!(-1), &json!(-1)));
+        // Not on one's own post.
+        let own = app
+            .json(
                 "PUT",
                 &path("vote"),
                 Some(&alice),
-                Some(json!({"score": -1})),
+                Some(json!({"score": 1})),
             )
-            .await
-            .body,
-        );
-        assert_eq!((&voted["score"], &voted["vote"]), (&json!(-1), &json!(-1)));
+            .await;
+        assert_eq!(own.status, StatusCode::UNPROCESSABLE_ENTITY);
         let bad_vote = app
             .json(
                 "PUT",
@@ -1339,7 +1396,8 @@ pub struct SimilarRequest {
     /// A picture.
     #[schema(value_type = Option<String>, format = Binary)]
     file: Option<Vec<u8>>,
-    /// A link to a picture, or to a work's page on a site Moekura reads.
+    /// A link to a picture of at most 20 MB, or to a work's page on a site
+    /// Moekura reads.
     url: Option<String>,
     /// A post, to find others like it.
     post_id: Option<i64>,

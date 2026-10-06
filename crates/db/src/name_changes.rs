@@ -100,6 +100,8 @@ pub struct Filter<'a> {
     pub user_id: Option<i64>,
     pub old_name: Option<&'a str>,
     pub new_name: Option<&'a str>,
+    /// Only active users' changes.
+    pub active_only: bool,
 }
 
 /// Name changes, newest first.
@@ -113,6 +115,8 @@ pub async fn list(
         "WHERE ($1::bigint IS NULL OR user_id = $1)
            AND ($2::citext IS NULL OR old_name = $2::citext)
            AND ($3::citext IS NULL OR new_name = $3::citext)
+           AND (NOT $6 OR EXISTS (SELECT 1 FROM users u
+                                  WHERE u.id = user_name_changes.user_id AND u.status = 'active'))
          ORDER BY id DESC LIMIT $4 OFFSET $5"
     ))
     .bind(filter.user_id)
@@ -120,6 +124,7 @@ pub async fn list(
     .bind(filter.new_name)
     .bind(limit)
     .bind(offset)
+    .bind(filter.active_only)
     .fetch_all(db)
     .await
 }

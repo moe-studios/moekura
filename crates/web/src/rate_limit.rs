@@ -7,6 +7,11 @@
 //! Both use the same algorithm (GCRA: a burst, then one more every
 //! period). If Valkey can't be reached, each server falls back to its own
 //! counters rather than refusing everyone.
+//!
+//! Addresses are counted by [`ip_bucket`] (IPv6 by its /64), and names
+//! and email addresses by a digest of a fixed size, so a client can't
+//! get a fresh allowance by moving within its network, or make a counter
+//! as big as the text it sends.
 
 use std::net::IpAddr;
 use std::num::NonZeroU32;
@@ -16,6 +21,9 @@ use governor::clock::{Clock, DefaultClock};
 use governor::middleware::StateInformationMiddleware;
 use governor::state::keyed::DefaultKeyedStateStore;
 use governor::{DefaultKeyedRateLimiter, Quota, RateLimiter};
+use ipnet::IpNet;
+use moekura_core::accounts::EMAIL_MAX_LEN;
+use sha2::{Digest, Sha256};
 
 use crate::error::AppError;
 use crate::shared::Valkey;
@@ -34,10 +42,21 @@ const LOGIN_BY_IP: Limit = Limit {
     burst: 20,
     period: Duration::from_secs(6),
 };
-// Tight per account: guessing one account's password from many IPs.
+// Tight per account and network: guessing one account's password. Kept
+// apart per network, so someone guessing can't lock the owner out.
+const LOGIN_BY_NAME_AND_NET: Limit = Limit {
+    name: "login_name_net",
+    burst: 5,
+    period: Duration::from_secs(30),
+};
+// Per account, from any network: guessing it from many at once. Twice
+// the burst of the limit per network, and the same rate, so one network
+// alone can't use it up. Past it, the login page still lets the owner in
+// with a solved captcha, or from a network the account has used (see
+// `account::login`).
 const LOGIN_BY_NAME: Limit = Limit {
     name: "login_name",
-    burst: 5,
+    burst: 10,
     period: Duration::from_secs(30),
 };
 const REGISTER_BY_IP: Limit = Limit {
@@ -145,6 +164,29 @@ const IMAGE_SEARCH: Limit = Limit {
     period: Duration::from_secs(12),
 };
 
+// Looking up a link on its site (the artist finder, related tags, the
+// upload source panel): each fetches a page from another server.
+const SOURCE_LOOKUP: Limit = Limit {
+    name: "source_lookup",
+    burst: 10,
+    period: Duration::from_secs(6),
+};
+
+// Uploads, against one account flooding the media workers.
+const UPLOAD_BY_USER: Limit = Limit {
+    name: "upload_user",
+    burst: 20,
+    period: Duration::from_secs(30),
+};
+
+// Tag and bulk update requests: each opens a forum topic and lands in the
+// staff's queue.
+const REQUEST_BY_USER: Limit = Limit {
+    name: "request_user",
+    burst: 5,
+    period: Duration::from_secs(60),
+};
+
 fn quota(limit: Limit) -> Quota {
     Quota::with_period(limit.period)
         .expect("period is non-zero")
@@ -153,6 +195,7 @@ fn quota(limit: Limit) -> Quota {
 
 pub struct RateLimits {
     login_by_ip: DefaultKeyedRateLimiter<IpAddr>,
+    login_by_name_and_net: DefaultKeyedRateLimiter<String>,
     login_by_name: DefaultKeyedRateLimiter<String>,
     register_by_ip: DefaultKeyedRateLimiter<IpAddr>,
     mail_by_ip: DefaultKeyedRateLimiter<IpAddr>,
@@ -164,6 +207,9 @@ pub struct RateLimits {
     appeal_by_user: DefaultKeyedRateLimiter<i64>,
     image_search: DefaultKeyedRateLimiter<String>,
     dmail_by_user: DefaultKeyedRateLimiter<i64>,
+    source_lookup: DefaultKeyedRateLimiter<String>,
+    upload_by_user: DefaultKeyedRateLimiter<i64>,
+    request_by_user: DefaultKeyedRateLimiter<i64>,
     /// Off when `server.api_requests_per_minute` is 0.
     api: Option<(Limit, InfoLimiter)>,
     valkey: Option<Valkey>,
@@ -180,6 +226,7 @@ impl RateLimits {
     pub fn new(valkey: Option<Valkey>) -> Self {
         Self {
             login_by_ip: RateLimiter::keyed(quota(LOGIN_BY_IP)),
+            login_by_name_and_net: RateLimiter::keyed(quota(LOGIN_BY_NAME_AND_NET)),
             login_by_name: RateLimiter::keyed(quota(LOGIN_BY_NAME)),
             register_by_ip: RateLimiter::keyed(quota(REGISTER_BY_IP)),
             mail_by_ip: RateLimiter::keyed(quota(MAIL_BY_IP)),
@@ -191,6 +238,9 @@ impl RateLimits {
             appeal_by_user: RateLimiter::keyed(quota(APPEAL_BY_USER)),
             image_search: RateLimiter::keyed(quota(IMAGE_SEARCH)),
             dmail_by_user: RateLimiter::keyed(quota(DMAIL_BY_USER)),
+            source_lookup: RateLimiter::keyed(quota(SOURCE_LOOKUP)),
+            upload_by_user: RateLimiter::keyed(quota(UPLOAD_BY_USER)),
+            request_by_user: RateLimiter::keyed(quota(REQUEST_BY_USER)),
             api: None,
             valkey,
         }
@@ -249,22 +299,45 @@ impl RateLimits {
         })
     }
 
-    /// Counts a login attempt. `ip` is `None` only when the connection
+    /// Counts a login attempt for account `name`: from the client's
+    /// network, and for the account from that network. Every attempt
+    /// counts, before the password is checked, so that attempts sent all
+    /// at once can't slip past. `ip` is `None` only when the connection
     /// address is unknown (in-process tests).
     pub async fn check_login(&self, ip: Option<IpAddr>, name: &str) -> Result<(), AppError> {
-        if let Some(ip) = ip {
-            self.check(LOGIN_BY_IP, &self.login_by_ip, &ip, &ip.to_string())
+        let net = ip.map(ip_bucket);
+        if let Some(net) = net {
+            self.check(LOGIN_BY_IP, &self.login_by_ip, &net, &net.to_string())
                 .await?;
         }
-        let name = name.to_lowercase();
+        let name = fold(name);
+        // A network's text has no spaces, so this can't be another pair's.
+        let from_net = digest(&format!(
+            "{} {name}",
+            net.map(|n| n.to_string()).unwrap_or_default()
+        ));
+        self.check(
+            LOGIN_BY_NAME_AND_NET,
+            &self.login_by_name_and_net,
+            &from_net,
+            &from_net,
+        )
+        .await
+    }
+
+    /// Counts a login attempt for account `name` from any network, against
+    /// guessing it from many at once. Counted before the password is
+    /// checked, like [`Self::check_login`].
+    pub async fn check_login_ceiling(&self, name: &str) -> Result<(), AppError> {
+        let name = digest(&fold(name));
         self.check(LOGIN_BY_NAME, &self.login_by_name, &name, &name)
             .await
     }
 
     pub async fn check_register(&self, ip: Option<IpAddr>) -> Result<(), AppError> {
-        match ip {
-            Some(ip) => {
-                self.check(REGISTER_BY_IP, &self.register_by_ip, &ip, &ip.to_string())
+        match ip.map(ip_bucket) {
+            Some(net) => {
+                self.check(REGISTER_BY_IP, &self.register_by_ip, &net, &net.to_string())
                     .await
             }
             None => Ok(()),
@@ -272,13 +345,20 @@ impl RateLimits {
     }
 
     /// Counts a request that would email `address` (a name or an email
-    /// address, whatever the form asked for).
+    /// address, whatever the form asked for). Refuses one longer than any
+    /// account's without counting it.
     pub async fn check_mail(&self, ip: Option<IpAddr>, address: &str) -> Result<(), AppError> {
-        if let Some(ip) = ip {
-            self.check(MAIL_BY_IP, &self.mail_by_ip, &ip, &ip.to_string())
+        let address = address.trim();
+        if address.len() > EMAIL_MAX_LEN {
+            return Err(AppError::Unprocessable(
+                "No account has a name or email address that long.".into(),
+            ));
+        }
+        if let Some(net) = ip.map(ip_bucket) {
+            self.check(MAIL_BY_IP, &self.mail_by_ip, &net, &net.to_string())
                 .await?;
         }
-        let address = address.trim().to_lowercase();
+        let address = digest(&fold(address));
         self.check(MAIL_BY_ADDRESS, &self.mail_by_address, &address, &address)
             .await
     }
@@ -357,10 +437,41 @@ impl RateLimits {
             .await
     }
 
+    /// Counts a lookup of a link on its site by `client` (`user:<id>` or
+    /// `ip:<address>`, see [`client_key`]).
+    pub async fn check_source_lookup(&self, client: &str) -> Result<(), AppError> {
+        let key = client.to_owned();
+        self.check(SOURCE_LOOKUP, &self.source_lookup, &key, &key)
+            .await
+    }
+
+    /// Counts an upload (a file or a link) by user `user_id`.
+    pub async fn check_upload(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            UPLOAD_BY_USER,
+            &self.upload_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
+    /// Counts a tag or bulk update request by user `user_id`.
+    pub async fn check_request(&self, user_id: i64) -> Result<(), AppError> {
+        self.check(
+            REQUEST_BY_USER,
+            &self.request_by_user,
+            &user_id,
+            &user_id.to_string(),
+        )
+        .await
+    }
+
     /// Forgets keys that are back at full allowance, bounding memory use.
     /// (Valkey expires its keys itself.)
     pub fn retain_recent(&self) {
         self.login_by_ip.retain_recent();
+        self.login_by_name_and_net.retain_recent();
         self.login_by_name.retain_recent();
         self.register_by_ip.retain_recent();
         self.mail_by_ip.retain_recent();
@@ -372,6 +483,9 @@ impl RateLimits {
         self.appeal_by_user.retain_recent();
         self.image_search.retain_recent();
         self.dmail_by_user.retain_recent();
+        self.source_lookup.retain_recent();
+        self.upload_by_user.retain_recent();
+        self.request_by_user.retain_recent();
         if let Some((_, api)) = &self.api {
             api.retain_recent();
         }
@@ -400,16 +514,47 @@ impl RateLimits {
     }
 }
 
-/// Who a limit counts: an account, or else an address (IPv6 by /64,
-/// which one person usually has).
+/// The address a per-IP limit counts: IPv4 as it is (also when it comes
+/// IPv4-mapped, as `::ffff:a.b.c.d`), IPv6 by its /64, which one person
+/// usually has.
+pub(crate) fn ip_bucket(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => IpAddr::V6(ipnet::Ipv6Net::new(v6, 64).map_or(v6, |net| net.network())),
+        },
+        v4 => v4,
+    }
+}
+
+/// [`ip_bucket`] as a range: an IPv4 address alone, or an IPv6 /64.
+pub(crate) fn ip_bucket_net(ip: IpAddr) -> IpNet {
+    let bucket = ip_bucket(ip);
+    let prefix = if bucket.is_ipv4() { 32 } else { 64 };
+    IpNet::new(bucket, prefix).unwrap_or(IpNet::from(bucket))
+}
+
+/// A key of a fixed size for text a client chose (a name or an email
+/// address), so a long one costs no more memory than a short one.
+fn digest(text: &str) -> String {
+    hex::encode(&Sha256::digest(text.as_bytes())[..16])
+}
+
+/// A name or email address as one counter, however it's written: lower
+/// case, with only its ASCII left. The database finds accounts ignoring
+/// case by its own rules (`citext`), which can take `İ` for `i`; dropping
+/// what isn't ASCII after lowering keeps every spelling it would take for
+/// the same account on one counter, rather than each getting its own.
+fn fold(text: &str) -> String {
+    text.to_lowercase().chars().filter(char::is_ascii).collect()
+}
+
+/// Who a limit counts: an account, or else an address (by
+/// [`ip_bucket`]).
 pub(crate) fn client_key(user: Option<i64>, ip: Option<IpAddr>) -> String {
     match (user, ip) {
         (Some(id), _) => format!("user:{id}"),
-        (None, Some(IpAddr::V6(ip))) => {
-            let net = ipnet::Ipv6Net::new(ip, 64).map_or(ip, |net| net.network());
-            format!("ip:{net}")
-        }
-        (None, Some(ip)) => format!("ip:{ip}"),
+        (None, Some(ip)) => format!("ip:{}", ip_bucket(ip)),
         // In-process tests only.
         (None, None) => "ip:unknown".to_owned(),
     }
@@ -493,26 +638,96 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn limits_attempts_per_account_across_ips() {
+    async fn limits_attempts_per_account_and_network() {
+        use crate::shared::tests::{unique, unique_ip};
+
         for limits in backends().await {
             // A name no other run has used, since Valkey keeps counts.
-            let name = crate::shared::tests::unique("alice");
-            for i in 0..5 {
-                limits.check_login(ip(i), &name).await.unwrap();
+            let name = unique("alice");
+            let guesser = Some(unique_ip());
+            for _ in 0..5 {
+                limits.check_login(guesser, &name).await.unwrap();
             }
             let err = limits
-                .check_login(ip(99), &name.to_uppercase())
+                .check_login(guesser, &name.to_uppercase())
                 .await
                 .unwrap_err();
             assert!(
                 matches!(err, AppError::TooManyRequests { retry_after_secs } if retry_after_secs >= 1)
             );
-            // Other accounts are unaffected.
-            limits
-                .check_login(ip(99), &crate::shared::tests::unique("bob"))
-                .await
-                .unwrap();
+            // The owner, on another network, isn't locked out, and the
+            // guesser's other accounts are unaffected.
+            limits.check_login(Some(unique_ip()), &name).await.unwrap();
+            limits.check_login(guesser, &unique("bob")).await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn limits_attempts_per_account_across_networks() {
+        use crate::shared::tests::{unique, unique_ip};
+
+        for limits in backends().await {
+            let name = unique("alice");
+            for _ in 0..2 {
+                let network = Some(unique_ip());
+                for _ in 0..5 {
+                    limits.check_login(network, &name).await.unwrap();
+                    limits.check_login_ceiling(&name).await.unwrap();
+                }
+            }
+            // A third network passes its own limit, not the account's.
+            limits.check_login(Some(unique_ip()), &name).await.unwrap();
+            let err = limits
+                .check_login_ceiling(&name.to_uppercase())
+                .await
+                .unwrap_err();
+            assert!(matches!(err, AppError::TooManyRequests { .. }), "{err:?}");
+            limits.check_login_ceiling(&unique("bob")).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn spellings_of_one_name_share_counters() {
+        use crate::shared::tests::{unique, unique_ip};
+
+        for limits in backends().await {
+            let name = unique("alice");
+            let from = Some(unique_ip());
+            // Postgres can take a dotted capital I for an i.
+            let spellings = [
+                name.clone(),
+                name.to_uppercase(),
+                name.replace('i', "İ"),
+                name.replace('a', "A"),
+                name.replacen('e', "E", 1),
+            ];
+            for spelling in &spellings {
+                limits.check_login(from, spelling).await.unwrap();
+            }
+            let other = name.replace('l', "L").replace('i', "İ");
+            assert!(limits.check_login(from, &other).await.is_err());
+
+            let address = format!("{name}@example.com");
+            for spelling in [
+                address.clone(),
+                address.replace('i', "İ"),
+                address.to_uppercase(),
+            ] {
+                limits
+                    .check_mail(Some(unique_ip()), &spelling)
+                    .await
+                    .unwrap();
+            }
+            let again = address.replace('e', "E");
+            assert!(limits.check_mail(Some(unique_ip()), &again).await.is_err());
+        }
+    }
+
+    #[test]
+    fn folding_keeps_one_spelling() {
+        assert_eq!(fold("ALİCE"), "alice");
+        assert_eq!(fold("\u{212A}ate"), "kate");
+        assert_eq!(fold("Josè@Example.com"), "jos@example.com");
     }
 
     #[tokio::test]
@@ -550,6 +765,125 @@ mod tests {
             }
             assert!(limits.check_register(Some(address)).await.is_err());
             limits.check_register(None).await.unwrap();
+        }
+    }
+
+    /// `count` addresses in one fresh IPv6 /64.
+    fn one_64(count: u128) -> Vec<Option<IpAddr>> {
+        let IpAddr::V6(base) = crate::shared::tests::unique_ip() else {
+            unreachable!("unique_ip is IPv6")
+        };
+        let net = u128::from(base) & !u128::from(u64::MAX);
+        (1..=count)
+            .map(|host| Some(IpAddr::V6((net | (host << 20)).into())))
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn per_ip_limits_count_ipv6_by_64() {
+        for limits in backends().await {
+            let neighbours = one_64(6);
+            for ip in &neighbours[..5] {
+                limits.check_register(*ip).await.unwrap();
+            }
+            assert!(limits.check_register(neighbours[5]).await.is_err());
+            limits
+                .check_register(Some(crate::shared::tests::unique_ip()))
+                .await
+                .unwrap();
+
+            let neighbours = one_64(21);
+            for (i, ip) in neighbours[..20].iter().enumerate() {
+                let name = crate::shared::tests::unique(&format!("u{i}"));
+                limits.check_login(*ip, &name).await.unwrap();
+            }
+            assert!(
+                limits
+                    .check_login(neighbours[20], &crate::shared::tests::unique("v"))
+                    .await
+                    .is_err()
+            );
+
+            let neighbours = one_64(6);
+            for (i, ip) in neighbours[..5].iter().enumerate() {
+                let address = crate::shared::tests::unique(&format!("m{i}"));
+                limits.check_mail(*ip, &address).await.unwrap();
+            }
+            let address = crate::shared::tests::unique("n");
+            assert!(limits.check_mail(neighbours[5], &address).await.is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn mail_limits_refuse_impossible_addresses_uncounted() {
+        for limits in backends().await {
+            let address = crate::shared::tests::unique_ip();
+            let long = format!("{}@example.com", "a".repeat(EMAIL_MAX_LEN));
+            for _ in 0..10 {
+                let err = limits.check_mail(Some(address), &long).await.unwrap_err();
+                assert!(matches!(err, AppError::Unprocessable(_)), "{err:?}");
+            }
+            // None of those used the address's allowance.
+            for i in 0..5 {
+                let to = crate::shared::tests::unique(&format!("a{i}"));
+                limits.check_mail(Some(address), &to).await.unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn keys_for_names_have_a_fixed_size() {
+        let long = "a".repeat(2 * 1024 * 1024);
+        assert_eq!(digest(&long).len(), 32);
+        assert_eq!(digest("alice").len(), 32);
+        assert_ne!(digest("alice"), digest("bob"));
+    }
+
+    #[test]
+    fn buckets_ipv6_by_64_and_unmaps_ipv4() {
+        let v6 = |s: &str| IpAddr::V6(s.parse().unwrap());
+        assert_eq!(ip_bucket(v6("2001:db8:1:2:aaaa::1")), v6("2001:db8:1:2::"));
+        assert_eq!(
+            ip_bucket(v6("2001:db8:1:2:bbbb::9")),
+            ip_bucket(v6("2001:db8:1:2:aaaa::1"))
+        );
+        assert_eq!(
+            ip_bucket(v6("::ffff:198.51.100.7")),
+            IpAddr::from([198, 51, 100, 7])
+        );
+        assert_eq!(ip_bucket(ip(7).unwrap()), ip(7).unwrap());
+        assert_eq!(
+            client_key(None, Some(v6("::ffff:198.51.100.7"))),
+            "ip:198.51.100.7"
+        );
+        let net = |s: &str| s.parse::<IpNet>().unwrap();
+        assert_eq!(
+            ip_bucket_net(v6("2001:db8:1:2:aaaa::1")),
+            net("2001:db8:1:2::/64")
+        );
+        assert_eq!(
+            ip_bucket_net(v6("::ffff:198.51.100.7")),
+            net("198.51.100.7/32")
+        );
+    }
+
+    #[tokio::test]
+    async fn limits_uploads_lookups_and_requests() {
+        for limits in backends().await {
+            let id = crate::shared::tests::fresh() as i64 & i64::MAX;
+            for _ in 0..20 {
+                limits.check_upload(id).await.unwrap();
+            }
+            assert!(limits.check_upload(id).await.is_err());
+            for _ in 0..5 {
+                limits.check_request(id).await.unwrap();
+            }
+            assert!(limits.check_request(id).await.is_err());
+            let client = format!("ip:{}", crate::shared::tests::unique_ip());
+            for _ in 0..10 {
+                limits.check_source_lookup(&client).await.unwrap();
+            }
+            assert!(limits.check_source_lookup(&client).await.is_err());
         }
     }
 

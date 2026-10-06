@@ -55,6 +55,9 @@ pub struct ServerConfig {
     pub api_burst: u32,
     /// Which other websites' scripts may call the APIs.
     pub cors: CorsConfig,
+    /// How many connections are served at once, and how long they may
+    /// wait for a request, or for the client to take a response.
+    pub connections: ConnectionConfig,
 }
 
 impl Default for ServerConfig {
@@ -67,6 +70,7 @@ impl Default for ServerConfig {
             api_requests_per_minute: 300,
             api_burst: 60,
             cors: CorsConfig::default(),
+            connections: ConnectionConfig::default(),
         }
     }
 }
@@ -101,6 +105,35 @@ impl CorsConfig {
     /// Whether any website is allowed.
     pub fn allows_any(&self) -> bool {
         self.allowed_origins.iter().any(|o| o == "*")
+    }
+}
+
+/// Limits on the HTTP server's connections, so clients that open them
+/// and send nothing, send slowly, or stop reading, can't hold them all.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConnectionConfig {
+    /// Connections served at once; more wait to be accepted until one
+    /// closes. Each takes a file descriptor, so this stays under the
+    /// process's limit (`ulimit -n`), with room for everything else.
+    pub max: u32,
+    /// A connection that hasn't sent a whole request's headers for this
+    /// long is closed: one sending nothing, or its headers too slowly, or
+    /// left idle between requests.
+    pub idle_timeout_secs: u64,
+    /// Once a connection is closing, it's cut off when the client takes
+    /// none of its response for this long (and no request is still being
+    /// handled), so a client that stops reading can't keep it open.
+    pub send_timeout_secs: u64,
+}
+
+impl Default for ConnectionConfig {
+    fn default() -> Self {
+        Self {
+            max: 512,
+            idle_timeout_secs: 10,
+            send_timeout_secs: 60,
+        }
     }
 }
 
@@ -167,7 +200,8 @@ pub struct AuthConfig {
     pub session_max_days: u32,
     /// Logging in through an OpenID Connect provider (single sign-on).
     pub oidc: Option<OidcConfig>,
-    /// A captcha service; site settings say where it's asked for.
+    /// A captcha service; site settings say where it's asked for, besides
+    /// logging in to an account whose password is being guessed.
     pub captcha: Option<CaptchaConfig>,
 }
 
@@ -275,6 +309,25 @@ impl OidcConfig {
     fn default_scopes() -> Vec<String> {
         ["openid", "email", "profile"].map(String::from).to_vec()
     }
+
+    /// Whether `url` is on this machine (`localhost` or a loopback
+    /// address), where a provider being developed against may use plain
+    /// http.
+    pub fn is_local(url: &Url) -> bool {
+        match url.host() {
+            Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            None => false,
+        }
+    }
+
+    /// Whether the provider may be reached at `url`: over https, or plain
+    /// http on this machine. The ID token's signature isn't checked, so
+    /// the connection is what vouches for it.
+    pub fn is_secure(url: &Url) -> bool {
+        url.scheme() == "https" || (url.scheme() == "http" && Self::is_local(url))
+    }
 }
 
 /// Outgoing mail over SMTP, for email verification and password resets.
@@ -344,6 +397,9 @@ pub struct WebhooksConfig {
     pub allow_private_addresses: bool,
     /// Seconds a delivery may take before it counts as failed.
     pub timeout_secs: u64,
+    /// Deliveries sent at once, across all job workers; the rest wait their
+    /// turn, so receivers that don't answer can't hold every worker.
+    pub max_concurrent: u32,
 }
 
 impl Default for WebhooksConfig {
@@ -351,6 +407,7 @@ impl Default for WebhooksConfig {
         Self {
             allow_private_addresses: false,
             timeout_secs: 10,
+            max_concurrent: 1,
         }
     }
 }
@@ -375,13 +432,13 @@ pub struct XSourceConfig {
     /// The API of an FxEmbed instance (fxtwitter, fixupx or your own),
     /// which reads posts, age-restricted ones too, without an account
     /// here. Empty: don't use one.
-    pub fxembed_api: String,
+    pub fxembed_api_url: String,
 }
 
 impl Default for XSourceConfig {
     fn default() -> Self {
         Self {
-            fxembed_api: "https://api.fixupx.com".into(),
+            fxembed_api_url: "https://api.fixupx.com".into(),
         }
     }
 }
@@ -436,9 +493,10 @@ pub struct TaggerConfig {
     /// Posts tagged at once. Each runs the whole model, so one is usually
     /// best: raise `threads` instead.
     pub workers: usize,
-    /// The account tags applied automatically are credited to. Created on
-    /// first use, without a password; an existing account that has one
-    /// isn't used.
+    /// The account tags applied automatically are credited to. Created
+    /// when `moekura tagger` starts, without a password, and nobody can
+    /// sign up with the name; an existing account that someone can log
+    /// in to (or that has an address) isn't used.
     pub account: String,
 }
 
@@ -491,6 +549,12 @@ impl TaggerConfig {
             tags_url: Url::parse(preset.tags_url).ok()?,
             tags_sha256: preset.tags_sha256.to_owned(),
         })
+    }
+
+    /// Whether `name` is the tagger's, which nobody may sign up or rename
+    /// themselves as (names are compared ignoring case, as accounts are).
+    pub fn reserves(&self, name: &str) -> bool {
+        name.trim().eq_ignore_ascii_case(&self.account)
     }
 }
 
@@ -673,7 +737,9 @@ pub struct MediaConfig {
     /// Kill media tools that run longer than this.
     pub tool_timeout_secs: u64,
     /// Whether identifying metadata (EXIF, GPS, XMP, IPTC, comments) is
-    /// removed from uploaded originals, not just from thumbnails.
+    /// removed from uploaded originals, not just from thumbnails. On by
+    /// default: anyone can download an original, and the metadata page
+    /// hiding GPS and serial numbers would otherwise suggest they're gone.
     pub strip_metadata: StripMetadata,
     /// Media tool processes running at once in this process, for uploads
     /// and jobs together; more wait their turn. 0: one per CPU core.
@@ -688,6 +754,13 @@ pub struct MediaConfig {
     /// threads together. 0: no limit (`tool_timeout_secs` and
     /// `ffmpeg_threads` still bound it). Linux only.
     pub ffmpeg_cpu_secs: u64,
+    /// Memory (address space) each libvips run (`vips`, `vipsheader`,
+    /// `vipsthumbnail`) may use, in MB. Decoding the largest images
+    /// `max_pixels` allows takes a few GB. 0: no limit. Linux only.
+    pub vips_memory_mb: u64,
+    /// CPU time each libvips run may use, in seconds. 0: no limit
+    /// (`tool_timeout_secs` still bounds it). Linux only.
+    pub vips_cpu_secs: u64,
     /// Scratch space for uploads and processing. Defaults to the system
     /// temporary directory.
     pub work_dir: Option<PathBuf>,
@@ -697,6 +770,10 @@ pub struct MediaConfig {
 /// The least `media.ffmpeg_memory_mb` ffmpeg starts with (its libraries
 /// alone take a few hundred MB of address space).
 pub const MIN_FFMPEG_MEMORY_MB: u64 = 512;
+
+/// The least `media.vips_memory_mb` libvips starts with, its libraries
+/// and plugins included.
+pub const MIN_VIPS_MEMORY_MB: u64 = 512;
 
 impl MediaConfig {
     /// `work_dir`, or a directory under the system temp dir.
@@ -722,11 +799,13 @@ impl Default for MediaConfig {
             sample_size: 1600,
             variant_format: "webp".to_owned(),
             tool_timeout_secs: 120,
-            strip_metadata: StripMetadata::Off,
+            strip_metadata: StripMetadata::Strip,
             max_tool_processes: 0,
             ffmpeg_threads: 2,
             ffmpeg_memory_mb: 2048,
             ffmpeg_cpu_secs: 0,
+            vips_memory_mb: 4096,
+            vips_cpu_secs: 0,
             work_dir: None,
             tools: MediaTools::default(),
         }
@@ -738,10 +817,10 @@ impl Default for MediaConfig {
 #[serde(rename_all = "lowercase")]
 pub enum StripMetadata {
     /// Originals are kept exactly as uploaded.
-    #[default]
     Off,
     /// Removed from the types that support it (JPEG, PNG, WebP); others
     /// are kept as uploaded.
+    #[default]
     Strip,
     /// Removed, and files of other types refused.
     Require,
@@ -978,12 +1057,12 @@ impl Config {
                 message: "must be an http:// or https:// URL".into(),
             });
         }
-        let fxembed_api = self.sources.x.fxembed_api.trim();
-        if !fxembed_api.is_empty()
-            && !Url::parse(fxembed_api).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+        let fxembed_api_url = self.sources.x.fxembed_api_url.trim();
+        if !fxembed_api_url.is_empty()
+            && !Url::parse(fxembed_api_url).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
         {
             problems.push(ConfigProblem {
-                key: "sources.x.fxembed_api",
+                key: "sources.x.fxembed_api_url",
                 message: "must be an http:// or https:// URL, or empty".into(),
             });
         }
@@ -992,6 +1071,14 @@ impl Config {
                 key: "media.ffmpeg_memory_mb",
                 message: format!(
                     "must be 0 (no limit) or at least {MIN_FFMPEG_MEMORY_MB}: ffmpeg needs that much to start"
+                ),
+            });
+        }
+        if (1..MIN_VIPS_MEMORY_MB).contains(&self.media.vips_memory_mb) {
+            problems.push(ConfigProblem {
+                key: "media.vips_memory_mb",
+                message: format!(
+                    "must be 0 (no limit) or at least {MIN_VIPS_MEMORY_MB}: libvips needs that much to start"
                 ),
             });
         }
@@ -1066,13 +1153,14 @@ impl Config {
                 message: "must be at least 10".into(),
             });
         }
-        if let Some(oidc) = &self.auth.oidc {
-            let loopback = oidc.issuer.host_str().is_some_and(|h| {
-                h == "localhost"
-                    || h.parse::<std::net::IpAddr>()
-                        .is_ok_and(|ip| ip.is_loopback())
+        if self.webhooks.max_concurrent == 0 {
+            problems.push(ConfigProblem {
+                key: "webhooks.max_concurrent",
+                message: "must be at least 1".into(),
             });
-            if !(oidc.issuer.scheme() == "https" || (oidc.issuer.scheme() == "http" && loopback)) {
+        }
+        if let Some(oidc) = &self.auth.oidc {
+            if !OidcConfig::is_secure(&oidc.issuer) {
                 problems.push(ConfigProblem {
                     key: "auth.oidc.issuer",
                     message: "must be an https:// URL".into(),
@@ -1193,6 +1281,25 @@ impl Config {
                 message: "must be at least 1".into(),
             });
         }
+        let connections = &self.server.connections;
+        for (key, value) in [
+            ("server.connections.max", u64::from(connections.max)),
+            (
+                "server.connections.idle_timeout_secs",
+                connections.idle_timeout_secs,
+            ),
+            (
+                "server.connections.send_timeout_secs",
+                connections.send_timeout_secs,
+            ),
+        ] {
+            if value == 0 {
+                problems.push(ConfigProblem {
+                    key,
+                    message: "must be at least 1".into(),
+                });
+            }
+        }
 
         if problems.is_empty() {
             Ok(())
@@ -1201,7 +1308,9 @@ impl Config {
         }
     }
 
-    /// A copy with credentials masked, safe to print or log.
+    /// A copy with credentials masked, safe to print or log: passwords,
+    /// secret keys, site logins, and whatever an address carries in its
+    /// userinfo or query.
     pub fn redacted(&self) -> Self {
         let mut config = self.clone();
         config.database.url = redact_url(&config.database.url);
@@ -1211,19 +1320,73 @@ impl Config {
         if let Some(url) = &mut config.cache.url {
             *url = redact_url(url);
         }
-        if !config.storage.s3.secret_access_key.is_empty() {
-            config.storage.s3.secret_access_key = REDACTED.to_owned();
+        redact_secret(&mut config.storage.s3.secret_access_key);
+        if let Some(oidc) = &mut config.auth.oidc {
+            redact_secret(&mut oidc.client_secret);
         }
-        if let Some(oidc) = &mut config.auth.oidc
-            && !oidc.client_secret.is_empty()
+        if let Some(captcha) = &mut config.auth.captcha {
+            redact_secret(&mut captcha.secret_key);
+        }
+        redact_secret(&mut config.mail.password);
+        // Session cookies, API keys and tokens for other sites: names are
+        // kept, so it still shows what is sent where.
+        for login in config.sources.logins.values_mut() {
+            redact_secret(&mut login.cookie);
+            login.query.values_mut().for_each(redact_secret);
+            login.headers.values_mut().for_each(redact_secret);
+        }
+        if let Ok(mut url) = Url::parse(&config.sources.x.fxembed_api_url)
+            && redact_web_url(&mut url)
         {
-            oidc.client_secret = REDACTED.to_owned();
+            config.sources.x.fxembed_api_url = url.into();
         }
-        if !config.mail.password.is_empty() {
-            config.mail.password = REDACTED.to_owned();
+        for url in [
+            config.telemetry.otlp_endpoint.as_mut(),
+            config.tagger.model_url.as_mut(),
+            config.tagger.tags_url.as_mut(),
+            config.storage.public_base_url.as_mut(),
+            config.storage.s3.endpoint.as_mut(),
+            config
+                .auth
+                .captcha
+                .as_mut()
+                .and_then(|c| c.verify_url.as_mut()),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            redact_web_url(url);
         }
         config
     }
+}
+
+/// Masks a secret that is set, leaving an unset one visibly empty.
+fn redact_secret(secret: &mut String) {
+    if !secret.is_empty() {
+        *secret = REDACTED.to_owned();
+    }
+}
+
+/// Masks the userinfo and every query value of a web address, where
+/// services take credentials and API keys. Says whether there were any.
+fn redact_web_url(url: &mut Url) -> bool {
+    let secret = !url.username().is_empty() || url.password().is_some() || url.query().is_some();
+    // Both only fail for URLs that cannot have credentials, which then
+    // have none to hide.
+    if !url.username().is_empty() {
+        let _ = url.set_username(REDACTED);
+    }
+    if url.password().is_some() {
+        let _ = url.set_password(Some(REDACTED));
+    }
+    if url.query().is_some() {
+        let keys: Vec<String> = url.query_pairs().map(|(k, _)| k.into_owned()).collect();
+        url.query_pairs_mut()
+            .clear()
+            .extend_pairs(keys.iter().map(|k| (k, REDACTED)));
+    }
+    secret
 }
 
 fn check_postgres_url(raw: &str) -> Result<(), String> {
@@ -1302,15 +1465,15 @@ mod tests {
     #[test]
     fn x_reads_through_fxembed_unless_turned_off() {
         assert_eq!(
-            Config::default().sources.x.fxembed_api,
+            Config::default().sources.x.fxembed_api_url,
             "https://api.fixupx.com"
         );
         let mut config = valid();
-        config.sources.x.fxembed_api = String::new();
+        config.sources.x.fxembed_api_url = String::new();
         assert!(config.validate().is_ok());
-        config.sources.x.fxembed_api = "fixupx.com".into();
+        config.sources.x.fxembed_api_url = "fixupx.com".into();
         let problems = config.validate().unwrap_err();
-        assert_eq!(problems[0].key, "sources.x.fxembed_api");
+        assert_eq!(problems[0].key, "sources.x.fxembed_api_url");
     }
 
     #[test]
@@ -1389,6 +1552,15 @@ mod tests {
     }
 
     #[test]
+    fn originals_lose_their_metadata_unless_turned_off() {
+        assert_eq!(Config::default().media.strip_metadata, StripMetadata::Strip);
+        let unset: Config = toml::from_str("[media]\nmax_upload_mb = 50\n").unwrap();
+        assert_eq!(unset.media.strip_metadata, StripMetadata::Strip);
+        let off: Config = toml::from_str("[media]\nstrip_metadata = \"off\"\n").unwrap();
+        assert_eq!(off.media.strip_metadata, StripMetadata::Off);
+    }
+
+    #[test]
     fn ffmpeg_memory_is_off_or_enough_to_start() {
         let mut config = valid();
         config.media.ffmpeg_memory_mb = 0;
@@ -1396,6 +1568,47 @@ mod tests {
         config.media.ffmpeg_memory_mb = 100;
         let problems = config.validate().unwrap_err();
         assert_eq!(problems[0].key, "media.ffmpeg_memory_mb");
+    }
+
+    #[test]
+    fn connections_are_limited() {
+        let connections = Config::default().server.connections;
+        assert_eq!(
+            (
+                connections.max,
+                connections.idle_timeout_secs,
+                connections.send_timeout_secs
+            ),
+            (512, 10, 60)
+        );
+        let mut config = valid();
+        config.server.connections.max = 0;
+        config.server.connections.idle_timeout_secs = 0;
+        config.server.connections.send_timeout_secs = 0;
+        let keys: Vec<_> = config
+            .validate()
+            .unwrap_err()
+            .iter()
+            .map(|p| p.key)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "server.connections.max",
+                "server.connections.idle_timeout_secs",
+                "server.connections.send_timeout_secs"
+            ]
+        );
+    }
+
+    #[test]
+    fn vips_memory_is_off_or_enough_to_start() {
+        let mut config = valid();
+        config.media.vips_memory_mb = 0;
+        config.validate().unwrap();
+        config.media.vips_memory_mb = 100;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "media.vips_memory_mb");
     }
 
     #[test]
@@ -1419,6 +1632,14 @@ mod tests {
         assert_eq!(problems[0].key, "server.cors.allow_credentials");
         config.server.cors.allow_credentials = false;
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn reserves_the_taggers_name() {
+        let tagger = TaggerConfig::default();
+        assert!(tagger.reserves("tagger"));
+        assert!(tagger.reserves("Tagger "));
+        assert!(!tagger.reserves("tagger_2"));
     }
 
     #[test]
@@ -1466,6 +1687,15 @@ mod tests {
         config.validate().unwrap();
         let custom = config.tagger.source().unwrap();
         assert_eq!(custom.model_sha256, "ab".repeat(32));
+    }
+
+    #[test]
+    fn webhooks_get_at_least_one_delivery_at_once() {
+        let mut config = valid();
+        assert_eq!(config.webhooks.max_concurrent, 1);
+        config.webhooks.max_concurrent = 0;
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "webhooks.max_concurrent");
     }
 
     #[test]
@@ -1603,6 +1833,22 @@ mod tests {
         oidc.client_id = "moekura".into();
         oidc.scopes = vec!["openid".into()];
         config.validate().unwrap();
+        for local in ["http://localhost:9000", "http://[::1]:9000/sso"] {
+            assert!(
+                OidcConfig::is_secure(&Url::parse(local).unwrap()),
+                "{local}"
+            );
+        }
+        for remote in [
+            "http://sso.example.com",
+            "http://10.0.0.1",
+            "ftp://localhost",
+        ] {
+            assert!(
+                !OidcConfig::is_secure(&Url::parse(remote).unwrap()),
+                "{remote}"
+            );
+        }
     }
 
     #[test]
@@ -1612,6 +1858,68 @@ mod tests {
         let redacted = config.redacted();
         assert!(!redacted.database.url.contains("hunter2"));
         assert!(!redacted.database.replicas[0].contains("secret"));
+    }
+
+    #[test]
+    fn redacted_hides_every_credential() {
+        let config: Config = toml::from_str(
+            r#"
+            [database]
+            url = "postgres://moekura:s3cr3t-db@db/moekura"
+            replicas = ["postgres://db/moekura?password=s3cr3t-replica"]
+            [cache]
+            url = "rediss://default:s3cr3t-cache@valkey:6379"
+            [auth.oidc]
+            issuer = "https://sso.example.com"
+            client_id = "moekura"
+            client_secret = "s3cr3t-oidc"
+            [auth.captcha]
+            provider = "turnstile"
+            site_key = "public-site-key"
+            secret_key = "s3cr3t-captcha"
+            verify_url = "https://verify:s3cr3t-verify@captcha.example.com/check?key=s3cr3t-verify-key"
+            [mail]
+            host = "smtp.example.com"
+            username = "moekura"
+            password = "s3cr3t-mail"
+            [sources.logins."pixiv.net"]
+            cookie = "PHPSESSID=s3cr3t-cookie"
+            [sources.logins."gelbooru.com"]
+            query = { user_id = "s3cr3t-user-id", api_key = "s3cr3t-api-key" }
+            [sources.logins."pawoo.net"]
+            headers = { Authorization = "Bearer s3cr3t-bearer" }
+            [sources.x]
+            fxembed_api_url = "https://fx:s3cr3t-fx@fx.example.com/?token=s3cr3t-fx-token"
+            [storage]
+            public_base_url = "https://cdn.example.com/?sig=s3cr3t-cdn"
+            [storage.s3]
+            endpoint = "https://minio:s3cr3t-endpoint@minio.example.com"
+            secret_access_key = "s3cr3t-s3"
+            [tagger]
+            model = "custom"
+            model_url = "https://huggingface.co/m/model.onnx?token=s3cr3t-model"
+            tags_url = "https://user:s3cr3t-tags@example.com/tags.csv"
+            [telemetry]
+            otlp_endpoint = "https://otel:s3cr3t-otlp@collector.example.com:4318"
+            "#,
+        )
+        .unwrap();
+        let printed = toml::to_string_pretty(&config.redacted()).unwrap();
+        assert!(!printed.contains("s3cr3t"), "{printed}");
+        // Still says what is configured, and where.
+        for shown in [
+            "public-site-key",
+            "Authorization",
+            "api_key",
+            "collector.example.com",
+            "token=REDACTED",
+        ] {
+            assert!(printed.contains(shown), "{shown}: {printed}");
+        }
+        // Unset secrets stay visibly unset, and plain addresses unchanged.
+        let plain = Config::default().redacted();
+        assert_eq!(plain.mail.password, "");
+        assert_eq!(plain.sources.x.fxembed_api_url, "https://api.fixupx.com");
     }
 
     #[test]

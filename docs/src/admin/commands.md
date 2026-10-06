@@ -10,6 +10,7 @@
 | `moekura openapi` | prints the API's OpenAPI description |
 | `moekura admin create-user NAME [--role ROLE] [--email E]` | creates an account; asks for the password, or reads one line from standard input |
 | `moekura admin set-role NAME ROLE` | changes someone's role |
+| `moekura admin lift-network-ban ADDRESS_OR_RANGE` | lifts the [network bans](moderation.md#bans) covering an address, or overlapping a range, such as one that locks staff out |
 | `moekura admin create-invite [--uses N] [--expires-days D]` | makes an invite code, shown once |
 | `moekura admin settings` | shows the site settings |
 | `moekura admin settings set KEY VALUE` | changes one; `VALUE` is JSON, or else a plain string |
@@ -23,5 +24,5 @@
 | `moekura admin bench [--check] [--explain NAME]` | times a suite of searches against the database |
 | `moekura admin bench-http [--url URL] [--concurrency N] [--check-ms MS]` | times pages and API responses from a running server; see [Scaling](../scaling.md) |
 
-Every command takes `--config PATH`. Role and setting changes made here
-appear in the moderation log.
+Every command takes `--config PATH`. Role and setting changes, and
+lifted network bans, made here appear in the moderation log.

@@ -6,6 +6,9 @@ use moekura_core::sites::SourceUrl;
 
 use super::{Http, SourceInfo, html, html_to_text, tags_named};
 
+/// The most of a work's pictures asked for, one request each.
+const MAX_PAGES: usize = 50;
+
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
@@ -22,6 +25,7 @@ pub(super) async fn fetch(
         .into_iter()
         .filter(|t| t.has_class("thumbnail_list"))
         .filter_map(|t| t.attr("sub_id").map(str::to_owned))
+        .take(MAX_PAGES)
         .collect();
     if let Some(token) = token {
         let subs: Vec<Option<&str>> = if sub_ids.is_empty() {
@@ -101,7 +105,7 @@ fn work_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo> {
                 a.attr("href")
                     .is_some_and(|h| h.starts_with("/search/list"))
             })
-            .map(|a| html_to_text(html::inner(view, &a)))
+            .filter_map(|a| html::label(view, &a))
             .collect::<Vec<_>>(),
     );
     Some(info)

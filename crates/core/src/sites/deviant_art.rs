@@ -33,13 +33,16 @@ fn base36(s: &str) -> Option<u64> {
 /// `<hash>-d<id>`, or `d<id>-<uuid>`.
 fn from_file_name(name: &str) -> (Option<u64>, Option<String>) {
     let name = name.split('.').next().unwrap_or(name);
-    // d797tit-1eac22e0-38b6-4eae-adcb-1b72843fd62a
+    // d797tit-1eac22e0-38b6-4eae-adcb-1b72843fd62a; `get` as the name may
+    // have any characters, and a byte offset inside one isn't a match.
     if let Some(rest) = name.strip_prefix('d')
         && rest.len() > 7
         && rest.as_bytes()[6] == b'-'
-        && super::parts::is_uuid(&rest[7..rest.len().min(43)])
+        && rest
+            .get(7..rest.len().min(43))
+            .is_some_and(super::parts::is_uuid)
     {
-        return (base36(&rest[..6]), None);
+        return (rest.get(..6).and_then(base36), None);
     }
     if let Some((before, id)) = name.rsplit_once("-d").or_else(|| name.rsplit_once("_d")) {
         let id = id.split('-').next().unwrap_or(id);
@@ -229,5 +232,22 @@ mod tests {
                 "https://images-wixmp-ed30a86b8c4ca887773594c2.wixmp.com/intermediary/f/d8995973-0b32-4a7d-8cd8-d847d083689a/d797tit-1eac22e0-38b6-4eae-adcb-1b72843fd62a.png",
             ),
         );
+    }
+
+    #[test]
+    fn odd_file_names() {
+        assert_eq!(
+            from_file_name("d797tit-1eac22e0-38b6-4eae-adcb-1b72843fd62a"),
+            (Some(base36("797tit").unwrap()), None)
+        );
+        // A character across where the UUID would end.
+        let name = "d797tit-1eac22e0-38b6-4eae-adcb-1b72843fd62é";
+        assert!(!name.is_char_boundary(1 + 43));
+        assert_eq!(from_file_name(name), (None, None));
+        let found = on(
+            &DEVIANTART,
+            "https://orig00.deviantart.net/a/d797tit-1eac22e0-38b6-4eae-adcb-1b72843fd62%C3%A9.png",
+        );
+        assert!(found.is_file);
     }
 }

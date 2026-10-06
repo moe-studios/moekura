@@ -54,6 +54,11 @@ async fn rename(
     if name.as_str() == user.name {
         return Err(AppError::Unprocessable("That's the name already.".into()));
     }
+    // The tagger's, even before it has made its account.
+    if state.config.tagger.reserves(name.as_str()) && !user.name.eq_ignore_ascii_case(name.as_str())
+    {
+        return Err(AppError::Unprocessable(format!("“{name}” is taken.")));
+    }
     match name_changes::rename(state.db.primary(), user.id, name.as_str(), changer).await {
         Ok(()) => Ok(name.as_str().to_owned()),
         Err(RenameError::Taken) => Err(AppError::Unprocessable(format!("“{name}” is taken."))),
@@ -94,8 +99,18 @@ fn render_form(
     )
 }
 
-async fn form(page: Page) -> Result<Response, AppError> {
+/// Users may change their own name unless banned: not to one that
+/// mocks the ban, nor back from one staff gave them.
+fn renamer(page: &Page) -> Result<User, AppError> {
     let user = page.current.user.clone().ok_or(AppError::Unauthorized)?;
+    if page.current.ban.is_some() {
+        return Err(AppError::Forbidden);
+    }
+    Ok(user)
+}
+
+async fn form(page: Page) -> Result<Response, AppError> {
+    let user = renamer(&page)?;
     let next = next_change(page.state(), &user).await?;
     Ok(render_form(&page, &user, next, "", None))
 }
@@ -113,7 +128,7 @@ async fn change_own(
     jar: CookieJar,
     Form(form): Form<NameForm>,
 ) -> Result<Response, AppError> {
-    let user = page.current.user.clone().ok_or(AppError::Unauthorized)?;
+    let user = renamer(&page)?;
     let state = page.state();
     if let Some(next) = next_change(state, &user).await? {
         let message = format!(
@@ -213,6 +228,12 @@ mod tests {
             .await;
         assert_eq!(taken.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(taken.body.contains("is taken"), "{}", taken.body);
+        // So is the tagger's, before it has an account.
+        let tagger = app
+            .post_form("/settings/name", Some(&member), &[], "name=TAGGER")
+            .await;
+        assert_eq!(tagger.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(tagger.body.contains("is taken"), "{}", tagger.body);
         let bad = app
             .post_form("/settings/name", Some(&member), &[], "name=a+b")
             .await;
@@ -295,5 +316,49 @@ mod tests {
         .unwrap();
         assert_eq!(found[0]["desired_name"], "renamed");
         assert_eq!(found.as_array().unwrap().len(), 1);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn banned_users_keep_their_names(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let member = session_for(&pool, "member", SystemRole::Member).await;
+        let staff = session_for(&pool, "staff", SystemRole::Moderator).await;
+        let renamed = app
+            .post_form(
+                "/users/member/rename",
+                Some(&staff),
+                &[],
+                "name=fixed&reason=Impersonation",
+            )
+            .await;
+        assert_eq!(renamed.location.as_deref(), Some("/users/fixed"));
+        sqlx::query(
+            "INSERT INTO bans (user_id, reason) SELECT id, 'spam' FROM users WHERE name = 'fixed'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Not back to the old name, nor any other.
+        assert_eq!(
+            app.get("/settings/name", Some(&member)).await.status,
+            StatusCode::FORBIDDEN
+        );
+        for name in ["member", "other"] {
+            let refused = app
+                .post_form(
+                    "/settings/name",
+                    Some(&member),
+                    &[],
+                    &format!("name={name}"),
+                )
+                .await;
+            assert_eq!(refused.status, StatusCode::FORBIDDEN);
+        }
+        let name: String = sqlx::query_scalar("SELECT name::text FROM users WHERE name = 'fixed'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "fixed");
     }
 }

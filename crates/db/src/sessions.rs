@@ -33,6 +33,8 @@ pub struct NewSession<'a> {
 #[derive(Debug, Clone)]
 pub struct SessionUser {
     pub session_id: i64,
+    /// When the session started: when the user logged in.
+    pub created_at: OffsetDateTime,
     pub last_used_at: OffsetDateTime,
     pub user: User,
     /// The user's ban in force, if any.
@@ -71,6 +73,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
     #[derive(sqlx::FromRow)]
     struct Row {
         session_id: i64,
+        session_created_at: OffsetDateTime,
         last_used_at: OffsetDateTime,
         #[sqlx(flatten)]
         user: User,
@@ -79,7 +82,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
         ban_expires_at: Option<OffsetDateTime>,
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT s.id AS session_id, s.last_used_at,
+        "SELECT s.id AS session_id, s.created_at AS session_created_at, s.last_used_at,
                 u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings,
                 b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
          FROM sessions s JOIN users u ON u.id = s.user_id
@@ -95,6 +98,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
     .await?;
     Ok(row.map(|r| SessionUser {
         session_id: r.session_id,
+        created_at: r.session_created_at,
         last_used_at: r.last_used_at,
         user: r.user,
         ban: r.banned.then(|| ActiveBan {

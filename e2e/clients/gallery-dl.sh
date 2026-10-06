@@ -41,7 +41,8 @@ PY
     -F "tags=$tag n$i artist:gdl_painter" "$base/upload"
 done
 
-key=$(curl -fsS -b jar -H "$origin" -d "name=gallery-dl $run&expires=never" "$base/settings/api-keys" \
+key=$(curl -fsS -b jar -H "$origin" -d "name=gallery-dl $run&expires=never" \
+  --data-urlencode "password=$password" "$base/settings/api-keys" \
   | grep -o 'mka_[0-9a-f]\{64\}' | head -n 1)
 [ -n "$key" ] || { echo "could not create an API key" >&2; exit 1; }
 

@@ -4,7 +4,9 @@
 #   export MOEKURA_BUILD_VERSION="git-$(git rev-parse --short=7 HEAD)"
 #   docker compose -f deploy/compose.tiny.yml up -d
 #
-# Then open http://localhost:8080. Migrations run automatically on start.
+# Then open http://localhost:8080 on this machine; other people reach it
+# through a reverse proxy (docs/src/install/reverse-proxy.md). Migrations
+# run automatically on start.
 
 name: moekura
 
@@ -15,8 +17,11 @@ services:
       args:
         MOEKURA_BUILD_VERSION: ${MOEKURA_BUILD_VERSION:-}
     restart: unless-stopped
+    # On this machine only, for a reverse proxy in front. Published ports
+    # get past host firewalls such as ufw: "8080:8080" would open the app
+    # to every network the machine is on.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       MOEKURA_DATABASE__URL: postgres://moekura:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in deploy/.env}@db/moekura
     volumes:

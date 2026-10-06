@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
 use crate::AppState;
-use crate::auth::CurrentUser;
+use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
@@ -57,7 +57,7 @@ fn display(name: &str) -> String {
 }
 
 /// Whether `current` sees deleted artists.
-fn sees_deleted(current: &CurrentUser) -> bool {
+pub(crate) fn sees_deleted(current: &CurrentUser) -> bool {
     current.can(Permission::EditWiki) || current.can(Permission::ViewDeleted)
 }
 
@@ -145,6 +145,11 @@ fn save_error(error: SaveError) -> AppError {
         SaveError::NameTaken => {
             AppError::Unprocessable("There's already an artist entry with that name.".into())
         }
+        SaveError::BanLocked => AppError::Unprocessable(
+            "This artist is banned: only those who manage tags can rename, delete or restore \
+             the entry."
+                .into(),
+        ),
         SaveError::Db(e) => e.into(),
     }
 }
@@ -186,6 +191,8 @@ pub(crate) async fn create_artist(
 }
 
 /// Saves artist `id` as `current`; see [`artists::save`] for `base`.
+/// Changing a ban, a banned entry's name or whether it's deleted takes
+/// [`Permission::ManageTags`].
 pub(crate) async fn save_artist(
     state: &AppState,
     current: &CurrentUser,
@@ -200,11 +207,48 @@ pub(crate) async fn save_artist(
         contents,
         current.user.as_ref().map(|u| u.id),
         base,
+        current.can(Permission::ManageTags),
     )
     .await
     .map_err(save_error)?;
     claim_tag(state, current, &contents.name).await?;
     Ok(version)
+}
+
+/// The tag an entry's ban applies to: its name, while it's banned and
+/// not deleted.
+fn banned_tag(name: &str, is_banned: bool, is_deleted: bool) -> Option<&str> {
+    (is_banned && !is_deleted).then_some(name)
+}
+
+/// Logs a ban that renaming, deleting or restoring a banned entry moved
+/// or lifted (bans and unbans are logged as such): `was` and `now` are
+/// the banned tag before and after ([`banned_tag`]).
+async fn record_ban_moved(
+    db: &PgPool,
+    current: &CurrentUser,
+    id: i32,
+    was: Option<&str>,
+    now: Option<&str>,
+) -> Result<(), AppError> {
+    let (kind, details) = match (was, now) {
+        (Some(old), Some(new)) if old != new => (
+            ActionKind::ArtistBan,
+            serde_json::json!({ "artist_id": id, "name": new, "previous_name": old }),
+        ),
+        (Some(old), None) => (
+            ActionKind::ArtistUnban,
+            serde_json::json!({ "artist_id": id, "name": old, "deleted": true }),
+        ),
+        (None, Some(new)) => (
+            ActionKind::ArtistBan,
+            serde_json::json!({ "artist_id": id, "name": new, "deleted": false }),
+        ),
+        _ => return Ok(()),
+    };
+    let actor = current.user.as_ref().map(|u| u.id);
+    mod_actions::record(db, NewAction::new(actor, kind).details(details)).await?;
+    Ok(())
 }
 
 /// Refuses tags `new` (a post's, `old` before the change) that add a
@@ -405,6 +449,8 @@ struct FinderAnswer {
 /// artist without an entry, how to start one.
 async fn find_for_url(
     state: &AppState,
+    current: &CurrentUser,
+    request: &RequestInfo,
     db: &PgPool,
     url: &str,
 ) -> Result<(Vec<Artist>, Option<Unknown>), AppError> {
@@ -414,7 +460,9 @@ async fn find_for_url(
     }
     let mut found = artists::find_by_url(db, url).await?;
     let mut unknown = None;
-    if let Some(info) = state.sources.lookup(url).await {
+    if let Some(info) =
+        crate::sources::lookup_for_page(state, current, request.ip, url, false).await?
+    {
         for artist in crate::sources::artists_for(db, &info).await? {
             if !found.iter().any(|a| a.id == artist.id) {
                 found.push(artist);
@@ -431,13 +479,14 @@ async fn find_for_url(
 /// JSON, a list.
 async fn finder(
     page: Page,
+    request: RequestInfo,
     headers: HeaderMap,
     Query(query): Query<FinderQuery>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
     let state = page.state();
     let db = state.reader(&page.current);
-    let (found, unknown) = find_for_url(state, db, &query.url).await?;
+    let (found, unknown) = find_for_url(state, &page.current, &request, db, &query.url).await?;
     let wants_json = headers
         .get(ACCEPT)
         .and_then(|v| v.to_str().ok())
@@ -508,6 +557,7 @@ async fn show(page: Page, Path(id): Path<i32>) -> Result<Response, AppError> {
 
 fn form_context(
     artist: Option<&Artist>,
+    current: &CurrentUser,
     input: &ArtistInput<'_>,
     base: i32,
     error: Option<String>,
@@ -518,6 +568,8 @@ fn form_context(
             url => url_value(&artist_url(a.id)),
         }),
         action => artist.map_or_else(|| "/artists".to_owned(), |a| artist_url(a.id)),
+        // A banned entry's name is part of its ban.
+        name_locked => artist.is_some_and(|a| a.is_banned) && !current.can(Permission::ManageTags),
         name => input.name,
         group_name => input.group_name,
         other_names => input.other_names,
@@ -535,7 +587,10 @@ async fn new_form(page: Page, Query(query): Query<NameQuery>) -> Result<Response
         other_names: query.other_names.trim(),
         urls: query.urls.trim(),
     };
-    Ok(page.render("artist_edit.html", form_context(None, &input, 0, None)))
+    Ok(page.render(
+        "artist_edit.html",
+        form_context(None, &page.current, &input, 0, None),
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -585,6 +640,7 @@ async fn create(
                 "artist_edit.html",
                 form_context(
                     None,
+                    &page.current,
                     &form.input(),
                     0,
                     Some(error.public_message().to_owned()),
@@ -609,7 +665,7 @@ async fn edit_form(page: Page, Path(id): Path<i32>) -> Result<Response, AppError
     };
     Ok(page.render(
         "artist_edit.html",
-        form_context(Some(&artist), &input, artist.version, None),
+        form_context(Some(&artist), &page.current, &input, artist.version, None),
     ))
 }
 
@@ -624,17 +680,30 @@ async fn edit(
     let db = state.db.primary();
     let artist = visible_artist(db, &page.current, id).await?;
     let saved = match contents(&form.input(), artist.is_banned, artist.is_deleted) {
-        Ok(contents) => save_artist(state, &page.current, id, &contents, Some(form.base)).await,
+        Ok(contents) => save_artist(state, &page.current, id, &contents, Some(form.base))
+            .await
+            .map(|_| contents),
         Err(error) => Err(error),
     };
     match saved {
-        Ok(_) => Ok((flash::set(jar, Flash::Saved), Redirect::to(&artist_url(id))).into_response()),
+        Ok(contents) => {
+            record_ban_moved(
+                db,
+                &page.current,
+                id,
+                banned_tag(&artist.name, artist.is_banned, artist.is_deleted),
+                banned_tag(&contents.name, contents.is_banned, contents.is_deleted),
+            )
+            .await?;
+            Ok((flash::set(jar, Flash::Saved), Redirect::to(&artist_url(id))).into_response())
+        }
         Err(error @ (AppError::Unprocessable(_) | AppError::Conflict(_))) => Ok(page
             .render_with_status(
                 error.status(),
                 "artist_edit.html",
                 form_context(
                     Some(&artist),
+                    &page.current,
                     &form.input(),
                     form.base,
                     Some(error.public_message().to_owned()),
@@ -652,7 +721,8 @@ pub(crate) async fn set_status(
     action: &str,
 ) -> Result<(), AppError> {
     let db = state.db.primary();
-    let mut contents = artists::contents(db, id).await?.ok_or(AppError::NotFound)?;
+    let before = artists::contents(db, id).await?.ok_or(AppError::NotFound)?;
+    let mut contents = before.clone();
     let kind = match action {
         "ban" | "unban" => {
             current.require(Permission::ManageTags)?;
@@ -665,20 +735,40 @@ pub(crate) async fn set_status(
         }
         "delete" | "undelete" => {
             current.require(Permission::EditWiki)?;
+            // Deleting a banned entry lifts its ban; restoring it bans again.
+            if contents.is_banned {
+                current.require(Permission::ManageTags)?;
+            }
             contents.is_deleted = action == "delete";
             None
         }
         _ => return Err(AppError::NotFound),
     };
     let actor = current.user.as_ref().map(|u| u.id);
-    artists::save(db, id, &contents, actor, None)
-        .await
-        .map_err(save_error)?;
+    artists::save(
+        db,
+        id,
+        &contents,
+        actor,
+        None,
+        current.can(Permission::ManageTags),
+    )
+    .await
+    .map_err(save_error)?;
     if let Some(kind) = kind {
         mod_actions::record(
             db,
             NewAction::new(actor, kind)
                 .details(serde_json::json!({ "artist_id": id, "name": contents.name })),
+        )
+        .await?;
+    } else {
+        record_ban_moved(
+            db,
+            current,
+            id,
+            banned_tag(&before.name, before.is_banned, before.is_deleted),
+            banned_tag(&contents.name, contents.is_banned, contents.is_deleted),
         )
         .await?;
     }
@@ -1019,5 +1109,190 @@ mod tests {
         app.post(&format!("/artists/{id}/unban"), Some(&boss), &[])
             .await;
         assert_eq!(app.get(&page, Some(&alice)).await.status, StatusCode::OK);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn only_tag_managers_move_or_lift_a_ban(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let boss = session_for(&pool, "boss", SystemRole::Admin).await;
+        let hidden =
+            crate::danbooru::test_support::upload(&app, &alice, 20, "bad_artist cat").await;
+        let shown = crate::danbooru::test_support::upload(&app, &alice, 30, "cat").await;
+        let created = app
+            .post_form("/artists", Some(&alice), &[], "name=bad_artist")
+            .await;
+        let id = id_from(&created.location.unwrap());
+        app.post(&format!("/artists/{id}/ban"), Some(&boss), &[])
+            .await;
+        let visible = async |post: i64| {
+            app.get(&format!("/posts/{post}"), Some(&alice))
+                .await
+                .status
+                == StatusCode::OK
+        };
+        assert!(!visible(hidden).await && visible(shown).await);
+
+        // A member can't move the ban onto another tag, nor lift it.
+        let page = format!("/artists/{id}");
+        let renamed = app
+            .post_form(&page, Some(&alice), &[], "name=cat&base=2")
+            .await;
+        assert_eq!(
+            renamed.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            renamed.body
+        );
+        assert!(renamed.body.contains("manage tags"), "{}", renamed.body);
+        for action in ["delete", "undelete"] {
+            assert_eq!(
+                app.post(&format!("{page}/{action}"), Some(&alice), &[])
+                    .await
+                    .status,
+                StatusCode::FORBIDDEN
+            );
+        }
+        assert!(!visible(hidden).await && visible(shown).await);
+        // The rest of the entry is still theirs to edit, the name read-only.
+        let form = app.get(&format!("{page}/edit"), Some(&alice)).await.body;
+        assert!(form.contains(" readonly>"), "{form}");
+        assert!(
+            !app.get(&page, Some(&alice))
+                .await
+                .body
+                .contains("/delete\"")
+        );
+        let grouped = app
+            .post_form(
+                &page,
+                Some(&alice),
+                &[],
+                "name=bad_artist&group_name=Bad&base=2",
+            )
+            .await;
+        assert_eq!(grouped.status, StatusCode::SEE_OTHER, "{}", grouped.body);
+
+        // Staff can, and the log says what happened to the ban.
+        let moved = app
+            .post_form(&page, Some(&boss), &[], "name=worse_artist&base=3")
+            .await;
+        assert_eq!(moved.status, StatusCode::SEE_OTHER, "{}", moved.body);
+        app.post(&format!("{page}/delete"), Some(&boss), &[]).await;
+        assert_eq!(
+            app.post(&format!("{page}/undelete"), Some(&alice), &[])
+                .await
+                .status,
+            StatusCode::FORBIDDEN
+        );
+        let log: Vec<(String, serde_json::Value)> = sqlx::query_as(
+            "SELECT action, details FROM mod_actions WHERE action LIKE 'artist.%' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let log: Vec<(&str, serde_json::Value)> = log
+            .iter()
+            .map(|(action, details)| (action.as_str(), details.clone()))
+            .collect();
+        assert_eq!(
+            log,
+            [
+                (
+                    "artist.ban",
+                    serde_json::json!({ "artist_id": id, "name": "bad_artist" })
+                ),
+                (
+                    "artist.ban",
+                    serde_json::json!({
+                        "artist_id": id, "name": "worse_artist", "previous_name": "bad_artist"
+                    })
+                ),
+                (
+                    "artist.unban",
+                    serde_json::json!({ "artist_id": id, "name": "worse_artist", "deleted": true })
+                ),
+            ]
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn urls_are_kept_encoded_and_shown_escaped(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let evil = "https://twitter.com/a\"><form data-upload>'";
+        state.sources.remember(
+            evil,
+            crate::sources::SourceInfo {
+                site: "Example",
+                page_url: evil.to_owned(),
+                profile_urls: vec![evil.to_owned()],
+                artist_name: Some("someone".into()),
+                ..crate::sources::SourceInfo::default()
+            },
+        );
+        let app = TestApp::new(
+            state,
+            super::routes().merge(crate::uploads::routes(1024 * 1024)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        // Typed encoded, a profile's canonical form stays encoded.
+        let created = app
+            .post_form(
+                "/artists",
+                Some(&alice),
+                &[],
+                "name=cat_artist&urls=https%3A%2F%2Fmisskey.io%2F%40a%2522%253E%253Cb%2527",
+            )
+            .await;
+        assert_eq!(created.status, StatusCode::SEE_OTHER, "{}", created.body);
+        let id = id_from(&created.location.unwrap());
+        let stored = moekura_db::artists::urls(&pool, &[id]).await.unwrap();
+        assert_eq!(stored[0].url, "https://misskey.io/@a%22%3E%3Cb%27");
+        // One that only grows past the limit once encoded is refused as
+        // too long, not left to the table to fail.
+        let long = app
+            .post_form(
+                "/artists",
+                Some(&alice),
+                &[],
+                &format!(
+                    "name=long_artist&urls=https%3A%2F%2Fexample.com%2F{}",
+                    "%27".repeat(1000)
+                ),
+            )
+            .await;
+        assert_eq!(
+            long.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            long.body
+        );
+        assert!(
+            long.body.contains("at most 2048 characters"),
+            "{}",
+            long.body
+        );
+
+        // One stored raw before that is escaped wherever it's linked.
+        sqlx::query("UPDATE artist_urls SET url = $1 WHERE artist_id = $2")
+            .bind(evil)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let escaped = "https://twitter.com/a&quot;&gt;&lt;form data-upload&gt;&#x27;";
+        let query: String = url::form_urlencoded::byte_serialize(evil.as_bytes()).collect();
+        for path in [
+            format!("/artists/{id}"),
+            "/artists".to_owned(),
+            format!("/uploads/source-data?url={query}"),
+        ] {
+            let body = app.get(&path, Some(&alice)).await.body;
+            assert!(!body.contains("<form data-upload"), "{path}: {body}");
+            assert!(
+                body.contains(&format!("href=\"{escaped}\"")),
+                "{path}: {body}"
+            );
+        }
     }
 }

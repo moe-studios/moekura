@@ -3,7 +3,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, strings, tags_named, text_of};
+use super::{Http, SourceInfo, number, strings, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -12,9 +12,11 @@ pub(super) async fn fetch(
 ) -> Result<SourceInfo, String> {
     let path = page.trim_start_matches("https://itaku.ee/");
     let api = match path.split_once('/') {
-        Some(("images", id)) => format!("https://itaku.ee/api/galleries/images/{id}/"),
-        Some(("posts", id)) => format!("https://itaku.ee/api/posts/{id}/"),
-        Some(("commissions", id)) => format!("https://itaku.ee/api/commissions/{id}/"),
+        Some(("images", id)) => format!("https://itaku.ee/api/galleries/images/{}/", number(id)?),
+        Some(("posts", id)) => format!("https://itaku.ee/api/posts/{}/", number(id)?),
+        Some(("commissions", id)) => {
+            format!("https://itaku.ee/api/commissions/{}/", number(id)?)
+        }
         _ => return Err("Itaku: not a work".into()),
     };
     let answer = http.json(&api, &[]).await?;

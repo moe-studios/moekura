@@ -1,5 +1,6 @@
 //! Tag names: how raw input is normalised and which names are allowed.
 
+use std::collections::HashMap;
 use std::fmt;
 
 /// Longest tag name, in characters.
@@ -186,6 +187,8 @@ impl fmt::Display for InvalidTag {
 /// first category given for a tag wins.
 pub fn parse_input(input: &str, categories: &[&str]) -> (Vec<TagInput>, Vec<InvalidTag>) {
     let mut tags: Vec<TagInput> = Vec::new();
+    // Where each name is in `tags`.
+    let mut index: HashMap<TagName, usize> = HashMap::new();
     let mut invalid = Vec::new();
     for word in input.split_whitespace() {
         let (category, raw) = match word.split_once(':') {
@@ -197,11 +200,15 @@ pub fn parse_input(input: &str, categories: &[&str]) -> (Vec<TagInput>, Vec<Inva
             _ => (None, word),
         };
         match TagName::parse(raw) {
-            Ok(name) => match tags.iter_mut().find(|t| t.name == name) {
-                Some(existing) => {
+            Ok(name) => match index.get(&name) {
+                Some(&at) => {
+                    let existing = &mut tags[at];
                     existing.category = existing.category.take().or(category);
                 }
-                None => tags.push(TagInput { name, category }),
+                None => {
+                    index.insert(name.clone(), tags.len());
+                    tags.push(TagInput { name, category });
+                }
             },
             Err(error) => invalid.push(InvalidTag {
                 input: word.to_owned(),

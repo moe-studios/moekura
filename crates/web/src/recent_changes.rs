@@ -8,7 +8,7 @@ use axum::response::Response;
 use axum::routing::get;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
-use moekura_core::pools::PoolName;
+use moekura_core::pools::{PoolName, post_changes};
 use moekura_db::{notes, pools, users, wiki};
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -16,6 +16,7 @@ use time::OffsetDateTime;
 use crate::AppState;
 use crate::error::AppError;
 use crate::pages::Page;
+use crate::pools::listed_changes;
 use crate::templates::url_value;
 
 /// Versions per page.
@@ -140,19 +141,11 @@ async fn pool_changes(page: Page, Query(query): Query<ChangeQuery>) -> Result<Re
             let (date, time) = when(v.created_at);
             let created = p.previous_post_ids.is_none();
             let before = p.previous_post_ids.as_deref().unwrap_or_default();
-            let added: Vec<i64> = v
-                .post_ids
-                .iter()
-                .copied()
-                .filter(|id| !before.contains(id))
-                .collect();
-            let removed: Vec<i64> = before
-                .iter()
-                .copied()
-                .filter(|id| !v.post_ids.contains(id))
-                .collect();
+            let (added, removed) = post_changes(before, &v.post_ids);
             let reordered =
                 !created && added.is_empty() && removed.is_empty() && before != v.post_ids;
+            let (added, more_added) = listed_changes(added);
+            let (removed, more_removed) = listed_changes(removed);
             context! {
                 pool_id => c.pool_id,
                 name => PoolName::display(&v.name),
@@ -166,7 +159,9 @@ async fn pool_changes(page: Page, Query(query): Query<ChangeQuery>) -> Result<Re
                 description_changed => p.previous_description.as_ref().is_some_and(|d| *d != v.description),
                 deleted => p.previous_is_deleted.filter(|&d| d != v.is_deleted).map(|_| v.is_deleted),
                 added => added,
+                more_added => more_added,
                 removed => removed,
+                more_removed => more_removed,
                 reordered => reordered,
             }
         })

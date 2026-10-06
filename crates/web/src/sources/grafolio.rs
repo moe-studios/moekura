@@ -3,14 +3,14 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html_to_text, strings, tags_named, text_of};
+use super::{Http, SourceInfo, html_to_text, key, strings, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = key(page.rsplit('/').next().unwrap_or_default())?;
     let project = http
         .json(
             &format!("https://grafolio.ogq.me/api/projects/single/{id}"),

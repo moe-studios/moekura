@@ -184,6 +184,7 @@ version-heading = Version
 turn-on = Turn on
 turn-off = Turn off
 your-password = Your password
+confirm-fresh-login = Your account has no password to confirm this with, so it works only within { $minutes } minutes of logging in. If it's been longer, log out and log in again first.
 renamed-from = renamed from { $name }
 deprecated = deprecated
 no-longer-deprecated = no longer deprecated

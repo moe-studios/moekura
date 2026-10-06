@@ -345,6 +345,16 @@ mod tests {
             !theirs.contains("/post_versions/undo"),
             "members can't undo"
         );
+        // Through the last day there is: no overflow.
+        let forever = app
+            .get("/post_versions?user=vandal&until=9999-12-31", None)
+            .await;
+        assert_eq!(forever.status, StatusCode::OK);
+        assert!(
+            forever.body.contains("rating: Explicit"),
+            "{}",
+            forever.body
+        );
         let added = app.get("/post_versions?added=cat", Some(&alice)).await.body;
         assert!(
             added.contains(">alice</a>") && !added.contains(">vandal</a>"),
@@ -377,13 +387,12 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(job["since"], serde_json::Value::Null);
-        let logged: String = sqlx::query_scalar(
-            "SELECT action FROM mod_actions WHERE action = 'post_versions.undo'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(logged, "post_versions.undo");
+        let logged: String =
+            sqlx::query_scalar("SELECT action FROM mod_actions WHERE action = 'user.undo_edits'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(logged, "user.undo_edits");
         // Not staff of one's own rank.
         session_for(&pool, "mod2", SystemRole::Moderator).await;
         assert_eq!(

@@ -51,7 +51,9 @@ fn level(role: Option<&Role>, site: &SiteSnapshot) -> i32 {
         .map_or(20, |(_, s)| danbooru(s))
 }
 
-/// A user as Danbooru describes them to anyone.
+/// A user as Danbooru describes them; when they were last seen and
+/// whether they're banned only to themselves and staff who see
+/// moderation records, as on the site.
 #[derive(Debug, Serialize)]
 pub(super) struct DanbooruUser {
     id: i64,
@@ -79,8 +81,11 @@ pub(super) struct DanbooruUser {
 pub(super) async fn danbooru_user(
     state: &AppState,
     db: &sqlx::PgPool,
+    current: &CurrentUser,
     user: &User,
 ) -> Result<DanbooruUser, AppError> {
+    let staff_or_self = crate::user_moderation::may_view(current)
+        || current.user.as_ref().is_some_and(|u| u.id == user.id);
     let site = state.site.get();
     let role = site.role(user.role_id);
     let activity = users::activity(db, user.id).await?;
@@ -95,7 +100,7 @@ pub(super) async fn danbooru_user(
             .map(|(id, _)| id),
         updated_at: created.clone(),
         created_at: created,
-        last_logged_in_at: user.last_seen_at.map(timestamp),
+        last_logged_in_at: user.last_seen_at.filter(|_| staff_or_self).map(timestamp),
         post_upload_count: activity.uploads,
         post_update_count: activity.edits,
         note_update_count: 0,
@@ -106,7 +111,7 @@ pub(super) async fn danbooru_user(
         positive_feedback_count: 0,
         neutral_feedback_count: 0,
         negative_feedback_count: 0,
-        is_banned: activity.banned,
+        is_banned: staff_or_self && activity.banned,
         is_deleted: user.status == UserStatus::Deactivated,
     })
 }
@@ -127,7 +132,7 @@ async fn profile(
     let db = state.db.primary();
     let settings = UserSettings::from_json(&user.settings);
     let site = state.site.get();
-    let public = danbooru_user(&state, db, &user).await?;
+    let public = danbooru_user(&state, db, &current, &user).await?;
     let mut value = serde_json::to_value(public).map_err(|e| AppError::Internal(e.to_string()))?;
     let extra = serde_json::json!({
         "blacklisted_tags": settings.blacklist.unwrap_or_else(|| site.settings.default_blacklist.clone()),
@@ -202,7 +207,7 @@ async fn index(
         .filter(|u| visible(&current, u))
         .take(limit as usize)
     {
-        result.push(danbooru_user(&state, db, user).await?);
+        result.push(danbooru_user(&state, db, &current, user).await?);
     }
     json(result, &params.list.only)
 }
@@ -226,7 +231,10 @@ async fn show(
         .await?
         .filter(|u| visible(&current, u))
         .ok_or(AppError::NotFound)?;
-    json(danbooru_user(&state, db, &user).await?, &params.only)
+    json(
+        danbooru_user(&state, db, &current, &user).await?,
+        &params.only,
+    )
 }
 
 /// A wiki page as Danbooru describes it.
@@ -420,6 +428,52 @@ mod tests {
             app.get("/users/999.json", None).await.status,
             StatusCode::NOT_FOUND
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn last_seen_and_bans_only_for_staff_and_self(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod_user", SystemRole::Moderator).await;
+        let post = upload(&app, &bob, 20, "cat").await;
+        sqlx::query(
+            "INSERT INTO favorites (user_id, post_id) SELECT id, $1 FROM users WHERE name = 'bob'",
+        )
+        .bind(post)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for statement in [
+            "UPDATE users SET last_seen_at = now() WHERE name = 'bob'",
+            "INSERT INTO bans (user_id, reason) SELECT id, 'spam' FROM users WHERE name = 'bob'",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        let bob_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'bob'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        for path in [
+            format!("/users/{bob_id}.json"),
+            format!("/users.json?search[id]={bob_id}"),
+            "/users.json?search[name]=bob".to_owned(),
+            "/users.json?search[name_matches]=bo*".to_owned(),
+            format!("/posts/{post}/favorites.json"),
+        ] {
+            for (viewer, shown) in [
+                (None, false),
+                (Some(&alice), false),
+                (Some(&moderator), true),
+                (Some(&bob), true),
+            ] {
+                let found = body(&app.get(&path, viewer.map(String::as_str)).await);
+                let user = if found.is_array() { &found[0] } else { &found };
+                assert_eq!(user["name"], json!("bob"), "{path}");
+                assert_eq!(user["last_logged_in_at"].is_string(), shown, "{path}");
+                assert_eq!(user["is_banned"], json!(shown), "{path}");
+            }
+        }
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

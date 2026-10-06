@@ -19,7 +19,10 @@ pub(super) fn target(url: &Url) -> Option<Target> {
     let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
     match segments.as_slice() {
         [creator, "works", n] => Some(Target {
-            creator: creator.strip_prefix('@')?.to_owned(),
+            creator: creator
+                .strip_prefix('@')
+                .filter(|c| super::key(c).is_ok())?
+                .to_owned(),
             work: n.parse().ok()?,
         }),
         _ => None,

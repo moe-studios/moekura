@@ -5,7 +5,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html_to_text, id_of, tags_named, text_of};
+use super::{Http, SourceInfo, html_to_text, id_of, number, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -17,7 +17,7 @@ pub(super) async fn fetch(
         .rsplit('/')
         .next()
         .unwrap_or_default();
-    let id = slug.rsplit('-').next().unwrap_or(slug);
+    let id = number(slug.rsplit('-').next().unwrap_or(slug))?;
     let answer = http
         .json(
             &format!(

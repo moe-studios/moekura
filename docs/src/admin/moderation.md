@@ -100,7 +100,7 @@ posts*:
   by reverting to an earlier version;
 - locked **notes** can't be added, changed or deleted;
 - a locked **status** means the post can't be flagged, approved,
-  rejected, deleted, restored or appealed.
+  rejected, deleted, restored or appealed, nor its flags dismissed.
 
 Mass tag edits leave posts with locked tags alone, and the tagger doesn't
 touch locked tags or ratings. Tag aliases and implications still apply to
@@ -137,9 +137,21 @@ are banned under **Moderation → Bans**, partly or fully:
   page and API call answers that the network is banned, with the reason.
 
 The range may not include your own address, or be wider than a `/8`
-(IPv4) or `/16` (IPv6). Network bans are kept in memory on every node,
-so checking them costs nothing per request; changes reach other nodes
-within moments.
+(IPv4) or `/16` (IPv6), and only staff who manage users can fully ban a
+range wider than a `/24` (IPv4) or `/48` (IPv6). As with banning users,
+rank counts: you can't ban a range, or lift a ban on one, that includes
+an address of anyone ranked at or above you (yourself included), as
+kept under [Addresses](#addresses) or by a session still open. If a
+network ban locks staff out anyway, lift it from the shell with
+`moekura admin lift-network-ban ADDRESS`, which lifts every ban covering
+that address (or overlapping a range) and logs it.
+
+IPv4 clients are always matched (and shown) as IPv4, also when the
+server listens on IPv6 as well (`[::]`). An address or range copied from
+a log that writes them IPv4-mapped (`::ffff:203.0.113.7`,
+`::ffff:203.0.113.0/120`) is banned as the IPv4 it stands for. Network
+bans are kept in memory on every node, so checking them costs nothing
+per request; changes reach other nodes within moments.
 
 ## A user's record
 
@@ -182,8 +194,9 @@ can ban users delete anyone's.
 
 ### Addresses
 
-For staff who can ban users, the record also lists the addresses the
-account used, when each was first and last seen, and the other accounts
+For staff who can ban users, on the record of someone ranked below them,
+the record also lists the addresses the account used, when each was
+first and last seen, and the other accounts (also ranked below them)
 seen on the same addresses, which is how ban evaders usually show. Each
 address has shortcuts to ban it, or its `/24` (IPv4) or `/64` (IPv6)
 network, under **Moderation → Bans**.
@@ -196,7 +209,10 @@ after they were last seen, then forgotten by a daily job; change that
 under **Admin → Settings** (**Keep the addresses accounts use**), where 0
 keeps none and stops recording them. Deleting an account deletes its
 addresses. Sessions separately keep the address they were started from
-until they end.
+until they end. The addresses also help at login: while someone guesses
+an account's password from many networks at once, its owner can still
+log in from a network (an IPv4 address or an IPv6 `/64`) it used, or
+from elsewhere with a captcha, if one is set up.
 
 ## Renaming users
 
@@ -215,11 +231,19 @@ Settings → Spam** keep spam accounts out:
 - **Email domains**: a list of domains whose addresses are refused (such
   as disposable-mail services), or the only ones accepted (such as a
   school's). Each domain covers its subdomains. It applies when signing up
-  and changing an address; accounts made through single sign-on simply
-  don't take a refused address.
+  and changing an address; accounts made through single sign-on don't
+  take a refused address, and where new accounts confirm their address,
+  can't be made without one the site accepts.
 - **Captcha**: with a service set up (see
   [`[auth.captcha]`](../configuration.md#authcaptcha)), ask for it when
   signing up, and on comments by accounts younger than a number of days.
+  The APIs ask too: such accounts' comments through them are refused
+  unless the client passes a solved captcha's token on.
+  It isn't asked for when signing up through single sign-on, where the
+  provider has checked who is logging in; the limit of new accounts per
+  address still applies.
+  Logging in to an account asks for it, whatever these say, while
+  someone guesses its password from many networks at once.
 
 ## Spam filter
 
@@ -232,15 +256,19 @@ holds:
 
 - links (`http://`, `https://`, `www.`) from accounts younger than 3
   days;
-- text its writer already posted 3 times in the past day, anywhere;
+- text its writer already posted (or changed something to) 3 times in
+  the past day, anywhere;
 - anything containing one of the **spam words**, one word or phrase per
   line, whatever the case.
 
-Set a number to 0 to stop holding for it. People who can *Hide comments
+Set a number to 0 to stop holding for it. Changing a comment or forum
+post is checked the same way: a change that would be held as a new text
+hides it again until the staff approve it. People who can *Hide comments
 and handle reports about them* are never held, and review what is under
 **Moderation → Held for review**, oldest first, with why each was held.
 **Approve** lets it through as if just posted (mentions, replies and
-messages notify then, and webhooks fire); **Reject** keeps it hidden for
+messages notify then, and webhooks fire; an approved change just
+reappears, as changes notify nobody); **Reject** keeps it hidden for
 good, and a rejected message never reaches its recipient. Both go in the
 moderation log. Hiding or restoring a held comment or forum post the
 usual way also settles it.
@@ -266,7 +294,10 @@ alone. Deleted posts are only changed if the search asks for them
 
 Bulk update requests (**Tags → Requests**) bundle several alias,
 implication, category and mass edit changes; approving one applies them
-in order, and approving or rejecting it is logged. See
+in order, and approving or rejecting it is logged. One with mass edit
+(`update`) lines needs *Mass edit tags* to approve, from someone other
+than its requester, and each of its mass edits is logged as the
+approver's. See
 [Tags](../using/tags.md#bulk-update-requests).
 
 ## Post changes and undoing vandalism

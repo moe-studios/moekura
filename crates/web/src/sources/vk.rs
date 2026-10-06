@@ -61,7 +61,7 @@ fn wall_info(known: &SourceUrl, page: &str, body: &str) -> SourceInfo {
         info.tags = tags_named(
             html::tags(text, "a")
                 .into_iter()
-                .map(|a| html_to_text(html::inner(text, &a)))
+                .filter_map(|a| html::label(text, &a))
                 .filter(|t| t.starts_with('#'))
                 .map(|t| {
                     t.trim_start_matches('#')

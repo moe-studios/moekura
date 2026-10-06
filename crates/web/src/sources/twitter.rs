@@ -1,9 +1,10 @@
 //! Posts on X (Twitter): `x.com/<user>/status/<id>` (or twitter.com,
-//! with `/photo/<n>`). Read through an FxEmbed instance's API
-//! (`[sources.x]`), which needs no account and sees age-restricted posts;
-//! failing that, from X itself as the account `[sources.logins."x.com"]`
-//! gives, if any; and last from the embed API that shows posts on other
-//! sites, which only sees public ones. Images are asked for at full size.
+//! with `/photo/<n>`, and the other ways X links to a post). Read through
+//! an FxEmbed instance's API (`[sources.x]`), which needs no account and
+//! sees age-restricted posts; failing that, from X itself as the account
+//! `[sources.logins."x.com"]` gives, if any; and last from the embed API
+//! that shows posts on other sites, which only sees public ones. Images
+//! are asked for at full size.
 
 use serde_json::Value;
 use time::OffsetDateTime;
@@ -31,14 +32,26 @@ pub(super) fn target(url: &Url) -> Option<Target> {
         return None;
     }
     let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
-    match segments.as_slice() {
-        [user, "status", id, rest @ ..] => Some(Target {
-            user: (*user).to_owned(),
+    let post = |user: &str, id: &str| {
+        Some(Target {
+            user: user.to_owned(),
             id: id.parse().ok()?,
+            page: 0,
+        })
+    };
+    match segments.as_slice() {
+        ["i", "web", "status", id] => post("i", id),
+        ["intent", "favorite" | "retweet"] => {
+            let id = url.query_pairs().find(|(k, _)| k == "tweet_id")?.1;
+            post("i", &id)
+        }
+        // `<id>.json` too.
+        [user, "status" | "statuses", id, rest @ ..] => Some(Target {
             page: match rest {
                 ["photo", n, ..] => n.parse::<usize>().ok()?.saturating_sub(1),
                 _ => 0,
             },
+            ..post(user, id.split('.').next().unwrap_or(id))?
         }),
         _ => None,
     }
@@ -305,13 +318,45 @@ fn csrf_token(cookie: &str) -> Option<&str> {
         .map(|(_, value)| value)
 }
 
-async fn from_fxembed(http: &Http<'_>, api: &str, target: &Target) -> Result<Post, String> {
+/// Why an FxEmbed instance didn't give a post.
+#[derive(Debug, PartialEq, Eq)]
+enum FxFailure {
+    /// It says there's no such post, which X would say too.
+    Missing(String),
+    /// It couldn't be asked, or failed.
+    Failed(String),
+}
+
+/// Whether a request failed with the server answering 404 Not Found.
+fn not_found(error: &str) -> bool {
+    error.ends_with(" answered 404 Not Found")
+}
+
+async fn from_fxembed(http: &Http<'_>, api: &str, target: &Target) -> Result<Post, FxFailure> {
     let url = format!("{api}/status/{}", target.id);
-    parse_fxembed(&http.json(&url, &[]).await?)
+    let answer = http.json(&url, &[]).await.map_err(|error| {
+        if not_found(&error) {
+            FxFailure::Missing(error)
+        } else {
+            FxFailure::Failed(error)
+        }
+    })?;
+    let missing = answer["code"] == 404;
+    parse_fxembed(&answer).map_err(|error| {
+        if missing {
+            FxFailure::Missing(error)
+        } else {
+            FxFailure::Failed(error)
+        }
+    })
 }
 
 async fn from_x(http: &Http<'_>, target: &Target) -> Result<Post, String> {
-    let login = http.logins.login_for("x.com").ok_or("no x.com login")?;
+    let login = http
+        .sources
+        .logins
+        .login_for("x.com")
+        .ok_or("no x.com login")?;
     let csrf = csrf_token(&login.cookie).ok_or("the x.com login's cookie lacks ct0")?;
     let variables = serde_json::json!({
         "tweetId": target.id.to_string(),
@@ -365,15 +410,32 @@ async fn from_embed(http: &Http<'_>, target: &Target) -> Result<Post, String> {
 
 pub(super) async fn fetch(http: &Http<'_>, target: &Target) -> Result<SourceInfo, String> {
     let mut failed = Vec::new();
-    let api = http.logins.x.fxembed_api.trim().trim_end_matches('/');
+    // When FxEmbed says there's no such post, X isn't asked as the login:
+    // anyone can make up ids.
+    let mut missing = false;
+    let api = http
+        .sources
+        .logins
+        .x
+        .fxembed_api_url
+        .trim()
+        .trim_end_matches('/');
     if !api.is_empty() {
         match from_fxembed(http, api, target).await {
             Ok(post) => return Ok(post.into_info(target)),
-            Err(error) => failed.push(format!("{api}: {error}")),
+            Err(FxFailure::Missing(error)) => {
+                missing = true;
+                failed.push(format!("{api}: {error}"));
+            }
+            Err(FxFailure::Failed(error)) => failed.push(format!("{api}: {error}")),
         }
     }
-    if http.has_login("x.com") {
-        match from_x(http, target).await {
+    if http.has_login("x.com") && !missing {
+        let read = match http.may_use_x_login() {
+            Ok(()) => from_x(http, target).await,
+            Err(refused) => Err(refused.to_owned()),
+        };
+        match read {
             Ok(post) => return Ok(post.into_info(target)),
             Err(error) => failed.push(format!("logged in to X: {error}")),
         }
@@ -404,6 +466,18 @@ mod tests {
                 page: 1
             })
         );
+        // The other ways X links to a post (anything else of X's would be
+        // read as a page).
+        for other in [
+            "https://x.com/i/web/status/17",
+            "https://x.com/artist/statuses/17",
+            "https://x.com/artist/status/17.json",
+            "https://x.com/intent/retweet?tweet_id=17",
+            "https://twitter.com/intent/favorite?tweet_id=17",
+        ] {
+            assert_eq!(t(other).map(|t| t.id), Some(17), "{other}");
+        }
+        assert!(t("https://x.com/intent/retweet?tweet_id=x").is_none());
         assert!(t("https://twitter.com/artist").is_none());
         assert!(t("https://example.com/a/status/1").is_none());
     }
@@ -547,6 +621,53 @@ mod tests {
             parse_logged_in(&hidden, id).unwrap_err(),
             "X says the post is NsfwLoggedOut"
         );
+    }
+
+    #[tokio::test]
+    async fn fxembed_saying_there_is_no_such_post_is_believed() {
+        use axum::Json;
+        use axum::Router;
+        use axum::extract::Path;
+        use axum::http::StatusCode;
+        use axum::routing::get;
+
+        let app = Router::new().route(
+            "/status/{id}",
+            get(|Path(id): Path<u64>| async move {
+                match id {
+                    1 => (
+                        StatusCode::NOT_FOUND,
+                        Json(json!({ "code": 404, "message": "NOT_FOUND" })),
+                    ),
+                    2 => (
+                        StatusCode::OK,
+                        Json(json!({ "code": 404, "message": "NOT_FOUND" })),
+                    ),
+                    _ => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "code": 500, "message": "API_FAIL" })),
+                    ),
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, app).await });
+
+        let sources = super::super::Sources::new(true, Default::default());
+        let http = Http::new(&sources, super::super::Asker::Uploader);
+        let ask = |id: u64| {
+            let target = Target {
+                user: "x".into(),
+                id,
+                page: 0,
+            };
+            let (http, api) = (&http, api.as_str());
+            async move { from_fxembed(http, api, &target).await.unwrap_err() }
+        };
+        assert!(matches!(ask(1).await, FxFailure::Missing(_)));
+        assert!(matches!(ask(2).await, FxFailure::Missing(_)));
+        assert!(matches!(ask(3).await, FxFailure::Failed(_)));
     }
 
     #[test]

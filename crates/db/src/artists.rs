@@ -1,7 +1,8 @@
 //! Artist entries, their URLs and history (`artists`, `artist_urls`,
 //! `artist_versions`).
 
-use moekura_core::artists::{ArtistUrl, normalize_url, url_prefixes};
+use moekura_core::artists::{ArtistUrl, URL_MAX_LEN, normalize_url, url_prefixes};
+use moekura_core::sites::encoded_url;
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
@@ -196,6 +197,18 @@ pub struct Contents {
     pub is_deleted: bool,
 }
 
+impl Contents {
+    /// Whether saving `self` over `before` changes a ban. A ban applies
+    /// to the tag with the entry's name while the entry isn't deleted
+    /// ([`banned_tag_ids`]), so renaming, deleting or restoring a banned
+    /// entry moves or lifts it as surely as unbanning does.
+    pub fn changes_ban(&self, before: &Contents) -> bool {
+        self.is_banned != before.is_banned
+            || (before.is_banned
+                && (self.name != before.name || self.is_deleted != before.is_deleted))
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SaveError {
     /// Someone else saved the artist since the editor loaded `base`.
@@ -203,6 +216,10 @@ pub enum SaveError {
     Conflict { base: i32, current: i32 },
     #[error("there is already an artist entry with that name")]
     NameTaken,
+    /// The save would change a ban ([`Contents::changes_ban`]), which
+    /// the saver may not do.
+    #[error("only those who manage tags can change an artist's ban")]
+    BanLocked,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 }
@@ -249,13 +266,17 @@ pub async fn create(
 ///
 /// `base` is the version the editor started from; a different current
 /// version is a [`SaveError::Conflict`]. `None` saves over whatever is
-/// there. Saving what's already there records no new version.
+/// there. Saving what's already there records no new version. Unless
+/// `may_ban` (the saver manages tags), a change to a ban is a
+/// [`SaveError::BanLocked`]; it's checked against the row as locked
+/// here, so a ban made since the editor loaded the entry counts.
 pub async fn save(
     db: &PgPool,
     id: i32,
     contents: &Contents,
     updater_id: Option<i64>,
     base: Option<i32>,
+    may_ban: bool,
 ) -> Result<i32, SaveError> {
     let mut tx = db.begin().await?;
     let (version,): (i32,) = sqlx::query_as("SELECT version FROM artists WHERE id = $1 FOR UPDATE")
@@ -274,6 +295,9 @@ pub async fn save(
     let before = current_contents(&mut tx, id).await?;
     if before.as_ref() == Some(contents) {
         return Ok(version);
+    }
+    if !may_ban && before.as_ref().is_some_and(|b| contents.changes_ban(b)) {
+        return Err(SaveError::BanLocked);
     }
     sqlx::query(
         "UPDATE artists SET name = $2, group_name = $3, other_names = $4, is_banned = $5,
@@ -346,7 +370,9 @@ async fn announce_bans(conn: &mut PgConnection) -> sqlx::Result<()> {
 }
 
 /// Recomputes every artist URL's normalized form with the current rules
-/// ([`normalize_url`]), a batch at a time. Returns how many changed.
+/// ([`normalize_url`]), a batch at a time, encoding what a stored URL
+/// can't hold raw ([`encoded_url`]: quotes, angle brackets, spaces) on
+/// the way. Returns how many changed.
 pub async fn renormalize_urls(db: &PgPool) -> sqlx::Result<u64> {
     let mut changed = 0;
     let mut after = 0_i64;
@@ -361,22 +387,39 @@ pub async fn renormalize_urls(db: &PgPool) -> sqlx::Result<u64> {
             break;
         };
         after = *last;
-        let updates: Vec<(i64, String)> = batch
-            .into_iter()
-            .filter_map(|(id, url, old)| {
-                let new = normalize_url(&url).unwrap_or(url);
-                (new != old).then_some((id, new))
-            })
-            .collect();
-        if updates.is_empty() {
+        let mut ids = Vec::new();
+        let mut urls = Vec::new();
+        let mut normalized = Vec::new();
+        for (id, url, old) in batch {
+            let mut encoded = encoded_url(&url);
+            let mut new = normalize_url(&encoded).unwrap_or_else(|| encoded.clone());
+            // Encoding triples what it touches, so a URL stored before can
+            // come out longer than the table or its index holds. Such a one
+            // keeps its stored form (pages escape it) rather than failing
+            // its whole batch, and every batch after it, on each retry.
+            if encoded.chars().count() > URL_MAX_LEN {
+                tracing::warn!(id, "artist URL too long to keep encoded; left as it is");
+                encoded = url.clone();
+            }
+            if new.len() > URL_MAX_LEN {
+                new = old.clone();
+            }
+            if encoded != url || new != old {
+                ids.push(id);
+                urls.push(encoded);
+                normalized.push(new);
+            }
+        }
+        if ids.is_empty() {
             continue;
         }
-        let (ids, normalized): (Vec<i64>, Vec<String>) = updates.into_iter().unzip();
         changed += sqlx::query(
-            "UPDATE artist_urls au SET normalized_url = n.normalized
-             FROM unnest($1::bigint[], $2::text[]) AS n(id, normalized) WHERE au.id = n.id",
+            "UPDATE artist_urls au SET url = n.url, normalized_url = n.normalized
+             FROM unnest($1::bigint[], $2::text[], $3::text[]) AS n(id, url, normalized)
+             WHERE au.id = n.id",
         )
         .bind(ids)
+        .bind(urls)
         .bind(normalized)
         .execute(db)
         .await?
@@ -559,6 +602,91 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn renormalizing_encodes_raw_urls(pool: PgPool) {
+        let id = create(&pool, &sample("cat_artist", "https://example.com/a"), None)
+            .await
+            .unwrap();
+        // Saved while canonical forms kept decoded quotes and brackets.
+        sqlx::query(
+            "UPDATE artist_urls SET url = 'https://misskey.io/@a\"><b>''c',
+             normalized_url = 'misskey.io/@a%22%3E%3Cb%3E''c' WHERE artist_id = $1",
+        )
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 1);
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 0);
+        let stored = urls(&pool, &[id]).await.unwrap();
+        assert_eq!(stored[0].url, "https://misskey.io/@a%22%3E%3Cb%3E%27c");
+        assert_eq!(stored[0].normalized_url, "misskey.io/@a%22%3E%3Cb%3E%27c");
+        let found = find_by_url(&pool, "https://misskey.io/@a%22%3E%3Cb%3E'c")
+            .await
+            .unwrap();
+        assert_eq!(found.iter().map(|a| a.id).collect::<Vec<_>>(), [id]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn renormalizing_skips_what_encoding_makes_too_long(pool: PgPool) {
+        let mut ids = Vec::new();
+        for name in ["quotes", "query", "plain"] {
+            ids.push(
+                create(&pool, &sample(name, "https://example.com/a"), None)
+                    .await
+                    .unwrap(),
+            );
+        }
+        // All within the column's 2048 characters as stored, the first two
+        // three times that once their quotes are encoded.
+        let quotes = "'".repeat(1000);
+        let stored = [
+            (
+                format!("https://example.com/{quotes}{quotes}"),
+                format!("example.com/{quotes}{quotes}"),
+            ),
+            (
+                format!("https://example.com/a'b?q={quotes}"),
+                "example.com/a'b".to_owned(),
+            ),
+            (
+                "https://example.com/it's".to_owned(),
+                "example.com/it's".to_owned(),
+            ),
+        ];
+        for (id, (url, normalized)) in ids.iter().zip(&stored) {
+            sqlx::query(
+                "UPDATE artist_urls SET url = $1, normalized_url = $2 WHERE artist_id = $3",
+            )
+            .bind(url)
+            .bind(normalized)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 2);
+        assert_eq!(renormalize_urls(&pool).await.unwrap(), 0);
+        let after = urls(&pool, &ids).await.unwrap();
+        // Too long either way: left as it was.
+        assert_eq!(
+            (&after[0].url, &after[0].normalized_url),
+            (&stored[0].0, &stored[0].1)
+        );
+        // Too long to keep encoded, but its comparison form fits.
+        assert_eq!(after[1].url, stored[1].0);
+        assert_eq!(after[1].normalized_url, "example.com/a%27b");
+        // The rest of the table still gets encoded.
+        assert_eq!(after[2].url, "https://example.com/it%27s");
+        for (raw, id) in [
+            ("https://example.com/a'b", ids[1]),
+            ("https://example.com/it's", ids[2]),
+        ] {
+            let found = find_by_url(&pool, raw).await.unwrap();
+            assert_eq!(found.iter().map(|a| a.id).collect::<Vec<_>>(), [id]);
+        }
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn saves_with_history_and_finds_by_url(pool: PgPool) {
         let cat = create(
             &pool,
@@ -593,10 +721,20 @@ mod tests {
 
         let mut changed = sample("cat_artist", "-https://twitter.com/cat");
         changed.group_name = "Cats".into();
-        assert_eq!(save(&pool, cat, &changed, None, Some(1)).await.unwrap(), 2);
-        assert_eq!(save(&pool, cat, &changed, None, Some(2)).await.unwrap(), 2);
+        assert_eq!(
+            save(&pool, cat, &changed, None, Some(1), false)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            save(&pool, cat, &changed, None, Some(2), false)
+                .await
+                .unwrap(),
+            2
+        );
         assert!(matches!(
-            save(&pool, cat, &changed, None, Some(1)).await,
+            save(&pool, cat, &changed, None, Some(1), false).await,
             Err(SaveError::Conflict { .. })
         ));
         assert_eq!(contents_of(&pool, cat).await, changed);
@@ -668,8 +806,41 @@ mod tests {
         assert!(banned_tag_ids(&pool).await.unwrap().is_empty());
         let mut banned = sample("dog_artist", "twitter.com/dog");
         banned.is_banned = true;
-        save(&pool, dog, &banned, None, None).await.unwrap();
-        assert_eq!(banned_tag_ids(&pool).await.unwrap().len(), 1);
+        assert!(matches!(
+            save(&pool, dog, &banned, None, None, false).await,
+            Err(SaveError::BanLocked)
+        ));
+        save(&pool, dog, &banned, None, None, true).await.unwrap();
+        let dog_tag = banned_tag_ids(&pool).await.unwrap();
+        assert_eq!(dog_tag.len(), 1);
+
+        // A banned entry's name and deleted flag are part of its ban.
+        let mut renamed = banned.clone();
+        renamed.name = "cat_artist_2".into();
+        let mut deleted = banned.clone();
+        deleted.is_deleted = true;
+        for change in [&renamed, &deleted] {
+            assert!(matches!(
+                save(&pool, dog, change, None, None, false).await,
+                Err(SaveError::BanLocked)
+            ));
+        }
+        assert_eq!(banned_tag_ids(&pool).await.unwrap(), dog_tag);
+        // Its other fields are anyone's to edit.
+        let mut grouped = banned.clone();
+        grouped.group_name = "Dogs".into();
+        save(&pool, dog, &grouped, None, None, false).await.unwrap();
+        save(&pool, dog, &deleted, None, None, true).await.unwrap();
+        assert!(banned_tag_ids(&pool).await.unwrap().is_empty());
+        // Restoring it bans again, and renaming a deleted one is locked.
+        let mut renamed_deleted = deleted.clone();
+        renamed_deleted.name = "cat_artist_2".into();
+        for change in [&banned, &renamed_deleted] {
+            assert!(matches!(
+                save(&pool, dog, change, None, None, false).await,
+                Err(SaveError::BanLocked)
+            ));
+        }
     }
 
     async fn contents_of(pool: &PgPool, id: i32) -> Contents {

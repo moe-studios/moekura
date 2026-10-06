@@ -16,13 +16,31 @@ post's source. Short links (`t.co`, `b23.tv`, `pin.it` and the like) are
 followed to the page they lead to.
 
 When a site has changed, refuses the server or wants a login it doesn't
-have, Moekura falls back to the page's preview (OpenGraph) image when
-that image is a file on a site it knows, and otherwise downloads the
-link as it is.
+have, Moekura falls back to the page's preview (OpenGraph) image, read
+without a login, when that image is a file on a site it knows, and
+otherwise downloads the link as it is.
 
 Google's and Kakao's image servers (behind YouTube, Blogger, Tistory
 and others), Skland and TikTok are only recognised: their files are
 downloaded at full size, and their pages' preview images are read.
+
+## Lookups
+
+What a link gives is kept for ten minutes, so the upload form, the
+[artist finder](artists.md#urls) and the related tags panel asking about
+the same link again don't ask the site again. **Fetch source data** on
+the post form reads the site again only for users whose uploads skip the
+approval queue; others see what was found.
+
+Every lookup that asks another server counts against an allowance, per
+account (or, for visitors, per address): about ten at once, then one
+more every six seconds. Past it, the artist finder answers *Too many
+requests*, and the related tags and the post form's source panel go
+without what the site says for a moment. The server reads at most 16
+links at a time, and gives up on one after 20 seconds. Of what a page
+says, only so much is kept: up to 200 files and tags, and a title and
+description as long as an [artist's commentary](artists.md#commentary)
+can be.
 
 ## Artist URLs
 
@@ -38,7 +56,15 @@ also tries the profile a work's page belongs to, so
 Some sites only show some works (or anything at all) to members. Give
 Moekura an account's cookies, API key or token in the
 [configuration](../configuration.md#sources), by domain; requests to that
-domain and its subdomains carry them:
+domain and its subdomains carry them, over https only. Only the requests
+Moekura makes to read a work carry them: the work's own page (the one a
+link to it gives back, not one a crafted id or query value leads to) and
+the site's API, once it has checked the ids it puts in it. A page read
+for its preview image goes without. A request carrying a login follows
+redirects only to the sites the same login is for, and a link whose path
+hides separators or `..` (such as `%2F` or `%5C`) isn't read at all, so
+a crafted link can't send the login elsewhere or to another page of the
+site:
 
 ```toml
 [sources.logins."pixiv.net"]
@@ -66,7 +92,7 @@ all to servers. Moekura reads posts on X:
 
    ```toml
    [sources.x]
-   fxembed_api = "https://api.fxtwitter.com"
+   fxembed_api_url = "https://api.fxtwitter.com"
    ```
 
    Set it to `""` to not use one;
@@ -80,7 +106,11 @@ all to servers. Moekura reads posts on X:
    ```
 
    X changes how its API is asked from time to time, which can break this,
-   and suspends accounts it finds reading it automatically;
+   and suspends accounts it finds reading it automatically. So the login
+   is only used for members who can upload (not for visitors using the
+   artist finder or the related tags), not when FxEmbed said there's no
+   such post, and for at most 30 links every 15 minutes on each web
+   server;
 3. last, through the API X's own embedded posts use, which only sees
    public posts that aren't age-restricted.
 

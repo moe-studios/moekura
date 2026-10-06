@@ -227,19 +227,37 @@ pub async fn create_failed(
     .await
 }
 
-/// Records that a pending file is being downloaded now, so it isn't taken
-/// for abandoned.
-pub async fn started(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<()> {
-    sqlx::query("UPDATE staged_uploads SET updated_at = now() WHERE id = $1")
-        .bind(id)
-        .execute(db)
-        .await?;
+/// Records that pending file `id` is being downloaded now, so it isn't
+/// taken for abandoned. False when it's no longer pending: it was given
+/// up on meanwhile, and isn't to be downloaded.
+pub async fn claim(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    let result = sqlx::query(
+        "UPDATE staged_uploads SET updated_at = now() WHERE id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Records that upload `upload_id`'s pending files are still to be
+/// downloaded (they wait their turn), so they aren't taken for abandoned.
+pub async fn still_pending(db: impl PgExecutor<'_>, upload_id: i64) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE staged_uploads SET updated_at = now()
+         WHERE upload_id = $1 AND status = 'pending'",
+    )
+    .bind(upload_id)
+    .execute(db)
+    .await?;
     Ok(())
 }
 
-/// Fills in a pending file once it's stored.
-pub async fn stored(db: impl PgExecutor<'_>, id: i64, file: StoredFile<'_>) -> sqlx::Result<()> {
-    sqlx::query(
+/// Fills in a pending file once it's stored. Returns false when it isn't
+/// pending any more (it was [given up on](fail_abandoned) meanwhile), so
+/// nothing records the file.
+pub async fn stored(db: impl PgExecutor<'_>, id: i64, file: StoredFile<'_>) -> sqlx::Result<bool> {
+    let result = sqlx::query(
         "UPDATE staged_uploads
          SET status = 'ready', sha256 = $2, md5 = $3, media_type = $4, width = $5, height = $6,
              duration_ms = $7, frames = $8, has_audio = $9, file_size = $10,
@@ -263,7 +281,7 @@ pub async fn stored(db: impl PgExecutor<'_>, id: i64, file: StoredFile<'_>) -> s
     .bind(file.traits)
     .execute(db)
     .await?;
-    Ok(())
+    Ok(result.rows_affected() == 1)
 }
 
 /// Marks a pending file failed.
@@ -315,14 +333,34 @@ pub async fn by_id(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Stag
 }
 
 /// How many of user `uploader_id`'s files wait to be posted (or to be
-/// downloaded).
+/// downloaded). Those that failed in the last hour count too, so links
+/// to files that will fail can't be sent without end.
 pub async fn waiting(db: impl PgExecutor<'_>, uploader_id: i64) -> sqlx::Result<i64> {
     sqlx::query_scalar(
         "SELECT count(*) FROM staged_uploads
-         WHERE uploader_id = $1 AND post_id IS NULL AND status <> 'failed'",
+         WHERE uploader_id = $1 AND post_id IS NULL
+           AND (status <> 'failed' OR updated_at > now() - interval '1 hour')",
     )
     .bind(uploader_id)
     .fetch_one(db)
+    .await
+}
+
+/// The newest of `uploader_id`'s stored files with this content that
+/// isn't a post yet, if any.
+pub async fn waiting_copy(
+    db: impl PgExecutor<'_>,
+    uploader_id: i64,
+    sha256: &[u8; 32],
+) -> sqlx::Result<Option<i64>> {
+    sqlx::query_scalar(
+        "SELECT id FROM staged_uploads
+         WHERE uploader_id = $1 AND sha256 = $2 AND status = 'ready' AND post_id IS NULL
+         ORDER BY id DESC LIMIT 1",
+    )
+    .bind(uploader_id)
+    .bind(&sha256[..])
+    .fetch_optional(db)
     .await
 }
 
@@ -548,7 +586,8 @@ mod tests {
         let second = create_pending(&pool, slot(1), "https://example.com/2.png")
             .await
             .unwrap();
-        stored(&pool, first, file("original/a.png")).await.unwrap();
+        assert!(claim(&pool, first).await.unwrap());
+        assert!(stored(&pool, first, file("original/a.png")).await.unwrap());
         let hour = std::time::Duration::from_secs(3600);
         assert_eq!(
             fail_abandoned(&pool, upload, hour, "gone").await.unwrap(),
@@ -576,6 +615,12 @@ mod tests {
         assert_eq!(files[0].storage_key.as_deref(), Some("original/a.png"));
         // Neither can change once settled.
         failed(&pool, first, "late", None).await.unwrap();
+        assert!(!claim(&pool, second).await.unwrap());
+        assert!(!stored(&pool, second, file("original/b.png")).await.unwrap());
+        assert_eq!(
+            by_id(&pool, second).await.unwrap().unwrap().storage_key,
+            None
+        );
         assert_eq!(
             by_id(&pool, first).await.unwrap().unwrap().status,
             Status::Ready
@@ -629,7 +674,77 @@ mod tests {
             .await
             .is_empty()
         );
-        // Only the ready one waits to be posted.
+        // The ready one waits to be posted; the failed one counts for an
+        // hour.
+        assert_eq!(waiting(&pool, user).await.unwrap(), 2);
+        sqlx::query("UPDATE staged_uploads SET updated_at = now() - interval '2 hours'")
+            .execute(&pool)
+            .await
+            .unwrap();
         assert_eq!(waiting(&pool, user).await.unwrap(), 1);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn only_pending_files_are_claimed(pool: PgPool) {
+        let user: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let upload = create_upload(&pool, user, "https://example.com/work", "")
+            .await
+            .unwrap();
+        let slot = |position| Slot {
+            upload_id: upload,
+            uploader_id: user,
+            position,
+            file_name: "https://example.com/1.png",
+            source: "https://example.com/work",
+        };
+        let mut ids = Vec::new();
+        for position in 0..3 {
+            let id = create_pending(&pool, slot(position), "https://example.com/1.png")
+                .await
+                .unwrap();
+            ids.push(id);
+        }
+        let hour = std::time::Duration::from_secs(3600);
+        let age = |id: i64| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "UPDATE staged_uploads SET updated_at = now() - interval '2 hours' WHERE id = $1",
+                )
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        // Files still wanted aren't given up on.
+        for id in &ids {
+            age(*id).await;
+        }
+        still_pending(&pool, upload).await.unwrap();
+        assert_eq!(
+            fail_abandoned(&pool, upload, hour, "gone").await.unwrap(),
+            0
+        );
+        // One given up on isn't claimed, nor brought back.
+        age(ids[0]).await;
+        assert_eq!(
+            fail_abandoned(&pool, upload, hour, "gone").await.unwrap(),
+            1
+        );
+        assert!(!claim(&pool, ids[0]).await.unwrap());
+        still_pending(&pool, upload).await.unwrap();
+        assert_eq!(
+            by_id(&pool, ids[0]).await.unwrap().unwrap().status,
+            Status::Failed
+        );
+        assert!(claim(&pool, ids[1]).await.unwrap());
+        stored(&pool, ids[1], file("original/a.png")).await.unwrap();
+        assert!(!claim(&pool, ids[1]).await.unwrap());
     }
 }

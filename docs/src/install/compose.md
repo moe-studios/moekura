@@ -16,6 +16,15 @@ curl localhost:8080/readyz   # → ok
 Open <http://localhost:8080>. The database is migrated automatically on
 start.
 
+The app's port is published on `127.0.0.1` only, so only this machine
+reaches it: other people come in through a [reverse proxy](reverse-proxy.md),
+which adds HTTPS and limits on what each client may do. Docker's
+published ports get past host firewalls such as ufw, so changing it to
+`"8080:8080"` (to try the site from another machine on your network,
+say) puts the app on every network the machine is on, without the
+proxy's protection; the app's own [connection limits](../configuration.md#serverconnections)
+still apply.
+
 Two volumes hold everything worth keeping: `db` (PostgreSQL) and `files`
 (uploads and thumbnails). Back them up together; see [Backups](../admin/backups.md).
 
@@ -37,7 +46,8 @@ MOEKURA_BUILD_VERSION="git-$(git rev-parse --short=7 HEAD)" \
 
 Images are published to `ghcr.io/moe-studios/moekura` for AMD64 and ARM64:
 
-- `0.5.0` (for example): a release; `latest` tracks stable releases.
+- `0.5.0` (for example): a release; `0.5` tracks its patch releases, and
+  from 1.0 on `1` tracks every 1.x release; `latest` tracks stable releases.
 - `edge`: the latest published main branch commit.
 - `git-<hash>`: a specific commit, using either its seven-character or full hash.
 
@@ -62,8 +72,10 @@ for example:
 ```
 
 Every setting is listed under [Configuration](../configuration.md). Put
-the site behind a [reverse proxy](reverse-proxy.md) for HTTPS, then
-continue with [First steps](first-steps.md).
+the site behind a [reverse proxy](reverse-proxy.md) for HTTPS, which
+also means [pinning the network and publishing the port on the loopback
+only](reverse-proxy.md#with-docker-compose), then continue with
+[First steps](first-steps.md).
 
 ## Updating
 

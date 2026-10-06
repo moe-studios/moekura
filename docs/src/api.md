@@ -20,6 +20,13 @@ banned only what visitors can. It's shown once, when created; revoke it
 from the same page if it leaks. Keys start with `mka_` so that secret
 scanners can spot them. Without a key, requests are made as a visitor.
 
+Making a key asks for your password. Accounts made through single
+sign-on have none to give, so for them it works only within 10 minutes
+of logging in. A key can't manage keys or the feed token,
+or change your address, password, two-factor login or single sign-on
+links: those need you logged in on the site. Resetting your password
+revokes all your keys, and changing it does too unless you untick that.
+
 ## Errors
 
 Errors are JSON with the HTTP status:
@@ -29,7 +36,9 @@ Errors are JSON with the HTTP status:
 ```
 
 A duplicate upload is a `409` whose error also has `post_id`, the post that
-already has the file.
+already has the file. If that post is one you can't see (someone else's
+that was deleted or waits for approval), the upload is a `422` that
+doesn't name it.
 
 An upload that looks like posts already on the site (see
 [Duplicates and look-alikes](using/posts.md#duplicates-and-look-alikes))
@@ -61,8 +70,9 @@ the same allowance. Every response says what's left:
 
 Past the limit, requests get a `429` with `Retry-After`, the seconds to
 wait. Some actions also have their own, tighter limits, the same as on the
-site: logging in, posting comments, flagging and reporting, and forms that
-send email.
+site: logging in, uploading (see [upload
+limits](admin/roles.md#upload-limits)), posting comments, flagging and
+reporting, and forms that send email.
 
 ## Browser apps on other websites
 
@@ -98,7 +108,7 @@ Search, 100 posts at a time:
 curl "https://booru.example.com/api/v1/posts?tags=cat+-dog&limit=100"
 ```
 
-The response has `posts`, a `count`, and `next`: pass it back as `page` for
+The response has `posts`, a `count`, and `next_page`: pass it back as `page` for
 the next page, until it's absent.
 
 Upload a file:
@@ -125,7 +135,8 @@ curl -X PUT -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" 
   https://booru.example.com/api/v1/wiki-pages/cat
 ```
 
-Comment on a post:
+Comment on a post (accounts new enough that the site asks them for a
+captcha also send a solved one's token as `"captcha"`):
 
 ```sh
 curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \

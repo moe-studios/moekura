@@ -35,7 +35,7 @@ roles can't be deleted and keep their ranks.
 | Approve posts and handle flags | the approval and flag queues |
 | Delete and restore posts | |
 | Purge posts | removing deleted posts and their files for good |
-| Manage tags, aliases and implications | moving tags between categories, deprecating tags, deciding alias and implication requests |
+| Manage tags, aliases and implications | moving tags between categories, deprecating tags, deciding alias and implication requests; banning artists, and renaming, deleting or restoring a banned artist's entry |
 | See deleted posts | deleted posts and comments |
 | Hide comments and handle reports about them | hiding and restoring anyone's comments, and the reported comments queue |
 | Ban users and networks | |
@@ -72,6 +72,14 @@ every 5 that were deleted, from 1 up to four times the role's limit.
 
 The upload page tells users how many uploads they have left, and why an
 upload was refused; the API's `/users/me` says the same under `uploads`.
+Uploads sent at the same moment are counted one after another, so they
+can't get past a limit together.
+
+Whatever the role's limits, each account may upload 20 times in a short
+while, then once every 30 seconds, so that one account can't flood the
+media tools that process every file. Sending files to be posted counts
+once, posting each of them counts again, and so does replacing a post's
+file. Staff who can approve posts aren't held to this.
 
 ## Automatic promotion
 
@@ -92,10 +100,13 @@ someone was promoted.
 ## Rank
 
 Staff act only on people below them: a moderator can ban members and
-janitors, but not other moderators or admins. The same goes for changing
+janitors, but not other moderators or admins, nor ban a network one of
+them used, or see their addresses. The same goes for changing
 roles: you can give or take away only roles ranked below your own that
 grant nothing you lack, and never change your own role or status. That keeps a mistake, or a
 compromised account, from locking out the people above it.
 
 From the shell, `moekura admin set-role NAME ROLE` changes anyone's role,
-which is how you recover if the last admin loses access.
+which is how you recover if the last admin loses access, and
+`moekura admin lift-network-ban ADDRESS` lifts network bans that lock
+staff out.

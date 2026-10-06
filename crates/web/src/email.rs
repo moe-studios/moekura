@@ -19,7 +19,7 @@ use moekura_core::settings::RegistrationMode;
 use moekura_db::account_tokens::{self, Purpose};
 use moekura_db::accounts::PasswordChangeError;
 use moekura_db::users::{self, InsertError, User, UserStatus};
-use moekura_db::{jobs, sessions};
+use moekura_db::{api_keys, jobs, sessions};
 use serde::Deserialize;
 use sqlx::PgConnection;
 
@@ -63,7 +63,7 @@ fn require_mail(state: &AppState) -> Result<(), AppError> {
 }
 
 /// `path` (with its query) on the public site, for links in messages.
-fn link(state: &AppState, path: &str) -> String {
+pub(crate) fn link(state: &AppState, path: &str) -> String {
     state
         .config
         .server
@@ -72,7 +72,7 @@ fn link(state: &AppState, path: &str) -> String {
         .map_or_else(|_| path.to_owned(), String::from)
 }
 
-async fn queue(
+pub(crate) async fn queue(
     conn: &mut PgConnection,
     to: &str,
     subject: String,
@@ -138,6 +138,42 @@ async fn send_reset(
     queue(conn, email, format!("Reset your password on {site}"), body).await
 }
 
+/// Tells `owner` that someone tried to use their address for another
+/// account, by signing up or changing an address. Those forms answer as
+/// they would for a free address, so they can't be used to find out who
+/// has an account here; the owner hears about it instead.
+pub(crate) async fn send_address_in_use(
+    conn: &mut PgConnection,
+    state: &AppState,
+    owner: &User,
+) -> sqlx::Result<()> {
+    let Some(email) = owner.email.as_deref() else {
+        return Ok(());
+    };
+    if owner.status == UserStatus::Deactivated {
+        return Ok(());
+    }
+    let site = state.site.get().settings.site_name.clone();
+    let url = link(state, "/forgot-password");
+    let body = format!(
+        "Hi {name},\n\n\
+         Someone tried to use this address for another account on {site}, by signing up \
+         or by changing an account's address. It stays with your account, and nothing changed.\n\n\
+         If that was you: you already have an account here, {name}. If you've forgotten its \
+         password, you can choose a new one at\n\n\
+         {url}\n\n\
+         Otherwise you can ignore this message.\n",
+        name = owner.name,
+    );
+    queue(
+        conn,
+        email,
+        format!("Someone tried to use your address on {site}"),
+        body,
+    )
+    .await
+}
+
 /// After an account's address is confirmed: an account waiting for that
 /// moves on, to approval if the site wants it.
 async fn finish_signup(
@@ -196,6 +232,14 @@ async fn verify(
             }
             InsertError::NameTaken | InsertError::Db(_) => AppError::Internal(e.to_string()),
         })?;
+    // Reset links mailed to the old address mustn't outlive it.
+    let changed = !user
+        .email
+        .as_deref()
+        .is_some_and(|old| old.eq_ignore_ascii_case(&redeemed.email));
+    if changed {
+        account_tokens::delete_for_user(&mut *tx, user.id).await?;
+    }
     let status = finish_signup(&mut tx, &state, &user).await?;
     tx.commit().await?;
     tracing::info!(user_id = user.id, "email address confirmed");
@@ -284,11 +328,29 @@ async fn forgot(
     ))
 }
 
-async fn reset_form(page: Page, Query(query): Query<TokenQuery>) -> Result<Response, AppError> {
-    let db = page.state().db.primary();
-    account_tokens::peek(db, Purpose::ResetPassword, &query.token)
+/// The account a reset link is for, as long as the address it went to is
+/// still the account's: a link mailed to an address that has since been
+/// replaced mustn't work any more.
+async fn reset_target(
+    db: impl sqlx::PgExecutor<'_>,
+    redeemed: &account_tokens::Redeemed,
+) -> Result<User, AppError> {
+    let user = users::by_id(db, redeemed.user_id)
         .await?
         .ok_or_else(expired_link)?;
+    let current = user.email.as_deref().map(str::to_lowercase);
+    if current.as_deref() != Some(redeemed.email.to_lowercase().as_str()) {
+        return Err(expired_link());
+    }
+    Ok(user)
+}
+
+async fn reset_form(page: Page, Query(query): Query<TokenQuery>) -> Result<Response, AppError> {
+    let db = page.state().db.primary();
+    let redeemed = account_tokens::peek(db, Purpose::ResetPassword, &query.token)
+        .await?
+        .ok_or_else(expired_link)?;
+    reset_target(db, &redeemed).await?;
     Ok(page.render(
         "reset_password.html",
         context! { token => query.token, error => None::<String> },
@@ -303,8 +365,9 @@ struct ResetForm {
     password_confirm: String,
 }
 
-/// Sets the new password and ends every session, in case someone else
-/// had got in.
+/// Sets the new password and, in case someone else had got in, ends every
+/// session and revokes what else lets them back in: API keys, the feed
+/// token and other links mailed to the account.
 async fn reset(
     State(state): State<AppState>,
     page: Page,
@@ -328,22 +391,32 @@ async fn reset(
     let redeemed = account_tokens::redeem(&mut *tx, Purpose::ResetPassword, &form.token)
         .await?
         .ok_or_else(expired_link)?;
-    let user = users::by_id(&mut *tx, redeemed.user_id)
-        .await?
-        .ok_or_else(expired_link)?;
+    let user = reset_target(&mut *tx, &redeemed).await?;
     moekura_db::accounts::set_password(&mut *tx, user.id, &form.password)
         .await
         .map_err(|e| AppError::Internal(e.to_string()))?;
+    // A provider account linked since sign-up could be someone else's,
+    // linked with the old password. The one the account was made through
+    // stays: it's the owner's, and how it logs in.
+    moekura_db::identities::unlink_added(&mut *tx, user.id).await?;
     // Following the link proved they read mail at the address.
-    if user.email.as_deref() == Some(redeemed.email.as_str()) && user.email_verified_at.is_none() {
+    if user.email_verified_at.is_none() {
         users::set_email(&mut *tx, user.id, Some(&redeemed.email), true)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
         finish_signup(&mut tx, &state, &user).await?;
     }
     let ended = sessions::delete_all_for_user(&mut *tx, user.id).await?;
+    let keys = api_keys::delete_all_for_user(&mut *tx, user.id).await?;
+    moekura_db::feeds::set_token(&mut *tx, user.id, None).await?;
+    account_tokens::delete_for_user(&mut *tx, user.id).await?;
     tx.commit().await?;
-    tracing::info!(user_id = user.id, sessions_ended = ended, "password reset");
+    tracing::info!(
+        user_id = user.id,
+        sessions_ended = ended,
+        keys_revoked = keys,
+        "password reset"
+    );
     Ok((
         flash::set(jar, Flash::PasswordChanged),
         Redirect::to("/login"),
@@ -400,8 +473,10 @@ fn render_account(
     )
 }
 
+/// The user, logged in on the site: an API key can't change how the
+/// account is logged in to.
 fn logged_in(page: &Page) -> Result<User, AppError> {
-    page.current.user.clone().ok_or(AppError::Unauthorized)
+    page.current.require_session().cloned()
 }
 
 async fn account(page: Page) -> Result<Response, AppError> {
@@ -426,6 +501,11 @@ struct EmailChange {
 
 /// With mail, the new address only replaces the old one once confirmed
 /// through a link sent to it; without, it's changed straight away.
+///
+/// With mail, an address another account has gets the same answer as a
+/// free one (its owner is told instead), so the form can't be used to find
+/// out who has an account. Without mail there's nobody to tell, and the
+/// address would change at once, so it's refused as taken.
 async fn change_email(
     page: Page,
     jar: CookieJar,
@@ -462,9 +542,12 @@ async fn change_email(
         |message| Ok((flash::set(jar, message), Redirect::to("/settings/account")).into_response());
 
     if email.is_empty() {
-        users::set_email(db, user.id, None, false)
+        let mut tx = db.begin().await?;
+        users::set_email(&mut *tx, user.id, None, false)
             .await
             .map_err(|e| AppError::Internal(e.to_string()))?;
+        account_tokens::delete_for_user(&mut *tx, user.id).await?;
+        tx.commit().await?;
         tracing::info!(user_id = user.id, "email address removed");
         return saved(Flash::Saved);
     }
@@ -477,24 +560,30 @@ async fn change_email(
     if unchanged && (user.email_verified_at.is_some() || !mail_enabled(state)) {
         return saved(Flash::Saved);
     }
-    if !unchanged && users::by_email(db, email).await?.is_some() {
-        return failed("That address is already in use.".into());
-    }
     if mail_enabled(state) {
         state.rate_limits.check_mail(info.ip, email).await?;
         let mut tx = db.begin().await?;
-        send_verification(&mut tx, state, &user, email).await?;
+        match users::by_email(&mut *tx, email).await? {
+            Some(owner) if owner.id != user.id => {
+                send_address_in_use(&mut tx, state, &owner).await?;
+                tracing::info!(user_id = user.id, "asked for an address in use");
+            }
+            _ => send_verification(&mut tx, state, &user, email).await?,
+        }
         tx.commit().await?;
         return saved(Flash::CheckEmail);
     }
-    match users::set_email(db, user.id, Some(email), false).await {
-        Ok(()) => {
-            tracing::info!(user_id = user.id, "email address changed");
-            saved(Flash::Saved)
-        }
-        Err(InsertError::EmailTaken) => failed("That address is already in use.".into()),
-        Err(e) => Err(AppError::Internal(e.to_string())),
+    let mut tx = db.begin().await?;
+    match users::set_email(&mut *tx, user.id, Some(email), false).await {
+        Ok(()) => {}
+        Err(InsertError::EmailTaken) => return failed("That address is already in use.".into()),
+        Err(e) => return Err(AppError::Internal(e.to_string())),
     }
+    // Links mailed to the old address mustn't outlive it.
+    account_tokens::delete_for_user(&mut *tx, user.id).await?;
+    tx.commit().await?;
+    tracing::info!(user_id = user.id, "email address changed");
+    saved(Flash::Saved)
 }
 
 #[derive(Debug, Deserialize)]
@@ -503,9 +592,14 @@ struct PasswordChange {
     current: String,
     password: String,
     password_confirm: String,
+    /// Ticked (the form's default): also revoke the API keys and the feed
+    /// token, which would otherwise outlast the old password.
+    revoke_keys: Option<String>,
 }
 
-/// Changes the password and logs out every other session.
+/// Changes the password, logs out every other session and drops reset
+/// links already mailed; with `revoke_keys`, revokes the API keys and the
+/// feed token too.
 async fn change_password(
     page: Page,
     jar: CookieJar,
@@ -545,10 +639,18 @@ async fn change_password(
         Some(cookie) => sessions::delete_others(&mut *tx, user.id, cookie.value()).await?,
         None => 0,
     };
+    account_tokens::delete_for_user(&mut *tx, user.id).await?;
+    let keys = if form.revoke_keys.is_some() {
+        moekura_db::feeds::set_token(&mut *tx, user.id, None).await?;
+        api_keys::delete_all_for_user(&mut *tx, user.id).await?
+    } else {
+        0
+    };
     tx.commit().await?;
     tracing::info!(
         user_id = user.id,
         sessions_ended = ended,
+        keys_revoked = keys,
         "password changed"
     );
     Ok((
@@ -950,6 +1052,371 @@ mod tests {
             .await;
         let user = users::by_id(&pool, alice.id).await.unwrap().unwrap();
         assert_eq!(user.email, None);
+    }
+
+    /// Everything `response` tells the browser, but the session token.
+    fn answer(response: &crate::test_support::TestResponse) -> String {
+        format!(
+            "{} {:?} {} {:?}",
+            response.status,
+            response.location,
+            response.session_cookie().is_some(),
+            response
+                .set_cookie
+                .iter()
+                .filter(|c| c.starts_with("moekura_flash="))
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn taken_addresses_get_the_same_answer(pool: PgPool) {
+        let (bob, _) = member(&pool, "bob", "bob@example.com").await;
+        let app = app(&pool, true).await;
+
+        // Signing up: the owner hears of it, not the person signing up.
+        let free = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &signup("carol", "carol@example.com"),
+            )
+            .await;
+        let (to, subject, body) = last_mail(&pool).await.unwrap();
+        assert_eq!(to, "carol@example.com");
+        assert!(subject.contains("Confirm"), "{subject}");
+        let link = token(&body);
+        let taken = app
+            .post_form("/register", None, &[], &signup("dave", "BOB@example.com"))
+            .await;
+        assert_eq!(answer(&free), answer(&taken));
+        assert_eq!(free.status, StatusCode::SEE_OTHER, "{}", free.body);
+        let (to, subject, body) = last_mail(&pool).await.unwrap();
+        assert_eq!(to, "bob@example.com");
+        assert!(subject.contains("tried to use your address"), "{subject}");
+        assert!(body.contains("Hi bob"), "{body}");
+        assert!(!body.contains("token="), "{body}");
+        // Neither new account has an address yet; carol's comes with the link.
+        let carol = users::by_name(&pool, "carol").await.unwrap().unwrap();
+        let dave = users::by_name(&pool, "dave").await.unwrap().unwrap();
+        assert_eq!(
+            (carol.email.as_deref(), dave.email.as_deref()),
+            (None, None)
+        );
+        app.get(&format!("/verify-email?token={link}"), None).await;
+        let carol = users::by_id(&pool, carol.id).await.unwrap().unwrap();
+        assert_eq!(carol.email.as_deref(), Some("carol@example.com"));
+        assert!(carol.email_verified_at.is_some());
+        let bob = users::by_id(&pool, bob.id).await.unwrap().unwrap();
+        assert_eq!(bob.email.as_deref(), Some("bob@example.com"));
+
+        // Where accounts wait for their address to be confirmed.
+        settings::set(&pool, "email_verification", json!(true))
+            .await
+            .unwrap();
+        let app = super::tests::app(&pool, true).await;
+        let free = app
+            .post_form("/register", None, &[], &signup("erin", "erin@example.com"))
+            .await;
+        let taken = app
+            .post_form("/register", None, &[], &signup("frank", "bob@example.com"))
+            .await;
+        assert_eq!(answer(&free), answer(&taken));
+        assert_eq!(last_mail(&pool).await.unwrap().0, "bob@example.com");
+        for name in ["erin", "frank"] {
+            let login = form(&[("name", name), ("password", "correct horse")]);
+            let refused = app.post_form("/login", None, &[], &login).await;
+            assert!(
+                refused.body.contains("Confirm your email address first"),
+                "{}",
+                refused.body
+            );
+        }
+
+        // Changing an address.
+        let (alice, session) = member(&pool, "alice", "alice@example.com").await;
+        let change = |email: &str| form(&[("email", email), ("password", "correct horse")]);
+        let sent = mail_count(&pool).await;
+        let free = app
+            .post_form(
+                "/settings/account/email",
+                Some(&session),
+                &[],
+                &change("new@example.com"),
+            )
+            .await;
+        assert_eq!(last_mail(&pool).await.unwrap().0, "new@example.com");
+        let taken = app
+            .post_form(
+                "/settings/account/email",
+                Some(&session),
+                &[],
+                &change("Bob@Example.com"),
+            )
+            .await;
+        assert_eq!(answer(&free), answer(&taken));
+        assert_eq!(free.location.as_deref(), Some("/settings/account"));
+        assert_eq!(mail_count(&pool).await, sent + 2);
+        let (to, subject, _) = last_mail(&pool).await.unwrap();
+        assert_eq!(to, "bob@example.com");
+        assert!(subject.contains("tried to use your address"), "{subject}");
+        let alice = users::by_id(&pool, alice.id).await.unwrap().unwrap();
+        assert_eq!(alice.email.as_deref(), Some("alice@example.com"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn refused_sign_ups_dont_use_up_the_mail_limit(pool: PgPool) {
+        member(&pool, "bob", "bob@example.com").await;
+        let app = app(&pool, true).await;
+        // More tries than the address may be mailed, all sent back for the
+        // name, send nothing and so aren't counted.
+        for _ in 0..5 {
+            let refused = app
+                .post_form("/register", None, &[], &signup("bob", "carol@example.com"))
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(
+                refused.body.contains("That name is taken."),
+                "{}",
+                refused.body
+            );
+        }
+        assert_eq!(mail_count(&pool).await, 0);
+        let made = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &signup("carol", "carol@example.com"),
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
+        assert_eq!(last_mail(&pool).await.unwrap().0, "carol@example.com");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn display_name_addresses_are_refused(pool: PgPool) {
+        moekura_db::settings::set(
+            &pool,
+            "email_domains",
+            serde_json::json!({ "mode": "block", "domains": ["spam.example"] }),
+        )
+        .await
+        .unwrap();
+        let app = app(&pool, true).await;
+        for email in [
+            "x@spam.example <someone@example.com>",
+            "Someone <someone@spam.example>",
+        ] {
+            let refused = app
+                .post_form("/register", None, &[], &signup("carol", email))
+                .await;
+            assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY, "{email}");
+            assert!(
+                refused.body.contains("not a valid email address"),
+                "{}",
+                refused.body
+            );
+        }
+        let (_, session) = member(&pool, "alice", "alice@example.com").await;
+        let change = form(&[
+            ("email", "Alice <alice@spam.example>"),
+            ("password", "correct horse"),
+        ]);
+        let refused = app
+            .post_form("/settings/account/email", Some(&session), &[], &change)
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(mail_count(&pool).await, 0);
+    }
+
+    /// A reset link for `email`, from the forgotten-password form.
+    async fn reset_link(app: &TestApp, pool: &PgPool, email: &str) -> String {
+        let asked = app
+            .post_form("/forgot-password", None, &[], &form(&[("email", email)]))
+            .await;
+        assert_eq!(asked.status, StatusCode::OK);
+        let (to, _, body) = last_mail(pool).await.unwrap();
+        assert_eq!(to, email);
+        token(&body)
+    }
+
+    fn reset_fields(link: &str) -> String {
+        form(&[
+            ("token", link),
+            ("password", "battery staple"),
+            ("password_confirm", "battery staple"),
+        ])
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn reset_links_end_with_the_password_or_address(pool: PgPool) {
+        let app = app(&pool, true).await;
+        let (alice, session) = member(&pool, "alice", "alice@example.com").await;
+
+        // Changing the password drops links already sent.
+        let link = reset_link(&app, &pool, "alice@example.com").await;
+        let changed = app
+            .post_form(
+                "/settings/account/password",
+                Some(&session),
+                &[],
+                &form(&[
+                    ("current", "correct horse"),
+                    ("password", "horse battery"),
+                    ("password_confirm", "horse battery"),
+                ]),
+            )
+            .await;
+        assert_eq!(changed.status, StatusCode::SEE_OTHER, "{}", changed.body);
+        let stale = app
+            .get(&format!("/reset-password?token={link}"), None)
+            .await;
+        assert_eq!(stale.status, StatusCode::BAD_REQUEST);
+        let refused = app
+            .post_form("/reset-password", None, &[], &reset_fields(&link))
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+
+        // A link to an address the account no longer has doesn't work,
+        // however the address changed.
+        let link = reset_link(&app, &pool, "alice@example.com").await;
+        users::set_email(&pool, alice.id, Some("other@example.com"), true)
+            .await
+            .unwrap();
+        let refused = app
+            .post_form("/reset-password", None, &[], &reset_fields(&link))
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+        accounts::authenticate(&pool, "alice", "horse battery")
+            .await
+            .unwrap();
+
+        // Confirming a new address drops links sent to the old one.
+        let link = reset_link(&app, &pool, "other@example.com").await;
+        app.post_form(
+            "/settings/account/email",
+            Some(&session),
+            &[],
+            &form(&[
+                ("email", "third@example.com"),
+                ("password", "horse battery"),
+            ]),
+        )
+        .await;
+        let confirm = token(&last_mail(&pool).await.unwrap().2);
+        let confirmed = app
+            .get(&format!("/verify-email?token={confirm}"), Some(&session))
+            .await;
+        assert_eq!(confirmed.status, StatusCode::SEE_OTHER);
+        let tokens: i64 = sqlx::query_scalar("SELECT count(*) FROM account_tokens")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(tokens, 0);
+        let refused = app
+            .post_form("/reset-password", None, &[], &reset_fields(&link))
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    }
+
+    async fn ways_in(pool: &PgPool, user_id: i64) -> (i64, bool) {
+        let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM api_keys WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        (
+            keys,
+            moekura_db::feeds::has_token(pool, user_id).await.unwrap(),
+        )
+    }
+
+    async fn give_ways_in(pool: &PgPool, user_id: i64) {
+        moekura_db::api_keys::create(pool, user_id, "bot", None)
+            .await
+            .unwrap();
+        let token = moekura_core::tokens::NewToken::generate();
+        moekura_db::feeds::set_token(pool, user_id, Some(&token.hash))
+            .await
+            .unwrap();
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn resetting_the_password_revokes_keys_and_feed_tokens(pool: PgPool) {
+        let app = app(&pool, true).await;
+        let (alice, _) = member(&pool, "alice", "alice@example.com").await;
+        give_ways_in(&pool, alice.id).await;
+        assert_eq!(ways_in(&pool, alice.id).await, (1, true));
+        let link = reset_link(&app, &pool, "alice@example.com").await;
+        let done = app
+            .post_form("/reset-password", None, &[], &reset_fields(&link))
+            .await;
+        assert_eq!(done.status, StatusCode::SEE_OTHER, "{}", done.body);
+        assert_eq!(ways_in(&pool, alice.id).await, (0, false));
+
+        // Changing it does too, unless told not to.
+        let login = form(&[("name", "alice"), ("password", "battery staple")]);
+        let session = app
+            .post_form("/login", None, &[], &login)
+            .await
+            .session_cookie()
+            .unwrap();
+        assert!(
+            app.get("/settings/account", Some(&session))
+                .await
+                .body
+                .contains("name=\"revoke_keys\" value=\"1\" checked")
+        );
+        let change = |current: &str, new: &str, revoke: bool| {
+            let mut fields = vec![
+                ("current", current),
+                ("password", new),
+                ("password_confirm", new),
+            ];
+            if revoke {
+                fields.push(("revoke_keys", "1"));
+            }
+            form(&fields)
+        };
+        give_ways_in(&pool, alice.id).await;
+        app.post_form(
+            "/settings/account/password",
+            Some(&session),
+            &[],
+            &change("battery staple", "horse battery", false),
+        )
+        .await;
+        assert_eq!(ways_in(&pool, alice.id).await, (1, true));
+        app.post_form(
+            "/settings/account/password",
+            Some(&session),
+            &[],
+            &change("horse battery", "staple horse", true),
+        )
+        .await;
+        assert_eq!(ways_in(&pool, alice.id).await, (0, false));
+        accounts::authenticate(&pool, "alice", "staple horse")
+            .await
+            .unwrap();
+
+        // An API key can't change it, even with the password.
+        let key = moekura_db::api_keys::create(&pool, alice.id, "bot", None)
+            .await
+            .unwrap();
+        let by_key = app
+            .post_form(
+                "/settings/account/password",
+                None,
+                &[("authorization", &format!("Bearer {key}"))],
+                &change("staple horse", "a new horse", false),
+            )
+            .await;
+        assert_eq!(by_key.status, StatusCode::FORBIDDEN);
+        accounts::authenticate(&pool, "alice", "staple horse")
+            .await
+            .unwrap();
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

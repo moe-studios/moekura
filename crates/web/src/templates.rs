@@ -97,11 +97,13 @@ pub fn search_url(query: &str) -> String {
     format!("/posts?tags={encoded}")
 }
 
-/// A local URL whose query string was built with `form_urlencoded`, ready
-/// for an HTML attribute. Encoding leaves `&` as the only character HTML
-/// cares about, so escaping it is enough.
+/// A URL ready for an HTML attribute or text. It may hold anything a
+/// stored or looked-up link can (quotes, angle brackets), so every
+/// character HTML cares about is escaped; only `/` is left as it is,
+/// which autoescaping would turn into `&#x2f;` (valid, but some link
+/// scrapers don't undo it).
 pub fn url_value(url: &str) -> Value {
-    Value::from_safe_string(url.replace('&', "&amp;"))
+    Value::from_safe_string(crate::i18n::escape(url))
 }
 
 fn load_source(override_dir: Option<&PathBuf>, name: &str) -> Result<Option<String>, Error> {
@@ -193,6 +195,42 @@ mod tests {
         );
         assert!(html.contains("&lt;script&gt;"), "{html}");
         assert!(!html.contains("<script>alert"));
+    }
+
+    #[test]
+    fn urls_are_escaped_in_attributes() {
+        assert_eq!(
+            url_value("/posts?tags=cat&page=2").to_string(),
+            "/posts?tags=cat&amp;page=2"
+        );
+        // What a looked-up page or a stored link may hold.
+        let evil = "https://example.com/a\"><img src=x>'b' c";
+        assert_eq!(
+            url_value(evil).to_string(),
+            "https://example.com/a&quot;&gt;&lt;img src=x&gt;&#x27;b&#x27; c"
+        );
+        let templates = Templates::load(None, assets(), locales()).unwrap();
+        let html = templates
+            .render(
+                "upload_source.html",
+                context! {
+                    source => context! {
+                        site => "Example",
+                        page_url => url_value(evil),
+                        artist_name => "someone",
+                        profiles => vec![url_value(evil)],
+                    },
+                },
+            )
+            .unwrap();
+        assert!(!html.contains("<img"), "{html}");
+        assert!(!html.contains("/a\""), "{html}");
+        assert!(
+            html.contains(
+                "href=\"https://example.com/a&quot;&gt;&lt;img src=x&gt;&#x27;b&#x27; c\""
+            ),
+            "{html}"
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@
 {% if source %}
 <dl class="upload-facts source-data">
   <dt>{{ t("upload-source-site") }}</dt>
-  <dd class="source">{{ site_icon(source.page_url) }}<a href="{{ source.page_url }}" rel="noopener noreferrer nofollow" target="_blank">{{ source.site }}</a></dd>
+  <dd class="source">{% if source.page_url %}{{ site_icon(source.page_url) }}<a href="{{ source.page_url }}" rel="noopener noreferrer nofollow" target="_blank">{{ source.site }}</a>{% else %}{{ source.site }}{% endif %}</dd>
   {% if source.artist_name or source.artist_account or source.artists %}
   <dt>{{ t("upload-source-artist") }}</dt>
   <dd>

@@ -13,7 +13,7 @@
 {% if can_decide or can_withdraw %}
 <div class="actions">
   {% if can_decide %}
-  <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="approve">{{ t("bur-approve") }}</button></form>
+  {% if can_approve %}<form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="approve">{{ t("bur-approve") }}</button></form>{% endif %}
   <form method="post" action="/tags/requests/{{ request.id }}/decide"><button type="submit" name="decision" value="reject" class="secondary">{{ t("reject") }}</button></form>
   {% endif %}
   {% if can_withdraw %}

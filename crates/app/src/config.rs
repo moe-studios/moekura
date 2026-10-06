@@ -8,6 +8,8 @@ use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
 use moekura_core::config::Config;
 
+use crate::deprecated::{self, Notices, Renamed, Source};
+
 /// Read from the working directory when no path is given, if it exists.
 pub const DEFAULT_PATH: &str = "moekura.toml";
 
@@ -15,20 +17,36 @@ pub const DEFAULT_PATH: &str = "moekura.toml";
 /// `MOEKURA_DATABASE__URL` sets `database.url`.
 const ENV_PREFIX: &str = "MOEKURA_";
 
-pub fn load(path: Option<&Path>) -> anyhow::Result<Config> {
+/// The configuration, and warnings about deprecated keys in it, to log
+/// once logging is set up.
+pub fn load(path: Option<&Path>) -> anyhow::Result<(Config, Vec<String>)> {
+    let notices = Notices::default();
+    let file = |path: &Path| {
+        Renamed::new(
+            Toml::file_exact(path),
+            deprecated::CONFIG_KEYS,
+            Source::File,
+            notices.clone(),
+        )
+    };
     let mut figment = Figment::from(Serialized::defaults(Config::default()));
     match path {
         Some(path) if !path.is_file() => bail!("config file {} does not exist", path.display()),
-        Some(path) => figment = figment.merge(Toml::file_exact(path)),
+        Some(path) => figment = figment.merge(file(path)),
         // Environment-only setups (e.g. containers) have no file at all.
         None if Path::new(DEFAULT_PATH).is_file() => {
-            figment = figment.merge(Toml::file_exact(DEFAULT_PATH))
+            figment = figment.merge(file(Path::new(DEFAULT_PATH)))
         }
         None => {}
     }
     let config: Config = figment
         // MOEKURA_CONFIG selects the file itself and is not a config key.
-        .merge(Env::prefixed(ENV_PREFIX).split("__").ignore(&["config"]))
+        .merge(Renamed::new(
+            Env::prefixed(ENV_PREFIX).split("__").ignore(&["config"]),
+            deprecated::CONFIG_KEYS,
+            Source::Env { prefix: ENV_PREFIX },
+            notices.clone(),
+        ))
         .extract()
         .context("could not load configuration")?;
 
@@ -36,7 +54,8 @@ pub fn load(path: Option<&Path>) -> anyhow::Result<Config> {
         let list: Vec<String> = problems.iter().map(|p| format!("  - {p}")).collect();
         bail!("invalid configuration:\n{}", list.join("\n"));
     }
-    Ok(config)
+    let notices = std::mem::take(&mut *notices.lock().expect("not poisoned"));
+    Ok((config, notices))
 }
 
 #[cfg(test)]
@@ -48,7 +67,9 @@ mod tests {
     use super::*;
 
     fn load_in_jail(path: Option<&Path>) -> figment::Result<Config> {
-        load(path).map_err(|e| format!("{e:#}").into())
+        load(path)
+            .map(|(config, _)| config)
+            .map_err(|e| format!("{e:#}").into())
     }
 
     #[test]

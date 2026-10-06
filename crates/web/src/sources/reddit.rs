@@ -5,7 +5,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, decode_entities, html_to_text, tags_named, text_of};
+use super::{Http, SourceInfo, decode_entities, html_to_text, key, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -23,6 +23,7 @@ pub(super) async fn fetch(
         .position(|p| *p == "comments")
         .and_then(|at| parts.get(at + 1))
         .ok_or("Reddit: not a post")?;
+    let id = key(id)?;
     let answer = http
         .json(&format!("https://www.reddit.com/comments/{id}.json"), &[])
         .await?;

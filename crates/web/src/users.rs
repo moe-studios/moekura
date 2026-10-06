@@ -36,14 +36,20 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     page.current.require(Permission::ViewPosts)?;
     let db = page.state().reader(&page.current);
     let Some(user) = users::by_name(db, &name).await? else {
-        // Someone who has since changed their name.
+        // Someone who has since changed their name. Not an inactive user,
+        // whose new name is as hidden as their profile.
         return match users::by_name_or_former(page.state().db.primary(), &name).await? {
-            Some(user) => Ok(Redirect::permanent(&format!(
-                "/users/{}",
-                url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>()
-            ))
-            .into_response()),
-            None => Err(AppError::NotFound),
+            Some(user)
+                if user.status == UserStatus::Active
+                    || page.current.can(Permission::ManageUsers) =>
+            {
+                Ok(Redirect::permanent(&format!(
+                    "/users/{}",
+                    url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>()
+                ))
+                .into_response())
+            }
+            _ => Err(AppError::NotFound),
         };
     };
     if user.status != UserStatus::Active && !page.current.can(Permission::ManageUsers) {
@@ -307,20 +313,25 @@ async fn settings_form(page: Page) -> Result<Response, AppError> {
     let settings = UserSettings::from_json(&user.settings);
     let blacklist = crate::blacklist::text_for(page.state(), &page.current);
     let has_feed_token = moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
+    let has_password = users::has_password(page.state().db.primary(), user.id).await?;
     Ok(render_settings(
         &page,
         &settings,
         &blacklist,
         has_feed_token,
+        has_password,
         None,
     ))
 }
 
+/// `has_password`: whether the user has one to confirm a new feed token
+/// with.
 fn render_settings(
     page: &Page,
     settings: &UserSettings,
     blacklist: &str,
     has_feed_token: bool,
+    has_password: bool,
     error: Option<String>,
 ) -> Response {
     let max = page.state().search_config().max_per_page;
@@ -336,6 +347,8 @@ fn render_settings(
             error => error,
             blacklist => blacklist,
             has_feed_token => has_feed_token,
+            has_password => has_password,
+            fresh_login_minutes => crate::auth::FRESH_LOGIN.as_secs() / 60,
             can_invite => crate::invites::may_invite(&page.current),
             per_page => settings.per_page,
             default_per_page => page.state().search_config().per_page,
@@ -476,11 +489,13 @@ async fn save_settings(
     if let Some(error) = error {
         let has_feed_token =
             moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
+        let has_password = users::has_password(page.state().db.primary(), user.id).await?;
         return Ok(render_settings(
             &page,
             &settings,
             &blacklist,
             has_feed_token,
+            has_password,
             Some(error),
         ));
     }
@@ -824,6 +839,37 @@ mod tests {
         let refused = app.post_form("/settings", Some(&alice), &[], &big).await;
         assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert!(refused.body.contains("at most 64 KB"), "{}", refused.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn former_names_lead_only_to_active_users(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let member = session_for(&pool, "bob", SystemRole::Member).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let alice: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'alice'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        moekura_db::name_changes::rename(&pool, alice, "alice_private", Some(alice))
+            .await
+            .unwrap();
+        let old = app.get("/users/alice", None).await;
+        assert_eq!(old.status, StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(old.location.as_deref(), Some("/users/alice_private"));
+
+        sqlx::query("UPDATE users SET status = 'deactivated' WHERE id = $1")
+            .bind(alice)
+            .execute(&pool)
+            .await
+            .unwrap();
+        for session in [None, Some(member.as_str())] {
+            let hidden = app.get("/users/alice", session).await;
+            assert_eq!(hidden.status, StatusCode::NOT_FOUND);
+            assert_eq!(hidden.location, None);
+        }
+        let staff = app.get("/users/alice", Some(&admin)).await;
+        assert_eq!(staff.location.as_deref(), Some("/users/alice_private"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

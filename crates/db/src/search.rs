@@ -1326,8 +1326,15 @@ async fn resolve_filter(
             found(user.map(|user| Node::ByUser(link, user)))
         }
         Filter::Similar(post) => {
-            let hash = match crate::media::for_post(db, *post).await? {
-                Some(asset) => asset.phash,
+            // Only a post the viewer may see, or `similar:` would show
+            // what hidden posts look like.
+            let seen = crate::posts::by_id(db, *post)
+                .await?
+                .filter(|p| visibility.allows(p));
+            let hash = match seen {
+                Some(p) => crate::media::for_post(db, p.id)
+                    .await?
+                    .and_then(|asset| asset.phash),
                 None => None,
             };
             match hash {
@@ -1344,7 +1351,8 @@ async fn resolve_filter(
                     .map(|s| s.post_id)
                     .collect(),
                 ),
-                // Unknown or not yet processed: nothing to compare with.
+                // Unknown, hidden or not yet processed: nothing to compare
+                // with.
                 None => Node::Const(false),
             }
         }
@@ -2284,6 +2292,9 @@ mod tests {
             ("-age:<1w", by(&[1, 0])),
             ("updated:<2d", by(&[2, 1, 0])),
             ("updated:>1w", by(&[3])),
+            // Further back than times go: every post is newer.
+            ("age:<9223372036854775807y", by(&[3, 2, 1, 0])),
+            ("updated:>9223372036854775807s", by(&[])),
             ("order:change", by(&[2, 1, 0, 3])),
             ("order:change_asc", by(&[3, 0, 1, 2])),
         ];
@@ -2738,6 +2749,86 @@ mod tests {
             search(&pool, &format!("similar:{unprocessed}"))
                 .await
                 .is_empty()
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn similar_only_to_visible_posts(pool: PgPool) {
+        let shown = seed(&pool, Seed::default()).await;
+        let deleted = seed(
+            &pool,
+            Seed {
+                status: "deleted",
+                ..Seed::default()
+            },
+        )
+        .await;
+        let pending = seed(
+            &pool,
+            Seed {
+                status: "pending",
+                ..Seed::default()
+            },
+        )
+        .await;
+        let explicit = seed(
+            &pool,
+            Seed {
+                rating: "e",
+                ..Seed::default()
+            },
+        )
+        .await;
+        let banned = seed(
+            &pool,
+            Seed {
+                tags: &["banned_artist"],
+                ..Seed::default()
+            },
+        )
+        .await;
+        for post in [shown, deleted, pending, explicit, banned] {
+            let asset: i64 = sqlx::query_scalar("SELECT id FROM media_assets WHERE post_id = $1")
+                .bind(post)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            crate::media::mark_processed(&pool, asset, Some(0xF0F0_1234_5678_9ABC))
+                .await
+                .unwrap();
+        }
+        let banned_tag: i32 =
+            sqlx::query_scalar("SELECT id FROM tags WHERE name = 'banned_artist'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let visitor = Visibility {
+            hidden_tags: vec![banned_tag],
+            ratings: vec![Rating::General],
+            ..public()
+        };
+        assert_eq!(
+            search_as(&pool, &format!("similar:{shown}"), &visitor).await,
+            [shown]
+        );
+        // Posts the viewer can't see give nothing to compare with.
+        for hidden in [deleted, pending, explicit, banned] {
+            assert!(
+                search_as(&pool, &format!("similar:{hidden}"), &visitor)
+                    .await
+                    .is_empty(),
+                "{hidden}"
+            );
+        }
+        // Staff who see deleted posts can.
+        let staff = Visibility {
+            statuses: vec![PostStatus::Active, PostStatus::Flagged, PostStatus::Deleted],
+            ..public()
+        };
+        assert!(
+            search_as(&pool, &format!("similar:{deleted}"), &staff)
+                .await
+                .contains(&shown)
         );
     }
 

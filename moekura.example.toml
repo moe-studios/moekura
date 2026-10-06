@@ -5,7 +5,7 @@
 # MOEKURA_<SECTION>__<KEY>, e.g. MOEKURA_DATABASE__URL. Environment variables win
 # over this file. Values shown are the defaults unless noted.
 #
-# `moekura check-config` prints the effective settings.
+# `moekura check-config` prints the effective settings, credentials redacted.
 
 [server]
 # Address the HTTP server listens on.
@@ -35,6 +35,17 @@ allow_credentials = false
 # Seconds browsers may cache a preflight answer.
 max_age_secs = 600
 
+[server.connections]
+# Connections served at once; more wait until one closes. Each takes a
+# file descriptor: keep this well under `ulimit -n` (often 1024).
+max = 512
+# Close a connection that goes this many seconds without sending a whole
+# request's headers: one sending nothing, or too slowly, or left idle.
+idle_timeout_secs = 10
+# Then cut it off if the client takes none of its response for this many
+# seconds (while no request is being worked on): one that stopped reading.
+send_timeout_secs = 60
+
 [database]
 # Required. Connection URL of the primary.
 url = "postgres://moekura:CHANGE_ME@localhost/moekura"
@@ -63,6 +74,7 @@ session_max_days = 365
 
 # Logging in through an OpenID Connect provider (single sign-on). Register
 # <public_url>/login/oidc/callback as the redirect URI with the provider.
+# The provider is only reached over https (plain http only on this machine).
 # [auth.oidc]
 # issuer = "https://sso.example.com/application/o/moekura/"
 # client_id = "moekura"
@@ -71,8 +83,9 @@ session_max_days = 365
 # scopes = ["openid", "email", "profile"]
 
 # A captcha for sign-up and new users' comments (turned on under Admin →
-# Settings): "turnstile" (Cloudflare) or "hcaptcha", with the keys the
-# provider gives you.
+# Settings), and for logging in to an account while its password is being
+# guessed from many networks: "turnstile" (Cloudflare) or "hcaptcha",
+# with the keys the provider gives you.
 # [auth.captcha]
 # provider = "turnstile"
 # site_key = ""
@@ -102,9 +115,10 @@ run_in_serve = true
 lock_timeout_secs = 300
 
 [mail]
-# Outgoing mail, for email verification and password resets. Leave host
-# empty to turn mail off, along with the features that need it. Test it
-# with `moekura admin send-test-mail you@example.com`.
+# Outgoing mail, for email verification and password resets, and to warn
+# users about wrong two-factor codes and about someone trying to use their
+# address. Leave host empty to turn mail off, along with the features that
+# need it. Test it with `moekura admin send-test-mail you@example.com`.
 host = ""               # e.g. "smtp.example.com"
 # "starttls" (upgrade a plain connection; required), "tls" (TLS from the
 # start) or "none" (only for a relay on the same machine or network).
@@ -127,7 +141,8 @@ per_page = 40
 max_per_page = 200
 # Deepest numbered page; "next" links keep working beyond it.
 max_page = 1000
-# Most tags and filters in one search.
+# Most tags and filters in one search. Whatever this is, a search is also
+# at most 1000 words and 10,000 characters long.
 max_terms = 40
 # Most tags a wildcard like long_* expands to (the most used ones).
 wildcard_limit = 100
@@ -176,10 +191,11 @@ sample_size = 1600
 variant_format = "webp"
 tool_timeout_secs = 120
 # Remove identifying metadata (EXIF and GPS, XMP, IPTC, comments) from the
-# originals too, not only from thumbnails: "off" keeps originals exactly as
-# uploaded; "strip" cleans JPEG, PNG and WebP and keeps other types as
-# they are; "require" also refuses the other types.
-strip_metadata = "off"
+# originals too, not only from thumbnails: "strip" cleans JPEG, PNG and
+# WebP and keeps other types (GIF, AVIF, JPEG XL, videos, ugoira) as they
+# are; "require" also refuses the other types; "off" keeps originals
+# exactly as uploaded, metadata and all.
+strip_metadata = "strip"
 # Media tool processes at once in this process (uploads and jobs); 0: one
 # per CPU core.
 max_tool_processes = 0
@@ -189,6 +205,10 @@ ffmpeg_threads = 2
 # 0 for no limit. Linux only. Files needing more are refused.
 ffmpeg_memory_mb = 2048
 ffmpeg_cpu_secs = 0
+# The same for each vips, vipsheader and vipsthumbnail run. The largest
+# pictures max_pixels allows take about 4 GB to decode.
+vips_memory_mb = 4096
+vips_cpu_secs = 0
 # Scratch space for uploads and processing; the system temp dir by default.
 # work_dir = "/var/tmp/moekura"
 
@@ -205,6 +225,9 @@ ffprobe = "ffprobe"
 # the same relative path, e.g. <templates_override>/base.html. Unset by default.
 # templates_override = "/etc/moekura/templates"
 # static_override = "/etc/moekura/static"
+# A directory per language (de/*.ftl) adding languages or replacing
+# built-in messages; see "Translations" in the documentation.
+# locales_override = "/etc/moekura/locales"
 
 [tagger]
 # Suggest tags for new uploads with a machine learning model, run by
@@ -228,7 +251,8 @@ threads = 0
 # Posts tagged at once.
 workers = 1
 # Tags applied automatically (a site setting) are credited to this account,
-# created without a password on first use.
+# created without a password when `moekura tagger` starts. Nobody can sign
+# up with the name; an account someone made with it first isn't used.
 account = "tagger"
 
 [telemetry]
@@ -252,7 +276,7 @@ service_name = "moekura"
 [sources]
 # Logins for sites that show some works only to members, by domain; see
 # "Sites" in the documentation for which want what. Requests to the
-# domain and its subdomains carry them.
+# domain and its subdomains carry them, over https only.
 # [sources.logins."pixiv.net"]
 # cookie = "PHPSESSID=…"
 # [sources.logins."gelbooru.com"]
@@ -260,7 +284,8 @@ service_name = "moekura"
 # [sources.logins."baraag.net"]
 # headers = { Authorization = "Bearer …" }
 # Posts on X are also read as this account when the FxEmbed API below
-# can't give them; it needs the auth_token and ct0 cookies.
+# can't give them (for members who can upload, at most 30 links every 15
+# minutes on each web server); it needs the auth_token and ct0 cookies.
 # [sources.logins."x.com"]
 # cookie = "auth_token=…; ct0=…"
 
@@ -268,7 +293,7 @@ service_name = "moekura"
 # An FxEmbed instance's API (fxtwitter, fixupx or your own), which reads
 # posts on X, age-restricted ones too, without an account. Empty: don't
 # use one.
-fxembed_api = "https://api.fixupx.com"
+fxembed_api_url = "https://api.fixupx.com"
 
 [webhooks]
 # Let webhooks go to private, loopback and link-local addresses, e.g. a
@@ -277,3 +302,7 @@ fxembed_api = "https://api.fixupx.com"
 allow_private_addresses = false
 # Seconds a delivery may take.
 timeout_secs = 10
+# Deliveries sent at once, across all job workers. The rest wait their
+# turn, so receivers that don't answer can't hold every worker (keep it
+# below jobs.workers).
+max_concurrent = 1

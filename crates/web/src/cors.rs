@@ -250,7 +250,7 @@ mod tests {
             .unwrap();
 
         let response = app.raw(save_search(APP, None, Some(&key))).await;
-        assert_eq!(response.status(), 200);
+        assert_eq!(response.status(), 201);
         let headers = response.headers();
         assert_eq!(headers["access-control-allow-origin"], APP);
         assert!(
@@ -284,7 +284,7 @@ mod tests {
         let app = app(&pool, &[APP], true).await;
         let session = session_for(&pool, "alice", SystemRole::Member).await;
         let response = app.raw(save_search(APP, Some(&session), None)).await;
-        assert_eq!(response.status(), 200);
+        assert_eq!(response.status(), 201);
         let headers = response.headers();
         assert_eq!(headers["access-control-allow-origin"], APP);
         assert_eq!(headers["access-control-allow-credentials"], "true");

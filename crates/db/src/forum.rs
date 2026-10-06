@@ -10,12 +10,16 @@ pub struct Category {
     pub id: i16,
     pub name: String,
     pub description: String,
+    /// Only staff start topics here or move topics here.
+    pub staff_only: bool,
 }
 
 pub async fn categories(db: impl PgExecutor<'_>) -> sqlx::Result<Vec<Category>> {
-    sqlx::query_as("SELECT id, name, description FROM forum_categories ORDER BY position, id")
-        .fetch_all(db)
-        .await
+    sqlx::query_as(
+        "SELECT id, name, description, staff_only FROM forum_categories ORDER BY position, id",
+    )
+    .fetch_all(db)
+    .await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -267,18 +271,25 @@ pub async fn create_post(
     .await
 }
 
+/// Replaces a post's text. When `held` (for review, with why), the post is
+/// hidden until the staff approve it, as a new one would be.
 pub async fn update_post(
     db: impl PgExecutor<'_>,
     id: i64,
     body: &str,
     updater_id: Option<i64>,
+    held: Option<&str>,
 ) -> sqlx::Result<bool> {
     let done = sqlx::query(
-        "UPDATE forum_posts SET body = $2, updater_id = $3, updated_at = now() WHERE id = $1",
+        "UPDATE forum_posts SET body = $2, updater_id = $3, updated_at = now(),
+                is_hidden = is_hidden OR $4::text IS NOT NULL,
+                held_reason = coalesce($4, held_reason)
+         WHERE id = $1",
     )
     .bind(id)
     .bind(body)
     .bind(updater_id)
+    .bind(held)
     .execute(db)
     .await?;
     Ok(done.rows_affected() > 0)
@@ -555,6 +566,18 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn site_news_is_for_staff(pool: PgPool) {
+        let staff_only: Vec<String> = categories(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|c| c.staff_only)
+            .map(|c| c.name)
+            .collect();
+        assert_eq!(staff_only, ["Site news"]);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn topics_posts_votes_and_reading(pool: PgPool) {
         let alice = user(&pool, "alice").await;
         let bob = user(&pool, "bob").await;
@@ -608,6 +631,30 @@ mod tests {
         .unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].id, reply);
+
+        // A held edit hides the post until the staff approve it.
+        update_post(&pool, reply, "Spam now", Some(bob), Some("links"))
+            .await
+            .unwrap();
+        let held: (String, bool, Option<String>) =
+            sqlx::query_as("SELECT body, is_hidden, held_reason FROM forum_posts WHERE id = $1")
+                .bind(reply)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(held, ("Spam now".into(), true, Some("links".into())));
+        assert_eq!(
+            super::topic(&pool, None, topic)
+                .await
+                .unwrap()
+                .unwrap()
+                .post_count,
+            1
+        );
+        update_post(&pool, first, "First post, edited", Some(alice), None)
+            .await
+            .unwrap();
+        assert!(!post(&pool, first).await.unwrap().unwrap().is_hidden);
         set_post_hidden(&pool, reply, true).await.unwrap();
         assert_eq!(
             super::topic(&pool, None, topic)

@@ -20,9 +20,10 @@
 //! [`Query::parse`] only checks syntax; resolving tags and users is the
 //! planner's job.
 
+use std::collections::HashMap;
 use std::fmt;
 
-use time::{Date, Duration, Month};
+use time::{Date, Month};
 
 use crate::posts::{PostStatus, Rating};
 use crate::tags::{RESERVED_PREFIXES, TagName, TagNameError, normalize};
@@ -59,6 +60,7 @@ pub const METATAGS: &[&str] = &[
     "ordfav",
     "similar",
     "commentcount",
+    "comment_count",
     "pool",
     "ordpool",
     "search",
@@ -66,6 +68,7 @@ pub const METATAGS: &[&str] = &[
     "ordfavgroup",
     "note",
     "notecount",
+    "note_count",
     "ai",
     "child",
     "is",
@@ -277,6 +280,11 @@ impl AgeUnit {
 }
 
 impl Age {
+    /// A thousand years: older than any post. Longer ages mean the same,
+    /// and are cut to this, since times that far back are out of the
+    /// database's range.
+    const MAX_SECONDS: i64 = 1000 * 365 * 86_400;
+
     pub fn seconds(self) -> i64 {
         let unit = match self.unit {
             AgeUnit::Seconds => 1,
@@ -287,7 +295,7 @@ impl Age {
             AgeUnit::Months => 30 * 86_400,
             AgeUnit::Years => 365 * 86_400,
         };
-        self.amount.saturating_mul(unit)
+        self.amount.saturating_mul(unit).min(Self::MAX_SECONDS)
     }
 }
 
@@ -582,9 +590,15 @@ impl Order {
         ("comment_count", Order::CommentCountDesc),
         ("comment_count_desc", Order::CommentCountDesc),
         ("comment_count_asc", Order::CommentCountAsc),
+        ("commentcount", Order::CommentCountDesc),
+        ("commentcount_desc", Order::CommentCountDesc),
+        ("commentcount_asc", Order::CommentCountAsc),
         ("note_count", Order::NoteCountDesc),
         ("note_count_desc", Order::NoteCountDesc),
         ("note_count_asc", Order::NoteCountAsc),
+        ("notecount", Order::NoteCountDesc),
+        ("notecount_desc", Order::NoteCountDesc),
+        ("notecount_asc", Order::NoteCountAsc),
         ("custom", Order::Custom),
         ("md5", Order::Md5Desc),
         ("md5_desc", Order::Md5Desc),
@@ -608,6 +622,12 @@ pub const RANK_DAYS: i32 = 2;
 
 /// Deepest nesting of parentheses a search may use.
 pub const MAX_DEPTH: usize = 10;
+
+/// Longest search, in characters, and most words in one. Far above the
+/// site's limit on terms (`search.max_terms`), they're checked before
+/// anything else so a huge search is refused without being read.
+pub const MAX_LEN: usize = 10_000;
+pub const MAX_WORDS: usize = 1_000;
 
 /// A term of a nested search (see [`Query::groups`]).
 #[derive(Debug, Clone, PartialEq)]
@@ -658,23 +678,35 @@ impl Expr {
     fn simplify_list(items: Vec<Expr>, and: bool) -> Expr {
         let mut flat: Vec<Expr> = Vec::with_capacity(items.len());
         for item in items {
-            let nested = match item.simplify() {
-                Expr::And(inner) if and => inner,
-                Expr::Or(inner) if !and => inner,
-                other => vec![other],
-            };
-            for item in nested {
-                if !flat.contains(&item) {
-                    flat.push(item);
-                }
+            match item.simplify() {
+                Expr::And(inner) if and => flat.extend(inner),
+                Expr::Or(inner) if !and => flat.extend(inner),
+                other => flat.push(other),
             }
         }
+        let mut flat = distinct(flat);
         match (flat.len(), and) {
             (1, _) => flat.pop().expect("one item"),
             (_, true) => Expr::And(flat),
             (_, false) => Expr::Or(flat),
         }
     }
+}
+
+/// `items` without repeats, first ones kept, in order. Only items that
+/// print the same are compared, so long lists stay quick; equal items
+/// always do (apart from `-0` and `0`, which are then both kept).
+fn distinct<T: PartialEq + fmt::Display>(items: Vec<T>) -> Vec<T> {
+    let mut by_text: HashMap<String, Vec<usize>> = HashMap::with_capacity(items.len());
+    let mut out: Vec<T> = Vec::with_capacity(items.len());
+    for item in items {
+        let same = by_text.entry(item.to_string()).or_default();
+        if !same.iter().any(|&i| out[i] == item) {
+            same.push(out.len());
+            out.push(item);
+        }
+    }
+    out
 }
 
 /// A parsed search.
@@ -729,6 +761,8 @@ pub enum SearchError {
     DanglingOr,
     #[error("parentheses may be nested at most {MAX_DEPTH} deep")]
     TooDeep,
+    #[error("a search may have at most {MAX_WORDS} words and {MAX_LEN} characters")]
+    TooLong,
 }
 
 /// A piece of a search: see [`tokenize`].
@@ -878,6 +912,10 @@ impl<'a> Parser<'_, 'a> {
 
 impl Query {
     pub fn parse(input: &str) -> Result<Self, SearchError> {
+        if input.chars().nth(MAX_LEN).is_some() || input.split_whitespace().nth(MAX_WORDS).is_some()
+        {
+            return Err(SearchError::TooLong);
+        }
         let mut query = Query::default();
         let tokens = tokenize(input)?;
         let mut depth = 0usize;
@@ -900,16 +938,17 @@ impl Query {
             Expr::And(items) => items.into_iter().for_each(|item| query.place(item)),
             expr => query.place(expr),
         }
+        // Placing can repeat a term: `-(a or b) -a` excludes `a` twice.
+        query.all = distinct(std::mem::take(&mut query.all));
+        query.none = distinct(std::mem::take(&mut query.none));
+        query.conditions = distinct(std::mem::take(&mut query.conditions));
+        query.groups = distinct(std::mem::take(&mut query.groups));
         Ok(query)
     }
 
-    /// Adds a term of the top level where the planner wants it.
+    /// Adds a term of the top level where the planner wants it, repeats
+    /// and all.
     fn place(&mut self, expr: Expr) {
-        fn push<T: PartialEq>(list: &mut Vec<T>, item: T) {
-            if !list.contains(&item) {
-                list.push(item);
-            }
-        }
         let tags = |items: &[Expr]| {
             items
                 .iter()
@@ -920,36 +959,28 @@ impl Query {
                 .collect::<Option<Vec<_>>>()
         };
         match expr {
-            Expr::Tag(term) => push(&mut self.all, term),
-            Expr::Filter(filter) => push(
-                &mut self.conditions,
-                Condition {
-                    negated: false,
-                    filter,
-                },
-            ),
+            Expr::Tag(term) => self.all.push(term),
+            Expr::Filter(filter) => self.conditions.push(Condition {
+                negated: false,
+                filter,
+            }),
             Expr::Not(inner) => match *inner {
-                Expr::Tag(term) => push(&mut self.none, term),
-                Expr::Filter(filter) => push(
-                    &mut self.conditions,
-                    Condition {
-                        negated: true,
-                        filter,
-                    },
-                ),
+                Expr::Tag(term) => self.none.push(term),
+                Expr::Filter(filter) => self.conditions.push(Condition {
+                    negated: true,
+                    filter,
+                }),
                 // Neither of them: each excluded.
                 Expr::Or(items) if tags(&items).is_some() => {
-                    for term in tags(&items).expect("checked") {
-                        push(&mut self.none, term);
-                    }
+                    self.none.extend(tags(&items).expect("checked"));
                 }
-                inner => push(&mut self.groups, Expr::Not(Box::new(inner))),
+                inner => self.groups.push(Expr::Not(Box::new(inner))),
             },
             Expr::Or(items) if self.any.is_empty() && tags(&items).is_some() => {
                 self.any = tags(&items).expect("checked");
             }
             Expr::And(items) => items.into_iter().for_each(|item| self.place(item)),
-            expr => push(&mut self.groups, expr),
+            expr => self.groups.push(expr),
         }
     }
 
@@ -1162,7 +1193,10 @@ impl Query {
                     _ => Filter::Downvote(value),
                 }
             }
-            "notecount" => Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
+            // Both spellings, as `order:` takes both.
+            "notecount" | "note_count" => {
+                Filter::NoteCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?)
+            }
             "favgroup" => Filter::FavGroup(match value {
                 "" => return Err(invalid("expected a favorite group name or id, any or none")),
                 "any" => PoolFilter::Any,
@@ -1226,7 +1260,7 @@ impl Query {
             "id" => Filter::Id(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "score" => Filter::Score(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
             "favcount" => Filter::FavCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
-            "commentcount" => {
+            "commentcount" | "comment_count" => {
                 Filter::CommentCount(bound(value, int).ok_or_else(|| invalid(NUMBER))?)
             }
             "width" => Filter::Width(bound(value, int).ok_or_else(|| invalid(NUMBER))?),
@@ -1506,7 +1540,8 @@ fn period(s: &str) -> Option<(Date, Date)> {
         }
         (Some(m), Some(d)) => {
             let start = Date::from_calendar_date(year, month_of(m)?, u8::try_from(d).ok()?).ok()?;
-            Some((start, start + Duration::days(1)))
+            // None after the last day there can be.
+            Some((start, start.next_day()?))
         }
     }
 }
@@ -1539,11 +1574,16 @@ fn write_dates(
     from: Option<Date>,
     until: Option<Date>,
 ) -> fmt::Result {
-    let last = |d: Date| d - Duration::days(1);
+    let last = |d: Date| d.previous_day().unwrap_or(d);
+    // The last day there is doesn't read back (it has no day after), so
+    // it is written through the day before.
+    let end = |d: Date| d.next_day().is_none();
     match (from, until) {
         (Some(a), Some(b)) if a == last(b) => write!(f, "{name}:{a}"),
         (Some(a), Some(b)) => write!(f, "{name}:{a}..{}", last(b)),
+        (Some(a), None) if end(a) => write!(f, "{name}:>{}", last(a)),
         (Some(a), None) => write!(f, "{name}:>={a}"),
+        (None, Some(b)) if end(b) => write!(f, "{name}:<={}", last(b)),
         (None, Some(b)) => write!(f, "{name}:<{b}"),
         (None, None) => write!(f, "{name}:>=0001-01-01"),
     }
@@ -1828,13 +1868,39 @@ mod tests {
             range("date:2026-01..2026-03"),
             (Some(date!(2026 - 01 - 01)), Some(date!(2026 - 04 - 01)))
         );
+        assert_eq!(
+            range("date:9999-12-30"),
+            (Some(date!(9999 - 12 - 30)), Some(date!(9999 - 12 - 31)))
+        );
+        // The day after the last one there can be isn't a date.
         for bad in [
             "date:2026-13",
             "date:2026-02-30",
             "date:soon",
             "date:2026,2027",
+            "date:9999-12-31",
+            "date:>9999-12-31",
+            "date:2026..9999-12-31",
+            "date:9999",
         ] {
             assert!(error(bad).contains("expected a date"), "{bad}");
+        }
+        assert!(error("updated:9999-12-31").contains("expected an age"));
+        assert!(error("-updated:<=9999-12-31").contains("expected an age"));
+        // Ranges ending on the last day print as searches that read back.
+        assert_eq!(
+            range("date:>9999-12-30"),
+            (Some(date!(9999 - 12 - 31)), None)
+        );
+        for input in [
+            "date:>9999-12-30",
+            "date:<=9999-12-30",
+            "-updated:>9999-12-30",
+            "updated:<=9999-12-30",
+        ] {
+            let printed = parse(input).to_string();
+            assert_eq!(printed, input);
+            assert_eq!(parse(&printed), parse(input));
         }
     }
 
@@ -2011,6 +2077,10 @@ mod tests {
         assert_eq!(parse("has:pools"), parse("pool:any"));
         assert_eq!(parse("has:notes"), parse("notecount:>0"));
         assert_eq!(parse("has:comments"), parse("commentcount:>0"));
+        assert_eq!(parse("comment_count:>0"), parse("commentcount:>0"));
+        assert_eq!(parse("note_count:2"), parse("notecount:2"));
+        assert_eq!(parse("order:notecount_asc"), parse("order:note_count_asc"));
+        assert_eq!(parse("order:commentcount"), parse("order:comment_count"));
         assert_eq!(filter("has:source"), Filter::Source(SourceFilter::Any));
         assert_eq!(
             parse("-has:source child:none").to_string(),
@@ -2077,6 +2147,20 @@ mod tests {
         };
         assert_eq!((a, b.unit), (days(2), AgeUnit::Months));
         assert_eq!(b.seconds(), 30 * 86_400);
+        // Older than any post: cut to a thousand years, which the
+        // database can still subtract from now.
+        let Filter::Age(Bound::Lt(huge)) = filter("age:<9223372036854775807y") else {
+            panic!()
+        };
+        assert_eq!(huge.seconds(), 1000 * 365 * 86_400);
+        assert_eq!(
+            Age {
+                amount: 999,
+                unit: AgeUnit::Years
+            }
+            .seconds(),
+            999 * 365 * 86_400
+        );
         assert_eq!(parse("age:>12MIN").to_string(), "age:>12mi");
         assert!(error("age:soon").contains("expected an age"));
         assert!(error("age:1d,2d").contains("expected an age"));
@@ -2234,6 +2318,50 @@ mod tests {
         );
         // Metatags inside groups are checked like any other.
         assert!(error("(a or rating:x)").contains("expected ratings"));
+    }
+
+    #[test]
+    fn long_searches() {
+        let too_long = "a search may have at most 1000 words and 10000 characters";
+        let words = |n: usize, word: &dyn Fn(usize) -> String| {
+            (0..n).map(word).collect::<Vec<_>>().join(" ")
+        };
+        let at_most = parse(&words(MAX_WORDS, &|i| format!("t{i}")));
+        assert_eq!(at_most.all.len(), MAX_WORDS);
+        assert_eq!(error(&words(MAX_WORDS + 1, &|i| format!("t{i}"))), too_long);
+        assert_eq!(error(&"a".repeat(MAX_LEN + 1)), too_long);
+        // Characters, not bytes.
+        let cat = "猫".repeat(crate::tags::TAG_MAX_LEN);
+        let cats = words(MAX_LEN / (cat.chars().count() + 1), &|_| cat.clone());
+        assert!(cats.len() > MAX_LEN);
+        assert_eq!(parse(&cats).all, [name(&cat)]);
+        // Refused before it's read, however it's put together.
+        let form_sized = words(100_000, &|i| format!("(t{i} or u{i})"));
+        assert_eq!(error(&form_sized), too_long);
+
+        // Repeats are dropped, in and out of groups, keeping the first.
+        let many = words(200, &|i| {
+            format!("t{} -u{} (v{} or rating:e)", i % 7, i % 5, i % 3)
+        });
+        let query = parse(&many);
+        assert_eq!(query.all.len(), 7);
+        assert_eq!(query.none.len(), 5);
+        assert_eq!(query.groups.len(), 3);
+        assert_eq!(query.term_count(), 7 + 5 + 3 * 2);
+        assert_eq!(parse(&query.to_string()), query);
+        let query =
+            parse("-(a or b) -a -b c (d or rating:e) c (d or rating:e) -rating:g -rating:g");
+        assert_eq!(query.none, [name("a"), name("b")]);
+        assert_eq!(query.all, [name("c")]);
+        assert_eq!(query.conditions.len(), 1);
+        assert_eq!(query.groups.len(), 1);
+        // Different terms that print alike are both kept: a tag named `or`
+        // between two others isn't the `or` of them.
+        let query = parse("x or -(a general:or b) or -(a or b)");
+        assert!(
+            matches!(&query.groups[..], [Expr::Or(items)] if items.len() == 3),
+            "{query:?}"
+        );
     }
 
     #[test]

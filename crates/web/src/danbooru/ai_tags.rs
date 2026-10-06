@@ -109,6 +109,9 @@ fn score_range(value: &str) -> Result<(i32, i32), AppError> {
     })
 }
 
+/// How far numbered pages go: each page walks the suggestions before it.
+const MAX_ROWS: i64 = 20_000;
+
 async fn list(
     State(state): State<AppState>,
     current: CurrentUser,
@@ -131,15 +134,13 @@ async fn list(
         _ => None,
     };
     let seen = visibility(&current);
-    let statuses: Vec<&str> = seen.statuses.iter().map(|s| s.as_str()).collect();
     let filter = SuggestionFilter {
         post_ids: &post_ids,
         tag_ids: &tag_ids,
         tag_names: &tag_names,
         posted,
         score: score_range(&params.score)?,
-        statuses: &statuses,
-        viewer: seen.viewer,
+        visibility: &seen,
     };
     let limit = params.list.limit(1000);
     let page = params
@@ -149,13 +150,14 @@ async fn list(
         .parse::<u32>()
         .unwrap_or(1)
         .clamp(1, 1000);
-    let found = tag_suggestions::list(
-        db,
-        &filter,
-        i64::from(page - 1) * i64::from(limit),
-        i64::from(limit),
-    )
-    .await?;
+    let (offset, limit) = (i64::from(page - 1) * i64::from(limit), i64::from(limit));
+    if offset + limit > MAX_ROWS {
+        return Err(AppError::BadRequest(format!(
+            "Numbered pages go only as far as the first {MAX_ROWS} suggestions; \
+             narrow the search, e.g. by `search[post_id]`"
+        )));
+    }
+    let found = tag_suggestions::list(db, &filter, offset, limit).await?;
     json(
         found.into_iter().map(AiTag::from).collect::<Vec<_>>(),
         &params.list.only,
@@ -164,6 +166,7 @@ async fn list(
 
 #[cfg(test)]
 mod tests {
+    use axum::http::StatusCode;
     use moekura_core::permissions::SystemRole;
     use moekura_core::posts::Rating;
     use moekura_db::tag_suggestions::NewResult;
@@ -256,5 +259,68 @@ mod tests {
             get(&format!("?search[post_id]={}", post_id + 1)).await,
             serde_json::json!([])
         );
+        // Numbered pages stop short of deep ones.
+        assert_eq!(get("?limit=1000&page=20").await, serde_json::json!([]));
+        let deep = app.get("/ai_tags.json?limit=1000&page=21", None).await;
+        assert_eq!(deep.status, StatusCode::BAD_REQUEST, "{}", deep.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn leaves_out_posts_the_viewer_cant_see(pool: PgPool) {
+        moekura_db::settings::set(&pool, "visitor_ratings", serde_json::json!(["g"]))
+            .await
+            .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let wanted = ["cat", "banned_artist"].map(|name| WantedTag {
+            name,
+            category_id: None,
+        });
+        let found = tags::ensure(&mut conn, &wanted, false).await.unwrap();
+        let id = |name: &str| found.iter().find(|t| t.name == name).unwrap().id;
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('banned_artist', true)")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let mut posts = Vec::new();
+        for (rating, tag_ids) in [
+            ("g", vec![]),
+            ("e", vec![]),
+            ("g", vec![id("banned_artist")]),
+        ] {
+            let post: i64 = sqlx::query_scalar(
+                "INSERT INTO posts (rating, tag_ids) VALUES ($1, $2) RETURNING id",
+            )
+            .bind(rating)
+            .bind(tag_ids)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+            moekura_db::tag_suggestions::save(
+                &mut conn,
+                &NewResult {
+                    post_id: post,
+                    model: "m",
+                    rating: Rating::General,
+                    rating_confidence: 0.9,
+                    suggestions: &[(id("cat"), 0.9)],
+                },
+            )
+            .await
+            .unwrap();
+            posts.push(post);
+        }
+        let app = TestApp::new(test_state(&pool).await, crate::danbooru::routes(1024));
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let listed = async |session: Option<&str>| -> Vec<i64> {
+            let response = app.get("/ai_tags.json", session).await;
+            let found: Vec<Value> = serde_json::from_str(&response.body).unwrap();
+            found
+                .iter()
+                .map(|s| s["post_id"].as_i64().unwrap())
+                .collect()
+        };
+        assert_eq!(listed(None).await, [posts[0]]);
+        // Members see every rating, but not banned artists' posts.
+        assert_eq!(listed(Some(&alice)).await, [posts[1], posts[0]]);
     }
 }

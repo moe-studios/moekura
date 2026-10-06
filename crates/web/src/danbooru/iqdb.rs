@@ -7,6 +7,7 @@ use axum::extract::{FromRequest, Multipart, Query, Request, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::response::Response;
 use axum::routing::get;
+use futures_util::StreamExt;
 use moekura_core::permissions::Permission;
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +17,10 @@ use crate::AppState;
 use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::image_search::Asked;
+
+/// Most bytes a POST without a file may send: its fields are a link or a
+/// post id.
+const FIELDS_MAX: usize = 64 * 1024;
 
 pub(super) fn routes(max_upload_bytes: u64) -> Router<AppState> {
     Router::new().route(
@@ -98,6 +103,9 @@ async fn post(
     info: RequestInfo,
     request: Request,
 ) -> Result<Response, AppError> {
+    // Before the body, so a visitor to a private site can't make it
+    // store files.
+    current.require(Permission::ViewPosts)?;
     let multipart = request
         .headers()
         .get(CONTENT_TYPE)
@@ -108,6 +116,17 @@ async fn post(
             .map_err(|e| AppError::BadRequest(e.body_text()))?;
         Asked::from_multipart(&state, form).await?
     } else {
+        // Only a file may take the route's limit, which is sized for one.
+        let (parts, body) = request.into_parts();
+        let (mut chunks, mut body) = (body.into_data_stream(), Vec::new());
+        while let Some(chunk) = chunks.next().await {
+            let chunk = chunk.map_err(|e| AppError::BadRequest(e.to_string()))?;
+            if body.len() + chunk.len() > FIELDS_MAX {
+                return Err(crate::upload::TextFieldError::TooLong.into());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let request = Request::from_parts(parts, body.into());
         let fields = Fields::from_request(request, &state).await?;
         let field = |names: [&str; 2]| names.iter().find_map(|n| fields.get(n)).unwrap_or_default();
         Asked {
@@ -121,6 +140,11 @@ async fn post(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
     use moekura_core::permissions::SystemRole;
     use serde_json::Value;
     use sqlx::PgPool;
@@ -154,5 +178,31 @@ mod tests {
         assert_eq!(found[0]["score"].as_f64(), Some(98.4));
         assert_eq!(found[0]["post"]["id"].as_i64(), Some(second));
         assert_eq!(found.as_array().unwrap().len(), 1, "not the post itself");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn private_sites_refuse_before_reading_files(pool: PgPool) {
+        sqlx::query("UPDATE roles SET permissions = permissions & ~1::bigint WHERE system_key = 'anonymous'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = app(&pool).await;
+        let read = Arc::new(AtomicBool::new(false));
+        let body = {
+            let read = Arc::clone(&read);
+            futures_util::stream::once(async move {
+                read.store(true, Ordering::SeqCst);
+                let part = "--b\r\nContent-Disposition: form-data; name=\"file\"; \
+                            filename=\"a.png\"\r\n\r\npng\r\n--b--\r\n";
+                Ok::<_, std::io::Error>(axum::body::Bytes::from(part))
+            })
+        };
+        let request = Request::post("/iqdb_queries.json")
+            .header("content-type", "multipart/form-data; boundary=b")
+            .body(Body::from_stream(body))
+            .unwrap();
+        let response = app.raw(request).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(!read.load(Ordering::SeqCst), "the body was read");
     }
 }

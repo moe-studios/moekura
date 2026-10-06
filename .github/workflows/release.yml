@@ -118,7 +118,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # Releases get semver tags (latest only for stable releases), main
+      # Releases get semver tags (the major alone from 1.0, latest only for
+      # stable releases), main
       # gets edge, and both get short and full commit tags. The tagger
       # gets the same tags with -tagger appended.
       - id: app
@@ -128,6 +129,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
             type=edge,branch=main
             type=sha,prefix=git-
             type=sha,prefix=git-,format=long
@@ -139,6 +141,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}},enable=${{ !startsWith(github.ref, 'refs/tags/v0.') }}
             type=edge,branch=main
             type=sha,prefix=git-
             type=sha,prefix=git-,format=long

@@ -223,6 +223,11 @@ pub(crate) async fn request_relation(
             "The reason may be at most {REASON_MAX_LEN} characters."
         )));
     }
+    // Requests that wait land in the queue and open a forum topic each;
+    // tag managers' take effect at once, as their approvals do.
+    if !current.can(Permission::ManageTags) {
+        state.rate_limits.check_request(user.id).await?;
+    }
 
     let db = state.db.primary();
     let request = NewRequest {
@@ -327,10 +332,24 @@ pub(crate) async fn decide(
     let result = match decision {
         Decision::Approve => tag_relations::approve(db, id, user.id).await,
         Decision::Reject => tag_relations::reject(db, id, user.id).await,
-        Decision::Remove => tag_relations::remove(db, id, user.id)
-            .await
-            .map(|_| ())
-            .map_err(RelationError::Db),
+        Decision::Remove => {
+            // A requester withdraws only while it's pending, though it was
+            // approved since it was read: ending relations is for managers.
+            let from: &[Status] = if manage {
+                &[Status::Pending, Status::Active]
+            } else {
+                &[Status::Pending]
+            };
+            match tag_relations::remove(db, id, user.id, from).await {
+                Ok(false) if !manage => {
+                    return Err(AppError::Unprocessable(
+                        "Only pending requests can be withdrawn.".into(),
+                    ));
+                }
+                Ok(_) => Ok(()),
+                Err(e) => Err(RelationError::Db(e)),
+            }
+        }
     };
     match result {
         Ok(()) => {
@@ -474,6 +493,53 @@ mod tests {
             response.body
         );
         assert!(response.body.contains("value=\"kitten\""));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn withdrawing_leaves_a_request_approved_meanwhile(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, routes());
+        let member = session_for(&pool, "alice", SystemRole::Member).await;
+        let request = form(&[("antecedent", "kitty"), ("consequent", "cat")]);
+        app.post_form("/tags/aliases", Some(&member), &[], &request)
+            .await;
+        let id = tag_relations::list(&pool, Kind::Alias, None, "", 0, 10)
+            .await
+            .unwrap()[0]
+            .id;
+        // Approved after the withdrawal read it as pending, before it
+        // changed it.
+        let mut approval = pool.begin().await.unwrap();
+        sqlx::query("UPDATE tag_relations SET status = 'active' WHERE id = $1")
+            .bind(id)
+            .execute(&mut *approval)
+            .await
+            .unwrap();
+        let remove = format!("/tags/aliases/{id}/remove");
+        let withdraw = app.post(&remove, Some(&member), &[]);
+        let approve = async {
+            loop {
+                let waiting: bool = sqlx::query_scalar(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                                    WHERE datname = current_database() AND wait_event_type = 'Lock')",
+                )
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if waiting {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            approval.commit().await.unwrap();
+        };
+        let (response, ()) = tokio::join!(withdraw, approve);
+        assert_eq!(
+            response.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{}",
+            response.body
+        );
+        assert_eq!(status_of(&pool, id).await, Status::Active);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

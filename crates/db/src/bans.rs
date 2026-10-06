@@ -195,6 +195,38 @@ pub async fn lift_network(
     Ok(network)
 }
 
+/// The network of ban `id`, locked until the transaction ends; `None` if
+/// it was lifted.
+pub async fn lock_network(conn: &mut PgConnection, id: i64) -> sqlx::Result<Option<IpNet>> {
+    sqlx::query_scalar("SELECT network FROM ip_bans WHERE id = $1 AND lifted_at IS NULL FOR UPDATE")
+        .bind(id)
+        .fetch_optional(conn)
+        .await
+}
+
+/// Lifts every network ban in force that covers `network` or lies within
+/// it, returning their networks.
+pub async fn lift_networks_overlapping(
+    conn: &mut PgConnection,
+    network: IpNet,
+    lifter_id: Option<i64>,
+) -> sqlx::Result<Vec<IpNet>> {
+    let lifted: Vec<IpNet> = sqlx::query_scalar(
+        "UPDATE ip_bans SET lifted_at = now(), lifter_id = $2
+         WHERE network && $1 AND lifted_at IS NULL
+           AND (expires_at IS NULL OR expires_at > now())
+         RETURNING network",
+    )
+    .bind(network.trunc())
+    .bind(lifter_id)
+    .fetch_all(&mut *conn)
+    .await?;
+    if !lifted.is_empty() {
+        announce(conn).await?;
+    }
+    Ok(lifted)
+}
+
 /// A network ban in force, as the site cache keeps them.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct NetworkBan {
@@ -334,6 +366,53 @@ mod tests {
                 .unwrap();
         assert_eq!(lifted_by, Some(lifter));
         assert!(lift_network(&mut conn, id, None).await.unwrap().is_none());
+        assert!(lock_network(&mut conn, id).await.unwrap().is_none());
         assert_eq!(networks_in_force(&pool).await.unwrap().len(), 1);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn lifting_the_bans_on_a_range(pool: PgPool) {
+        let mut conn = pool.acquire().await.unwrap();
+        for range in [
+            "203.0.0.0/16",
+            "203.0.113.0/24",
+            "203.0.113.7/32",
+            "198.51.100.0/24",
+        ] {
+            ban_network(&mut conn, range.parse().unwrap(), "x", None, true, None)
+                .await
+                .unwrap();
+        }
+        let id = ban_network(
+            &mut conn,
+            "2001:db8::/64".parse().unwrap(),
+            "x",
+            None,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            lock_network(&mut conn, id).await.unwrap(),
+            Some("2001:db8::/64".parse().unwrap())
+        );
+        // Those covering the address, and those within the range.
+        let mut lifted =
+            lift_networks_overlapping(&mut conn, "203.0.113.0/24".parse().unwrap(), None)
+                .await
+                .unwrap();
+        lifted.sort();
+        assert_eq!(
+            lifted.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["203.0.0.0/16", "203.0.113.0/24", "203.0.113.7/32"]
+        );
+        assert!(
+            lift_networks_overlapping(&mut conn, "203.0.113.9/32".parse().unwrap(), None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(networks_in_force(&pool).await.unwrap().len(), 2);
     }
 }

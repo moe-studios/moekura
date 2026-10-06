@@ -10,12 +10,19 @@ Anyone with **Create and edit pools** (members, by default) can start a
 pool with **New pool** and change any pool's name, kind, description and
 posts. The posts are a list of post numbers in order; on the edit page
 you can also drag the thumbnails into order. To add one post, open it
-and use **Add to a pool** beside it, which puts it at the end.
+and use **Add to a pool** beside it, which puts it at the end. Only
+posts you can see go in, and not deleted ones: a post you can't see is
+refused as if it didn't exist. Posts already in a pool stay when you
+save it, even those you can't see, and everyone sees only the posts in
+it they may see (on its page, in the reader and through the APIs).
 
 Every change is kept: **History** shows who added, removed or reordered
-posts, and any version can be restored. If someone else saves the pool
-while you're editing it, you're told instead of overwriting their
-change. Staff who can delete posts can also delete and restore pools.
+posts (linking the first 100 posts a change added or removed, and
+counting the rest), and any version can be restored (posts taken out
+since come back only if they could be added again). If someone else
+saves the pool while you're editing it, you're told instead of
+overwriting their change. Staff who can delete posts can also delete
+and restore pools.
 **Recent changes** on the pool list (`/pool_versions`) shows the changes
 to every pool, newest first, and can be filtered by user.
 

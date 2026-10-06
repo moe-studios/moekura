@@ -2,7 +2,7 @@
 //! strategy reads the work's page; a site without one (or a link that
 //! isn't a work) gets what the link itself says.
 
-use moekura_core::sites::{Kind, SourceUrl};
+use moekura_core::sites::{Kind, SourceUrl, encoded_url};
 use url::Url;
 
 use super::{
@@ -115,14 +115,16 @@ pub(super) async fn fetch(
 ) -> Result<Option<SourceInfo>, String> {
     if depth < 2 && is_short_link(url) {
         // Where it leads is what it says.
-        let target = http.final_url(url.as_str(), &[]).await?;
+        let target = http.final_url_without_login(url.as_str()).await?;
         if target.host_str() == url.host_str() {
             return Ok(None);
         }
         return http.redirected(&target, depth + 1).await;
     }
     let read = match known.page_url.as_deref() {
-        Some(page) => strategy(http, known, page, depth).await,
+        Some(page) if super::is_canonical(page) => strategy(http, known, page, depth).await,
+        // Read as a page, without a login.
+        Some(page) => Some(Err(format!("{page} isn't the work's own page"))),
         None => None,
     };
     let read = match read {
@@ -279,15 +281,18 @@ async fn generic(
     known: &SourceUrl,
     url: &Url,
 ) -> Result<Option<SourceInfo>, String> {
+    // Canonical forms come encoded (`sites::parse`); so must the link as
+    // typed, which `Url` leaves with `'` in its path.
+    let link = encoded_url(url.as_str());
     let page = known.page_url.clone();
     match known.kind() {
         Kind::File => {
-            let mut info = SourceInfo::new(known.site, page.unwrap_or_else(|| url.to_string()));
-            info.files = vec![known.file_url.clone().unwrap_or_else(|| url.to_string())];
+            let mut info = SourceInfo::new(known.site, page.unwrap_or_else(|| link.clone()));
+            info.files = vec![known.file_url.clone().unwrap_or(link)];
             Ok(Some(info))
         }
         Kind::Page => {
-            let page = page.unwrap_or_else(|| url.to_string());
+            let page = page.unwrap_or(link);
             let parsed = Url::parse(&page).map_err(|e| e.to_string())?;
             let found = opengraph::fetch(http, &parsed).await.unwrap_or(None);
             let mut info = found.unwrap_or_else(|| SourceInfo::new(known.site, page.clone()));

@@ -67,7 +67,7 @@
       <dt>{{ t("api-type") }}</dt><dd>{{ file.media_type|upper }}{% if file.duration %} · {{ file.duration }}{% endif %}{% if file.animated %} · {{ t("post-animated") }}{% endif %}</dd>
       <dt>{{ t("upload-size") }}</dt><dd>{{ file.width }}×{{ file.height }} · {{ file.size }}</dd>
       {% endif %}
-      {% if upload.source %}<dt>{{ t("upload-from") }}</dt><dd class="source">{{ site_icon(upload.source) }}<a href="{{ upload.source }}" rel="noopener noreferrer nofollow">{{ upload.source }}</a></dd>{% endif %}
+      {% if upload.source %}<dt>{{ t("upload-from") }}</dt><dd class="source">{% if upload.source_link %}{{ site_icon(upload.source) }}<a href="{{ upload.source }}" rel="noopener noreferrer nofollow">{{ upload.source }}</a>{% else %}{{ upload.source }}{% endif %}</dd>{% endif %}
     </dl>
 
     {% if file.post_id %}

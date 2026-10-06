@@ -12,6 +12,7 @@ mod render;
 pub mod strip;
 pub mod tool;
 pub mod ugoira;
+mod zipfile;
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -84,8 +85,8 @@ impl Media {
 
     /// Runs one of the media tools, `program`, waiting for a turn if
     /// `max_tool_processes` are running. ffmpeg gets `ffmpeg_threads`;
-    /// ffmpeg and ffprobe are held to the configured memory and CPU
-    /// limits.
+    /// ffmpeg and ffprobe, and the libvips tools, are held to their
+    /// configured memory and CPU limits.
     pub(crate) async fn run<I, S>(
         &self,
         program: &Path,
@@ -97,23 +98,54 @@ impl Media {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        let tools = &self.config.tools;
         let mut args: Vec<OsString> = args.into_iter().map(|a| a.as_ref().to_owned()).collect();
-        let is_ffmpeg = program == tools.ffmpeg;
-        let limits = if is_ffmpeg || program == tools.ffprobe {
-            tool::Limits {
-                memory_mb: self.config.ffmpeg_memory_mb,
-                cpu_secs: self.config.ffmpeg_cpu_secs,
-            }
-        } else {
-            tool::Limits::NONE
-        };
-        if is_ffmpeg && self.config.ffmpeg_threads > 0 {
+        if program == self.config.tools.ffmpeg && self.config.ffmpeg_threads > 0 {
             args = with_threads(args, self.config.ffmpeg_threads);
         }
         // Closed only if the process is shutting down.
         let _turn = self.permits.acquire().await.ok();
-        tool::run_limited(program, args, timeout, loaders, limits).await
+        tool::run_limited(program, args, timeout, loaders, self.limits_for(program)).await
+    }
+
+    /// [`Self::run`], handing the program's standard output to `sink` as
+    /// it comes rather than collecting it.
+    pub(crate) async fn stream<I, S>(
+        &self,
+        program: &Path,
+        args: I,
+        timeout: std::time::Duration,
+        loaders: tool::Loaders,
+        sink: impl FnMut(&[u8]),
+    ) -> Result<(), ToolError>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let _turn = self.permits.acquire().await.ok();
+        let limits = self.limits_for(program);
+        tool::stream_limited(program, args, timeout, loaders, limits, sink).await
+    }
+
+    /// What a run of `program` may use: ffmpeg's limits for ffmpeg and
+    /// ffprobe, libvips' for the libvips tools.
+    fn limits_for(&self, program: &Path) -> tool::Limits {
+        let tools = &self.config.tools;
+        if program == tools.ffmpeg || program == tools.ffprobe {
+            tool::Limits {
+                memory_mb: self.config.ffmpeg_memory_mb,
+                cpu_secs: self.config.ffmpeg_cpu_secs,
+            }
+        } else if program == tools.vips
+            || program == tools.vipsheader
+            || program == tools.vipsthumbnail
+        {
+            tool::Limits {
+                memory_mb: self.config.vips_memory_mb,
+                cpu_secs: self.config.vips_cpu_secs,
+            }
+        } else {
+            tool::Limits::NONE
+        }
     }
 
     /// [`Self::run`] with only the trusted libvips loaders.
@@ -351,6 +383,36 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn vips_over_its_memory_is_the_files_problem() {
+        let dir = fixtures::dir("vips-limits");
+        let image = fixtures::image(&dir, "a.png", 64, 48);
+        // Too little for libvips to even load its libraries.
+        let starved = Media {
+            config: MediaConfig {
+                vips_memory_mb: 64,
+                ..MediaConfig::default()
+            },
+            permits: Arc::new(Semaphore::new(1)),
+        };
+        let err = starved.probe(&image, MediaType::Png).await.unwrap_err();
+        assert!(matches!(err, MediaError::OverLimit(_)), "{err}");
+        assert!(!err.is_internal());
+        let err = starved
+            .fit_within(&image, MediaType::Png, 32, &dir.join("t.webp"))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, MediaError::OverLimit(_)), "{err}");
+        // The defaults are plenty for ordinary files.
+        let thumb = media()
+            .fit_within(&image, MediaType::Png, 32, &dir.join("t.webp"))
+            .await
+            .unwrap();
+        assert_eq!((thumb.width, thumb.height), (32, 24));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[tokio::test]
     async fn identifies_real_files() {
         let dir = fixtures::dir("identify");
@@ -471,6 +533,21 @@ pub(crate) mod tests {
         std::fs::write(&path, b"\x89PNG\r\n\x1a\nthis is not really a png").unwrap();
         let err = media().probe(&path, MediaType::Png).await.unwrap_err();
         assert!(matches!(err, MediaError::Corrupt(_)), "{err}");
+        // What vips said, naming the file on the server, isn't repeated.
+        assert_eq!(
+            err.to_string(),
+            "the file appears to be damaged (it couldn't be decoded)"
+        );
+        let err = media()
+            .fit_within(&path, MediaType::Png, 32, &dir.join("t.webp"))
+            .await
+            .unwrap_err();
+        assert!(!err.to_string().contains("broken.png"), "{err}");
+        let err = media()
+            .perceptual_hash(&path, MediaType::Png, &dir)
+            .await
+            .unwrap_err();
+        assert!(!err.to_string().contains("broken.png"), "{err}");
     }
 
     #[tokio::test]
@@ -525,6 +602,7 @@ pub(crate) mod tests {
         let err = media().probe(&fake, MediaType::Mp4).await.unwrap_err();
         assert!(matches!(err, MediaError::Corrupt(_)), "{err}");
         assert!(!err.is_internal());
+        assert!(!err.to_string().contains("fake.mp4"), "{err}");
     }
 
     #[tokio::test]

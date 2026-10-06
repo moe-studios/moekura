@@ -54,6 +54,11 @@ pub struct CurrentUser {
     pub unread_messages: i64,
     /// Their notifications not read yet, likewise.
     pub unread_notifications: i64,
+    /// Sent with an API key rather than a session cookie.
+    pub with_api_key: bool,
+    /// When they logged in, for a session cookie: see
+    /// [`confirm_password`].
+    pub logged_in_at: Option<OffsetDateTime>,
 }
 
 /// The banned artists' tags hidden from someone in `role`.
@@ -77,6 +82,8 @@ impl CurrentUser {
             ratings: site.settings.visitor_ratings.clone(),
             unread_messages: 0,
             unread_notifications: 0,
+            with_api_key: false,
+            logged_in_at: None,
         }
     }
 
@@ -105,11 +112,26 @@ impl CurrentUser {
             },
             unread_messages: 0,
             unread_notifications: 0,
+            with_api_key: false,
+            logged_in_at: None,
         }
     }
 
     pub fn is_logged_in(&self) -> bool {
         self.user.is_some()
+    }
+
+    /// The user, if they're logged in to the site itself. Handing out new
+    /// ways in (API keys, feed tokens) takes that: an API key, which
+    /// skips two-factor login, mustn't be able to make more of itself.
+    pub fn require_session(&self) -> Result<&User, AppError> {
+        let user = self.user.as_ref().ok_or(AppError::Unauthorized)?;
+        if self.with_api_key {
+            return Err(AppError::Blocked(
+                "Log in on the site to do this; an API key can't.".into(),
+            ));
+        }
+        Ok(user)
     }
 
     pub fn can(&self, permission: Permission) -> bool {
@@ -178,10 +200,44 @@ async fn key_user(state: &AppState, token: &str) -> sqlx::Result<Option<CurrentU
     {
         tracing::warn!(%error, "could not record API key use");
     }
-    Ok(Some(CurrentUser::for_user(
-        key.user,
-        key.ban,
-        &state.site.get(),
+    let mut current = CurrentUser::for_user(key.user, key.ban, &state.site.get());
+    current.with_api_key = true;
+    Ok(Some(current))
+}
+
+/// How recently someone without a password must have logged in for their
+/// session to stand in for it.
+pub(crate) const FRESH_LOGIN: Duration = Duration::from_secs(10 * 60);
+
+/// Whether the requester, logged in on the site, confirmed it's them
+/// before being handed a new way in (an API key, a feed token), counted
+/// against guessing; `Err` says why not. That takes their password.
+/// Accounts made through single sign-on have none to type, so for them
+/// the session has to be fresh from logging in: one someone took a while
+/// ago isn't enough.
+pub(crate) async fn confirm_password(
+    state: &AppState,
+    current: &CurrentUser,
+    password: &str,
+) -> Result<Result<(), String>, AppError> {
+    let user = current.require_session()?;
+    state.rate_limits.check_confirm(user.id).await?;
+    let db = state.db.primary();
+    if moekura_db::users::has_password(db, user.id).await? {
+        if moekura_db::accounts::check_password_of(db, user.id, password).await? {
+            return Ok(Ok(()));
+        }
+        return Ok(Err("Wrong password.".into()));
+    }
+    let fresh = current
+        .logged_in_at
+        .is_some_and(|at| OffsetDateTime::now_utc() - at <= FRESH_LOGIN);
+    if fresh {
+        return Ok(Ok(()));
+    }
+    Ok(Err(format!(
+        "To confirm it's you, log out and log in again, then do this within {} minutes.",
+        FRESH_LOGIN.as_secs() / 60
     )))
 }
 
@@ -271,7 +327,9 @@ pub async fn resolve_session(
                         tracing::warn!(%error, "could not touch session");
                     }
                 }
-                CurrentUser::for_user(session.user, session.ban, &site)
+                let mut current = CurrentUser::for_user(session.user, session.ban, &site);
+                current.logged_in_at = Some(session.created_at);
+                current
             }
             Ok(None) => {
                 stale_cookie = true;
@@ -651,6 +709,43 @@ mod tests {
             .post("/login/alice", None, &[("origin", "http://localhost:8080")])
             .await;
         assert_eq!(our_origin.status, StatusCode::OK);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn api_keys_cant_hand_out_ways_in(pool: PgPool) {
+        async fn session_only(current: CurrentUser) -> Result<String, AppError> {
+            Ok(current.require_session()?.name.clone())
+        }
+        let alice = member(&pool, "alice").await;
+        let routes = Router::new()
+            .route("/session-only", post(session_only))
+            .route("/login/{name}", post(login_as))
+            .merge(crate::oidc::routes());
+        let app = TestApp::new(test_state(&pool).await, routes);
+        let session = app
+            .post("/login/alice", None, &[])
+            .await
+            .session_cookie()
+            .unwrap();
+        let key = api_keys::create(&pool, alice.id, "bot", None)
+            .await
+            .unwrap();
+        let bearer = format!("Bearer {key}");
+        let by_session = app.post("/session-only", Some(&session), &[]).await;
+        assert_eq!(by_session.body, "alice");
+        for path in [
+            "/session-only",
+            "/settings/oidc/link",
+            "/settings/oidc/unlink/1",
+        ] {
+            let by_key = app.post(path, None, &[("authorization", &bearer)]).await;
+            assert_eq!(by_key.status, StatusCode::FORBIDDEN, "{path}");
+            assert!(by_key.body.contains("an API key can"), "{}", by_key.body);
+        }
+        assert_eq!(
+            app.post("/session-only", None, &[]).await.status,
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[test]

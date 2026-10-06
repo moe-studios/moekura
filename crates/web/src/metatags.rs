@@ -132,7 +132,17 @@ pub(crate) async fn prepare(
             }
             Metatag::Vote(score) => {
                 may(Permission::Vote, "vote on posts")?;
-                signed_in("vote on posts")?;
+                let user = signed_in("vote on posts")?;
+                // Not on their own post, which an upload is.
+                let own = match post_id {
+                    Some(id) => posts::by_id(db, id)
+                        .await?
+                        .is_some_and(|p| p.uploader_id == Some(user)),
+                    None => true,
+                };
+                if own && *score != 0 {
+                    return Err(refused("You can't vote on your own post."));
+                }
                 Effect::Vote(*score)
             }
         };
@@ -183,6 +193,9 @@ pub(crate) async fn apply(
                 }
             }
             Effect::NewPool(name) => {
+                crate::pools::check_added(db, current, &[], &[post_id], "pools")
+                    .await
+                    .map_err(from_app)?;
                 let contents = Contents {
                     name: name.clone(),
                     description: String::new(),

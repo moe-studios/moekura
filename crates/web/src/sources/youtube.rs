@@ -5,16 +5,18 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html, tags_named};
+use super::{Http, SourceInfo, html, key, tags_named};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    if !page.starts_with("https://www.youtube.com/post/") {
+    let Some(post) = page.strip_prefix("https://www.youtube.com/post/") else {
         return Err("YouTube: only community posts have images".into());
-    }
+    };
+    // A channel's link names its post in the query, where anything could be.
+    key(post)?;
     let body = http.page(page, &[]).await?;
     let data =
         html::json_after(&body, "var ytInitialData =").ok_or("YouTube: no post in the page")?;

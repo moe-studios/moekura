@@ -11,6 +11,7 @@ use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use crate::ugoira::FRAME_DATA;
+use crate::zipfile;
 
 /// Why an archive can't be unpacked. The messages are shown to uploaders.
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +55,14 @@ fn corrupt(error: impl std::fmt::Display) -> ArchiveError {
     ArchiveError::Corrupt(error.to_string())
 }
 
+/// Opens the zip at `path`; see [`crate::zipfile`].
+fn open(path: &Path) -> Result<zipfile::Zip, ArchiveError> {
+    zipfile::open(path).map_err(|e| match e {
+        zipfile::OpenError::Io(e) => ArchiveError::Io(e),
+        other => corrupt(other),
+    })
+}
+
 /// Whether the start of a file (`head`) is a zip's.
 pub fn is_zip(head: &[u8]) -> bool {
     head.starts_with(b"PK\x03\x04")
@@ -63,7 +72,7 @@ pub fn is_zip(head: &[u8]) -> bool {
 /// files: it has Pixiv's frame data, or only frames named as Pixiv names
 /// them.
 pub fn is_ugoira(path: &Path) -> Result<bool, ArchiveError> {
-    let archive = zip::ZipArchive::new(File::open(path)?).map_err(corrupt)?;
+    let archive = open(path)?;
     let names: Vec<&str> = archive.file_names().collect();
     if names.contains(&FRAME_DATA) {
         return Ok(true);
@@ -91,7 +100,7 @@ fn is_clutter(name: &str) -> bool {
 /// their names (`2.jpg` before `10.jpg`). Refuses archives over `limits`,
 /// or holding absolute paths, `..`, or anything but files and folders.
 pub fn unpack(path: &Path, dir: &Path, limits: Limits) -> Result<Vec<Unpacked>, ArchiveError> {
-    let mut archive = zip::ZipArchive::new(File::open(path)?).map_err(corrupt)?;
+    let mut archive = open(path)?;
     // Everything is checked before anything is written.
     let mut wanted: Vec<(usize, String)> = Vec::new();
     let mut total = 0u64;
@@ -318,6 +327,33 @@ mod tests {
         assert!(matches!(
             unpack(&empty, &out, ROOMY),
             Err(ArchiveError::Empty)
+        ));
+    }
+
+    #[test]
+    fn refuses_directories_too_large_to_read() {
+        let dir = scratch("directory");
+        let path = dir.join("many.zip");
+        let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        // Over 1 MB of names alone.
+        let long = "x".repeat(200);
+        for n in 0..6000 {
+            zip.start_file(format!("{long}{n:06}.png"), options)
+                .unwrap();
+        }
+        zip.finish().unwrap();
+        fn refused<T>(result: Result<T, ArchiveError>) -> bool {
+            matches!(result, Err(ArchiveError::Corrupt(m)) if m.contains("directory"))
+        }
+        assert!(refused(is_ugoira(&path)));
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        assert!(refused(unpack(&path, &out, ROOMY)));
+        assert!(matches!(
+            crate::ugoira::frames(&path),
+            Err(crate::MediaError::Corrupt(_))
         ));
     }
 }

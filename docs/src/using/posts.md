@@ -55,8 +55,9 @@ downloading, ready or failed, posted or not, of one file type, or from a
 source (its start; `*` matches anything). Users who can ban (moderators)
 can list anyone's (**Uploader**, blank for everyone's) and look at their
 files, but only the uploader can post them. Files not posted within a day
-are removed, and you can have at most 250 waiting to be posted. Without
-scripts, choose the files and press **Upload**.
+are removed, and you can have at most 250 waiting to be posted (files
+that failed in the last hour count too). Without scripts, choose the
+files and press **Upload**.
 
 A **zip** of pictures is unpacked into its files, in the order people
 sort their names (`2.jpg` before `10.jpg`): at most 100, each within the
@@ -75,7 +76,8 @@ Scripts can still send a whole post in one form to `POST /upload`
 ## Duplicates and look-alikes
 
 A file that's already a post isn't kept: its page says so, with a link
-to that post.
+to that post. When it's a post you can't see (someone else's that was
+deleted or waits for approval), it's only refused, without saying which.
 
 A file that only *looks like* posts already on the site (the same
 picture resized, recompressed or slightly edited, by
@@ -99,19 +101,25 @@ Give it the file itself, or a work's page on one of the
 boorus, Misskey and some ninety more.
 
 Moekura asks the site for the work's best (original) files and downloads
-them, every page of a work of several (up to 100). The upload's page
-shows as soon as the first is ready (with scripts, the post form
-follows the moment it is). Each post's source is
-the file's own link when that names its work (Pixiv's
+them, every page of a work of several, each file once. A work of more
+than 20 files asks first: tick **Download all N files** and upload it
+again to take them all (up to 100). Together they may come to 20 times
+the upload size limit, counting what downloads that failed received;
+files past that fail. The upload's page shows as soon as the first is
+ready (with scripts, the post form follows the moment it is). Each
+post's source is the file's own link when that names its work (Pixiv's
 `i.pximg.net/…_p3.png`, so the post says which of the work's images it
-is), else the work's page. They download in the background: the
-upload's page follows them, and a file that can't be downloaded says
-why. Any other
-page whose preview tags (OpenGraph) name an image works the same way.
+is), else the work's page. They download in the background, a few at a
+time for the whole site and two at a time of each user's (the rest wait
+their turn): the upload's page follows them, and a file that can't be
+downloaded says why. Any other page whose preview tags (OpenGraph) name
+an image works the same way.
 What the site says is used as well, and shown under the source field:
 the site, the artist and their profiles, the site's tags, and when the
 work was published and last changed. **Fetch source data** reads the
-source again, after you change it or when the site has changed.
+source again, after you change it or when the site has changed (the
+same source is read again only for users whose uploads skip the
+approval queue; see [Lookups](sources.md#lookups)).
 
 - **The artist**: the tag of the artist whose
   [artist entry](artists.md) lists their profile there is put in the tags
@@ -126,20 +134,34 @@ source again, after you change it or when the site has changed.
   post's commentary if the fields are left empty.
 
 The same happens with files sent with such a link, which becomes their
-source, and for uploads through the APIs (which download only the
-work's first file). When a site can't be reached or has
-changed, the link is downloaded as it is, without extras.
+source (if it's a web link, `http` or `https`), and for uploads through
+the APIs (which download only the work's first file). When a site can't
+be reached or has changed, the link is downloaded as it is, without
+extras.
+
+Links must lead to the public internet: nothing is fetched from
+loopback, private, link-local or other special-purpose addresses (for
+IPv6, anything outside global unicast `2000::/3` or in its reserved
+blocks), whether the link names one, its name resolves to one or a
+redirect leads there.
 
 ### The bookmarklet
 
 **Bookmarklet** (`/uploads/bookmarklet`) has a **Post to …** link to drag
 to the bookmarks toolbar, and lists the sites whose works are read.
 Clicking it on a work's page opens the upload page with the page's link
-(`/uploads/new?url=…&ref=…`), which sends it straight away; going back
-skips the upload page. `ref` is the page you came from: when the link is
-a bare image, the work is read from that page if it's on the same site
-or shows the image. It's kept as the upload's `referer_url` (also in the
-Danbooru API's `upload[referer_url]`).
+(`/uploads/new?token=…&url=…&ref=…`), which sends it straight away; going
+back skips the upload page. `token` is a key of your own, so take the
+bookmarklet while logged in, and don't share it: without it, as in a
+link to the upload page from another site, the link only fills in the
+form, and waits for you to press **Upload**. The sites you use the
+bookmarklet on can see the key as well. **Make a new key** on the
+bookmarklet page replaces it (yours only), if you doubt one of them;
+bookmarklets taken before then only fill in the form, so take it again.
+`ref` is the page you came from: when the link is a bare image, the work
+is read from that page if it's on the same site or shows the image. It's
+kept as the upload's `referer_url` (also in the Danbooru API's
+`upload[referer_url]`).
 
 ## Ugoira
 
@@ -205,16 +227,16 @@ post's page, lists it by group, with names like exiftool's: `EXIF:Make`,
 
 Where a photo was taken and whose camera took it stay private: GPS and
 other location fields, serial numbers and owners' names are never read
-into it. Thumbnails and samples never carry metadata. By default the
-original file itself is kept as it was uploaded, so **Download original**
-still has whatever it contained; sites can remove it from originals too,
-below.
+into it. Thumbnails and samples never carry metadata. By default it's
+also taken out of JPEG, PNG and WebP originals, below; files of other
+types are kept as they were uploaded, so **Download original** still
+has whatever they contained.
 
 ### Removing metadata from originals
 
 With `strip_metadata` in [`[media]`](../configuration.md#media) set to
-`"strip"` or `"require"`, metadata is taken out of uploaded originals
-before they're stored:
+`"strip"` (the default) or `"require"`, metadata is taken out of
+uploaded originals before they're stored:
 
 | Type | What's removed | What stays |
 |---|---|---|
@@ -227,7 +249,8 @@ for byte, so it looks exactly the same and loses no quality. A picture
 that's turned by its EXIF orientation keeps the orientation, in an EXIF
 block holding nothing else. Other types (GIF, AVIF, JPEG XL, videos,
 ugoira) aren't changed by `"strip"`, and are refused by `"require"` with
-a message saying so.
+a message saying so. `"off"` keeps every original exactly as uploaded,
+metadata and all.
 
 Removing metadata changes the file's bytes, so its SHA-256 and MD5 are
 those of the stored, cleaned file, as is its storage name. Duplicates are

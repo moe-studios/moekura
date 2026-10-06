@@ -7,6 +7,7 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
+use moekura_core::jobs::{Job, SendMail};
 use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
 use moekura_core::permissions::{Permission, Permissions, Role, SystemRole};
 use moekura_core::settings::{RegistrationMode, SettingError, SiteSettings};
@@ -57,6 +58,9 @@ async fn overview(page: Page) -> Result<Response, AppError> {
     let counts = jobs::counts_by_kind(db).await?;
     let dead = jobs::dead(db, 50).await?;
     let human = crate::posts::human_size;
+    // Errors can quote what a job was sending to (a webhook's address,
+    // whose path may be its only secret): for those who manage settings.
+    let settings = page.current.can(Permission::ManageSettings);
     Ok(page.render(
         "admin_overview.html",
         context! {
@@ -74,14 +78,24 @@ async fn overview(page: Page) -> Result<Response, AppError> {
             dead => dead.iter().map(|job| context! {
                 id => job.id,
                 kind => job.kind,
-                payload => job.payload.to_string(),
+                payload => shown_payload(job),
                 attempts => job.attempts,
-                error => job.last_error,
+                error => job.last_error.as_ref().filter(|_| settings),
                 created => crate::dates::day(job.created_at),
             }).collect::<Vec<_>>(),
-            can_manage_jobs => page.current.can(Permission::ManageSettings),
+            can_manage_jobs => settings,
         },
     ))
+}
+
+/// A dead job's payload as the overview shows it. Of a mail, only who it
+/// was for: its text may hold a password reset or verification link.
+fn shown_payload(job: &jobs::DeadJob) -> String {
+    if job.kind == SendMail::KIND {
+        json!({ "to": job.payload["to"] }).to_string()
+    } else {
+        job.payload.to_string()
+    }
 }
 
 async fn job_action(
@@ -1153,6 +1167,57 @@ mod tests {
             app.get("/admin", Some(&member)).await.status,
             StatusCode::FORBIDDEN
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn dead_jobs_keep_their_secrets(pool: PgPool) {
+        // Manages users, not the site's settings.
+        let keeper = {
+            let mut conn = pool.acquire().await.unwrap();
+            moekura_db::roles::create(
+                &mut conn,
+                "Keeper",
+                50,
+                moekura_core::permissions::Permissions::of(&[
+                    Permission::ViewPosts,
+                    Permission::ManageUsers,
+                ]),
+            )
+            .await
+            .unwrap()
+        };
+        let app = app(&pool).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let manager = session_for(&pool, "keeper", SystemRole::Member).await;
+        sqlx::query("UPDATE users SET role_id = $1 WHERE name = 'keeper'")
+            .bind(keeper)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO jobs (kind, payload, status, attempts, last_error) VALUES
+             ('mail.send', $1, 'dead', 5, '554 relay refused'),
+             ('webhooks.deliver', '{\"delivery_id\": 3}', 'dead', 12, 'couldn''t send to tok3n')",
+        )
+        .bind(serde_json::json!({
+            "to": "root@booru.example",
+            "subject": "Reset your password",
+            "body": "Open https://booru.example/reset-password?token=sekrit",
+        }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (session, settings) in [(&admin, true), (&manager, false)] {
+            let page = app.get("/admin", Some(session)).await;
+            assert_eq!(page.status, StatusCode::OK);
+            // Who a mail was for, never what it said.
+            assert!(page.body.contains("root@booru.example"), "{}", page.body);
+            assert!(!page.body.contains("sekrit") && !page.body.contains("Reset your"));
+            assert!(page.body.contains("delivery_id"));
+            // Errors only for those who manage settings.
+            assert_eq!(page.body.contains("tok3n"), settings, "{}", page.body);
+            assert_eq!(page.body.contains("554 relay refused"), settings);
+        }
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -204,9 +204,12 @@ pub(crate) mod tests {
         format!("{prefix}-{}", fresh())
     }
 
-    /// An address in the IPv6 documentation range.
+    /// An address in the IPv6 documentation range, in a /64 of its own
+    /// (per-address limits count IPv6 by /64).
     pub fn unique_ip() -> IpAddr {
-        let bits = (0x2001_0db8_u128 << 96) | (fresh() & ((1 << 96) - 1));
+        let id = fresh();
+        let net = ((id >> 32) as u32).wrapping_add((id as u32).wrapping_mul(0x9E37_79B9));
+        let bits = (0x2001_0db8_u128 << 96) | (u128::from(net) << 64) | (id & u128::from(u64::MAX));
         IpAddr::from(bits.to_be_bytes())
     }
 

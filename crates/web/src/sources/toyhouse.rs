@@ -48,10 +48,8 @@ fn image_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo> {
         html::tags(body, "a")
             .into_iter()
             .filter(|a| a.has_class("character-name-badge"))
-            .map(|a| {
-                let name = html_to_text(html::inner(body, &a));
-                name.split(" (").next().unwrap_or(&name).to_owned()
-            })
+            .filter_map(|a| html::label(body, &a))
+            .map(|name| name.split(" (").next().unwrap_or(&name).to_owned())
             .collect::<Vec<_>>(),
     );
     info.description = html::find(body, "div", |t| t.has_class("image-description"))

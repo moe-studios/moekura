@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use moekura_core::permissions::Permission;
+use moekura_core::pools::{MAX_POSTS, unique_post_ids};
 use moekura_db::favorite_groups::{self, Group};
 use moekura_db::users;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,9 @@ use utoipa::{IntoParams, ToSchema};
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::error::{AppError, ErrorBody};
-use crate::favorite_groups::{MAX_GROUPS, append, contents, own_group, save_error, visible_group};
+use crate::favorite_groups::{
+    MAX_GROUPS, append, check_added, contents, own_group, post_ids_error, save_error, visible_group,
+};
 use crate::posts::visibility;
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -63,7 +66,7 @@ async fn with_posts(
         group.id,
         &visibility(current),
         0,
-        i64::MAX,
+        MAX_POSTS as i64,
     )
     .await?;
     Ok(ApiFavoriteGroupWithPosts {
@@ -142,18 +145,9 @@ pub struct GroupInput {
     name: Option<String>,
     /// Public (the default) or private.
     is_public: Option<bool>,
-    /// All of its posts, in order.
+    /// All of its posts, in order. Posts added must be ones you can see
+    /// that aren't deleted; those already in the group may stay.
     post_ids: Option<Vec<i64>>,
-}
-
-fn dedup(ids: Vec<i64>) -> Vec<i64> {
-    let mut seen = Vec::with_capacity(ids.len());
-    for id in ids {
-        if !seen.contains(&id) {
-            seen.push(id);
-        }
-    }
-    seen
 }
 
 /// Create a favorite group.
@@ -178,13 +172,14 @@ pub(crate) async fn create(
     let contents = contents(
         input.name.as_deref().unwrap_or_default(),
         input.is_public.unwrap_or(true),
-        dedup(input.post_ids.unwrap_or_default()),
+        unique_post_ids(input.post_ids.unwrap_or_default()).map_err(post_ids_error)?,
     )?;
     if favorite_groups::count_for_user(db, user.id).await? >= MAX_GROUPS {
         return Err(AppError::Unprocessable(format!(
             "You can have at most {MAX_GROUPS} groups."
         )));
     }
+    check_added(db, &current, &[], &contents.post_ids).await?;
     let id = favorite_groups::create(db, user.id, &contents)
         .await
         .map_err(save_error)?;
@@ -217,15 +212,17 @@ pub(crate) async fn update(
 ) -> Result<Json<ApiFavoriteGroupWithPosts>, AppError> {
     let db = state.db.primary();
     let group = own_group(db, &current, id).await?;
+    let before = favorite_groups::post_ids(db, id).await?;
     let post_ids = match input.post_ids {
-        Some(ids) => dedup(ids),
-        None => favorite_groups::post_ids(db, id).await?,
+        Some(ids) => unique_post_ids(ids).map_err(post_ids_error)?,
+        None => before.clone(),
     };
     let contents = contents(
         input.name.as_deref().unwrap_or(&group.name),
         input.is_public.unwrap_or(group.is_public),
         post_ids,
     )?;
+    check_added(db, &current, &before, &contents.post_ids).await?;
     favorite_groups::save(db, id, &contents)
         .await
         .map_err(save_error)?;

@@ -3,7 +3,7 @@
 use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
-use crate::posts::Visibility;
+use crate::posts::{BindVisibility, Visibility, visible_post};
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Group {
@@ -84,20 +84,16 @@ pub async fn visible_post_ids(
     offset: i64,
     limit: i64,
 ) -> sqlx::Result<Vec<i64>> {
-    let statuses: Vec<&str> = visibility.statuses.iter().map(|s| s.as_str()).collect();
-    sqlx::query_scalar(
+    sqlx::query_scalar(concat!(
         "SELECT gp.post_id FROM favorite_group_posts gp JOIN posts p ON p.id = gp.post_id
-         WHERE gp.group_id = $1
-           AND (p.status = ANY($2) OR (p.status = 'pending' AND p.uploader_id = $3))
-           AND p.rating = ANY($6)
-         ORDER BY gp.position OFFSET $4 LIMIT $5",
-    )
+         WHERE gp.group_id = $5 AND ",
+        visible_post!(),
+        " ORDER BY gp.position OFFSET $6 LIMIT $7"
+    ))
+    .bind_visibility(visibility)
     .bind(group_id)
-    .bind(statuses)
-    .bind(visibility.viewer)
     .bind(offset)
     .bind(limit)
-    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }
@@ -332,5 +328,42 @@ mod tests {
         assert_eq!(count_for_user(&pool, alice).await.unwrap(), 2);
         delete(&pool, id).await.unwrap();
         assert!(by_id(&pool, id).await.unwrap().is_none());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn banned_artists_posts_stay_hidden(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let banned: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('banned') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let (a, b) = (post(&pool).await, post(&pool).await);
+        sqlx::query("UPDATE posts SET status = 'active', tag_ids = $1 WHERE id = $2")
+            .bind(vec![banned])
+            .bind(a)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE posts SET status = 'active' WHERE id = $1")
+            .bind(b)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let group = Contents {
+            name: "Best".into(),
+            is_public: true,
+            post_ids: vec![a, b],
+        };
+        let id = create(&pool, alice, &group).await.unwrap();
+        let visitor = Visibility {
+            statuses: vec![moekura_core::posts::PostStatus::Active],
+            hidden_tags: vec![banned],
+            ..Visibility::default()
+        };
+        assert_eq!(
+            visible_post_ids(&pool, id, &visitor, 0, 10).await.unwrap(),
+            [b]
+        );
     }
 }

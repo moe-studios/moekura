@@ -14,8 +14,8 @@ use utoipa::{IntoParams, ToSchema};
 use crate::AppState;
 use crate::auth::CurrentUser;
 use crate::comments::{
-    CommentScore, check_author, clean_body, commenter, moderate, report_comment, sees_deleted,
-    visible_comment, vote_on,
+    CommentScore, check_author, clean_body, commenter, moderate, report_comment, save_edit,
+    sees_deleted, visible_comment, vote_on,
 };
 use crate::error::{AppError, ErrorBody};
 use crate::posts::visibility;
@@ -120,6 +120,7 @@ pub(crate) async fn list(
         &visibility(&current),
         &filter,
         params.before,
+        0,
         PAGE_SIZE + 1,
     )
     .await?;
@@ -161,11 +162,17 @@ pub struct CommentText {
     /// Leave the post's place in `order:comment_bumped` alone.
     #[serde(default)]
     do_not_bump: bool,
+    /// A solved captcha's token, which new accounts need to comment when
+    /// the site asks for one; ignored on changes.
+    #[serde(default)]
+    captcha: Option<String>,
 }
 
 /// Comment on a post.
 ///
 /// Needs `comment`. Rate limited; deleted posts can't be commented on.
+/// Comments that look like spam are held for the staff to check, hidden
+/// meanwhile.
 #[utoipa::path(
     post,
     path = "/posts/{id}/comments",
@@ -175,14 +182,16 @@ pub struct CommentText {
     request_body = CommentText,
     responses(
         (status = 201, body = ApiComment),
+        (status = 400, body = ErrorBody, description = "The captcha wasn't solved"),
         (status = 404, body = ErrorBody),
-        (status = 422, body = ErrorBody, description = "The text is empty or too long, or the post is deleted"),
+        (status = 422, body = ErrorBody, description = "The text is empty or too long, the post is deleted, or a new account sent no captcha"),
         (status = 429, body = ErrorBody),
     ),
 )]
 pub(crate) async fn create(
     State(state): State<AppState>,
     current: CurrentUser,
+    info: crate::auth::RequestInfo,
     Path(id): Path<i64>,
     Json(text): Json<CommentText>,
 ) -> Result<(StatusCode, Json<ApiComment>), AppError> {
@@ -192,7 +201,7 @@ pub(crate) async fn create(
         .filter(|p| visibility(&current).allows(p))
         .ok_or(AppError::NotFound)?;
     let body = clean_body(&text.body)?;
-    let user = commenter(&state, &current, &post).await?;
+    let user = commenter(&state, &current, &post, text.captcha.as_deref(), info.ip).await?;
     let db = state.db.primary();
     let (comment_id, _) =
         crate::comments::publish(&state, &current, id, user, &body, !text.do_not_bump).await?;
@@ -204,7 +213,9 @@ pub(crate) async fn create(
 
 /// Change your comment.
 ///
-/// Needs `comment`; only the author changes a comment.
+/// Needs `comment`; only the author changes a comment. Rate limited like
+/// new comments; a change that looks like spam is held for the staff to
+/// check, and the comment is hidden (`is_deleted`) meanwhile.
 #[utoipa::path(
     put,
     path = "/comments/{id}",
@@ -212,7 +223,7 @@ pub(crate) async fn create(
     tag = "comments",
     params(("id" = i64, Path, description = "Comment number")),
     request_body = CommentText,
-    responses((status = 200, body = ApiComment), (status = 403, body = ErrorBody), (status = 422, body = ErrorBody)),
+    responses((status = 200, body = ApiComment), (status = 403, body = ErrorBody), (status = 422, body = ErrorBody), (status = 429, body = ErrorBody)),
 )]
 pub(crate) async fn update(
     State(state): State<AppState>,
@@ -223,9 +234,10 @@ pub(crate) async fn update(
     let (comment, _) = visible_comment(&state, &current, id).await?;
     check_author(&current, &comment)?;
     let body = clean_body(&text.body)?;
-    let db = state.db.primary();
-    comments::update(db, id, &body).await?;
-    let comment = comments::by_id(db, id).await?.ok_or(AppError::NotFound)?;
+    save_edit(&state, &current, &comment, &body).await?;
+    let comment = comments::by_id(state.db.primary(), id)
+        .await?
+        .ok_or(AppError::NotFound)?;
     Ok(Json(comment.into()))
 }
 
@@ -481,5 +493,49 @@ mod tests {
             .status,
             StatusCode::NO_CONTENT
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn changes_go_through_the_spam_filter(pool: PgPool) {
+        moekura_db::settings::set(&pool, "spam_filter", json!({ "words": ["casino"] }))
+            .await
+            .unwrap();
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let jan = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let post = upload(&app, &jan, &fixture::png(20, 20), "cat").await;
+        let created = app
+            .json(
+                "POST",
+                &format!("/api/v1/posts/{post}/comments"),
+                Some(&alice),
+                Some(json!({ "body": "Nice" })),
+            )
+            .await;
+        let id = json(&created.body)["id"].as_i64().unwrap();
+        assert_eq!(json(&created.body)["is_deleted"], json!(false));
+
+        let edited = app
+            .json(
+                "PUT",
+                &format!("/api/v1/comments/{id}"),
+                Some(&alice),
+                Some(json!({ "body": "Best casino deals" })),
+            )
+            .await;
+        assert_eq!(edited.status, StatusCode::OK, "{}", edited.body);
+        assert_eq!(json(&edited.body)["is_deleted"], json!(true));
+        assert_eq!(
+            app.get(&format!("/api/v1/comments/{id}"), None)
+                .await
+                .status,
+            StatusCode::NOT_FOUND
+        );
+        let held: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM comments WHERE held_reason IS NOT NULL")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(held, 1);
     }
 }

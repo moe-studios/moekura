@@ -41,7 +41,7 @@
 <p><a href="{{ search_url }}">{{ t("all-posts") }}</a></p>
 {% endif %}
 <div class="actions">
-  {% if can_edit %}
+  {% if can_edit and (can_ban or not artist.banned) %}
   {% if artist.deleted %}
   <form method="post" action="{{ artist.url }}/undelete"><button type="submit" class="secondary">{{ t("restore") }}</button></form>
   {% else %}

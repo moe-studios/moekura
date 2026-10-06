@@ -79,9 +79,20 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
     )
 }
 
-/// Paths that end in `.json` without being Danbooru's.
+/// Paths that end in `.json` without being Danbooru's: files, the API,
+/// and pages that end in a name Danbooru has no URL for (wiki titles, and
+/// user names on staff pages). User names can't end in `.json`, as
+/// `/users/{name}` shares Danbooru's `/users/{id}.json`; profiles of those
+/// named before that stay pages, since Danbooru's ids are numbers.
 fn ours(path: &str) -> bool {
-    crate::api::is_api_path(path) || path.starts_with("/static/") || path.starts_with("/data/")
+    crate::api::is_api_path(path)
+        || ["/static/", "/data/", "/wiki/", "/moderation/", "/admin/"]
+            .iter()
+            .any(|prefix| path.starts_with(prefix))
+        || path
+            .strip_prefix("/users/")
+            .and_then(|rest| rest.strip_suffix(".json"))
+            .is_some_and(|name| !name.contains('/') && !name.bytes().all(|b| b.is_ascii_digit()))
 }
 
 /// Moves a Danbooru URL (`/posts/1.json?tags=cat`) to its internal route
@@ -362,11 +373,21 @@ mod tests {
         let rewritten = rewrite(request("/posts/12.json?tags=cat+dog&page=b5"));
         assert_eq!(rewritten.uri(), "/__danbooru/posts/12?tags=cat+dog&page=b5");
         assert!(rewritten.extensions().get::<DanbooruRequest>().is_some());
+        for (path, internal) in [
+            ("/users/12.json", "/__danbooru/users/12"),
+            ("/users/12/uploads.json", "/__danbooru/users/12/uploads"),
+        ] {
+            assert_eq!(rewrite(request(path)).uri(), internal);
+        }
         for path in [
+            "/users/old.json",
             "/posts/12",
             "/api/v1/openapi.json",
             "/static/app.json",
             "/data/x.json",
+            "/wiki/package.json",
+            "/moderation/users/old.json",
+            "/admin/users/old.json",
         ] {
             let untouched = rewrite(request(path));
             assert_eq!(untouched.uri(), path);
@@ -405,5 +426,53 @@ mod tests {
             serde_json::json!([{ "id": 1, "md5": "x" }])
         );
         assert_eq!(only(value.clone(), ""), value);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn pages_ending_in_json_names_stay_pages(pool: sqlx::PgPool) {
+        use moekura_core::permissions::SystemRole;
+
+        use crate::test_support::{TestApp, session_for, test_state};
+
+        let app = TestApp::new(
+            test_state(&pool).await,
+            test_support::routes()
+                .merge(crate::wiki::routes())
+                .merge(crate::users::routes())
+                .merge(crate::user_moderation::routes()),
+        );
+        // A name from before `.json` was reserved.
+        session_for(&pool, "old.json", SystemRole::Member).await;
+        let old: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'old.json'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let moderator = session_for(&pool, "mod_user", SystemRole::Moderator).await;
+        moekura_db::wiki::save(&pool, "package.json", "About packages.", None, None)
+            .await
+            .unwrap();
+        let wiki = app.get("/wiki/package.json", None).await;
+        assert_eq!(wiki.status, StatusCode::OK, "{}", wiki.body);
+        assert!(wiki.body.contains("About packages."));
+        let moderation = app
+            .get("/moderation/users/old.json", Some(&moderator))
+            .await;
+        assert_eq!(moderation.status, StatusCode::OK, "{}", moderation.body);
+        assert!(moderation.body.contains("old.json"));
+        // Their profile, and Danbooru's URL for them by id.
+        let profile = app.get("/users/old.json", None).await;
+        assert_eq!(profile.status, StatusCode::OK, "{}", profile.body);
+        assert!(
+            profile.body.contains("<dt>Uploads</dt>"),
+            "{}",
+            profile.body
+        );
+        let user: Value =
+            serde_json::from_str(&app.get(&format!("/users/{old}.json"), None).await.body).unwrap();
+        assert_eq!(user["name"], "old.json");
+        // Danbooru's wiki URL for the same page.
+        let danbooru = app.get("/wiki_pages/package.json.json", None).await;
+        let page: Value = serde_json::from_str(&danbooru.body).unwrap();
+        assert_eq!(page["body"], "About packages.");
     }
 }

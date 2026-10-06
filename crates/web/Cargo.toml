@@ -22,6 +22,7 @@ futures-util.workspace = true
 governor.workspace = true
 hex.workspace = true
 hmac.workspace = true
+hyper-util.workspace = true
 md-5.workspace = true
 ipnet.workspace = true
 mime_guess.workspace = true
@@ -44,7 +45,7 @@ thiserror.workspace = true
 sqlx.workspace = true
 jiff.workspace = true
 time.workspace = true
-tokio = { workspace = true, features = ["fs", "io-util"] }
+tokio = { workspace = true, features = ["fs", "io-util", "time"] }
 tower.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
@@ -53,6 +54,7 @@ utoipa.workspace = true
 utoipa-axum.workspace = true
 
 [dev-dependencies]
+h2.workspace = true
 zip.workspace = true
 http-body-util.workspace = true
 serde_json.workspace = true

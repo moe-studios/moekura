@@ -10,6 +10,12 @@
     <input id="name" name="name" value="{{ name }}" autocomplete="username" required autofocus>
     <label for="password">{{ t("account-password") }}</label>
     <input id="password" name="password" type="password" autocomplete="current-password" required>
+    {% if captcha %}
+    <p class="hint">{{ t("login-captcha") }}</p>
+    <script src="{{ captcha.script }}" async defer></script>
+    <div class="{{ captcha.class }}" data-sitekey="{{ captcha.site_key }}"></div>
+    {% if captcha_error %}<p class="field-error">{{ captcha_error }}</p>{% endif %}
+    {% endif %}
     <button type="submit">{{ t("nav-log-in") }}</button>
   </form>
   {% if mail_enabled %}<p class="aside"><a href="/forgot-password">{{ t("forgot-title") }}</a></p>{% endif %}

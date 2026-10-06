@@ -330,4 +330,75 @@ mod tests {
     async fn ping_succeeds(pool: PgPool) {
         Db::from_pools(pool, vec![]).ping().await.unwrap();
     }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn ipv4_mapped_addresses_become_ipv4(pool: PgPool) {
+        let user: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        for network in ["::ffff:198.51.100.0/120", "::/64", "2001:db8::/64"] {
+            sqlx::query("INSERT INTO ip_bans (network, reason) VALUES ($1::cidr, 'spam')")
+                .bind(network)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query(
+            "INSERT INTO user_ips (user_id, ip, first_seen_at, last_seen_at) VALUES
+             ($1, '::ffff:198.51.100.7', '2026-01-01', '2026-02-01'),
+             ($1, '198.51.100.7', '2026-01-15', '2026-03-01'),
+             ($1, '::ffff:203.0.113.9', '2026-01-01', '2026-01-02')",
+        )
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO sessions (token_hash, user_id, expires_at, ip)
+             VALUES (sha256('t'), $1, now() + interval '1 day', '::ffff:198.51.100.7')",
+        )
+        .bind(user)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The migration ran before anything was there; run it again.
+        let migration = MIGRATOR
+            .iter()
+            .find(|m| m.description == "canonical ips")
+            .expect("the migration exists");
+        sqlx::raw_sql(migration.sql.clone())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let bans: Vec<String> = sqlx::query_scalar("SELECT network::text FROM ip_bans ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(bans, ["198.51.100.0/24", "::/64", "2001:db8::/64"]);
+        let ips: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT host(ip), first_seen_at::date::text, last_seen_at::date::text
+             FROM user_ips ORDER BY ip",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let row = |ip: &str, first: &str, last: &str| (ip.into(), first.into(), last.into());
+        assert_eq!(
+            ips,
+            [
+                row("198.51.100.7", "2026-01-01", "2026-03-01"),
+                row("203.0.113.9", "2026-01-01", "2026-01-02"),
+            ]
+        );
+        let session: String = sqlx::query_scalar("SELECT host(ip) FROM sessions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(session, "198.51.100.7");
+    }
 }

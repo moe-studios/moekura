@@ -17,13 +17,18 @@ use crate::error::{AppError, ErrorBody};
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiUser {
     pub name: String,
+    /// The role's display name, which admins may change.
     pub role: Option<String>,
+    /// The built-in role's key, which never changes (`member`,
+    /// `contributor`, `janitor`, `moderator` or `admin`); `null` for a
+    /// role the site made.
+    pub role_key: Option<String>,
     /// `active`, `pending` (awaiting approval) or `deactivated`.
     pub status: String,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
-    pub uploads: i64,
-    pub favorites: i64,
+    pub upload_count: i64,
+    pub favorite_count: i64,
     /// What they wrote about themselves, in markup; empty for nothing.
     pub bio: String,
     /// Their profile picture: square, at most 400 pixels a side.
@@ -55,7 +60,10 @@ pub(crate) async fn show(
         .await?
         .filter(|u| u.status == UserStatus::Active || current.can(Permission::ManageUsers))
         .ok_or(AppError::NotFound)?;
-    let role = state.site.get().role(user.role_id).map(|r| r.name.clone());
+    let site = state.site.get();
+    let role = site.role(user.role_id);
+    let role_key = role.and_then(|r| r.system).map(|s| s.key().to_owned());
+    let role = role.map(|r| r.name.clone());
     let profile = users::profile(db, user.id).await?;
     let url = |key: Option<String>| {
         key.as_deref()
@@ -66,10 +74,11 @@ pub(crate) async fn show(
         avatar_url: url(profile.avatar_key),
         banner_url: url(profile.banner_key),
         bio: profile.bio,
-        uploads: posts::count_by_uploader(db, user.id).await?,
-        favorites: favorites::count_by_user(db, user.id).await?,
+        upload_count: posts::count_by_uploader(db, user.id).await?,
+        favorite_count: favorites::count_by_user(db, user.id).await?,
         name: user.name,
         role,
+        role_key,
         status: user.status.as_str().to_owned(),
         created_at: user.created_at,
     }))
@@ -79,14 +88,18 @@ pub(crate) async fn show(
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiMe {
     pub name: String,
+    /// The role's display name, which admins may change.
     pub role: String,
+    /// The built-in role's key, which never changes; `null` for a role
+    /// the site made.
+    pub role_key: Option<String>,
     /// What this account may do now (`upload`, `edit_posts`, …). While
     /// banned, only what visitors may.
     pub permissions: Vec<String>,
     pub settings: ApiSettings,
     /// Set while banned.
     pub ban: Option<ApiActiveBan>,
-    pub uploads: ApiUploadAllowance,
+    pub upload_limits: ApiUploadAllowance,
 }
 
 /// How many more posts the account may upload now.
@@ -144,6 +157,7 @@ pub(crate) async fn me(
     Ok(Json(ApiMe {
         name: user.name.clone(),
         role: current.role.name.clone(),
+        role_key: current.role.system.map(|s| s.key().to_owned()),
         permissions: current
             .role
             .permissions
@@ -163,7 +177,7 @@ pub(crate) async fn me(
             safe_mode: settings.safe_mode,
             time_zone: settings.time_zone.clone(),
         },
-        uploads: {
+        upload_limits: {
             let allowance = crate::upload::allowance(&state, &current).await?;
             ApiUploadAllowance {
                 refused: allowance.refusal,
@@ -197,10 +211,12 @@ mod tests {
         let user = json(&app.get("/api/v1/users/ALICE", None).await.body);
         assert_eq!(user["name"], json!("alice"));
         assert_eq!(user["role"], json!("Member"));
-        assert_eq!(user["uploads"], json!(1));
+        assert_eq!(user["role_key"], json!("member"));
+        assert_eq!(user["upload_count"], json!(1));
 
         let me = json(&app.get("/api/v1/me", Some(&alice)).await.body);
         assert_eq!(me["name"], json!("alice"));
+        assert_eq!(me["role_key"], json!("member"));
         assert!(
             me["permissions"]
                 .as_array()
@@ -212,6 +228,32 @@ mod tests {
         assert_eq!(
             app.get("/api/v1/me", None).await.status,
             StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn site_made_roles_have_no_key(pool: PgPool) {
+        session_for(&pool, "bob", SystemRole::Member).await;
+        let mut conn = pool.acquire().await.unwrap();
+        let role = moekura_db::roles::create(
+            &mut conn,
+            "Curator",
+            150,
+            moekura_core::permissions::Permissions::NONE,
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE users SET role_id = $1 WHERE name = 'bob'")
+            .bind(role)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Built after the role, so the site's cache has it.
+        let app = app(&pool).await;
+        let user = json(&app.get("/api/v1/users/bob", None).await.body);
+        assert_eq!(
+            (&user["role"], &user["role_key"]),
+            (&json!("Curator"), &json!(null))
         );
     }
 }

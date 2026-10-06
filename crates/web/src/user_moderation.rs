@@ -222,11 +222,12 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     let disapprovals = Tally(moekura_db::disapprovals::counts_by(db, user.id).await?);
     let flag_statuses = ["open", "upheld", "dismissed"];
     let notes = notes(state, &page.current, user.id).await?;
-    // Addresses are for those who can ban them.
-    let (addresses, related) = if page.current.can(Permission::BanUsers) {
+    // Addresses are for those who can ban them: staff ranked above the
+    // user, and above the other accounts listed.
+    let (addresses, related) = if can_ban {
         (
             user_ips::for_user(db, user.id, ADDRESSES).await?,
-            user_ips::related(db, user.id, ADDRESSES).await?,
+            user_ips::related(db, user.id, page.current.role.rank, ADDRESSES).await?,
         )
     } else {
         (Vec::new(), Vec::new())
@@ -270,7 +271,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
             }).collect::<Vec<_>>(),
             delete_uploads => delete_uploads,
             upload_deletions => upload_deletions.iter().map(crate::post_batches::batch_context).collect::<Vec<_>>(),
-            show_addresses => page.current.can(Permission::BanUsers),
+            show_addresses => can_ban,
             addresses => addresses.iter().map(|a| {
                 let range = network_of(a.ip.addr());
                 context! {

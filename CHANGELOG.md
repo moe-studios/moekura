@@ -1,9 +1,70 @@
 # Changelog
 
 Notable changes in each release. Moekura follows [semantic
-versioning](https://semver.org/); before 1.0, a minor release (0.2) may
-change configuration or behaviour, and says so here. See
+versioning](https://semver.org/): from 1.0 on, only a major release (2.0)
+may break what [Stability](docs/src/stability.md) lists, and minor
+releases list what they deprecate. Before 1.0, a minor release (0.2) could
+change configuration or behaviour, and said so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
+
+## [Unreleased]
+
+Getting ready for 1.0: what 1.0 promises, how things get renamed after
+it, and CI that checks upgrades, backups and performance.
+
+### Stability
+
+- [Stability](docs/src/stability.md) says what 1.0 promises not to break
+  (the API, the Danbooru API as the tested apps use it, configuration,
+  commands, search syntax, webhooks, feeds, metrics and image tags) and
+  what isn't a contract (the database schema, overridden templates and
+  translations, pages' HTML, logs).
+- After a rename, old config keys (and their `MOEKURA_*` variables) and
+  old command-line flags keep working, with a warning naming the new
+  ones; deprecated API operations are marked in the OpenAPI description
+  and answer with a `Deprecation` header.
+- A support policy: which releases get security fixes after 1.0, and the
+  oldest supported PostgreSQL, Valkey, libvips, ffmpeg, glibc and Rust
+  (see [Upgrading](docs/src/upgrading.md#requirements)).
+- From 1.0, releases are also tagged with their major version alone
+  (`ghcr.io/moe-studios/moekura:1`).
+- `/api/v1` users and `/me` have `role_key`: the built-in role's key
+  (`member`, `moderator`, …), which doesn't change when an admin renames
+  the role, or `null` for a role the site made.
+
+### Operations
+
+- CI upgrades a site seeded on the previous release to each new build
+  and checks its data, backs it up and restores it as
+  [Backups](docs/src/admin/backups.md) says (local storage and S3), and
+  checks memory at idle and at peak and every page's speed with 200,000
+  posts on the 1 GB stack. The backups page now covers restoring, and
+  copying files with compose.
+- X posts are read through an FxEmbed API (`sources.x.fxembed_api_url`),
+  with a logged-in account as the fallback.
+
+### Upgrading
+
+Names were made consistent before the 1.0 freeze. If you use these, update
+them:
+
+- `/api/v1`: search results' `next` and `previous` are now `next_page` and
+  `previous_page`, as in the other lists; tags' `deprecated` is
+  `is_deprecated` (also when changing a tag); users' `uploads` and
+  `favorites` counts are `upload_count` and `favorite_count`; `/me`'s
+  `uploads` is `upload_limits`; creating a saved search answers
+  `201 Created`.
+- Webhooks: `comment.created` sends the comment's `creator` and
+  `creator_url`, as the API does, instead of `author` and `author_url`.
+- The moderation log's action names: `pool.undelete` is `pool.restore`,
+  `ip.ban` and `ip.unban` are `network.ban` and `network.unban`,
+  `tags.mass_update` is `tag.mass_update`, `posts.delete_uploads` is
+  `user.delete_uploads`, `posts.purge_batch` is `post.purge_batch`,
+  `post_versions.undo` is `user.undo_edits` and `forum_post.unhide` is
+  `forum_post.restore`. Existing entries are renamed when you upgrade.
+- `comment_count:` and `note_count:` work beside `commentcount:` and
+  `notecount:`, and `order:commentcount` and `order:notecount` beside
+  `order:comment_count` and `order:note_count`.
 
 ## [0.5.0] - 2026-10-02
 

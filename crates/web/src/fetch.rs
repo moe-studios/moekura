@@ -36,6 +36,43 @@ pub fn check_url(url: &Url, allow_private: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Follows a few redirects, each to a URL [`check_url`] accepts.
+pub(crate) fn redirect_policy(allow_private: bool) -> redirect::Policy {
+    redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        match check_url(attempt.url(), allow_private) {
+            Ok(()) => attempt.follow(),
+            Err(reason) => attempt.error(reason),
+        }
+    })
+}
+
+/// `response`'s body, refused once it's more than `limit` bytes.
+pub(crate) async fn read_body(
+    response: reqwest::Response,
+    limit: usize,
+) -> Result<Vec<u8>, String> {
+    let too_large = || "the response is too large".to_owned();
+    if response
+        .content_length()
+        .is_some_and(|len| len > limit as u64)
+    {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| short_reason(&e).to_owned())?;
+        if body.len() + chunk.len() > limit {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 #[derive(Clone)]
 pub struct Fetcher {
     client: reqwest::Client,
@@ -46,9 +83,32 @@ impl Fetcher {
     /// `allow_private` exists for tests against a local server; the app
     /// always passes false.
     pub fn new(timeout: Duration, allow_private: bool) -> Self {
+        let client = moekura_net::client(timeout, allow_private, redirect_policy(allow_private));
+        Self {
+            client,
+            allow_private,
+        }
+    }
+
+    /// [`Self::new`], but only following the redirects `follow` allows,
+    /// given the first URL and the next: for requests carrying a site's
+    /// login, which another site mustn't be sent. Other redirects are
+    /// answered as they are (a failure, but for [`Self::final_url`]).
+    pub fn with_redirects(
+        timeout: Duration,
+        allow_private: bool,
+        follow: impl Fn(&Url, &Url) -> bool + Send + Sync + 'static,
+    ) -> Self {
         let policy = redirect::Policy::custom(move |attempt| {
             if attempt.previous().len() >= MAX_REDIRECTS {
                 return attempt.error("too many redirects");
+            }
+            if !attempt
+                .previous()
+                .first()
+                .is_some_and(|first| follow(first, attempt.url()))
+            {
+                return attempt.stop();
             }
             match check_url(attempt.url(), allow_private) {
                 Ok(()) => attempt.follow(),
@@ -147,6 +207,17 @@ impl Fetcher {
             .send()
             .await
             .map_err(|e| short_reason(&e).to_owned())?;
+        // A redirect not followed (see `with_redirects`) still says where
+        // it leads.
+        if response.status().is_redirection()
+            && let Some(next) = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|location| response.url().join(location).ok())
+        {
+            return Ok(next);
+        }
         Ok(response.url().clone())
     }
 
@@ -182,16 +253,7 @@ impl Fetcher {
             .and_then(|v| v.to_str().ok())
             .unwrap_or_default()
             .to_owned();
-        let mut body = Vec::new();
-        let mut stream = response.bytes_stream();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|e| short_reason(&e).to_owned())?;
-            if body.len() + chunk.len() > limit {
-                return Err("the response is too large".into());
-            }
-            body.extend_from_slice(&chunk);
-        }
-        Ok((content_type, body))
+        Ok((content_type, read_body(response, limit).await?))
     }
 
     /// [`Self::fetch`], sending `headers` (some sites want a `Referer`).
@@ -277,6 +339,8 @@ mod tests {
             "151.101.1.69",
             "2606:4700::1111",
             "2a00:1450:4001::200e",
+            "2001:4860:4860::8888",
+            "2620:fe::fe",
         ] {
             assert!(is_public(ip(public)), "{public}");
         }
@@ -307,6 +371,26 @@ mod tests {
             "2002:7f00:1::",
             "2001:0::1",
             "::127.0.0.1",
+            // Site-local, deprecated but maybe still routed inside.
+            "fec0::1",
+            // Local-use NAT64: the translator's own IPv4 networks.
+            "64:ff9b:1::a00:1",
+            "64:ff9b:1::808:808",
+            // Discard-only.
+            "100::1",
+            // Benchmarking, ORCHID and the rest of 2001::/23.
+            "2001:2::1",
+            "2001:10::1",
+            "2001:20::1",
+            "2001:1ff::1",
+            // Documentation.
+            "3fff::1",
+            "3fff:fff::1",
+            // SRv6 segment ids.
+            "5f00::1",
+            // Not global unicast (outside 2000::/3).
+            "4000::1",
+            "e000::1",
         ] {
             assert!(!is_public(ip(private)), "{private}");
         }
@@ -339,6 +423,17 @@ mod tests {
         let app = Router::new()
             .route("/a.png", get(move || async move { png }))
             .route("/redirect", get(|| async { Redirect::temporary("/a.png") }))
+            .route("/keyed", get(|| async { Redirect::temporary("/referer") }))
+            .route(
+                "/referer",
+                get(|headers: axum::http::HeaderMap| async move {
+                    headers
+                        .get(axum::http::header::REFERER)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("none")
+                        .to_owned()
+                }),
+            )
             .route("/big", get(|| async { vec![0u8; 2 * 1024 * 1024] }))
             .route(
                 "/missing",
@@ -403,5 +498,19 @@ mod tests {
             .err()
             .unwrap();
         assert!(err.to_string().contains("404"), "{err}");
+        let big = Url::parse(&format!("http://{addr}/big")).unwrap();
+        let err = fetcher.get(&big, &[], 1024 * 1024).await.unwrap_err();
+        assert!(err.contains("too large"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn sends_no_referer_on_redirects() {
+        // It would carry the first URL's query (an API key, a login's
+        // parameters) to wherever the redirect goes.
+        let addr = serve_fixtures().await;
+        let fetcher = Fetcher::new(Duration::from_secs(10), true);
+        let url = Url::parse(&format!("http://{addr}/keyed?api_key=secret")).unwrap();
+        let (_, body) = fetcher.get(&url, &[], 1024).await.unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "none");
     }
 }

@@ -169,10 +169,12 @@ mod tests {
         explore::add_searches(&pool, &[searched("cat", 3, 0), searched("dgo", 1, 1)])
             .await
             .unwrap();
+        // `dgo` isn't a tag, so it's only among the searches that found
+        // nothing.
         let searches: Value =
             serde_json::from_str(&app.get("/explore/posts/searches.json", None).await.body)
                 .unwrap();
-        assert_eq!(searches, json!([["cat", 3], ["dgo", 1]]));
+        assert_eq!(searches, json!([["cat", 3]]));
         let missed: Value = serde_json::from_str(
             &app.get("/explore/posts/missed_searches.json", None)
                 .await

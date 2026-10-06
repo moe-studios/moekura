@@ -1,6 +1,7 @@
 mod admin;
 mod bench_http;
 mod config;
+mod deprecated;
 mod export;
 mod import;
 mod import_remote;
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use moekura_core::config::{Config, DatabaseConfig};
 use moekura_db::Db;
 use moekura_db::site_cache::SiteCache;
@@ -74,27 +75,34 @@ enum Command {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     moekura_storage::install_crypto_provider();
-    let cli = Cli::parse();
+    let cli = parse_args();
     // Needs no configuration.
     if let Command::Openapi = cli.command {
         println!("{}", moekura_web::api::openapi().to_pretty_json()?);
         return Ok(());
     }
-    let config = config::load(cli.config.as_deref())?;
+    let (config, notices) = config::load(cli.config.as_deref())?;
+    // Logged once logging is set up; commands without it print them.
+    let warn_deprecated = || {
+        for notice in &notices {
+            tracing::warn!("{notice}");
+        }
+    };
+    if matches!(cli.command, Command::CheckConfig | Command::Admin { .. }) {
+        for notice in &notices {
+            eprintln!("warning: {notice}");
+        }
+    }
 
     match cli.command {
         Command::Openapi => unreachable!("handled before loading the configuration"),
         Command::CheckConfig => {
-            // Site settings live in the database; say which ones win.
-            println!(
-                "# search.per_page, max_per_page and max_page are defaults: the `pagination`\n\
-                 # site setting overrides them (see `moekura admin settings`).\n"
-            );
-            print!("{}", toml::to_string_pretty(&config.redacted())?);
+            print!("{}", effective_settings(&config)?);
             Ok(())
         }
         Command::Migrate => {
             let telemetry = telemetry::init(&config.telemetry, "migrate")?;
+            warn_deprecated();
             let result = async {
                 let db = connect(&config.database).await?;
                 migrate(&db).await?;
@@ -130,23 +138,54 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Serve => {
             let telemetry = telemetry::init(&config.telemetry, "serve")?;
+            warn_deprecated();
             let result = serve(config).await;
             telemetry.shutdown().await;
             result
         }
         Command::Worker => {
             let telemetry = telemetry::init(&config.telemetry, "worker")?;
+            warn_deprecated();
             let result = worker(config).await;
             telemetry.shutdown().await;
             result
         }
         Command::Tagger(args) => {
             let telemetry = telemetry::init(&config.telemetry, "tagger")?;
+            warn_deprecated();
             let result = tagger::run(config, args).await;
             telemetry.shutdown().await;
             result
         }
     }
+}
+
+/// The command line, with deprecated spellings rewritten (and warned
+/// about) first.
+fn parse_args() -> Cli {
+    let args: Option<Vec<String>> = std::env::args_os()
+        .map(|arg| arg.into_string().ok())
+        .collect();
+    // Old names are plain ASCII; leave anything else to clap.
+    let Some(args) = args else {
+        return Cli::parse();
+    };
+    let (args, warnings) = deprecated::rewrite_args(&Cli::command(), deprecated::CLI_NAMES, args);
+    for warning in warnings {
+        eprintln!("warning: {warning}");
+    }
+    Cli::parse_from(args)
+}
+
+/// What `check-config` prints: the settings in effect, with credentials
+/// masked, as operators paste it into bug reports.
+fn effective_settings(config: &Config) -> anyhow::Result<String> {
+    // Site settings live in the database; say which ones win.
+    Ok(format!(
+        "# search.per_page, max_per_page and max_page are defaults: the `pagination`\n\
+         # site setting overrides them (see `moekura admin settings`).\n\n{}",
+        toml::to_string_pretty(&config.redacted())?
+    ))
 }
 
 async fn serve(config: Config) -> anyhow::Result<()> {
@@ -162,7 +201,15 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     tracing::info!(addr = %listener.local_addr()?, "listening");
     let shutdown = CancellationToken::new();
     let metrics = match config.telemetry.metrics_bind {
-        Some(bind) => Some(telemetry::start_metrics(bind, db.clone(), shutdown.clone()).await?),
+        Some(bind) => Some(
+            telemetry::start_metrics(
+                bind,
+                config.server.connections.clone(),
+                db.clone(),
+                shutdown.clone(),
+            )
+            .await?,
+        ),
         None => None,
     };
 
@@ -201,7 +248,13 @@ async fn serve(config: Config) -> anyhow::Result<()> {
     let workers = workers.map(|run| tokio::spawn(run(shutdown.clone())));
 
     let app = moekura_web::router(state.clone());
-    moekura_web::serve(listener, app, shutdown.clone().cancelled_owned()).await?;
+    moekura_web::serve(
+        listener,
+        app,
+        &state.config.server.connections,
+        shutdown.clone().cancelled_owned(),
+    )
+    .await?;
     // Views and searches counted since the last minute.
     moekura_web::explore::flush(&state).await;
 
@@ -227,7 +280,15 @@ async fn worker(config: Config) -> anyhow::Result<()> {
     }
     let shutdown = CancellationToken::new();
     let metrics = match config.telemetry.metrics_bind {
-        Some(bind) => Some(telemetry::start_metrics(bind, db.clone(), shutdown.clone()).await?),
+        Some(bind) => Some(
+            telemetry::start_metrics(
+                bind,
+                config.server.connections.clone(),
+                db.clone(),
+                shutdown.clone(),
+            )
+            .await?,
+        ),
         None => None,
     };
     tokio::spawn(cancel_on_signal(shutdown.clone()));
@@ -292,6 +353,7 @@ fn job_registry(db: &Db, config: &Config) -> anyhow::Result<Registry> {
         Duration::from_secs(config.webhooks.timeout_secs),
         config.webhooks.allow_private_addresses,
     )
+    .max_concurrent(config.webhooks.max_concurrent)
     .register(&mut registry);
     let mailer = if config.mail.is_enabled() {
         let mailer = Mailer::new(&config.mail).context("mail")?;
@@ -337,8 +399,8 @@ async fn wait_for_workers(mut workers: tokio::task::JoinHandle<()>, shutdown: &C
 }
 
 /// Deletes expired sessions, unfinished logins, old view and search
-/// counts and old read notifications, and forgets idle rate-limit
-/// counters.
+/// counts, old read notifications and scratch files left by requests,
+/// and forgets idle rate-limit counters.
 async fn hourly_maintenance(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(60 * 60));
     loop {
@@ -357,6 +419,7 @@ async fn hourly_maintenance(state: AppState) {
         }
         moekura_web::explore::prune(&state).await;
         moekura_web::notifications::prune(&state).await;
+        moekura_web::uploads::sweep_work_dir(&state).await;
     }
 }
 
@@ -415,4 +478,73 @@ async fn shutdown_signal() {
         () = terminate => {}
     }
     tracing::info!("shutdown signal received, finishing in-flight work");
+}
+
+#[cfg(test)]
+// `Jail` closures must return `figment::Result`, whose error type is large.
+#[allow(clippy::result_large_err)]
+mod tests {
+    use clap::CommandFactory;
+    use figment::Jail;
+
+    use super::*;
+
+    /// Each old spelling leads to a flag or subcommand that exists, and no
+    /// longer exists itself.
+    #[test]
+    fn renamed_cli_names_point_at_current_ones() {
+        let root = Cli::command();
+        for rename in deprecated::CLI_NAMES {
+            let mut words: Vec<&str> = rename.old.split(' ').collect();
+            let old = words.pop().expect("not empty");
+            let mut command = &root;
+            for word in words {
+                command = command
+                    .find_subcommand(word)
+                    .unwrap_or_else(|| panic!("{}: no subcommand {word}", rename.old));
+            }
+            let exists = |name: &str| match name.strip_prefix("--") {
+                Some(long) => command.get_arguments().any(|a| a.get_long() == Some(long)),
+                None => command.find_subcommand(name).is_some(),
+            };
+            assert!(
+                exists(rename.new),
+                "{}: {} is missing",
+                rename.old,
+                rename.new
+            );
+            assert!(!exists(old), "{} still exists", rename.old);
+        }
+    }
+
+    #[test]
+    fn check_config_prints_no_credentials() {
+        Jail::expect_with(|jail| {
+            jail.create_file(
+                config::DEFAULT_PATH,
+                r#"
+                [database]
+                url = "postgres://moekura:s3cr3t-db@db/moekura"
+                [auth.captcha]
+                provider = "hcaptcha"
+                site_key = "public-site-key"
+                secret_key = "s3cr3t-captcha"
+                [sources.logins."x.com"]
+                cookie = "auth_token=s3cr3t-cookie"
+                headers = { "x-csrf-token" = "s3cr3t-csrf" }
+                [sources.logins."gelbooru.com"]
+                query = { user_id = "7", api_key = "s3cr3t-api-key" }
+                [telemetry]
+                otlp_endpoint = "https://otel:s3cr3t-otlp@collector.example.com"
+                "#,
+            )?;
+            jail.set_env("MOEKURA_MAIL__PASSWORD", "s3cr3t-mail");
+            let (config, _) = config::load(None).map_err(|e| format!("{e:#}"))?;
+            let printed = effective_settings(&config).map_err(|e| format!("{e:#}"))?;
+            assert!(!printed.contains("s3cr3t"), "{printed}");
+            assert!(printed.contains("public-site-key"), "{printed}");
+            assert!(printed.contains("x-csrf-token"), "{printed}");
+            Ok(())
+        });
+    }
 }

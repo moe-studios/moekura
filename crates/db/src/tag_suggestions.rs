@@ -159,23 +159,34 @@ pub async fn site_tags(
 #[derive(Debug, thiserror::Error)]
 pub enum AccountError {
     #[error(
-        "the account `{0}` has a password, so it isn't used as the tagger's; \
-         set tagger.account to another name"
+        "the account `{0}` belongs to someone (it has a password, an email address, \
+         a login through the provider, a session or an API key), so it isn't used as \
+         the tagger's; set tagger.account to another name"
     )]
-    HasPassword(String),
+    Taken(String),
     #[error(transparent)]
     Db(#[from] sqlx::Error),
 }
 
 /// The id of the tagger's account `name`, created as a member without a
 /// password (so nobody can log in as it) if it doesn't exist. An account
-/// someone can log in to is refused.
+/// that shows a person made it, or can get into it, is refused: someone
+/// may have signed up with the name (with a password, or through the
+/// provider) before the tagger first ran.
 pub async fn tagger_account(db: &PgPool, name: &str) -> Result<i64, AccountError> {
     let find = async || -> sqlx::Result<Option<(i64, bool)>> {
-        sqlx::query_as("SELECT id, password_hash IS NOT NULL FROM users WHERE name = $1")
-            .bind(name)
-            .fetch_optional(db)
-            .await
+        sqlx::query_as(
+            "SELECT id,
+                    password_hash IS NOT NULL
+                    OR email IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM user_identities i WHERE i.user_id = users.id)
+                    OR EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = users.id)
+                    OR EXISTS (SELECT 1 FROM api_keys k WHERE k.user_id = users.id)
+             FROM users WHERE name = $1::citext",
+        )
+        .bind(name)
+        .fetch_optional(db)
+        .await
     };
     let found = match find().await? {
         Some(found) => found,
@@ -206,7 +217,7 @@ pub async fn tagger_account(db: &PgPool, name: &str) -> Result<i64, AccountError
         }
     };
     match found {
-        (_, true) => Err(AccountError::HasPassword(name.to_owned())),
+        (_, true) => Err(AccountError::Taken(name.to_owned())),
         (id, false) => Ok(id),
     }
 }
@@ -295,7 +306,7 @@ pub async fn backlog(db: impl PgExecutor<'_>, all: bool, limit: i64) -> sqlx::Re
 }
 
 /// Which suggestions [`list`] finds; every condition given must hold.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SuggestionFilter<'a> {
     pub post_ids: &'a [i64],
     pub tag_ids: &'a [i32],
@@ -304,9 +315,8 @@ pub struct SuggestionFilter<'a> {
     pub posted: Option<bool>,
     /// Confidence in percent, inclusive.
     pub score: (i32, i32),
-    /// Posts with these statuses, or pending ones uploaded by `viewer`.
-    pub statuses: &'a [&'a str],
-    pub viewer: Option<i64>,
+    /// Only on posts the viewer may see.
+    pub visibility: &'a crate::posts::Visibility,
 }
 
 /// A suggestion on some post.
@@ -336,6 +346,8 @@ pub async fn list(
          JOIN tags t ON t.id = s.tag_id
          JOIN posts p ON p.id = s.post_id
          WHERE (p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
+           AND p.rating = ANY($11)
+           AND NOT p.tag_ids && $12::int[]
            AND (cardinality($3::int8[]) = 0 OR s.post_id = ANY($3))
            AND (cardinality($4::int4[]) = 0 OR s.tag_id = ANY($4))
            AND (cardinality($5::text[]) = 0 OR t.name = ANY($5))
@@ -344,8 +356,8 @@ pub async fn list(
          ORDER BY s.post_id DESC, s.confidence DESC, t.name
          OFFSET $9 LIMIT $10",
     )
-    .bind(filter.statuses)
-    .bind(filter.viewer)
+    .bind(filter.visibility.status_names())
+    .bind(filter.visibility.viewer)
     .bind(filter.post_ids)
     .bind(filter.tag_ids)
     .bind(filter.tag_names)
@@ -354,6 +366,8 @@ pub async fn list(
     .bind(filter.score.1)
     .bind(offset)
     .bind(limit)
+    .bind(filter.visibility.rating_codes())
+    .bind(&filter.visibility.hidden_tags)
     .fetch_all(db)
     .await
 }
@@ -589,8 +603,58 @@ mod tests {
             .unwrap();
         assert!(matches!(
             tagger_account(&pool, "tagger").await,
-            Err(AccountError::HasPassword(_))
+            Err(AccountError::Taken(_))
         ));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn the_tagger_doesnt_take_over_someones_account(pool: PgPool) {
+        // An account made before the tagger's, without a password (as
+        // single sign-on makes them), but which someone can get into.
+        let role = crate::roles::by_system(&pool, SystemRole::Member)
+            .await
+            .unwrap();
+        let mut ways_in = Vec::new();
+        for name in ["by_sso", "by_address", "by_session", "by_key"] {
+            let new = crate::users::NewUser {
+                name,
+                email: None,
+                password_hash: None,
+                role_id: role.id,
+                status: crate::users::UserStatus::Active,
+            };
+            ways_in.push(crate::users::insert(&pool, new).await.unwrap().id);
+        }
+        crate::identities::link(&pool, ways_in[0], "https://sso.example.com", "1")
+            .await
+            .unwrap();
+        crate::users::set_email(&pool, ways_in[1], Some("me@example.com"), false)
+            .await
+            .unwrap();
+        let session = crate::sessions::NewSession {
+            user_id: ways_in[2],
+            user_agent: None,
+            ip: None,
+        };
+        let lifetime = crate::sessions::Lifetime {
+            idle: std::time::Duration::from_secs(3600),
+            max: std::time::Duration::from_secs(3600),
+        };
+        crate::sessions::create(&pool, session, lifetime)
+            .await
+            .unwrap();
+        crate::api_keys::create(&pool, ways_in[3], "script", None)
+            .await
+            .unwrap();
+        for name in ["by_sso", "by_address", "by_session", "BY_KEY"] {
+            assert!(
+                matches!(
+                    tagger_account(&pool, name).await,
+                    Err(AccountError::Taken(_))
+                ),
+                "{name}"
+            );
+        }
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

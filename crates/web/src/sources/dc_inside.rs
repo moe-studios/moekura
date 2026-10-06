@@ -3,7 +3,7 @@
 
 use moekura_core::sites::SourceUrl;
 
-use super::{Http, SourceInfo, html, html_to_text};
+use super::{Http, SourceInfo, html, html_to_text, key, number};
 
 const REFERER: &str = "https://gall.dcinside.com/";
 
@@ -12,8 +12,31 @@ pub(super) async fn fetch(
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
+    check_page(page)?;
     let body = http.page(page, &[]).await?;
     post_info(known, page, &body).ok_or_else(|| "DC Inside: no post in the page".into())
+}
+
+/// Refuses a post's page unless it's what a gallery and post number make
+/// of it: they come from the link's query, where anything could be.
+fn check_page(page: &str) -> Result<(), String> {
+    let url = url::Url::parse(page).map_err(|e| e.to_string())?;
+    let get = |name: &str| {
+        url.query_pairs()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.into_owned())
+            .unwrap_or_default()
+    };
+    let (board, no) = (get("id"), get("no"));
+    let expected = format!(
+        "https://gall.dcinside.com/mgallery/board/view/?id={}&no={}",
+        key(&board)?,
+        number(&no)?
+    );
+    if page != expected {
+        return Err("DC Inside: not a post".into());
+    }
+    Ok(())
 }
 
 fn post_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceInfo> {

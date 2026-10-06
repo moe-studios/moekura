@@ -66,8 +66,13 @@ like `user:`) are left out with a note; the rest of the file is still
 imported.
 
 Once every file is in, posts whose sidecar names a parent's file get that
-post as their parent, if it's here (imported now or before). Pixiv ugoira
-are imported from their `.zip`.
+post as their parent, if it's here. A parent imported in the same run is
+found by the file it was imported from, even when its metadata was
+[removed](../using/posts.md#removing-metadata-from-originals) as it was
+stored, which gives its post another SHA-256. One imported before is
+found by the file it's stored as; if that lost its metadata, import the
+parent again with its children (it's skipped as a duplicate, and found).
+Pixiv ugoira are imported from their `.zip`.
 
 ## From other boorus
 
@@ -95,7 +100,10 @@ search is in the other site's syntax. Posts are imported newest first:
   here are left out.
 - The source is the post's own source, or its page on the other site.
 - Files already here (by MD5, or the same file) aren't downloaded again;
-  parents and children are linked as both arrive.
+  parents and children are linked as both arrive. A file whose metadata
+  was [removed](../using/posts.md#removing-metadata-from-originals) here
+  has another MD5, so it's downloaded again, then recognised as the
+  same post.
 - `--notes` and `--pools` also bring notes and pools from Danbooru-style
   sites. Pools are matched by name.
 
@@ -107,8 +115,11 @@ your user id and API key). Posts whose file the site hides are skipped.
 Progress is saved as it goes. Running the same site and search again
 carries on where it stopped (after `--limit`, a failure or Ctrl-C), and
 once it's finished there's nothing to do; `--restart` starts from the
-newest posts again, which also picks up posts added since. To import from
-a site on your own network, add `--allow-private-addresses`.
+newest posts again, which also picks up posts added since. The site's
+API pages, the files and every redirect must be on the public internet;
+to import from a site on your own network, add
+`--allow-private-addresses`. An API page (posts, a post's notes or
+pools) may be up to 16 MB.
 
 ## Exporting
 

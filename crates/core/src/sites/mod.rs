@@ -168,6 +168,23 @@ impl SourceUrl {
         self
     }
 
+    /// The canonical forms with what can't stand raw in a link encoded:
+    /// parsers build them from decoded path segments and query values,
+    /// so `%22` in a link would otherwise come back as a quote.
+    fn encoded(mut self) -> Self {
+        for url in [
+            &mut self.file_url,
+            &mut self.page_url,
+            &mut self.profile_url,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *url = encoded_url(url);
+        }
+        self
+    }
+
     pub fn kind(&self) -> Kind {
         if self.is_file {
             Kind::File
@@ -271,7 +288,10 @@ pub fn parse(raw: &str) -> Option<SourceUrl> {
         return None;
     }
     let parts = Parts::new(&url)?;
-    PARSERS.iter().find_map(|parse| parse(&parts))
+    PARSERS
+        .iter()
+        .find_map(|parse| parse(&parts))
+        .map(SourceUrl::encoded)
 }
 
 /// The site `raw` is on, if we know it.
@@ -281,12 +301,42 @@ pub fn site_of(raw: &str) -> Option<&'static Site> {
 
 /// `raw` as an artist's URL should be kept: a profile's canonical form
 /// (`artstation.com/artist/x` becomes `https://www.artstation.com/x`),
-/// anything else as it is.
+/// anything else as it is, with what can't stand raw in a link encoded
+/// ([`encoded_url`]).
 pub fn canonical_artist_url(raw: &str) -> String {
     match parse(raw) {
         Some(found) if found.kind() == Kind::Profile => found.profile_url.unwrap_or_default(),
-        _ => raw.to_owned(),
+        _ => encoded_url(raw),
     }
+}
+
+/// Whether `c` can't stand raw in a link kept or shown: controls,
+/// spaces, quotes, angle brackets and backticks.
+fn needs_encoding(c: char) -> bool {
+    c.is_control() || c.is_whitespace() || matches!(c, '"' | '\'' | '<' | '>' | '`')
+}
+
+/// `url` with the characters [`needs_encoding`] names percent-encoded.
+/// A URL holding any is serialised again through [`url::Url`], then
+/// what that leaves raw (`'` in a path, a quote in a host name) is
+/// encoded by hand; other URLs are kept exactly as they are, so
+/// canonical forms like `https://name.fanbox.cc` don't change.
+pub fn encoded_url(url: &str) -> String {
+    if !url.contains(needs_encoding) {
+        return url.to_owned();
+    }
+    let serialised = url::Url::parse(url.trim()).map_or_else(|_| url.to_owned(), String::from);
+    let mut out = String::with_capacity(serialised.len());
+    for c in serialised.chars() {
+        if needs_encoding(c) {
+            for byte in c.encode_utf8(&mut [0; 4]).bytes() {
+                out.push_str(&format!("%{byte:02X}"));
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -333,6 +383,39 @@ pub(crate) mod testing {
 mod tests {
     use super::*;
 
+    /// No parser cuts a name or path inside a character: every link in
+    /// the sites' code, with a character of 2, 3 or 4 bytes put in at each
+    /// place after the host, still parses.
+    #[test]
+    fn characters_anywhere() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/sites");
+        let mut urls: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let code = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+            for (at, _) in code.match_indices("\"http") {
+                let rest = &code[at + 1..];
+                urls.push(rest[..rest.find('"').unwrap_or(rest.len())].to_owned());
+            }
+        }
+        urls.sort_unstable();
+        urls.dedup();
+        assert!(urls.len() > 500, "{}", urls.len());
+        for url in &urls {
+            // Hosts are ASCII by the time parsers see them.
+            let host = url.find("//").map_or(0, |at| at + 2);
+            let path_start = url[host..]
+                .find(['/', '?', '#'])
+                .map_or(url.len(), |end| host + end);
+            let starts = url.char_indices().map(|(at, _)| at).chain([url.len()]);
+            for (n, at) in starts.filter(|&at| at >= path_start).enumerate() {
+                let mut changed = url.clone();
+                changed.insert(at, ['é', '猫', '😀'][n % 3]);
+                let parsed = std::panic::catch_unwind(|| parse(&changed));
+                assert!(parsed.is_ok(), "{changed}");
+            }
+        }
+    }
+
     #[test]
     fn unknown_and_odd_links() {
         assert_eq!(parse("https://example.com/a"), None);
@@ -359,6 +442,54 @@ mod tests {
             canonical_artist_url("https://example.com/me"),
             "https://example.com/me"
         );
+    }
+
+    #[test]
+    fn canonical_forms_are_encoded() {
+        // Quotes, brackets and spaces typed encoded stay encoded, though
+        // the parsers build canonical forms from decoded segments.
+        assert_eq!(
+            canonical_artist_url("https://misskey.io/@a%22%3E%3Cb%20c%27"),
+            "https://misskey.io/@a%22%3E%3Cb%20c%27"
+        );
+        assert_eq!(
+            canonical_artist_url("https://example.com/it's"),
+            "https://example.com/it%27s"
+        );
+        // Others are kept exactly as they are.
+        assert_eq!(
+            canonical_artist_url("https://www.fanbox.cc/@name"),
+            "https://name.fanbox.cc"
+        );
+        assert_eq!(
+            encoded_url("https://example.com/猫"),
+            "https://example.com/猫"
+        );
+        let evil = "%22%3E%3Cimg%20src%3Dx%3E%27%60";
+        for raw in [
+            format!("https://twitter.com/{evil}"),
+            format!("https://twitter.com/{evil}/status/1"),
+            format!("https://misskey.io/@{evil}"),
+            format!("https://misskey.io/notes/{evil}"),
+            format!("https://mastodon.social/@{evil}"),
+            format!("https://www.fanbox.cc/@{evil}"),
+            format!("https://www.artstation.com/artist/{evil}"),
+            format!("https://www.pixiv.net/member.php?id={evil}"),
+            format!("https://{evil}.tumblr.com/post/1"),
+            format!("https://example.com/{evil}"),
+        ] {
+            let mut urls = vec![canonical_artist_url(&raw)];
+            if let Some(found) = parse(&raw) {
+                urls.extend(
+                    [found.file_url, found.page_url, found.profile_url]
+                        .into_iter()
+                        .flatten(),
+                );
+            }
+            for url in urls {
+                assert!(!url.contains(needs_encoding), "{raw}: {url}");
+            }
+        }
     }
 
     #[test]

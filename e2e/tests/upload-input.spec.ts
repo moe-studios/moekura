@@ -97,7 +97,8 @@ test("a typed link is sent with the button", async ({ page }) => {
   expect(links).toEqual(["https://example.com/image.png"]);
 });
 
-test("a link given with the page is sent at once, and going back skips the form", async ({ page }) => {
+test("a link the bookmarklet gives with the page is sent at once, and going back skips the form", async ({ page }) => {
+  // The server marks the form to be sent only when the bookmarklet's token is right.
   const prefilled = form.replace('id="url" name="url" type="url" value=""', 'id="url" name="url" type="url" value="https://example.com/work"');
   await page.route("**/uploads/new?*", (route) => route.fulfill({ contentType: "text/html", body: prefilled }));
   await page.route("**/uploads", (route) => {
@@ -105,13 +106,57 @@ test("a link given with the page is sent at once, and going back skips the form"
     // Requests following a redirect aren't routed: this page is the site's.
     return route.fulfill({ status: 303, headers: { Location: "/wiki" } });
   });
-  await page.goto("/uploads/new?url=https%3A%2F%2Fexample.com%2Fwork");
+  await page.goto("/uploads/new?token=abc&url=https%3A%2F%2Fexample.com%2Fwork");
   await page.addScriptTag({ content: script, type: "module" });
   await expect(page).toHaveURL(/\/wiki$/);
   expect(links).toEqual(["https://example.com/work"]);
   // Back goes to the page before, not the one sending the link again.
   await page.goBack();
   await expect(page).not.toHaveURL(/url=/);
+});
+
+test("a form slipped into another page isn't sent by itself", async ({ page }) => {
+  const posted: string[] = [];
+  await page.route("**/comments", (route) => {
+    posted.push(route.request().url());
+    return route.fulfill({ contentType: "text/html", body: "<p>sent</p>" });
+  });
+  const planted = form.replace('id="url" name="url" type="url" value=""', 'id="url" name="url" type="url" value="https://example.com/work"');
+  // Posting elsewhere: not the upload form at all, so pasting a link doesn't send it either.
+  await page.route("**/artists/1", (route) => route.fulfill({ contentType: "text/html", body: planted.replace('action="/uploads"', 'action="/comments"') }));
+  await page.goto("/artists/1");
+  await page.addScriptTag({ content: script, type: "module" });
+  const pasted = await page.locator("#url").evaluate((element) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "https://example.com/other");
+    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(pasted).toBe(false);
+  await expect(page.locator("[data-upload-hint]")).toBeHidden();
+  // Posting to /uploads, but not on a page that shows the upload form: left alone too.
+  await page.route("**/artists/2", (route) => route.fulfill({ contentType: "text/html", body: planted }));
+  await page.goto("/artists/2");
+  await page.addScriptTag({ content: script, type: "module" });
+  const pastedThere = await page.locator("#url").evaluate((element) => {
+    const data = new DataTransfer();
+    data.setData("text/plain", "https://example.com/other");
+    const event = new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true });
+    element.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(pastedThere).toBe(false);
+  await expect(page.locator("[data-upload-hint]")).toBeHidden();
+  await expect(page.locator("[data-upload-status]")).toBeEmpty();
+  // On the upload page, a form slipped in before the real one: neither is trusted.
+  await page.route("**/uploads/new?*", (route) => route.fulfill({ contentType: "text/html", body: planted + form }));
+  await page.goto("/uploads/new?token=abc&url=https%3A%2F%2Fexample.com%2Fwork");
+  await page.addScriptTag({ content: script, type: "module" });
+  await expect(page.locator("[data-upload-hint]:visible")).toHaveCount(0);
+  await expect(page.locator("[data-upload-status]:not(:empty)")).toHaveCount(0);
+  expect(posted).toEqual([]);
+  expect(links).toEqual([]);
 });
 
 test("file drag highlights the form through child transitions and clears on leave/drop", async ({ page }) => {

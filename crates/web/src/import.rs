@@ -1,6 +1,7 @@
 //! Importing files from disk as posts, for `moekura admin import`. Each
 //! file goes through the same checks and steps as an upload.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use moekura_core::posts::Rating;
@@ -10,7 +11,9 @@ use tokio::io::AsyncReadExt;
 
 use crate::AppState;
 use crate::auth::CurrentUser;
-use crate::upload::{TempUpload, TempWriter, UploadError, UploadFields, ingest};
+use crate::upload::{
+    TempUpload, TempWriter, UploadError, UploadFields, ingest, media_error, strip_metadata,
+};
 
 /// A file to import and what to give its post.
 #[derive(Debug, Clone)]
@@ -29,6 +32,24 @@ pub enum Imported {
     Created(i64),
     /// The file was already this post; nothing changed.
     Duplicate(i64),
+}
+
+impl Imported {
+    /// The post the file is, new or not.
+    pub fn post(self) -> i64 {
+        match self {
+            Self::Created(id) | Self::Duplicate(id) => id,
+        }
+    }
+}
+
+/// What [`import_file`] made of a file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Outcome {
+    pub imported: Imported,
+    /// The SHA-256 of the file as it is on disk, which sidecars name
+    /// parents by. The post's is another when its metadata was removed.
+    pub file_sha256: [u8; 32],
 }
 
 /// The tags of `tags` that are valid, as one input string, and the ones
@@ -88,7 +109,7 @@ pub async fn import_file(
     state: &AppState,
     uploader: &User,
     file: ImportFile<'_>,
-) -> Result<Imported, String> {
+) -> Result<Outcome, String> {
     let received = receive(state, file.path).await?;
     let current = CurrentUser::for_user(uploader.clone(), None, &state.site.get());
     let fields = UploadFields {
@@ -99,25 +120,35 @@ pub async fn import_file(
         description: file.description.to_owned(),
         ..UploadFields::default()
     };
-    match ingest(state, &current, &received, &fields, false).await {
-        Ok(id) => Ok(Imported::Created(id)),
-        Err(UploadError::Duplicate(id)) => Ok(Imported::Duplicate(id)),
-        Err(error) => Err(error.to_string()),
-    }
+    let imported = match ingest(state, &current, &received, &fields, false).await {
+        Ok(id) => Imported::Created(id),
+        Err(UploadError::Duplicate(id)) => Imported::Duplicate(id),
+        Err(error) => return Err(error.to_string()),
+    };
+    Ok(Outcome {
+        imported,
+        file_sha256: received.sha256,
+    })
 }
 
 /// Makes the post with the file `parent_sha256` the parent of post
-/// `child`, as `uploader`. `None` when no post has that file (yet).
+/// `child`, as `uploader`: the post that file became in this import
+/// (`imported`, by [`Outcome::file_sha256`]), or else the post whose
+/// stored file it is. `None` when no post has that file (yet).
 pub async fn link_parent(
     state: &AppState,
     uploader: &User,
     child: i64,
     parent_sha256: &[u8; 32],
+    imported: &HashMap<[u8; 32], i64>,
 ) -> Result<Option<i64>, String> {
-    let Some(parent) = moekura_db::media::post_with_sha256(state.db.primary(), parent_sha256)
-        .await
-        .map_err(|e| e.to_string())?
-    else {
+    let parent = match imported.get(parent_sha256) {
+        Some(&post) => Some(post),
+        None => moekura_db::media::post_with_sha256(state.db.primary(), parent_sha256)
+            .await
+            .map_err(|e| e.to_string())?,
+    };
+    let Some(parent) = parent else {
         return Ok(None);
     };
     let current = CurrentUser::for_user(uploader.clone(), None, &state.site.get());
@@ -128,10 +159,29 @@ pub async fn link_parent(
 }
 
 /// The post that already has the file at `path`, if any, without
-/// importing it.
+/// importing it: as it is, or as it would be stored, without its
+/// metadata, as uploads find duplicates.
 pub async fn existing_post(state: &AppState, path: &Path) -> Result<Option<i64>, String> {
+    let db = state.db.primary();
     let received = receive(state, path).await?;
-    moekura_db::media::post_with_sha256(state.db.primary(), &received.sha256)
+    let found = moekura_db::media::post_with_sha256(db, &received.sha256)
+        .await
+        .map_err(|e| e.to_string())?;
+    if found.is_some() {
+        return Ok(found);
+    }
+    let media_type = state
+        .media
+        .identify(received.path())
+        .await
+        .map_err(|e| media_error(e).to_string())?;
+    let Some(stripped) = strip_metadata(state, &received, media_type)
+        .await
+        .map_err(|e| e.to_string())?
+    else {
+        return Ok(None);
+    };
+    moekura_db::media::post_with_sha256(db, &stripped.sha256)
         .await
         .map_err(|e| e.to_string())
 }
@@ -176,7 +226,11 @@ mod tests {
         };
 
         assert_eq!(existing_post(&state, &path).await.unwrap(), None);
-        let Imported::Created(id) = import_file(&state, &alice, file.clone()).await.unwrap() else {
+        let Imported::Created(id) = import_file(&state, &alice, file.clone())
+            .await
+            .unwrap()
+            .imported
+        else {
             panic!("expected a new post");
         };
         let post = moekura_db::posts::by_id(&pool, id).await.unwrap().unwrap();
@@ -188,7 +242,7 @@ mod tests {
         assert!(path.exists());
 
         assert_eq!(
-            import_file(&state, &alice, file).await.unwrap(),
+            import_file(&state, &alice, file).await.unwrap().imported,
             Imported::Duplicate(id)
         );
         assert_eq!(existing_post(&state, &path).await.unwrap(), Some(id));
@@ -209,5 +263,62 @@ mod tests {
         .await
         .unwrap_err();
         assert!(error.contains("isn't supported"), "{error}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn files_stored_without_metadata_are_found_by_what_was_imported(pool: PgPool) {
+        let state = test_state(&pool).await;
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let alice = moekura_db::users::by_name(&pool, "alice")
+            .await
+            .unwrap()
+            .unwrap();
+        let dir = state.work_dir.join("import-stripped");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (parent, child) = (dir.join("parent.png"), dir.join("child.png"));
+        std::fs::write(&parent, fixture::png_with_text(30, 20, "secret")).unwrap();
+        std::fs::write(&child, fixture::png(20, 30)).unwrap();
+        let file = |path| ImportFile {
+            path,
+            rating: Rating::General,
+            tags: &[],
+            source: "",
+            description: "",
+        };
+
+        let imported = import_file(&state, &alice, file(&parent)).await.unwrap();
+        let Imported::Created(parent_id) = imported.imported else {
+            panic!("expected a new post");
+        };
+        // Stored without the text, so the post has another hash than the
+        // file...
+        let by_file = moekura_db::media::post_with_sha256(&pool, &imported.file_sha256)
+            .await
+            .unwrap();
+        assert_eq!(by_file, None);
+        // ...which still finds it, as a dry run would.
+        assert_eq!(
+            existing_post(&state, &parent).await.unwrap(),
+            Some(parent_id)
+        );
+
+        // A sidecar names the parent by the file it had.
+        let child_id = import_file(&state, &alice, file(&child))
+            .await
+            .unwrap()
+            .imported
+            .post();
+        let posts = HashMap::from([(imported.file_sha256, parent_id)]);
+        assert_eq!(
+            link_parent(&state, &alice, child_id, &imported.file_sha256, &posts)
+                .await
+                .unwrap(),
+            Some(parent_id)
+        );
+        let child = moekura_db::posts::by_id(&pool, child_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(child.parent_id, Some(parent_id));
     }
 }

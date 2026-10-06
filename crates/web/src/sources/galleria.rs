@@ -2,13 +2,21 @@
 
 use moekura_core::sites::SourceUrl;
 
-use super::{Http, SourceInfo, html, html_to_text, tags_named};
+use super::{Http, SourceInfo, html, html_to_text, number, tags_named};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
+    // The user and illustration may come from the link's query, where
+    // anything could be.
+    let (user, file) = page
+        .strip_prefix("https://galleria.emotionflow.com/")
+        .and_then(|path| path.split_once('/'))
+        .ok_or("Galleria: not an illustration")?;
+    number(user)?;
+    number(file.strip_suffix(".html").unwrap_or_default())?;
     let body = http.page(page, &[("Cookie", "SFL=3")]).await?;
     let info = page_info(known, page, &body);
     if info.files.is_empty() {
@@ -43,11 +51,8 @@ fn page_info(known: &SourceUrl, page: &str, body: &str) -> SourceInfo {
         html::tags(body, "a")
             .into_iter()
             .filter(|a| a.has_class("AutoLinkTag") || a.has_class("AutoLinkMyTag"))
-            .map(|a| {
-                html_to_text(html::inner(body, &a))
-                    .trim_start_matches('#')
-                    .to_owned()
-            })
+            .filter_map(|a| html::label(body, &a))
+            .map(|name| name.trim_start_matches('#').to_owned())
             .collect::<Vec<_>>(),
     );
     info

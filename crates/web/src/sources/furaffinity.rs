@@ -25,7 +25,7 @@ fn submission_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceIn
     .unwrap_or(body);
     let download = html::tags(options, "a")
         .into_iter()
-        .find(|a| html_to_text(html::inner(options, a)) == "Download")?;
+        .find(|a| html::label(options, a).as_deref() == Some("Download"))?;
     let href = download.attr("href")?;
     let file = if href.starts_with("//") {
         format!("https:{href}")
@@ -40,7 +40,7 @@ fn submission_info(known: &SourceUrl, page: &str, body: &str) -> Option<SourceIn
         html::tags(body, "a")
             .into_iter()
             .filter(|a| a.has_class("tag") || a.attr("rel") == Some("tag"))
-            .map(|a| html_to_text(html::inner(body, &a)))
+            .filter_map(|a| html::label(body, &a))
             .collect::<Vec<_>>(),
     );
     info.artist_name = html::find(body, "span", |t| {

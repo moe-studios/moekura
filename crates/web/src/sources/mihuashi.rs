@@ -4,7 +4,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, id_of, strings, tags_named};
+use super::{Http, SourceInfo, id_of, key, strings, tags_named};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -14,6 +14,9 @@ pub(super) async fn fetch(
     let path = page.trim_start_matches("https://www.mihuashi.com/");
     let path = path.split('?').next().unwrap_or(path);
     let parts: Vec<&str> = path.split('/').collect();
+    for part in &parts {
+        key(part)?;
+    }
     let (api, key) = match parts.as_slice() {
         ["artworks", id] => (format!("v1/artworks/{id}/"), "artwork"),
         ["stalls", id] => (format!("v1/stalls/{id}/"), "stall"),

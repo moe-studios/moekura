@@ -23,3 +23,9 @@ E2E_ADMIN_NAME=boss E2E_ADMIN_PASSWORD="e2e admin password" npx playwright test
 with gallery-dl, against the same site and admin (`BASE_URL`,
 `E2E_ADMIN_NAME`, `E2E_ADMIN_PASSWORD`); it needs `gallery-dl` and
 `python3`.
+
+`upgrade/` holds the upgrade and backup tests (`.github/workflows/upgrade.yml`):
+`seed.sh` fills an empty site through the CLI and the API, `check.sh`
+checks it afterwards, and `jobs.sh` waits for background jobs and fails on
+any that died. They need `curl`, `jq` and `python3`; see each script for
+its variables.

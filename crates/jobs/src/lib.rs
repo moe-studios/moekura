@@ -78,11 +78,14 @@ struct Scheduled {
     enqueue: Enqueue,
 }
 
-/// Maps job kinds to handlers, and knows which jobs run on a schedule.
+/// Maps job kinds to handlers, and knows which jobs run on a schedule and
+/// which may only run a few at a time.
 #[derive(Default, Clone)]
 pub struct Registry {
     handlers: HashMap<&'static str, Handler>,
     scheduled: Vec<Scheduled>,
+    /// Kinds with the most of their jobs that may run at once.
+    limits: Vec<(&'static str, i32)>,
 }
 
 impl Registry {
@@ -117,6 +120,15 @@ impl Registry {
         let mut kinds: Vec<&'static str> = self.handlers.keys().copied().collect();
         kinds.sort_unstable();
         kinds
+    }
+
+    /// Runs at most `most` jobs of type `J` at once, across all workers and
+    /// nodes, so jobs that wait on something slow can't hold every worker.
+    pub fn at_most<J: Job>(&mut self, most: u32) -> &mut Self {
+        self.limits.retain(|(kind, _)| *kind != J::KIND);
+        self.limits
+            .push((J::KIND, i32::try_from(most).unwrap_or(i32::MAX)));
+        self
     }
 
     /// Enqueues a `J` every `every` (and shortly after start), unless one
@@ -212,7 +224,14 @@ impl Worker {
             tokio::pin!(notified);
             notified.as_mut().enable();
 
-            match jobs::claim(&self.db, &self.id, self.config.lock, &self.kinds).await {
+            let claimed = jobs::claim_limited(
+                &self.db,
+                &self.id,
+                self.config.lock,
+                &self.kinds,
+                &self.registry.limits,
+            );
+            match claimed.await {
                 Ok(Some(job)) => {
                     let span = tracing::info_span!(
                         "job",
@@ -580,6 +599,62 @@ mod tests {
         pool_task.await.unwrap();
         assert_eq!(finished.load(Ordering::SeqCst), 1);
         assert_eq!(jobs::counts(&pool).await.unwrap().running, 0);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn limited_kinds_leave_workers_free(pool: PgPool) {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let counted = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::new();
+        let held = gate.clone();
+        registry
+            .register(move |_: Slow| {
+                let held = held.clone();
+                async move {
+                    held.acquire().await.unwrap().forget();
+                    Ok(())
+                }
+            })
+            .at_most::<Slow>(1);
+        let seen = counted.clone();
+        registry.register(move |_: Count| {
+            let seen = seen.clone();
+            async move {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        });
+        push(&pool, &Slow).await;
+        push(&pool, &Slow).await;
+        push(&pool, &Count { fail_times: 0 }).await;
+
+        let shutdown = CancellationToken::new();
+        let pool_task = tokio::spawn(run(
+            pool.clone(),
+            registry,
+            fast_config(2),
+            shutdown.clone(),
+        ));
+        // One slow job at a time, so the other worker gets to the rest.
+        wait_until("the other kind to run", async || {
+            counted.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(jobs::counts(&pool).await.unwrap().running, 1);
+
+        gate.add_permits(2);
+        wait_until("the slow jobs to finish", async || {
+            jobs::counts(&pool).await.unwrap()
+                == jobs::JobCounts {
+                    queued: 0,
+                    running: 0,
+                    dead: 0,
+                }
+        })
+        .await;
+        shutdown.cancel();
+        pool_task.await.unwrap();
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

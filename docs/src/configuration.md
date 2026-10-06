@@ -26,7 +26,10 @@ underscores), for example `MOEKURA_DATABASE__URL` or
 a typo fails loudly instead of being ignored.
 
 `moekura check-config` validates the configuration and prints the result
-with passwords redacted.
+with credentials replaced by `REDACTED`: passwords and secret keys, the
+cookies, query values and headers of `[sources.logins]`, and the user,
+password and query values of every address (the OTLP collector, the
+tagger's model, …). Names stay, so it still shows what is sent where.
 
 ## `[server]`
 
@@ -34,7 +37,7 @@ with passwords redacted.
 |---|---|---|
 | `bind` | `"0.0.0.0:8080"` | address the HTTP server listens on |
 | `public_url` | `"http://localhost:8080"` | the address people use; set it to your `https://` URL (cookies become `Secure`, and forms are only accepted from this origin) |
-| `trusted_proxies` | `[]` | reverse proxies allowed to report the client's address in `X-Forwarded-For` (addresses or CIDR ranges) |
+| `trusted_proxies` | `[]` | reverse proxies allowed to report the client's address in `X-Forwarded-For` (addresses or CIDR ranges); see [Behind a reverse proxy](install/reverse-proxy.md) |
 | `request_timeout_secs` | `30` | requests running longer are stopped with a 408 |
 | `api_requests_per_minute` | `300` | [API](api.md#rate-limits) requests a client may make a minute on average (per account, or per address for visitors); `0` for no limit |
 | `api_burst` | `60` | how many API requests may come at once before the per-minute rate applies |
@@ -55,6 +58,34 @@ are never available to other websites.
 [server.cors]
 allowed_origins = ["https://viewer.example.com", "http://localhost:5173"]
 ```
+
+## `[server.connections]`
+
+Limits on the connections the app serves, so clients that open them and
+send nothing, send their requests a byte at a time, or stop reading the
+responses they asked for, can't hold them for long or run the process
+out of file descriptors.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `max` | `512` | connections served at once; more wait to be accepted until one closes. Each takes a file descriptor, so keep it well under the process's open file limit (`ulimit -n`, often 1024), which also covers database connections, files and media tools |
+| `idle_timeout_secs` | `10` | a connection is closed when it goes this long without sending a whole request's headers: one that sends nothing, sends its headers too slowly, or sits idle between requests. A request in progress is answered first |
+| `send_timeout_secs` | `60` | a connection being closed (as idle, or because the app is stopping) is cut off when the client takes none of its response for this long, while no request is still being worked on: a client that stops reading, or never lets an HTTP/2 response through, can't keep it. A slow download goes on as long as the client keeps taking some of it |
+
+These hold whether or not a reverse proxy is in front. Stopping the app
+waits for the responses in progress, but no longer than
+`send_timeout_secs` for a client that takes nothing. The limits don't
+tell one client from another: a client opening connections fast enough
+can still fill them all, and others then wait, and one that keeps
+sending something, or takes a little of a response now and then, keeps
+its connection. A [reverse proxy](install/reverse-proxy.md)
+in front can limit connections per client (nginx's `limit_conn`) and
+has its own client timeouts, which is one more reason to keep the app's
+port reachable only by the proxy. A proxy that keeps connections to the
+app open between requests should let idle ones go sooner than
+`idle_timeout_secs` (Caddy's `keepalive` transport option, nginx's
+`keepalive_timeout` in an `upstream` block), or a request may now and
+then be sent on a connection the app is closing.
 
 ## `[database]`
 
@@ -92,7 +123,12 @@ out to turn it off.
 
 Register the redirect URI `https://your.site/login/oidc/callback` (from
 `server.public_url`) with the provider. Logins use the authorization code
-flow with PKCE.
+flow with PKCE, and each one has to finish in the browser that started it
+(a short-lived cookie ties them together). The ID token's signature isn't
+checked, since it comes straight from the provider, so the provider is
+only ever reached over https: its description must list https:// login
+and token endpoints, and redirects to plain http are refused. Plain http
+is allowed only for a provider on the same machine, for development.
 
 Someone logging in through the provider for the first time gets a new
 account (with no password) when registration is `open`, or one waiting for
@@ -100,13 +136,23 @@ approval when it's `approval`; with `invite` or `closed`, only people who
 [linked](using/account.md#single-sign-on) an existing account can. A new
 account takes its name from the provider (the next free one if it's
 taken), and the provider's email address if it says it's verified,
-nobody here uses it yet, and the site accepts its domain.
+nobody here uses it yet, and the site accepts its domain. Signing up this
+way counts towards the limit of new accounts per address, like the sign-up
+form, and a [network ban](admin/moderation.md#bans) keeps the network from
+signing up or logging in this way, as from the forms. Where new accounts confirm their address (**Admin → Settings →
+Registration**), they need an address the site accepts: one the provider
+says is verified is good enough; otherwise a confirmation link is sent to
+it first, and without one, signing up through the provider is refused. The
+captcha isn't asked for, as the provider has already checked who is
+logging in.
 
 ### `[auth.captcha]`
 
 A captcha service for the sign-up form and new accounts' comments: where
 it's asked for is chosen under **Admin → Settings** (nowhere, until
-then). Leave the section out to turn it off.
+then). Logging in to an account also asks for it while someone guesses
+the account's password from many networks at once. Leave the section
+out to turn it off.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -140,7 +186,9 @@ stops caching until it's back, and logs a warning; nothing fails.
 
 ## `[mail]`
 
-Outgoing mail over SMTP, for email verification and password resets.
+Outgoing mail over SMTP, for email verification and password resets, and
+to warn users about wrong two-factor codes and about someone trying to
+use their address.
 Messages are sent by the job workers, so a slow mail server doesn't hold
 up the site, and failed sends are retried.
 
@@ -167,7 +215,7 @@ server, without a restart. See [Search pages](#search-pages).
 | `per_page` | `40` | posts per page |
 | `max_per_page` | `200` | the most `limit:` may ask for |
 | `max_page` | `1000` | deepest numbered page; "next" links keep working beyond it |
-| `max_terms` | `40` | most tags and filters in one search |
+| `max_terms` | `40` | most tags and filters in one search; every search is also at most 1000 words and 10,000 characters long, whatever this is |
 | `wildcard_limit` | `100` | most tags a wildcard expands to (the most used) |
 | `count_limit` | `10000` | result counts are exact up to this, estimated above |
 | `count_cost_limit` | `25000` | counts PostgreSQL expects to cost more than this (roughly pages read) are estimated instead, so filters no index covers don't read every post |
@@ -204,12 +252,14 @@ See [File storage](admin/storage.md).
 | `sample_size` | `1600` | larger images also get a resized copy for the post page |
 | `variant_format` | `"webp"` | `"webp"` or `"avif"` (smaller, slower) for thumbnails and samples |
 | `tool_timeout_secs` | `120` | longest a media tool may run |
-| `strip_metadata` | `"off"` | remove identifying metadata from uploaded originals too: `"off"`, `"strip"` (JPEG, PNG and WebP; other types kept as uploaded) or `"require"` (and refuse other types); see [File metadata](using/posts.md#file-metadata) |
+| `strip_metadata` | `"strip"` | remove identifying metadata (EXIF and GPS, XMP, IPTC, comments) from uploaded originals too: `"strip"` (JPEG, PNG and WebP; other types, such as GIF, AVIF, JPEG XL and videos, keep theirs), `"require"` (and refuse other types) or `"off"` (originals kept exactly as uploaded); see [File metadata](using/posts.md#file-metadata). Up to 0.5 the default was `"off"` |
 | `max_tool_processes` | `0` | media tools (`vips`, `ffmpeg`, …) running at once in one `serve` or `worker` process, uploads and jobs together; more wait their turn. `0`: one per CPU core |
 | `ffmpeg_threads` | `2` | threads each `ffmpeg` run may use for decoding, filters and encoding; `0` lets ffmpeg pick (about one per core) |
 | `ffmpeg_memory_mb` | `2048` | memory each `ffmpeg` or `ffprobe` run may use; `0` for no limit, otherwise at least `512` (Linux only) |
 | `ffmpeg_cpu_secs` | `0` | CPU time each `ffmpeg` or `ffprobe` run may use, all threads together; `0` for no limit (Linux only) |
-| `work_dir` | system temp dir | scratch space for uploads and processing |
+| `vips_memory_mb` | `4096` | memory each `vips`, `vipsheader` or `vipsthumbnail` run may use; `0` for no limit, otherwise at least `512` (Linux only) |
+| `vips_cpu_secs` | `0` | CPU time each `vips`, `vipsheader` or `vipsthumbnail` run may use; `0` for no limit (Linux only) |
+| `work_dir` | system temp dir | scratch space for uploads and processing; an upload's scratch files left behind for more than a day (by a restart, say) are removed at startup and every hour, so several processes can share it |
 
 ### Limits on media tools
 
@@ -220,24 +270,31 @@ the server. Each run is stopped after `tool_timeout_secs`, and at most
 `ffmpeg_threads` threads, so one video can't take every core.
 
 On Linux, `ffmpeg` and `ffprobe` are also held to `ffmpeg_memory_mb` and
-`ffmpeg_cpu_secs`, set with `ulimit` by `/bin/sh` before they start. The
-memory limit is on address space, which counts the program's libraries and
-thread stacks too, so it's well above what the process really uses; ffmpeg
-alone needs a few hundred MB of it to start. A file that would need more is
-refused with an explanation ("too demanding to process") rather than as an
-error on the site's side: on upload, or in the failed job's message when
-thumbnails are made. ffmpeg doesn't always say an allocation failed, so
-some such files are reported as damaged instead. Without a CPU limit, a
-run still can't use more than `ffmpeg_threads` × `tool_timeout_secs` of
-CPU time. Other systems ignore both limits.
+`ffmpeg_cpu_secs`, and the libvips tools (`vips`, `vipsheader`,
+`vipsthumbnail`) to `vips_memory_mb` and `vips_cpu_secs`, set with
+`ulimit` by `/bin/sh` before they start. The memory limits are on address
+space, which counts the program's libraries and thread stacks too, so
+they're well above what the process really uses; ffmpeg and libvips each
+need a few hundred MB of it to start. Decoding the largest pictures
+`max_pixels` allows (a progressive JPEG or an AVIF of 200 megapixels)
+takes about 4 GB; with a lower `max_pixels`, `vips_memory_mb` can be
+lower too. A file
+that would need more is refused with an explanation ("too demanding to
+process") rather than as an error on the site's side: on upload, or in
+the failed job's message when thumbnails are made. The tools don't always
+say an allocation failed, so some such files are reported as damaged
+instead. Without a CPU limit, an ffmpeg run still can't use more than
+`ffmpeg_threads` × `tool_timeout_secs` of CPU time, and a libvips run,
+which works on one thread, about `tool_timeout_secs`. Other systems ignore
+these limits.
 
 These limits are per process. A container's memory limit (Docker
 `mem_limit`, or the cgroup a service runs in) counts the real memory of
 the server and every tool running at once; when it's reached, the kernel
 stops whichever process it picks, possibly the server. On a small
 machine, keep `max_tool_processes` low (1 or 2 on 1 GB) so tools fit
-beside the server, and let `ffmpeg_memory_mb` stop single runs that grow
-too large.
+beside the server, and let `ffmpeg_memory_mb` and `vips_memory_mb` stop
+single runs that grow too large.
 
 ### `[media.tools]`
 
@@ -266,7 +323,7 @@ The optional [tagger](admin/tagger.md), which suggests tags for new uploads.
 | `runtime` | `ORT_DYLIB_PATH`, or the system's | the ONNX Runtime library, `libonnxruntime.so` |
 | `threads` | `0` | threads one image uses; `0` means one per core |
 | `workers` | `1` | posts tagged at once |
-| `account` | `"tagger"` | who automatically applied tags are credited to; created without a password on first use |
+| `account` | `"tagger"` | who automatically applied tags are credited to; created without a password when `moekura tagger` starts, and nobody can sign up with the name |
 
 ## `[telemetry]`
 
@@ -331,7 +388,7 @@ traces everything beneath it.
 | Key | Default | Meaning |
 |---|---|---|
 | `logins` | none | logins for [sites](using/sources.md#logins) that show some works only to members, by domain |
-| `x.fxembed_api` | `"https://api.fixupx.com"` | the API of an [FxEmbed](https://github.com/FxEmbed/FxEmbed) instance that [posts on X](using/sources.md#x) are read through; empty to not use one |
+| `x.fxembed_api_url` | `"https://api.fixupx.com"` | the API of an [FxEmbed](https://github.com/FxEmbed/FxEmbed) instance that [posts on X](using/sources.md#x) are read through; empty to not use one |
 
 Each `[sources.logins."<domain>"]` covers the domain and its subdomains
 and can set any of:
@@ -342,8 +399,9 @@ and can set any of:
 | `query` | parameters added to the address, such as an API key |
 | `headers` | other headers, such as `Authorization` |
 
-They're sent only to that site, when reading where an upload comes
-from; the files themselves are downloaded without them.
+They're sent only to that site, over https, when reading where an upload
+comes from, and not along redirects to other sites; the files themselves
+are downloaded without them.
 
 ## `[webhooks]`
 
@@ -351,6 +409,7 @@ from; the files themselves are downloaded without them.
 |---|---|---|
 | `allow_private_addresses` | `false` | let [webhooks](admin/webhooks.md) go to private, loopback and link-local addresses (a service on the same machine or network) |
 | `timeout_secs` | `10` | how long a delivery may take |
+| `max_concurrent` | `1` | deliveries sent at once, across all job workers; the rest wait their turn, so receivers that don't answer can't hold every worker (keep it below `jobs.workers`) |
 
 [Discord webhooks](admin/webhooks.md#discord) are public addresses, so
 they work without `allow_private_addresses`.

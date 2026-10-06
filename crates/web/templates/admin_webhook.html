@@ -4,6 +4,7 @@
 {% include "admin_nav.html" %}
 <p class="back"><a href="/admin/webhooks">« {{ t("admin-nav-webhooks") }}</a></p>
 <h1>{{ hook.url }}</h1>
+{% if hook.paused_until %}<p class="notice" role="status">{{ t("webhook-paused", count=hook.failures) }} <time datetime="{{ hook.paused_until }}">{{ hook.paused_until[:16]|replace("T", " ") }}</time>.</p>{% endif %}
 {% if hook.format != "discord" %}
 <section class="card medium">
   <h2>{{ t("webhook-secret") }}</h2>

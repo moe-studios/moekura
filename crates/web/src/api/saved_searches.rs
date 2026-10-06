@@ -93,16 +93,16 @@ async fn one(state: &AppState, user: i64, id: i64) -> Result<ApiSavedSearch, App
     operation_id = "create_saved_search",
     tag = "users",
     request_body = SavedSearchInput,
-    responses((status = 200, body = ApiSavedSearch), (status = 422, body = ErrorBody)),
+    responses((status = 201, body = ApiSavedSearch), (status = 422, body = ErrorBody)),
 )]
 pub(crate) async fn create(
     State(state): State<AppState>,
     current: CurrentUser,
     Json(input): Json<SavedSearchInput>,
-) -> Result<Json<ApiSavedSearch>, AppError> {
+) -> Result<(StatusCode, Json<ApiSavedSearch>), AppError> {
     let user = me(&current)?;
     let id = save(&state, &current, &input.query, &input.labels.join(" ")).await?;
-    Ok(Json(one(&state, user, id).await?))
+    Ok((StatusCode::CREATED, Json(one(&state, user, id).await?)))
 }
 
 /// Change a saved search.
@@ -180,7 +180,7 @@ mod tests {
                 Some(json!({ "query": "Cat  rating:G", "labels": ["Pets"] })),
             )
             .await;
-        assert_eq!(saved.status, StatusCode::OK, "{}", saved.body);
+        assert_eq!(saved.status, StatusCode::CREATED, "{}", saved.body);
         let body = json(&saved.body);
         assert_eq!(
             (&body["query"], &body["labels"]),

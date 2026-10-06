@@ -7,9 +7,11 @@ use axum::extract::{Query, State};
 use axum::response::Response;
 use axum::routing::get;
 use moekura_core::permissions::Permission;
+use moekura_core::pools::post_changes;
 use moekura_db::{pools, wiki};
 use serde::{Deserialize, Serialize};
 
+use super::community::{MAX_LISTED, check_listed};
 use super::tags::window;
 use super::{ListParams, json, timestamp};
 use crate::AppState;
@@ -144,7 +146,8 @@ async fn pool_versions(
 ) -> Result<Response, AppError> {
     current.require(Permission::ViewPosts)?;
     let db = state.reader(&current);
-    let (offset, limit) = window(&params.list, 1000)?;
+    // Each version lists every post the pool had then.
+    let (offset, limit) = window(&params.list, MAX_LISTED)?;
     let pool_id = match params.pool_id.trim() {
         "" => None,
         id => Some(id.parse().unwrap_or(-1)),
@@ -157,23 +160,17 @@ async fn pool_versions(
             .into_iter()
             .map(|v| {
                 let at = timestamp(v.created_at);
-                let before = v.previous_post_ids.clone().unwrap_or_default();
+                let (added_post_ids, removed_post_ids) = post_changes(
+                    v.previous_post_ids.as_deref().unwrap_or_default(),
+                    &v.post_ids,
+                );
                 let first = v.previous_name.is_none();
                 DanbooruPoolVersion {
                     id: v.id,
                     pool_id: v.pool_id,
                     version: v.version,
-                    added_post_ids: v
-                        .post_ids
-                        .iter()
-                        .filter(|p| !before.contains(p))
-                        .copied()
-                        .collect(),
-                    removed_post_ids: before
-                        .iter()
-                        .filter(|p| !v.post_ids.contains(p))
-                        .copied()
-                        .collect(),
+                    added_post_ids,
+                    removed_post_ids,
                     name_changed: first || v.previous_name.as_deref() != Some(v.name.as_str()),
                     description_changed: first
                         || v.previous_description.as_deref() != Some(v.description.as_str()),
@@ -189,6 +186,12 @@ async fn pool_versions(
                 }
             })
             .collect();
+    check_listed(
+        "pool versions",
+        list.iter()
+            .map(|v| v.post_ids.len() + v.added_post_ids.len() + v.removed_post_ids.len())
+            .sum(),
+    )?;
     json(list, &params.list.only)
 }
 
@@ -249,5 +252,54 @@ mod tests {
         assert_eq!(versions[0]["removed_post_ids"][0].as_i64(), Some(a));
         assert_eq!(versions[0]["name_changed"], false);
         assert_eq!(versions[1]["name_changed"], true);
+    }
+
+    /// A pool with `versions` versions listing posts 1 to `posts` (versions
+    /// keep their post ids as a list, posts or not).
+    async fn pool_with(pool: &PgPool, name: &str, versions: i32, posts: i64) -> i32 {
+        let id: i32 = sqlx::query_scalar("INSERT INTO pools (name) VALUES ($1) RETURNING id")
+            .bind(name)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO pool_versions
+                 (pool_id, version, name, description, category, is_deleted, post_ids)
+             SELECT $1, v, $2, '', 'series', false, ARRAY(SELECT generate_series(1::bigint, $4))
+             FROM generate_series(1, $3) v",
+        )
+        .bind(id)
+        .bind(name)
+        .bind(versions)
+        .bind(posts)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn pool_version_pages_stay_small(pool: PgPool) {
+        let app = app(&pool).await;
+        let small = pool_with(&pool, "small", 110, 10).await;
+        let big = pool_with(&pool, "big", 11, 10_000).await;
+        let path =
+            |id: i32, limit: u32| format!("/pool_versions.json?search[pool_id]={id}&limit={limit}");
+        let parse = |body: &str| serde_json::from_str::<Value>(body).unwrap();
+
+        // At most 100 a page.
+        let listed = parse(&app.get(&path(small, 1000), None).await.body);
+        assert_eq!(listed.as_array().map(Vec::len), Some(100));
+        // And no more than 100,000 post ids between them.
+        let refused = app.get(&path(big, 11), None).await;
+        assert_eq!(
+            refused.status,
+            axum::http::StatusCode::BAD_REQUEST,
+            "{}",
+            refused.body
+        );
+        assert!(refused.body.contains("ask for fewer"), "{}", refused.body);
+        let listed = parse(&app.get(&path(big, 5), None).await.body);
+        assert_eq!(listed[0]["post_ids"].as_array().map(Vec::len), Some(10_000));
     }
 }

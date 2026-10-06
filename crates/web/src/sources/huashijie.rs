@@ -5,14 +5,14 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html_to_text, id_of, strings, tags_named, text_of};
+use super::{Http, SourceInfo, html_to_text, id_of, key, strings, tags_named, text_of};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
     known: &SourceUrl,
     page: &str,
 ) -> Result<SourceInfo, String> {
-    let id = page.rsplit('/').next().unwrap_or_default();
+    let id = key(page.rsplit('/').next().unwrap_or_default())?;
     let api = "https://app.huashijie.art/api";
     let (url, product) = if page.contains("/work/detail/") {
         (

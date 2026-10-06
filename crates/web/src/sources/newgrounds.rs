@@ -4,7 +4,7 @@
 use moekura_core::sites::SourceUrl;
 use serde_json::Value;
 
-use super::{Http, SourceInfo, html, html_to_text, tags_named};
+use super::{Http, SourceInfo, html, html_to_text, number, tags_named};
 
 pub(super) async fn fetch(
     http: &Http<'_>,
@@ -12,6 +12,7 @@ pub(super) async fn fetch(
     page: &str,
 ) -> Result<SourceInfo, String> {
     if let Some(id) = page.strip_prefix("https://www.newgrounds.com/portal/view/") {
+        let id = number(id)?;
         let video = http
             .json(
                 &format!("https://www.newgrounds.com/portal/video/{id}"),
@@ -85,7 +86,8 @@ fn art_info(known: &SourceUrl, page: &str, body: &str) -> SourceInfo {
             .map(|(_, tags)| {
                 html::tags(tags, "a")
                     .into_iter()
-                    .map(|a| html_to_text(html::inner(tags, &a)).replace('-', "_"))
+                    .filter_map(|a| html::label(tags, &a))
+                    .map(|name| name.replace('-', "_"))
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default(),

@@ -9,7 +9,7 @@ use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
-use moekura_core::posts::Rating;
+use moekura_core::posts::{PostStatus, Rating};
 use moekura_core::tokens::NewToken;
 use moekura_core::webhooks::{Event, Format, discord};
 use moekura_db::webhooks::{self, Fields, Webhook};
@@ -70,11 +70,13 @@ async fn post_data(state: &AppState, id: i64) -> Option<serde_json::Value> {
             .map(|u| u.name),
         None => None,
     };
-    // Only what visitors may see, so a Discord channel never shows more.
-    let visitors = &state.site.get().settings.visitor_ratings;
-    let image = if post.status.as_str() != "deleted"
+    // Only posts visitors may see, so a Discord channel never shows more:
+    // not pending ones (until post.approved), banned artists' or ratings
+    // kept from visitors, nor deleted ones even where visitors see those.
+    let visitor = crate::auth::CurrentUser::anonymous(&state.site.get());
+    let image = if post.status != PostStatus::Deleted
         && !state.is_private()
-        && (visitors.is_empty() || visitors.contains(&post.rating))
+        && crate::posts::visibility(&visitor).allows(&post)
     {
         crate::previews::any_post_image(state, db, post.id)
             .await
@@ -117,8 +119,8 @@ pub(crate) async fn emit_comment(state: &AppState, id: i64) {
         "comment_id": comment.id,
         "post_id": comment.post_id,
         "url": absolute_url(state, &crate::comments::url(&comment)),
-        "author_url": comment.creator_name.as_deref().map(|name| user_url(state, name)),
-        "author": comment.creator_name,
+        "creator_url": comment.creator_name.as_deref().map(|name| user_url(state, name)),
+        "creator": comment.creator_name,
         "body": comment.body,
         "created_at": comment.created_at.format(&Rfc3339).unwrap_or_default(),
     });
@@ -185,6 +187,10 @@ fn events_context(chosen: &[String]) -> Vec<Value> {
 }
 
 fn hook_context(hook: &Webhook) -> Value {
+    let paused_until = hook
+        .paused_until
+        .filter(|until| *until > time::OffsetDateTime::now_utc())
+        .map(|until| until.format(&Rfc3339).unwrap_or_default());
     context! {
         id => hook.id,
         url => hook.url,
@@ -192,6 +198,8 @@ fn hook_context(hook: &Webhook) -> Value {
         events => hook.events,
         enabled => hook.is_enabled,
         format => hook.format,
+        paused_until => paused_until,
+        failures => hook.network_failures,
     }
 }
 
@@ -603,6 +611,86 @@ mod tests {
         );
         app.post(&format!("{url}/delete"), Some(&admin), &[]).await;
         assert!(webhooks::list(&pool).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn paused_webhooks_say_so(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, routes());
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let fields = Fields::new("https://hooks.example/a", &[Event::PostCreated]);
+        let id = webhooks::create(&pool, &fields, "s").await.unwrap();
+        let page = app
+            .get(&format!("/admin/webhooks/{id}"), Some(&admin))
+            .await;
+        assert!(!page.body.contains("Paused"), "{}", page.body);
+
+        for _ in 0..5 {
+            webhooks::note_unreachable(&pool, id, 5, std::time::Duration::from_secs(600))
+                .await
+                .unwrap();
+        }
+        let page = app
+            .get(&format!("/admin/webhooks/{id}"), Some(&admin))
+            .await;
+        assert!(
+            page.body.contains("Paused: 5 deliveries in a row"),
+            "{}",
+            page.body
+        );
+        let list = app.get("/admin/webhooks", Some(&admin)).await;
+        assert!(list.body.contains("(paused)"), "{}", list.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn images_only_of_posts_visitors_see(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let max = state.config.media.max_upload_mb * 1024 * 1024;
+        let app = TestApp::new(state.clone(), crate::upload::routes(max));
+        let member = session_for(&pool, "alice", SystemRole::Member).await;
+        let uploaded = app
+            .post_multipart(
+                "/upload",
+                Some(&member),
+                &[("rating", "g".to_owned()), ("tags", "cat".to_owned())],
+                Some(("a.png", &fixture::png(20, 20))),
+            )
+            .await;
+        let post: i64 = uploaded.location.unwrap()["/posts/".len()..]
+            .split('?')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let image = |state: AppState| async move {
+            post_data(&state, post).await.unwrap()["image_url"].clone()
+        };
+        let set_status = |status: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query("UPDATE posts SET status = $2 WHERE id = $1")
+                    .bind(post)
+                    .bind(status)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+        };
+        assert!(image(state.clone()).await.is_string());
+
+        // Waiting for approval: post.approved shows it, once it is.
+        set_status("pending").await;
+        assert_eq!(image(state.clone()).await, json!(null));
+        set_status("flagged").await;
+        assert!(image(state.clone()).await.is_string());
+
+        // A banned artist's, hidden from visitors.
+        set_status("active").await;
+        sqlx::query("INSERT INTO artists (name, is_banned) VALUES ('cat', true)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        state.site.reload(&pool).await.unwrap();
+        assert_eq!(image(state.clone()).await, json!(null));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

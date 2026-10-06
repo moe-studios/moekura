@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use moekura_core::tokens::{NewToken, hash_token};
-use sqlx::PgExecutor;
+use sqlx::{PgExecutor, PgPool};
 use time::OffsetDateTime;
 
 pub struct NewInvite {
@@ -70,6 +70,31 @@ pub async fn create(db: impl PgExecutor<'_>, invite: NewInvite) -> sqlx::Result<
     .execute(db)
     .await?;
     Ok(token)
+}
+
+/// Creates an invite, as [`create`], unless its creator already made
+/// `quota` in the last `days` days; `None` then. The creator's row is
+/// locked while counting, so requests sent together can't each find room
+/// under the quota.
+pub async fn create_within_quota(
+    db: &PgPool,
+    invite: NewInvite,
+    quota: i64,
+    days: i64,
+) -> sqlx::Result<Option<String>> {
+    let mut tx = db.begin().await?;
+    if let Some(creator) = invite.created_by {
+        sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE")
+            .bind(creator)
+            .execute(&mut *tx)
+            .await?;
+        if made_since(&mut *tx, creator, days).await? >= quota {
+            return Ok(None);
+        }
+    }
+    let code = create(&mut *tx, invite).await?;
+    tx.commit().await?;
+    Ok(Some(code))
 }
 
 /// Uses up one redemption of `code`, returning the invite's id, or `None`
@@ -216,6 +241,69 @@ mod tests {
         let found = by_id(&pool, id).await.unwrap().unwrap();
         assert_eq!(found.used_by, ["alice"]);
         assert!(!found.is_usable());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn quotas_hold_against_requests_sent_together(pool: PgPool) {
+        let alice: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let mine = || NewInvite {
+            created_by: Some(alice),
+            ..invite(1, None)
+        };
+        create(&pool, mine()).await.unwrap();
+        // One request has counted and is making its invite, holding the
+        // inviter's row …
+        let mut first = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE")
+            .bind(alice)
+            .execute(&mut *first)
+            .await
+            .unwrap();
+        assert_eq!(made_since(&mut *first, alice, 30).await.unwrap(), 1);
+        // … when another comes: it waits, then counts the first's invite.
+        let second = create_within_quota(&pool, mine(), 2, 30);
+        let finish_first = async {
+            waiting_on_lock(&pool).await;
+            create(&mut *first, mine()).await.unwrap();
+            first.commit().await.unwrap();
+        };
+        let (second, ()) = tokio::join!(second, finish_first);
+        assert_eq!(second.unwrap(), None);
+        assert_eq!(made_since(&pool, alice, 30).await.unwrap(), 2);
+        // Older invites don't count.
+        sqlx::query("UPDATE invites SET created_at = now() - interval '31 days'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            create_within_quota(&pool, mine(), 2, 30)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    /// Returns once a query in this test's database waits for a lock, or
+    /// after a few seconds.
+    async fn waiting_on_lock(pool: &PgPool) {
+        for _ in 0..300 {
+            let waiting: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                                WHERE datname = current_database() AND wait_event_type = 'Lock')",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if waiting {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

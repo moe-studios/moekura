@@ -252,7 +252,8 @@ async fn create_topic(
             .map_err(|_| AppError::Unprocessable("Choose a category.".into()))?,
         None => forum::categories(state.db.primary())
             .await?
-            .first()
+            .iter()
+            .find(|c| crate::forum::may_post_in(&current, c))
             .map(|c| c.id)
             .ok_or(AppError::NotFound)?,
     };

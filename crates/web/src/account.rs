@@ -7,11 +7,12 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::context;
+use moekura_core::accounts::{NAME_MAX_LEN, NAME_MIN_LEN};
 use moekura_core::permissions::SystemRole;
 use moekura_core::settings::RegistrationMode;
 use moekura_db::accounts::{self, AuthError, CreateError, NewAccount};
-use moekura_db::invites;
-use moekura_db::users::UserStatus;
+use moekura_db::users::{self, UserStatus};
+use moekura_db::{invites, user_ips};
 use serde::Deserialize;
 
 use crate::AppState;
@@ -126,6 +127,7 @@ fn render_register(
             needs_invite => mode == RegistrationMode::Invite,
             needs_approval => mode == RegistrationMode::Approval,
             email_required => crate::email::verification_required(page.state()),
+            mail_enabled => crate::email::mail_enabled(page.state()),
             captcha => crate::captcha::for_sign_up(page.state()).map(|c| c.widget()),
         },
     )
@@ -177,20 +179,23 @@ async fn register(
         });
     }
     let verify = crate::email::verification_required(&state);
-    if verify && form.email.trim().is_empty() {
+    let email = form.email.trim();
+    if verify && email.is_empty() {
         return invalid(RegisterErrors {
             email: Some("An email address is required, to confirm your account.".into()),
             ..Default::default()
         });
     }
-    if !form.email.trim().is_empty()
-        && !state
-            .site
-            .get()
-            .settings
-            .email_domains
-            .allows(form.email.trim())
+    // A bare address first: the domain list reads what follows the `@`.
+    if !email.is_empty()
+        && let Err(e) = moekura_core::accounts::check_email(email)
     {
+        return invalid(RegisterErrors {
+            email: Some(format!("The address {e}.")),
+            ..Default::default()
+        });
+    }
+    if !email.is_empty() && !state.site.get().settings.email_domains.allows(email) {
         return invalid(RegisterErrors {
             email: Some(DOMAIN_REFUSED.into()),
             ..Default::default()
@@ -199,6 +204,13 @@ async fn register(
     if mode == RegistrationMode::Invite && form.invite.trim().is_empty() {
         return invalid(RegisterErrors {
             invite: Some("An invite code is required.".into()),
+            ..Default::default()
+        });
+    }
+    // The tagger's, even before it has made its account.
+    if state.config.tagger.reserves(&form.name) {
+        return invalid(RegisterErrors {
+            name: Some("That name is taken.".into()),
             ..Default::default()
         });
     }
@@ -213,9 +225,23 @@ async fn register(
         RegistrationMode::Approval => UserStatus::Pending,
         _ => UserStatus::Active,
     };
+    let mailing = !email.is_empty() && crate::email::mail_enabled(&state);
 
     // One transaction, so a failed signup doesn't use up the invite.
     let mut tx = state.db.primary().begin().await?;
+    // With mail, an address another account has gets the same answer as a
+    // free one, and its owner is told instead, so signing up can't be used
+    // to find out who has an account. The new account goes without it.
+    // Without mail nobody could be told, and the address is the account's
+    // at once, so a taken one is refused as before.
+    let taken = match mailing {
+        true => users::by_email(&mut *tx, email).await?,
+        false => None,
+    };
+    // An address waiting to be confirmed for an account that can't log in
+    // until then is kept on it; otherwise, with mail, it becomes the
+    // account's once the link sent to it is followed, as when changing it.
+    let keep_email = !mailing || (verify && taken.is_none());
     let invite = match mode {
         RegistrationMode::Invite => match invites::redeem(&mut *tx, &form.invite).await? {
             Some(id) => Some(id),
@@ -231,7 +257,7 @@ async fn register(
     let account = NewAccount {
         name: form.name.trim(),
         password: &form.password,
-        email: Some(form.email.as_str()),
+        email: keep_email.then_some(email),
         role_id: member.id,
         status,
     };
@@ -257,8 +283,15 @@ async fn register(
     if let Some(invite) = invite {
         invites::record_use(&mut *tx, invite, user.id).await?;
     }
-    if let (UserStatus::Unverified, Some(email)) = (status, user.email.clone()) {
-        crate::email::send_verification(&mut tx, &state, &user, &email).await?;
+    if mailing {
+        // Only now that a message goes out, so a form sent back for a
+        // taken name doesn't use up the address's mail. Refused, the
+        // account and the invite are rolled back.
+        state.rate_limits.check_mail(info.ip, email).await?;
+        match &taken {
+            Some(owner) => crate::email::send_address_in_use(&mut tx, &state, owner).await?,
+            None => crate::email::send_verification(&mut tx, &state, &user, email).await?,
+        }
     }
     tx.commit().await?;
     tracing::info!(user_id = user.id, name = %user.name, ?status, "account registered");
@@ -284,13 +317,36 @@ struct LoginForm {
     name: String,
     password: String,
     next: Option<String>,
+    /// The captcha widget's token, once one is asked for (see [`login`]).
+    #[serde(default, alias = "cf-turnstile-response", alias = "h-captcha-response")]
+    captcha: String,
+}
+
+/// A captcha the login form asks for, and what's wrong with the last
+/// answer, if anything.
+type CaptchaPrompt<'a> = (&'a crate::captcha::Captcha, Option<&'a str>);
+
+/// At most as much of a typed `name` as an account name can be, for logs
+/// and for showing it again.
+fn clipped(name: &str) -> &str {
+    &name[..name.floor_char_boundary(NAME_MAX_LEN)]
+}
+
+/// Whether some account could be called `name`: account names are 2 to
+/// 32 ASCII letters, digits, `_`, `.` and `-` (see `UserName`, and the
+/// check on `users.name`).
+fn could_be_account_name(name: &str) -> bool {
+    (NAME_MIN_LEN..=NAME_MAX_LEN).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
 }
 
 async fn login_form(page: Page, Query(query): Query<NextQuery>) -> Response {
     if page.current.is_logged_in() {
         return Redirect::to(safe_next(query.next.as_deref())).into_response();
     }
-    render_login(&page, "", query.next.as_deref(), None, StatusCode::OK)
+    render_login(&page, "", query.next.as_deref(), None, None, StatusCode::OK)
 }
 
 fn render_login(
@@ -298,6 +354,7 @@ fn render_login(
     name: &str,
     next: Option<&str>,
     error: Option<&AuthError>,
+    captcha: Option<CaptchaPrompt>,
     status: StatusCode,
 ) -> Response {
     let message = error.map(|error| match error {
@@ -314,6 +371,8 @@ fn render_login(
             next => next,
             error => message,
             unverified => matches!(error, Some(AuthError::Unverified)),
+            captcha => captcha.map(|(captcha, _)| captcha.widget()),
+            captcha_error => captcha.and_then(|(_, error)| error),
             mail_enabled => crate::email::mail_enabled(page.state()),
             sso_label => page.state().oidc.as_ref().map(|o| o.button_label().to_owned()),
         },
@@ -328,24 +387,86 @@ async fn login(
     Form(form): Form<LoginForm>,
 ) -> Result<Response, AppError> {
     let name = form.name.trim();
-    state
-        .rate_limits
+    // No account has a name like this, so there's nothing to count, look
+    // up or log in full. Refused before the limits also because the
+    // database would take some other spellings (`İ` for `i`) for a real
+    // account's name.
+    if !could_be_account_name(name) {
+        tracing::info!(
+            name = clipped(name),
+            reason = "no account could have this name",
+            "login failed"
+        );
+        let error = AuthError::InvalidCredentials;
+        return Ok(render_login(
+            &page,
+            clipped(name),
+            form.next.as_deref(),
+            Some(&error),
+            None,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ));
+    }
+    let limited = || tracing::warn!(ip = ?info.ip, name = clipped(name), "login rate limited");
+    let limits = &state.rate_limits;
+    limits
         .check_login(info.ip, name)
         .await
-        .inspect_err(|_| {
-            tracing::warn!(ip = ?info.ip, name, "login rate limited");
-        })?;
-    let user = match accounts::authenticate(state.db.primary(), name, &form.password).await {
+        .inspect_err(|_| limited())?;
+    // Past the limit for the account from all networks together, someone
+    // is guessing from many. Then an attempt gets through with a solved
+    // captcha, if the site has a captcha service, and the owner also gets
+    // in with the right password from a network the account has used.
+    // Everyone else is refused alike, after the same work, so a refusal
+    // tells nothing about the password or the network.
+    let ceiling = limits.check_login_ceiling(name).await;
+    let captcha = match (&ceiling, state.captcha.as_deref()) {
+        (Err(_), Some(captcha)) => Some((captcha, captcha.check(&form.captcha, info.ip).await)),
+        _ => None,
+    };
+    let solved = matches!(captcha, Some((_, Ok(()))));
+    let used_network = match (&ceiling, info.ip) {
+        (Err(_), Some(ip)) if !solved => {
+            let network = crate::rate_limit::ip_bucket_net(ip);
+            user_ips::name_used(state.db.primary(), name, network).await?
+        }
+        _ => false,
+    };
+    let result = accounts::authenticate(state.db.primary(), name, &form.password).await;
+    if let Err(refused) = ceiling
+        && !solved
+        && !(used_network && result.is_ok())
+    {
+        if let Err(AuthError::Db(error)) = result {
+            return Err(error.into());
+        }
+        limited();
+        return match &captcha {
+            Some((captcha, Err(message))) => Ok(render_login(
+                &page,
+                name,
+                form.next.as_deref(),
+                None,
+                Some((*captcha, Some(message.as_str()))),
+                StatusCode::TOO_MANY_REQUESTS,
+            )),
+            _ => Err(refused),
+        };
+    }
+    let user = match result {
         Ok(user) => user,
         Err(AuthError::Db(error)) => return Err(error.into()),
         Err(error) => {
-            tracing::info!(name, reason = %error, "login failed");
+            tracing::info!(name = clipped(name), reason = %error, "login failed");
             let status = StatusCode::UNPROCESSABLE_ENTITY;
+            // Still past the limit: the next attempt needs one too.
+            let captcha = captcha.map(|(captcha, _)| (captcha, None));
             return Ok(render_login(
                 &page,
                 name,
                 form.next.as_deref(),
                 Some(&error),
+                captcha,
                 status,
             ));
         }
@@ -471,6 +592,61 @@ mod tests {
             "{}",
             reserved.body
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn without_mail_a_taken_address_is_refused(pool: PgPool) {
+        // Nobody could be told of it, and the address is the account's at
+        // once, so this is the only way to say so.
+        let app = app(&pool).await;
+        let with_email = |name: &str, email: &str| {
+            form(&[
+                ("name", name),
+                ("email", email),
+                ("password", "correct horse"),
+                ("password_confirm", "correct horse"),
+            ])
+        };
+        let first = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &with_email("alice", "a@example.com"),
+            )
+            .await;
+        assert_eq!(first.status, StatusCode::SEE_OTHER);
+        let user = users::by_name(&pool, "alice").await.unwrap().unwrap();
+        assert_eq!(user.email.as_deref(), Some("a@example.com"));
+        let taken = app
+            .post_form("/register", None, &[], &with_email("bob", "A@example.com"))
+            .await;
+        assert_eq!(taken.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(taken.body.contains("already in use"), "{}", taken.body);
+        let name_addr = app
+            .post_form(
+                "/register",
+                None,
+                &[],
+                &with_email("bob", "Bob <bob@example.com>"),
+            )
+            .await;
+        assert!(
+            name_addr.body.contains("not a valid email address"),
+            "{}",
+            name_addr.body
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn nobody_signs_up_as_the_tagger(pool: PgPool) {
+        let app = app(&pool).await;
+        let response = app
+            .post_form("/register", None, &[], &signup("Tagger"))
+            .await;
+        assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(response.body.contains("That name is taken."));
+        assert!(users::by_name(&pool, "tagger").await.unwrap().is_none());
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
@@ -633,6 +809,171 @@ mod tests {
             limited.body
         );
         assert!(limited.retry_after.is_some_and(|s| s >= 1));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn impossibly_long_names_are_refused_uncounted(pool: PgPool) {
+        let app = app(&pool).await;
+        let long = "a".repeat(100_000);
+        let attempt = form(&[("name", &long), ("password", "wrong horse")]);
+        for _ in 0..10 {
+            let response = app.post_form("/login", None, &[], &attempt).await;
+            assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+            assert!(response.body.contains("Wrong name or password."));
+            // Shown again only as far as a name can go.
+            assert!(
+                response
+                    .body
+                    .contains(&format!("value=\"{}\"", &long[..32]))
+            );
+            assert!(!response.body.contains(&long[..33]));
+        }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn names_no_account_could_have_are_refused_uncounted(pool: PgPool) {
+        let app = app(&pool).await;
+        app.post_form("/register", None, &[], &signup("alice"))
+            .await;
+        // The database may take these for alice, but no account can be
+        // called them.
+        for name in ["al\u{130}ce", "ALİCE", "alice\u{0}", "a"] {
+            let attempt = form(&[("name", name), ("password", "wrong horse")]);
+            for _ in 0..6 {
+                let response = app.post_form("/login", None, &[], &attempt).await;
+                assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY, "{name}");
+                assert!(response.body.contains("Wrong name or password."));
+            }
+        }
+        let right = form(&[("name", "alice"), ("password", "correct horse")]);
+        let response = app.post_form("/login", None, &[], &right).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn guessing_from_one_network_does_not_lock_the_owner_out(pool: PgPool) {
+        let mut state = test_state(&pool).await;
+        let mut config = (*state.config).clone();
+        config.server.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        state.config = std::sync::Arc::new(config);
+        let proxy = "10.0.0.2:40000".parse().unwrap();
+        let app = TestApp::with_peer(state, routes(), proxy);
+        app.post_form(
+            "/register",
+            None,
+            &[("x-forwarded-for", "198.51.100.1")],
+            &signup("alice"),
+        )
+        .await;
+
+        let guesser = [("x-forwarded-for", "203.0.113.9")];
+        let wrong = form(&[("name", "alice"), ("password", "wrong horse")]);
+        for _ in 0..5 {
+            let response = app.post_form("/login", None, &guesser, &wrong).await;
+            assert_eq!(response.status, StatusCode::UNPROCESSABLE_ENTITY);
+        }
+        let limited = app.post_form("/login", None, &guesser, &wrong).await;
+        assert_eq!(limited.status, StatusCode::TOO_MANY_REQUESTS);
+
+        let owner = [("x-forwarded-for", "198.51.100.1")];
+        let right = form(&[("name", "alice"), ("password", "correct horse")]);
+        let response = app.post_form("/login", None, &owner, &right).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn guessing_from_many_networks_lets_the_owner_in_from_theirs(pool: PgPool) {
+        let mut state = test_state(&pool).await;
+        let mut config = (*state.config).clone();
+        config.server.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        state.config = std::sync::Arc::new(config);
+        let limits = state.rate_limits.clone();
+        let proxy = "10.0.0.2:40000".parse().unwrap();
+        let app = TestApp::with_peer(state, routes(), proxy);
+        let response = app
+            .post_form(
+                "/register",
+                None,
+                &[("x-forwarded-for", "2001:db8:1:2::1")],
+                &signup("alice"),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+
+        // Each attempt follows guesses from enough networks to use up the
+        // account's allowance from all of them (used up right before, as a
+        // password check takes long enough in tests for it to refill).
+        let login = async |client: &str, password: &str| {
+            while limits.check_login_ceiling("alice").await.is_ok() {}
+            let attempt = form(&[("name", "alice"), ("password", password)]);
+            let from = [("x-forwarded-for", client)];
+            app.post_form("/login", None, &from, &attempt).await.status
+        };
+        // Other networks are refused, with the right password too.
+        for password in ["wrong horse", "correct horse"] {
+            let status = login("203.0.113.7", password).await;
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{password}");
+        }
+        // From the /64 the account used, a wrong password is refused the
+        // same way, and the right one gets in.
+        let status = login("2001:db8:1:2::abcd", "wrong horse").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        let status = login("2001:db8:1:2::abcd", "correct horse").await;
+        assert_eq!(status, StatusCode::SEE_OTHER);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn guessing_from_many_networks_lets_the_owner_in_with_a_captcha(pool: PgPool) {
+        let mut config = crate::test_support::test_config();
+        config.server.trusted_proxies = vec!["10.0.0.0/8".parse().unwrap()];
+        config.auth.captcha = Some(crate::captcha::test_service::start().await);
+        let state = crate::test_support::test_state_with(&pool, config).await;
+        let limits = state.rate_limits.clone();
+        let proxy = "10.0.0.2:40000".parse().unwrap();
+        let app = TestApp::with_peer(state, routes(), proxy);
+        let from = [("x-forwarded-for", "198.51.100.1")];
+        let response = app
+            .post_form("/register", None, &from, &signup("alice"))
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+        // Not asked for while the account's allowance lasts.
+        let page = app.get("/login", None).await;
+        assert!(!page.body.contains("cf-turnstile"), "{}", page.body);
+        let right = form(&[("name", "alice"), ("password", "correct horse")]);
+        let response = app.post_form("/login", None, &from, &right).await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER, "{}", response.body);
+
+        // From a network the account never used, once guesses from many
+        // have used up its allowance.
+        let login = async |password: &str, token: &str| {
+            while limits.check_login_ceiling("alice").await.is_ok() {}
+            let attempt = form(&[
+                ("name", "alice"),
+                ("password", password),
+                ("cf-turnstile-response", token),
+            ]);
+            let from = [("x-forwarded-for", "203.0.113.7")];
+            app.post_form("/login", None, &from, &attempt).await
+        };
+        for (password, token) in [("correct horse", ""), ("correct horse", "bad")] {
+            let refused = login(password, token).await;
+            assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS, "{token}");
+            assert!(
+                refused
+                    .body
+                    .contains("class=\"cf-turnstile\" data-sitekey=\"site-key\""),
+                "{}",
+                refused.body
+            );
+            assert!(refused.body.contains("captcha"), "{}", refused.body);
+        }
+        // Solved, the attempt is checked as usual.
+        let wrong = login("wrong horse", "good").await;
+        assert_eq!(wrong.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(wrong.body.contains("Wrong name or password."));
+        assert!(wrong.body.contains("cf-turnstile"), "{}", wrong.body);
+        let right = login("correct horse", "good").await;
+        assert_eq!(right.status, StatusCode::SEE_OTHER, "{}", right.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

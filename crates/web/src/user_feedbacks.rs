@@ -1,7 +1,9 @@
 //! Feedback on users: staff and senior users (with *Leave feedback*) note
 //! positive, neutral or negative things about someone of lower rank. It's
 //! public, shown on profiles and weighed in automatic promotion; its
-//! writer can change it, and staff who ban users can delete it.
+//! writer can change it, and staff who ban users can delete it if they
+//! outrank whom it's on, and who wrote it unless it's theirs, and restore
+//! it if they also outrank who deleted it, unless they did.
 
 use axum::extract::{Path, Query};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -50,6 +52,29 @@ pub(crate) fn may_give(state: &AppState, current: &CurrentUser, user: &User) -> 
             .is_some_and(|role| current.role.outranks(role))
 }
 
+/// Whether `current` may delete or restore feedback `f`: staff who ban
+/// users, on someone else ranked below them, written by them or by
+/// someone else ranked below them, and if it's deleted, deleted by them
+/// or by someone ranked below them, so nobody undoes what those above
+/// them decided.
+pub(crate) fn may_moderate(state: &AppState, current: &CurrentUser, f: &Feedback) -> bool {
+    let site = state.site.get();
+    let below = |role_id: i32| {
+        site.role(role_id)
+            .is_some_and(|role| current.role.outranks(role))
+    };
+    current.can(Permission::BanUsers)
+        && current.user.as_ref().is_some_and(|me| {
+            let theirs_or_below = |id: Option<i64>, role_id: Option<i32>| {
+                id == Some(me.id) || role_id.is_none_or(below)
+            };
+            me.id != f.user_id
+                && below(f.user_role_id)
+                && theirs_or_below(f.creator_id, f.creator_role_id)
+                && (!f.is_deleted || theirs_or_below(f.deleted_by_id, f.deleted_by_role_id))
+        })
+}
+
 /// Where `name`'s feedback is listed.
 pub(crate) fn list_url(name: &str) -> String {
     format!(
@@ -79,7 +104,7 @@ fn clean(category: &str, body: &str) -> Result<(String, String), AppError> {
     Ok((category.to_owned(), body))
 }
 
-fn feedback_context(f: &Feedback, current: &CurrentUser) -> Value {
+fn feedback_context(state: &AppState, f: &Feedback, current: &CurrentUser) -> Value {
     let mine = f.creator_id.is_some() && f.creator_id == current.user.as_ref().map(|u| u.id);
     context! {
         id => f.id,
@@ -91,7 +116,7 @@ fn feedback_context(f: &Feedback, current: &CurrentUser) -> Value {
         edited => f.updated_at > f.created_at,
         date => crate::dates::day(f.created_at),
         can_edit => mine && !f.is_deleted && current.can(Permission::GiveFeedback),
-        can_delete => current.can(Permission::BanUsers),
+        can_delete => may_moderate(state, current, f),
     }
 }
 
@@ -174,7 +199,7 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
                     current => category == Some(*c),
                 }))
                 .collect::<Vec<_>>(),
-            feedbacks => found.iter().map(|f| feedback_context(f, &page.current)).collect::<Vec<_>>(),
+            feedbacks => found.iter().map(|f| feedback_context(state, f, &page.current)).collect::<Vec<_>>(),
             new_url => new_url,
             previous_url => (number > 1).then(|| link(category, number - 1)),
             next_url => more.then(|| link(category, number + 1)),
@@ -347,7 +372,9 @@ async fn update(
         .into_response())
 }
 
-/// Deleting and restoring, by staff who ban users; logged.
+/// Deleting and restoring, by staff who ban users, on feedback about and
+/// by those ranked below them, and restoring only what they or those
+/// below them deleted; logged.
 async fn moderate(
     page: Page,
     jar: CookieJar,
@@ -359,15 +386,20 @@ async fn moderate(
         "restore" => false,
         _ => return Err(AppError::NotFound),
     };
-    let db = page.state().db.primary();
-    let f = user_feedbacks::by_id(db, id)
+    let actor = page.current.user.as_ref().map(|u| u.id);
+    // Locked, so that who deleted it can't change before it's restored.
+    let mut tx = page.state().db.primary().begin().await?;
+    let f = user_feedbacks::lock(&mut *tx, id)
         .await?
         .ok_or(AppError::NotFound)?;
-    if user_feedbacks::set_deleted(db, id, deleted).await? {
+    if !may_moderate(page.state(), &page.current, &f) {
+        return Err(AppError::Forbidden);
+    }
+    if user_feedbacks::set_deleted(&mut *tx, id, deleted, actor).await? {
         mod_actions::record(
-            db,
+            &mut *tx,
             NewAction::new(
-                page.current.user.as_ref().map(|u| u.id),
+                actor,
                 if deleted {
                     ActionKind::FeedbackDelete
                 } else {
@@ -379,6 +411,7 @@ async fn moderate(
         )
         .await?;
     }
+    tx.commit().await?;
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to(&list_url(&f.user_name)),
@@ -552,5 +585,186 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(logged, "user_feedback.delete");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn deleting_feedback_respects_rank(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        session_for(&pool, "member", SystemRole::Member).await;
+        let moderator = session_for(&pool, "moderator", SystemRole::Moderator).await;
+        let other = session_for(&pool, "other", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "admin", SystemRole::Admin).await;
+        let give = async |by: &str, on: &str, body: &str| -> i64 {
+            let made = app
+                .post_form(
+                    "/user_feedbacks",
+                    Some(by),
+                    &[],
+                    &format!("user={on}&category=negative&body={body}"),
+                )
+                .await;
+            assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
+            sqlx::query_scalar("SELECT id FROM user_feedbacks WHERE body = $1")
+                .bind(body)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let act = async |who: &str, id: i64, action: &str| {
+            app.post_form(
+                &format!("/user_feedbacks/{id}/{action}"),
+                Some(who),
+                &[],
+                "",
+            )
+            .await
+            .status
+        };
+        let on_moderator = give(&admin, "moderator", "Overreach").await;
+        let by_admin = give(&admin, "member", "Spam").await;
+        let by_moderator = give(&moderator, "member", "Rude").await;
+
+        // Not on themselves, nor what someone above them wrote.
+        assert_eq!(
+            act(&moderator, on_moderator, "delete").await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            act(&other, on_moderator, "delete").await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            act(&moderator, by_admin, "delete").await,
+            StatusCode::FORBIDDEN
+        );
+        let page = app
+            .get("/user_feedbacks?user=member", Some(&moderator))
+            .await;
+        assert_eq!(page.body.matches("/delete\"").count(), 1, "{}", page.body);
+        // Their own, or below them all; not a peer's.
+        assert_eq!(
+            act(&moderator, by_moderator, "delete").await,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(
+            act(&other, by_moderator, "restore").await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            act(&admin, by_moderator, "restore").await,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(
+            act(&admin, on_moderator, "delete").await,
+            StatusCode::SEE_OTHER
+        );
+        // Nor undo what someone above them did.
+        assert_eq!(
+            act(&moderator, on_moderator, "restore").await,
+            StatusCode::FORBIDDEN
+        );
+        let deleted: Vec<String> =
+            sqlx::query_scalar("SELECT body FROM user_feedbacks WHERE is_deleted ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(deleted, ["Overreach"]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn restoring_feedback_respects_who_deleted_it(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        session_for(&pool, "member", SystemRole::Member).await;
+        let contributor = session_for(&pool, "contributor", SystemRole::Contributor).await;
+        let moderator = session_for(&pool, "moderator", SystemRole::Moderator).await;
+        let other = session_for(&pool, "other", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "admin", SystemRole::Admin).await;
+        let give = async |by: &str, body: &str| -> i64 {
+            let made = app
+                .post_form(
+                    "/user_feedbacks",
+                    Some(by),
+                    &[],
+                    &format!("user=member&category=negative&body={body}"),
+                )
+                .await;
+            assert_eq!(made.status, StatusCode::SEE_OTHER, "{}", made.body);
+            sqlx::query_scalar("SELECT id FROM user_feedbacks WHERE body = $1")
+                .bind(body)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let act = async |who: &str, id: i64, action: &str| {
+            app.post_form(
+                &format!("/user_feedbacks/{id}/{action}"),
+                Some(who),
+                &[],
+                "",
+            )
+            .await
+            .status
+        };
+        let restorable = async |who: &str| {
+            app.get("/user_feedbacks?user=member", Some(who))
+                .await
+                .body
+                .matches("/restore\"")
+                .count()
+        };
+        let by_moderator = give(&moderator, "Rude").await;
+        let by_contributor = give(&contributor, "Spam").await;
+
+        // What an admin deleted stays deleted for those below them, even
+        // when they wrote it.
+        assert_eq!(
+            act(&admin, by_moderator, "delete").await,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(
+            act(&admin, by_contributor, "delete").await,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(restorable(&moderator).await, 0);
+        assert_eq!(
+            act(&moderator, by_moderator, "restore").await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            act(&moderator, by_contributor, "restore").await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(restorable(&admin).await, 2);
+
+        // What they deleted themselves, they restore; a peer doesn't.
+        assert_eq!(
+            act(&admin, by_contributor, "restore").await,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(
+            act(&moderator, by_contributor, "delete").await,
+            StatusCode::SEE_OTHER
+        );
+        assert_eq!(restorable(&other).await, 0);
+        assert_eq!(
+            act(&other, by_contributor, "restore").await,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(restorable(&moderator).await, 1);
+        assert_eq!(
+            act(&moderator, by_contributor, "restore").await,
+            StatusCode::SEE_OTHER
+        );
+        let deleted: Vec<(String, Option<i64>)> = sqlx::query_as(
+            "SELECT body, deleted_by_id FROM user_feedbacks WHERE is_deleted OR deleted_by_id IS NOT NULL ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let admin_id: i64 = sqlx::query_scalar("SELECT id FROM users WHERE name = 'admin'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(deleted, [("Rude".to_owned(), Some(admin_id))]);
     }
 }

@@ -187,7 +187,9 @@ var METATAGS = {
   score: [],
   favcount: [],
   commentcount: [],
+  comment_count: [],
   notecount: [],
+  note_count: [],
   note: [],
   width: [],
   height: [],
@@ -1557,6 +1559,26 @@ function enableTagScript(root = document) {
 }
 
 // src/upload.ts
+var UPLOADS = "/uploads";
+var UPLOAD_PAGE = "/uploads/new";
+var FORM_PAGES = [UPLOAD_PAGE, UPLOADS, "/upload"];
+function isUploadForm(action, method, page) {
+  if (action === null || method?.toLowerCase() !== "post") return false;
+  try {
+    const here = new URL(page);
+    const target2 = new URL(action, here);
+    return FORM_PAGES.includes(here.pathname) && target2.origin === here.origin && target2.pathname === UPLOADS && target2.search === "";
+  } catch {
+    return false;
+  }
+}
+function sendsNow(sendNow, page) {
+  try {
+    return sendNow !== null && new URL(page).pathname === UPLOAD_PAGE;
+  } catch {
+    return false;
+  }
+}
 function asLink(text) {
   const trimmed = text.trim();
   if (trimmed === "" || /\s/.test(trimmed)) return null;
@@ -1573,12 +1595,17 @@ function asLink(text) {
   return null;
 }
 function enableUpload(root = document) {
-  const form = root.querySelector("form[data-upload]");
-  const input = form?.querySelector('input[type="file"]');
-  const zone = form?.querySelector("[data-upload-drop-zone]");
-  const status = form?.querySelector("[data-upload-status]");
-  const link = form?.querySelector('input[name="url"]');
-  if (!form || !input || !zone || !status || !link) return;
+  const forms = root.querySelectorAll("form[data-upload]");
+  const form = forms.length === 1 ? forms[0] : void 0;
+  if (!form) return;
+  const attribute = (name) => Element.prototype.getAttribute.call(form, name);
+  const here = root.location?.href ?? "";
+  if (!isUploadForm(attribute("action"), attribute("method"), here)) return;
+  const input = form.querySelector('input[type="file"]');
+  const zone = form.querySelector("[data-upload-drop-zone]");
+  const status = form.querySelector("[data-upload-status]");
+  const link = form.querySelector('input[name="url"]');
+  if (!input || !zone || !status || !link) return;
   const max = Number(input.dataset["max"] ?? "1") || 1;
   let sending = false;
   const busy2 = (on) => {
@@ -1608,13 +1635,15 @@ function enableUpload(root = document) {
     try {
       const body = new FormData(form);
       body.delete("file");
-      const response = await fetch(form.action, { method: "POST", body, credentials: "same-origin" });
+      const response = await fetch(new URL(UPLOADS, here), { method: "POST", body, credentials: "same-origin" });
       if (response.redirected) {
-        root.defaultView?.location.replace(response.url);
+        root.location.replace(response.url);
         return;
       }
       const page = new DOMParser().parseFromString(await response.text(), "text/html");
       const message = page.querySelector(".form-error")?.textContent?.trim();
+      const confirm = page.querySelector("[data-upload-confirm]");
+      if (confirm && !form.querySelector("[data-upload-confirm]")) error?.before(root.importNode(confirm, true));
       if (error) {
         error.textContent = message || t("upload-failed", "The upload failed. Please try again.");
         error.hidden = false;
@@ -1647,7 +1676,7 @@ function enableUpload(root = document) {
     busy2(true);
     form.requestSubmit();
   });
-  if (form.hasAttribute("data-upload-send-now") && link.value) void sendInPlace();
+  if (sendsNow(attribute("data-upload-send-now"), here) && link.value) void sendInPlace();
   if (typeof DataTransfer === "undefined") return;
   zone.classList.add("enhanced");
   const hint = form.querySelector("[data-upload-hint]");

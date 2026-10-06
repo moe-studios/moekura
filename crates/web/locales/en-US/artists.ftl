@@ -2,6 +2,7 @@
 
 artist-new = New artist
 artist-name-hint = The artist's tag. A new tag, or one no post uses yet, becomes an artist tag.
+artist-name-banned-hint = The artist is banned, and the ban is on this tag: only those who manage tags can rename the entry.
 artist-other-names-hint = Separated by spaces, with underscores for spaces in a name: the artist's names elsewhere, and in other scripts.
 artist-group = Group
 artist-urls = URLs

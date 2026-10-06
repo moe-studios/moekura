@@ -16,6 +16,7 @@ mod charts;
 mod client_ip;
 mod commentary;
 mod comments;
+mod connections;
 mod cors;
 mod counts;
 mod danbooru;
@@ -80,7 +81,7 @@ mod test_support;
 mod themes;
 mod two_factor;
 mod upload;
-mod uploads;
+pub mod uploads;
 mod user_feedbacks;
 mod user_moderation;
 mod users;
@@ -89,7 +90,6 @@ mod wiki;
 
 use std::future::Future;
 use std::io;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -98,7 +98,7 @@ use axum::http::header::{CONTENT_SECURITY_POLICY, REFERRER_POLICY, X_CONTENT_TYP
 use axum::http::{HeaderValue, Request, StatusCode};
 use axum::middleware;
 use axum::routing::get;
-use moekura_core::config::Config;
+use moekura_core::config::{Config, ConnectionConfig};
 use moekura_db::Db;
 use moekura_db::site_cache::SiteCache;
 use tokio::net::TcpListener;
@@ -482,19 +482,16 @@ fn request_span<B>(request: &Request<B>) -> Span {
 }
 
 /// Serves `router` on `listener` until `shutdown` resolves, then lets
-/// in-flight requests finish.
+/// in-flight requests finish. `limits` caps the connections and how long
+/// they may wait for a request; handlers get the peer's address as
+/// `ConnectInfo<SocketAddr>`.
 pub async fn serve(
     listener: TcpListener,
     router: Router,
+    limits: &ConnectionConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> io::Result<()> {
-    // Connection info gives handlers the peer address.
-    axum::serve(
-        listener,
-        router.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown)
-    .await
+    connections::serve(listener, router, limits.into(), shutdown).await
 }
 
 #[cfg(test)]

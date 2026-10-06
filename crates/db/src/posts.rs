@@ -1,7 +1,9 @@
 //! Queries on `posts`.
 
 use moekura_core::posts::{PostLock, PostStatus, Rating};
-use sqlx::PgExecutor;
+use sqlx::postgres::PgArguments;
+use sqlx::query::{Query, QueryAs, QueryScalar};
+use sqlx::{PgExecutor, Postgres};
 use time::OffsetDateTime;
 
 pub struct NewPost<'a> {
@@ -193,9 +195,68 @@ impl Visibility {
             .collect()
     }
 
-    fn status_names(&self) -> Vec<&'static str> {
+    /// The statuses visible to everyone in the role, for
+    /// `p.status = ANY(…)`.
+    pub fn status_names(&self) -> Vec<&'static str> {
         self.statuses.iter().map(|s| s.as_str()).collect()
     }
+}
+
+/// SQL that holds for the post `p` when the [`Visibility`] bound as `$1`
+/// to `$4` (by [`BindVisibility::bind_visibility`]) allows it, as
+/// [`Visibility::allows`] decides: its status (or the viewer's own pending
+/// upload), its rating and no hidden tag. Every query that takes a
+/// `Visibility` filters with this, so none forgets a part.
+macro_rules! visible_post {
+    () => {
+        "((p.status = ANY($1) OR (p.status = 'pending' AND p.uploader_id = $2))
+          AND p.rating = ANY($3) AND NOT p.tag_ids && $4::int[])"
+    };
+}
+pub(crate) use visible_post;
+
+/// Binds a [`Visibility`] as `$1` to `$4` of a query that filters with
+/// [`visible_post!`], before its own parameters.
+pub(crate) trait BindVisibility {
+    fn bind_visibility(self, visibility: &Visibility) -> Self;
+}
+
+macro_rules! impl_bind_visibility {
+    ($(impl<$($generic:ident),*> for $query:ty;)*) => {$(
+        impl<$($generic),*> BindVisibility for $query {
+            fn bind_visibility(self, visibility: &Visibility) -> Self {
+                self.bind(visibility.status_names())
+                    .bind(visibility.viewer)
+                    .bind(visibility.rating_codes())
+                    .bind(visibility.hidden_tags.clone())
+            }
+        }
+    )*};
+}
+
+impl_bind_visibility! {
+    impl<> for Query<'_, Postgres, PgArguments>;
+    impl<O> for QueryAs<'_, Postgres, O, PgArguments>;
+    impl<O> for QueryScalar<'_, Postgres, O, PgArguments>;
+}
+
+/// Those of posts `ids` that `visibility` allows, in the order of `ids`.
+pub async fn visible_ids(
+    db: impl PgExecutor<'_>,
+    ids: &[i64],
+    visibility: &Visibility,
+) -> sqlx::Result<Vec<i64>> {
+    sqlx::query_scalar(concat!(
+        "SELECT p.id FROM unnest($5::bigint[]) WITH ORDINALITY AS ids (id, n)
+         JOIN posts p ON p.id = ids.id
+         WHERE ",
+        visible_post!(),
+        " ORDER BY ids.n"
+    ))
+    .bind_visibility(visibility)
+    .bind(ids)
+    .fetch_all(db)
+    .await
 }
 
 /// A post as shown in a grid.
@@ -424,6 +485,16 @@ pub async fn upload_counts(
     })
 }
 
+/// Holds user `user_id`'s other uploads off until the transaction ends,
+/// so that limits counted in it still hold when it commits.
+pub async fn lock_uploads(conn: &mut sqlx::PgConnection, user_id: i64) -> sqlx::Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('uploads:' || $1::text, 0))")
+        .bind(user_id)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
 /// Like [`by_id`], locking the row until the transaction ends so edits
 /// don't overwrite each other.
 pub async fn lock(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Post>> {
@@ -502,17 +573,14 @@ pub async fn family(
     root: i64,
     visibility: &Visibility,
 ) -> sqlx::Result<Vec<i64>> {
-    sqlx::query_scalar(
-        "SELECT id FROM posts
-         WHERE (id = $1 OR parent_id = $1)
-           AND (status = ANY($2) OR (status = 'pending' AND uploader_id = $3))
-           AND rating = ANY($4)
-         ORDER BY id LIMIT 100",
-    )
+    sqlx::query_scalar(concat!(
+        "SELECT p.id FROM posts p
+         WHERE (p.id = $5 OR p.parent_id = $5) AND ",
+        visible_post!(),
+        " ORDER BY p.id LIMIT 100"
+    ))
+    .bind_visibility(visibility)
     .bind(root)
-    .bind(visibility.status_names())
-    .bind(visibility.viewer)
-    .bind(visibility.rating_codes())
     .fetch_all(db)
     .await
 }
@@ -618,6 +686,89 @@ mod tests {
         assert!(has_ancestor(&pool, child, parent).await.unwrap());
         assert!(has_ancestor(&pool, child, child).await.unwrap());
         assert!(!has_ancestor(&pool, parent, child).await.unwrap());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn visibility_in_sql_matches_allows(pool: PgPool) {
+        let viewer: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let banned: i32 =
+            sqlx::query_scalar("INSERT INTO tags (name) VALUES ('banned') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let post = |status: &'static str, rating: &'static str, uploader, tags: Vec<i32>| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO posts (status, rating, uploader_id, tag_ids)
+                     VALUES ($1, $2, $3, $4) RETURNING id",
+                )
+                .bind(status)
+                .bind(rating)
+                .bind(uploader)
+                .bind(tags)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let shown = post("active", "g", None, vec![]).await;
+        let own = post("pending", "g", Some(viewer), vec![]).await;
+        let pending = post("pending", "g", None, vec![]).await;
+        let deleted = post("deleted", "g", None, vec![]).await;
+        let explicit = post("active", "e", None, vec![]).await;
+        let hidden = post("active", "g", None, vec![banned]).await;
+        let visibility = Visibility {
+            statuses: vec![PostStatus::Active, PostStatus::Flagged],
+            viewer: Some(viewer),
+            ratings: vec![Rating::General],
+            hidden_tags: vec![banned],
+            deleted_by_default: false,
+        };
+        let asked = [hidden, own, explicit, deleted, shown, pending, shown + 100];
+        assert_eq!(
+            visible_ids(&pool, &asked, &visibility).await.unwrap(),
+            [own, shown]
+        );
+        // As `allows` has it.
+        let mut allowed: Vec<i64> = by_ids(&pool, &asked)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|p| visibility.allows(p))
+            .map(|p| p.id)
+            .collect();
+        allowed.sort_unstable();
+        assert_eq!(allowed, [shown, own]);
+
+        // A banned artist's child stays out of the family.
+        for child in [explicit, hidden, pending] {
+            sqlx::query("UPDATE posts SET parent_id = $1 WHERE id = $2")
+                .bind(shown)
+                .bind(child)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        assert_eq!(family(&pool, shown, &visibility).await.unwrap(), [shown]);
+        let everything = Visibility {
+            statuses: vec![
+                PostStatus::Pending,
+                PostStatus::Active,
+                PostStatus::Flagged,
+                PostStatus::Deleted,
+            ],
+            ..Visibility::default()
+        };
+        assert_eq!(
+            family(&pool, shown, &everything).await.unwrap(),
+            [shown, pending, explicit, hidden]
+        );
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

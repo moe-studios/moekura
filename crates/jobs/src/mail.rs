@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use lettre::Address;
 use lettre::message::Mailbox;
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
@@ -71,11 +72,17 @@ impl Mailer {
         })
     }
 
-    /// Sends a plain-text message to `to`.
+    /// Sends a plain-text message to `to`, which must be a bare address:
+    /// a display name and angle brackets would have the message delivered
+    /// to whatever address is inside them.
     pub async fn send(&self, to: &str, subject: &str, body: &str) -> Result<(), MailError> {
+        let address: Address = to.parse().map_err(|error| MailError::Address {
+            address: to.to_owned(),
+            error,
+        })?;
         let message = Message::builder()
             .from(self.from.clone())
-            .to(parse_mailbox(to)?)
+            .to(Mailbox::new(None, address))
             .subject(subject)
             .header(ContentType::TEXT_PLAIN)
             .body(body.to_owned())?;
@@ -229,6 +236,21 @@ mod tests {
             jobs.send(job("not an address")).await,
             Err(JobError::Permanent(_))
         ));
+        // Only bare addresses: never the one hidden in a display-name form.
+        assert!(matches!(
+            jobs.send(job("x@refused.example <someone@example.com>"))
+                .await,
+            Err(JobError::Permanent(_))
+        ));
+        assert!(matches!(
+            jobs.mailer
+                .as_ref()
+                .unwrap()
+                .send("Someone <someone@example.com>", "Hello", "Hi")
+                .await,
+            Err(MailError::Address { .. })
+        ));
+        assert_eq!(server.received.lock().unwrap().len(), 1);
 
         // Nobody listening: worth retrying.
         let mut config = server.config();

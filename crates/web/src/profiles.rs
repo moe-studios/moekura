@@ -142,7 +142,15 @@ async fn read_form(mut multipart: Multipart) -> Result<ProfileForm, String> {
                     *slot = Some(bytes.to_vec());
                 }
             }
-            "bio" => form.bio = Some(field.text().await.map_err(too_large)?),
+            "bio" => {
+                let text = crate::upload::text_field(field, 4 * BIO_MAX_CHARS).await;
+                form.bio = Some(text.map_err(|error| match error {
+                    crate::upload::TextFieldError::TooLong => {
+                        format!("The bio can be at most {BIO_MAX_CHARS} characters.")
+                    }
+                    crate::upload::TextFieldError::Multipart(error) => too_large(error),
+                })?);
+            }
             "remove_avatar" => form.remove_avatar = true,
             "remove_banner" => form.remove_banner = true,
             _ => {}
@@ -174,26 +182,43 @@ async fn save(page: Page, jar: CookieJar, multipart: Multipart) -> Result<Respon
         avatar_key: before.avatar_key.clone().filter(|_| !form.remove_avatar),
         banner_key: before.banner_key.clone().filter(|_| !form.remove_banner),
     };
+    // Both pictures are made before either is stored, so a refused one
+    // leaves nothing behind.
+    let mut rendered = Vec::new();
     for (bytes, kind, size) in [
         (form.avatar, "avatar", AVATAR_SIZE),
         (form.banner, "banner", BANNER_SIZE),
     ] {
         let Some(bytes) = bytes else { continue };
-        let key = match render(state, &bytes, kind, size).await {
-            Ok(key) => key,
+        match render(state, &bytes, kind, size).await {
+            Ok((key, picture)) => {
+                let slot = if kind == "avatar" {
+                    &mut after.avatar_key
+                } else {
+                    &mut after.banner_key
+                };
+                *slot = Some(key.as_str().to_owned());
+                rendered.push((key, picture));
+            }
             Err(ImageError::Invalid(error)) => {
                 return Ok(render_form(&page, &before, &after.bio, Some(error)));
             }
             Err(ImageError::Internal(error)) => return Err(AppError::Internal(error)),
-        };
-        let slot = if kind == "avatar" {
-            &mut after.avatar_key
-        } else {
-            &mut after.banner_key
-        };
-        *slot = Some(key.as_str().to_owned());
+        }
     }
-    users::set_profile(db, user.id, &after).await?;
+    // Removed again if the save fails.
+    let mut stored = Vec::new();
+    for (key, picture) in rendered {
+        if let Err(error) = state.storage.put_bytes(&key, picture.into()).await {
+            forget_unused(state, &stored).await;
+            return Err(AppError::Internal(error.to_string()));
+        }
+        stored.push(key);
+    }
+    if let Err(error) = users::set_profile(db, user.id, &after).await {
+        forget_unused(state, &stored).await;
+        return Err(error.into());
+    }
     forget_replaced(state, &before, &after).await;
     Ok((
         flash::set(jar, Flash::Saved),
@@ -208,14 +233,14 @@ enum ImageError {
     Internal(String),
 }
 
-/// Stores `bytes`, a picture someone sent, cut to `size` without its
-/// metadata, under `kind/`.
+/// `bytes`, a picture someone sent, cut to `size` without its metadata,
+/// and the key to store it under, under `kind/`.
 async fn render(
     state: &AppState,
     bytes: &[u8],
     kind: &str,
     size: (u32, u32),
-) -> Result<Key, ImageError> {
+) -> Result<(Key, Vec<u8>), ImageError> {
     let token = hex::encode(moekura_core::tokens::NewToken::generate().hash);
     let source = TempFile(state.work_dir.join(format!("{kind}-{}", &token[..24])));
     tokio::fs::write(&source.0, bytes)
@@ -260,12 +285,7 @@ async fn render(
         .await
         .map_err(|e| ImageError::Internal(format!("reading rendition: {e}")))?;
     let key = Key::variant(kind, &hex::encode(Sha256::digest(&rendered)), &format);
-    state
-        .storage
-        .put_bytes(&key, rendered.into())
-        .await
-        .map_err(|e| ImageError::Internal(e.to_string()))?;
-    Ok(key)
+    Ok((key, rendered))
 }
 
 /// A file in the work directory, removed when dropped.
@@ -281,18 +301,23 @@ impl Drop for TempFile {
 /// else's profile uses the same file. Failing only leaves a file behind.
 async fn forget_replaced(state: &AppState, before: &Profile, after: &Profile) {
     let kept = [after.avatar_key.as_deref(), after.banner_key.as_deref()];
-    for old in [before.avatar_key.as_deref(), before.banner_key.as_deref()]
+    let old: Vec<Key> = [before.avatar_key.as_deref(), before.banner_key.as_deref()]
         .into_iter()
         .flatten()
-    {
-        if kept.contains(&Some(old)) {
-            continue;
-        }
-        let Some(key) = Key::parse(old) else { continue };
-        match users::profile_image_used(state.db.primary(), old).await {
+        .filter(|old| !kept.contains(&Some(*old)))
+        .filter_map(Key::parse)
+        .collect();
+    forget_unused(state, &old).await;
+}
+
+/// Deletes the images `keys` unless a profile uses them. Failing only
+/// leaves a file behind.
+async fn forget_unused(state: &AppState, keys: &[Key]) {
+    for key in keys {
+        match users::profile_image_used(state.db.primary(), key.as_str()).await {
             Ok(false) => {
-                if let Err(error) = state.storage.delete(&key).await {
-                    tracing::warn!(%error, key = old, "couldn't delete a profile image");
+                if let Err(error) = state.storage.delete(key).await {
+                    tracing::warn!(%error, key = key.as_str(), "couldn't delete a profile image");
                 }
             }
             Ok(true) => {}
@@ -385,6 +410,41 @@ mod tests {
         let start = page.find(&format!("src=\"{prefix}"))? + 5;
         let end = start + page[start..].find('"')?;
         Some(&page[start..end])
+    }
+
+    /// How many files are stored under `dir`.
+    fn files_under(dir: &std::path::Path) -> usize {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .map(|entry| {
+                let path = entry.path();
+                if path.is_dir() { files_under(&path) } else { 1 }
+            })
+            .sum()
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn refused_changes_keep_no_pictures(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let app = app(&state);
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let refused = app
+            .post_multipart_files(
+                "/settings/profile",
+                Some(&alice),
+                &[("bio", "hi".into())],
+                &[
+                    ("avatar", "me.png", &fixture::png(64, 64)),
+                    ("banner", "x.svg", b"<svg/>"),
+                ],
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let stored = files_under(&state.config.storage.path.join("avatar"));
+        assert_eq!(stored, 0, "the picture stored before the banner failed");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

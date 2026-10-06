@@ -107,6 +107,38 @@ pub async fn post_with_sha256(
         .await
 }
 
+/// Holds others locking stored file `key` off until the transaction
+/// ends: a failed upload removing the original it stored, and another
+/// upload recording the same file.
+pub async fn lock_file(conn: &mut sqlx::PgConnection, key: &str) -> sqlx::Result<()> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended('file:' || $1, 0))")
+        .bind(key)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Whether stored original `key`, of the file with `sha256`, is a post's
+/// file, one a replacement kept, or a staged upload's still to be posted.
+pub async fn original_used(
+    db: impl PgExecutor<'_>,
+    sha256: &[u8; 32],
+    key: &str,
+) -> sqlx::Result<bool> {
+    // Posted staged uploads' files are their posts'; purging a post
+    // removes them regardless.
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM media_assets WHERE sha256 = $1 AND storage_key = $2)
+             OR EXISTS (SELECT 1 FROM staged_uploads WHERE post_id IS NULL AND storage_key = $2)
+             OR EXISTS (SELECT 1 FROM post_replacements
+                        WHERE old_storage_key = $2 OR new_storage_key = $2)",
+    )
+    .bind(&sha256[..])
+    .bind(key)
+    .fetch_one(db)
+    .await
+}
+
 /// The post whose file has this MD5, if any.
 pub async fn post_with_md5(db: impl PgExecutor<'_>, md5: &[u8; 16]) -> sqlx::Result<Option<i64>> {
     sqlx::query_scalar("SELECT post_id FROM media_assets WHERE md5 = $1 LIMIT 1")
@@ -486,6 +518,73 @@ mod tests {
         let other = post(&pool).await;
         let err = insert(&pool, asset(other, &[1; 32])).await.unwrap_err();
         assert!(matches!(err, InsertAssetError::Duplicate(_)), "{err:?}");
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn knows_which_originals_are_used(pool: PgPool) {
+        use crate::staged_uploads::{self, Slot, StoredFile};
+        let used = async |sha256: &[u8; 32], key: &str| {
+            let mut tx = pool.begin().await.unwrap();
+            lock_file(&mut tx, key).await.unwrap();
+            original_used(&mut *tx, sha256, key).await.unwrap()
+        };
+        let post_id = post(&pool).await;
+        insert(&pool, asset(post_id, &[1; 32])).await.unwrap();
+        assert!(used(&[1; 32], "original/ab/cd/x.png").await);
+        assert!(!used(&[2; 32], "original/ef/01/y.png").await);
+
+        // A file waiting to be posted, until it's posted.
+        let user: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id)
+             SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let upload = staged_uploads::create_upload(&pool, user, "", "")
+            .await
+            .unwrap();
+        let slot = Slot {
+            upload_id: upload,
+            uploader_id: user,
+            position: 0,
+            file_name: "y.png",
+            source: "",
+        };
+        let file = StoredFile {
+            sha256: &[2; 32],
+            md5: &[2; 16],
+            media_type: "png",
+            width: 1,
+            height: 1,
+            duration_ms: None,
+            frames: 1,
+            has_audio: false,
+            file_size: 1,
+            storage_key: "original/ef/01/y.png",
+            phash: None,
+            pixel_hash: None,
+            traits: &[],
+        };
+        let staged = staged_uploads::create(&pool, slot, file).await.unwrap();
+        assert!(used(&[2; 32], "original/ef/01/y.png").await);
+        let other = post(&pool).await;
+        staged_uploads::used(&pool, staged, other).await.unwrap();
+        assert!(!used(&[2; 32], "original/ef/01/y.png").await);
+
+        // A file a replacement kept.
+        sqlx::query(
+            "INSERT INTO post_replacements (post_id, old_sha256, old_md5, old_media_type,
+                 old_width, old_height, old_file_size, old_storage_key, new_sha256, new_md5,
+                 new_media_type, new_width, new_height, new_file_size, new_storage_key)
+             VALUES ($1, '\\x02', '\\x02', 'png', 1, 1, 1, 'original/ef/01/y.png',
+                     '\\x01', '\\x01', 'png', 1, 1, 1, 'original/ab/cd/x.png')",
+        )
+        .bind(post_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert!(used(&[2; 32], "original/ef/01/y.png").await);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

@@ -58,6 +58,8 @@ pub enum NameError {
     AllDigits,
     #[error("is reserved")]
     Reserved,
+    #[error("may not end in .json")]
+    JsonSuffix,
 }
 
 impl UserName {
@@ -84,6 +86,11 @@ impl UserName {
         }
         if RESERVED_NAMES.iter().any(|r| r.eq_ignore_ascii_case(raw)) {
             return Err(NameError::Reserved);
+        }
+        // `/users/name.json` would be taken for a Danbooru API URL, hiding
+        // the profile.
+        if raw.to_ascii_lowercase().ends_with(".json") {
+            return Err(NameError::JsonSuffix);
         }
         Ok(Self(raw.to_owned()))
     }
@@ -124,16 +131,28 @@ pub fn check_password(password: &str) -> Result<(), PasswordError> {
 pub struct EmailError;
 
 /// A deliberately loose check; only a confirmation mail proves an address.
+///
+/// It does insist on a bare address: no display name, angle brackets,
+/// quotes, comments or lists, which a mailer would read past to some other
+/// address than the one the domain list, uniqueness and mail limits saw.
 pub fn check_email(email: &str) -> Result<(), EmailError> {
     let Some((local, domain)) = email.rsplit_once('@') else {
         return Err(EmailError);
     };
     let valid = !local.is_empty()
+        && !local.contains('@')
         && domain.contains('.')
         && !domain.starts_with('.')
         && !domain.ends_with('.')
         && email.len() <= EMAIL_MAX_LEN
-        && !email.chars().any(|c| c.is_whitespace() || c.is_control());
+        && !email.chars().any(|c| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(
+                    c,
+                    '<' | '>' | '"' | '(' | ')' | ',' | ';' | ':' | '[' | ']' | '\\'
+                )
+        });
     if valid { Ok(()) } else { Err(EmailError) }
 }
 
@@ -198,6 +217,9 @@ mod tests {
             "x-y-z",
             "_under",
             "123abc",
+            "json",
+            "alice_json",
+            "a.jsonp",
         ] {
             assert_eq!(UserName::parse(name).unwrap().as_str(), name);
         }
@@ -217,6 +239,8 @@ mod tests {
             ("12345", NameError::AllDigits),
             ("Admin", NameError::Reserved),
             ("ME", NameError::Reserved),
+            ("alice.json", NameError::JsonSuffix),
+            ("Alice.JSON", NameError::JsonSuffix),
         ];
         for (name, expected) in cases {
             assert_eq!(UserName::parse(name), Err(expected), "{name:?}");
@@ -247,6 +271,19 @@ mod tests {
             "a@localhost",
             "a@.com",
             "a b@c.com",
+            // Only bare addresses: a mailer would send these elsewhere.
+            "Name<victim@example.com>",
+            "\"Name\"<victim@example.com>",
+            "x@blocked.example<victim@example.com>",
+            "victim@example.com>",
+            "<victim@example.com>",
+            "victim@example.com(comment)",
+            "a@example.com,b@example.com",
+            "a@example.com;b@example.com",
+            "group:a@example.com",
+            "a@[192.0.2.1]",
+            "a\\@b@example.com",
+            "a@b@example.com",
         ] {
             assert_eq!(check_email(bad), Err(EmailError), "{bad}");
         }

@@ -37,7 +37,9 @@
       {% if v.description_changed %}<li>{{ t("description-changed") }}</li>{% endif %}
       {% if v.deleted is not none %}<li>{{ t("status-deleted") if v.deleted else t("restored") }}</li>{% endif %}
       {% for id in v.added %}<li class="added">+<a href="/posts/{{ id }}">#{{ id }}</a></li>{% endfor %}
+      {% if v.more_added %}<li class="added">+{{ t("pool-history-more", count=v.more_added) }}</li>{% endif %}
       {% for id in v.removed %}<li class="removed">−<a href="/posts/{{ id }}">#{{ id }}</a></li>{% endfor %}
+      {% if v.more_removed %}<li class="removed">−{{ t("pool-history-more", count=v.more_removed) }}</li>{% endif %}
       {% if v.reordered %}<li>{{ t("reordered") }}</li>{% endif %}
       {% else %}
       {% if v.moved %}<li>{{ t("moved") }}</li>{% endif %}

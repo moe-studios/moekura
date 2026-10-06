@@ -409,7 +409,7 @@ pub struct Dismissed {
     params(("id" = i64, Path, description = "Post number")),
     responses(
         (status = 200, body = Dismissed),
-        (status = 400, body = ErrorBody, description = "The post has no open flags"),
+        (status = 400, body = ErrorBody, description = "The post has no open flags, or its status is locked"),
     ),
 )]
 pub(crate) async fn dismiss_flags(
@@ -556,7 +556,11 @@ pub(crate) async fn reject_relation(
     operation_id = "remove_tag_relation",
     tag = "moderation",
     params(("id" = i32, Path, description = "Relation id")),
-    responses((status = 200, body = ApiRelation), (status = 403, body = ErrorBody)),
+    responses(
+        (status = 200, body = ApiRelation),
+        (status = 403, body = ErrorBody),
+        (status = 422, body = ErrorBody, description = "Your request was decided before you could withdraw it"),
+    ),
 )]
 pub(crate) async fn remove_relation(
     State(state): State<AppState>,
@@ -733,7 +737,9 @@ pub struct NewNetworkBan {
 ///
 /// Needs `ban_users`. Requests from the network can read but not change
 /// anything, and it can't register or log in; with `full`, it can't see
-/// the site at all.
+/// the site at all. A full ban wider than a /24 (IPv4) or /48 (IPv6) needs
+/// `manage_users`, and no range may include an address of anyone ranked
+/// at or above you.
 #[utoipa::path(
     post,
     path = "/network-bans",
@@ -743,6 +749,7 @@ pub struct NewNetworkBan {
     responses(
         (status = 201, body = ApiNetworkBan),
         (status = 400, body = ErrorBody, description = "The range isn't valid, is too wide, or includes your address"),
+        (status = 403, body = ErrorBody, description = "The range includes an address of someone ranked at or above you"),
     ),
 )]
 pub(crate) async fn ban_network(
@@ -784,14 +791,19 @@ pub(crate) async fn ban_network(
 
 /// Lift a network ban.
 ///
-/// Needs `ban_users`.
+/// Needs `ban_users`, and a rank above everyone seen on an address in the
+/// range.
 #[utoipa::path(
     delete,
     path = "/network-bans/{id}",
     operation_id = "lift_network_ban",
     tag = "moderation",
     params(("id" = i64, Path, description = "Network ban id")),
-    responses((status = 204, description = "Lifted"), (status = 404, body = ErrorBody)),
+    responses(
+        (status = 204, description = "Lifted"),
+        (status = 403, body = ErrorBody, description = "The range includes an address of someone ranked at or above you"),
+        (status = 404, body = ErrorBody),
+    ),
 )]
 pub(crate) async fn lift_network_ban(
     State(state): State<AppState>,

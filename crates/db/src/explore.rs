@@ -33,11 +33,21 @@ pub async fn add_views(db: &PgPool, views: &[(Date, i64, i32)]) -> sqlx::Result<
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Searched {
     pub day: Date,
+    /// Tags separated by spaces, an excluded one after `-` and an optional
+    /// one after `~`; a pattern has a `*`.
     pub query: String,
     pub searches: i32,
     pub misses: i32,
 }
 
+/// Adds `searches` to each search's counts for its day.
+///
+/// A search naming a tag that doesn't exist (neither a tag nor an alias of
+/// one), or with a pattern among its excluded or optional tags, counts
+/// only the times it found nothing: what it found came from its other
+/// tags, and the searches that found posts most (see [`top_searches`])
+/// shouldn't show made-up tags. A pattern it requires found posts only by
+/// matching tags.
 pub async fn add_searches(db: &PgPool, searches: &[Searched]) -> sqlx::Result<()> {
     if searches.is_empty() {
         return Ok(());
@@ -48,7 +58,24 @@ pub async fn add_searches(db: &PgPool, searches: &[Searched]) -> sqlx::Result<()
     let misses: Vec<i32> = searches.iter().map(|s| s.misses).collect();
     sqlx::query(
         "INSERT INTO search_counts (day, query, searches, misses)
-         SELECT * FROM unnest($1::date[], $2::text[], $3::int[], $4::int[])
+         SELECT day, query, CASE WHEN known THEN searches ELSE misses END, misses
+         FROM (
+             SELECT s.*, NOT EXISTS (
+                 SELECT 1 FROM unnest(string_to_array(s.query, ' ')) AS t (term)
+                 WHERE CASE
+                     WHEN strpos(t.term, '*') > 0 THEN left(t.term, 1) IN ('-', '~')
+                     ELSE NOT EXISTS (SELECT 1 FROM tags WHERE name = ltrim(t.term, '-~'))
+                         AND NOT EXISTS (
+                             SELECT 1 FROM tag_relations
+                             WHERE kind = 'alias' AND status = 'active'
+                                 AND antecedent_name = ltrim(t.term, '-~')
+                         )
+                 END
+             ) AS known
+             FROM unnest($1::date[], $2::text[], $3::int[], $4::int[])
+                 AS s (day, query, searches, misses)
+         ) s
+         WHERE known OR misses > 0
          ORDER BY 1, 2
          ON CONFLICT (day, query) DO UPDATE
          SET searches = search_counts.searches + EXCLUDED.searches,
@@ -83,8 +110,8 @@ pub async fn most_viewed(
     .await
 }
 
-/// The searches made most from `from` to `to`, or with `missed`, those
-/// that most often found nothing, with their counts.
+/// The searches that most often found posts from `from` to `to`, or with
+/// `missed`, those that most often found nothing, with their counts.
 pub async fn top_searches(
     db: impl PgExecutor<'_>,
     from: Date,
@@ -94,7 +121,8 @@ pub async fn top_searches(
 ) -> sqlx::Result<Vec<(String, i64)>> {
     sqlx::query_as(
         "SELECT query, n FROM (
-             SELECT query, sum(CASE WHEN $3 THEN misses ELSE searches END)::bigint AS n
+             SELECT query,
+                 sum(CASE WHEN $3 THEN misses ELSE searches - misses END)::bigint AS n
              FROM search_counts WHERE day BETWEEN $1 AND $2 GROUP BY query
          ) q WHERE n > 0 ORDER BY n DESC, query LIMIT $4",
     )
@@ -138,6 +166,14 @@ mod tests {
     async fn counts_add_up(pool: PgPool) {
         let a = post(&pool).await;
         let b = post(&pool).await;
+        sqlx::raw_sql(
+            "INSERT INTO tags (name) VALUES ('cat'), ('dog');
+             INSERT INTO tag_relations (kind, antecedent_name, consequent_name, status)
+             VALUES ('alias', 'kitty', 'cat', 'active')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         let day = date!(2026 - 09 - 01);
         let next = date!(2026 - 09 - 02);
         add_views(
@@ -168,14 +204,46 @@ mod tests {
         add_searches(&pool, &[searched("dgo", 1, 1)]).await.unwrap();
         assert_eq!(
             top_searches(&pool, day, next, false, 10).await.unwrap(),
-            [("cat".to_owned(), 3), ("dgo".to_owned(), 3)]
+            [("cat".to_owned(), 3)]
         );
         assert_eq!(
             top_searches(&pool, day, next, true, 10).await.unwrap(),
             [("dgo".to_owned(), 3)]
         );
 
-        assert_eq!(prune(&pool, next).await.unwrap(), 4);
+        // Searches naming tags that don't exist only count their misses.
+        add_searches(
+            &pool,
+            &[
+                searched("kitty -dog", 2, 0),
+                searched("long_* -dog", 2, 0),
+                searched("cat dog", 2, 2),
+                searched("cat -made_up", 4, 0),
+                searched("cat -spam_*", 5, 0),
+                searched("~cat ~made_up", 2, 1),
+            ],
+        )
+        .await
+        .unwrap();
+        let pairs = |list: &[(&str, i64)]| -> Vec<(String, i64)> {
+            list.iter().map(|(q, n)| ((*q).to_owned(), *n)).collect()
+        };
+        assert_eq!(
+            top_searches(&pool, day, next, false, 10).await.unwrap(),
+            pairs(&[("cat", 3), ("kitty -dog", 2), ("long_* -dog", 2)])
+        );
+        assert_eq!(
+            top_searches(&pool, day, next, true, 10).await.unwrap(),
+            pairs(&[("dgo", 3), ("cat dog", 2), ("~cat ~made_up", 1)])
+        );
+        // What found posts but named a made-up tag isn't kept at all.
+        let kept: i64 = sqlx::query_scalar("SELECT count(*) FROM search_counts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, 6);
+
+        assert_eq!(prune(&pool, next).await.unwrap(), 8);
         assert_eq!(most_viewed(&pool, day, next, 10).await.unwrap(), [(b, 3)]);
     }
 }

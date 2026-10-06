@@ -96,6 +96,17 @@ pub async fn redeem(
     .await
 }
 
+/// Drops every link sent to `user_id`, once their password or address
+/// changes: a link mailed before then mustn't outlive it. Returns how
+/// many there were.
+pub async fn delete_for_user(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<u64> {
+    let result = sqlx::query("DELETE FROM account_tokens WHERE user_id = $1")
+        .bind(user_id)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected())
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::PgPool;
@@ -197,6 +208,36 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn deleting_a_users_tokens_leaves_others(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let bob = user(&pool, "bob").await;
+        let hour = Duration::from_secs(3600);
+        let mut conn = pool.acquire().await.unwrap();
+        let reset = issue(&mut conn, alice, Purpose::ResetPassword, "a@x.com", hour)
+            .await
+            .unwrap();
+        issue(&mut conn, alice, Purpose::VerifyEmail, "a2@x.com", hour)
+            .await
+            .unwrap();
+        let bobs = issue(&mut conn, bob, Purpose::ResetPassword, "b@x.com", hour)
+            .await
+            .unwrap();
+        assert_eq!(delete_for_user(&pool, alice).await.unwrap(), 2);
+        assert!(
+            peek(&pool, Purpose::ResetPassword, &reset)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            peek(&pool, Purpose::ResetPassword, &bobs)
+                .await
+                .unwrap()
+                .is_some()
         );
     }
 }

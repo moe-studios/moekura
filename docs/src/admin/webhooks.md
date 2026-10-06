@@ -33,10 +33,13 @@ Each event is a `POST` of JSON:
 
 Post events carry `post_id`, `url`, `status`, `rating`, `source`,
 `tags`, `uploader` and `uploader_url`, `created_at`, and `image_url`: a
-sample of the image (or a video's poster), only for ratings visitors who
-aren't logged in may see and never for deleted posts; deletions and
-flags add a `reason`. Comments carry `comment_id`, `post_id`, `url`,
-`author`, `author_url`, `body` and `created_at`; registrations
+sample of the image (or a video's poster), only for posts visitors who
+aren't logged in may see on a site that isn't private, and never for
+deleted posts. So a post waiting for approval has no image until
+`post.approved`, and neither do banned artists' posts while they're
+hidden or ratings kept from visitors. Deletions and flags add a
+`reason`. Comments carry `comment_id`, `post_id`, `url`,
+`creator`, `creator_url`, `body` and `created_at`; registrations
 `user_id`, `name`, `url` and `status`.
 
 with these headers:
@@ -63,9 +66,21 @@ def valid(secret: str, timestamp: str, body: bytes, signature: str) -> bool:
 Answer with any 2xx status. Network errors, 5xx, 408 and 429 are
 retried in the background, waiting longer each time, for about five
 hours (or, for a 429 with `Retry-After`, as long as that says, up to an
-hour); other statuses are given up at once. A webhook's page lists its
-latest deliveries with what came back, and **Send a test** sends a
-`ping` event. Deliveries are kept for 30 days.
+hour); other statuses are given up at once. Only the first 64 KiB of an
+answer are read, so keep it short. A webhook's page lists its latest
+deliveries with what came back (the first 1000 bytes), and **Send a
+test** sends a `ping` event. Deliveries are kept for 30 days.
+
+Deliveries are sent one at a time (`webhooks.max_concurrent` in the
+[configuration](../configuration.md#webhooks)), so the other background
+jobs, like thumbnails and mail, don't wait on a receiver that's slow to
+answer. After 5 deliveries in a row that couldn't reach a receiver, or
+that it didn't answer within `webhooks.timeout_secs`, the webhook is
+paused for 10 minutes: its page says so, and its deliveries go on being
+retried on their usual schedule without being sent. Then the next one
+tries again; an answer of any status ends the pause, and **Send a test**
+goes even while paused. Pointing the webhook at another URL ends it
+too.
 
 Webhooks don't follow redirects, and don't go to private or local
 addresses unless `webhooks.allow_private_addresses` is on in the
@@ -84,10 +99,14 @@ message.
 - Images show only for posts whose rating is ticked under **Images in
   Discord messages** (general and sensitive at first) *and* that
   visitors who aren't logged in may see (the `visitor_ratings` site
-  setting). Others get a message without the image. Private sites
-  never send images, since Discord couldn't load them.
+  setting; not pending posts or hidden banned artists' posts). Others
+  get a message without the image. Private sites never send images,
+  since Discord couldn't load them.
 - Nobody is pinged: messages turn off `@everyone`, role and user
   mentions, whatever a comment says.
+- Comments, sources, tags and reasons show as written: Discord markdown
+  in them is escaped, so a link can't pose as another. A source that is
+  a web address shows as that address, linked.
 - **Name** and **Avatar URL** replace the webhook's own name and avatar
   in the messages. Discord doesn't allow names containing "discord" or
   "clyde".

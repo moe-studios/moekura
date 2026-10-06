@@ -93,8 +93,10 @@ contributors and up, by default) can leave **positive**, **neutral** or
 feedback** on their profile. Profiles count it, linking to the whole
 list at `/user_feedbacks?user=name`; anyone can read it, and the person
 it's about is notified. Its writer can edit it. Staff who can ban users
-can delete and restore it, which goes in the moderation log. Negative
-feedback can keep a member from [automatic
+can delete and restore it, which goes in the moderation log, if they
+outrank the person it's about and, unless they wrote it, its writer;
+deleted feedback comes back only from whoever deleted it or someone
+ranked above them. Negative feedback can keep a member from [automatic
 promotion](../admin/roles.md#automatic-promotion).
 
 ## Your name
@@ -103,19 +105,53 @@ promotion](../admin/roles.md#automatic-promotion).
 once every 7 days. Your profile lists your former names, and links to
 your old profile and searches such as `user:oldname` and
 `ordfav:oldname` keep finding you, unless someone else takes the name
-later. Staff who can ban users can rename anyone ranked below them,
-with **Rename** on their profile, at any time; that goes in the
-moderation log.
+later. An inactive account's old profile address leads nowhere, except
+for staff who manage users. You can't change your name while banned.
+Staff who can ban users can rename anyone ranked below them, with
+**Rename** on their profile, at any time; that goes in the moderation
+log.
+
+A name may not end in `.json`: addresses ending in `.json`, like
+`/users/{id}.json`, belong to the [Danbooru API](danbooru-clients.md).
 
 ## Email address and password
 
 Changing either needs your current password. Changing the password logs
-you out everywhere else.
+you out everywhere else, and reset links already emailed stop working.
+**Also revoke my API keys and feed token**, ticked unless you untick it,
+revokes those too: do that if you think someone else got in.
+
+An address is written plainly, as `name@example.com`, without a name
+in front or angle brackets. Mail isn't sent to one saved in another
+form before that was required: it shows as not confirmed until you
+replace it with a plain one.
 
 On sites that send mail, a new address only replaces the old one once
-you follow the link sent to it, and **Forgot your password?** on the
-login page emails you a link to choose a new one. The link works for an
-hour, and using it logs you out everywhere.
+you follow the link sent to it; so does the address given when signing
+up, unless the site has new accounts confirm theirs before they can log
+in. Asking for an address another account already has gets the same
+answer as any other, and that account is emailed about it instead, so
+nobody can use these forms to find out who has an account here. On
+sites without mail, the address changes straight away, so a taken one is
+refused.
+
+**Forgot your password?** on the login page emails you a link to choose
+a new one. The link works for an hour, and only while that's still your
+address. Using it logs you out everywhere, revokes your API keys and
+feed token, and unlinks any [single sign-on](#single-sign-on) account
+linked since you signed up, in case someone else had got in (link yours
+again afterwards). An account made through single sign-on keeps the one
+it was made with.
+
+Logging in is limited, against password guessing: five tries at an
+account from one network (an IPv4 address, or an IPv6 `/64`), then one
+every 30 seconds; and ten at an account from all networks together,
+then one every 30 seconds. Someone guessing your password from their
+network doesn't keep you from logging in from yours. While people guess
+it from many networks at once, you can still log in from a network you
+used the account from before (if the site keeps the addresses accounts
+use, as it does by default), and from anywhere by also solving a
+captcha (on sites with a captcha service).
 
 ## Single sign-on
 
@@ -124,10 +160,13 @@ through another service's account. The first time, that makes you an
 account here (if the site is taking new ones).
 
 To use it with an account you already have, log in with your password
-and choose **Link** under **Single sign-on**. You can unlink it later, as
-long as you have a password to log in with instead. Accounts made through
-single sign-on have no password; to set one, use **Forgot your
-password?** if the site sends mail.
+and choose **Link** under **Single sign-on**, confirming your password;
+finish at the provider in the same browser. (It can't be done with an API
+key.) If your address is confirmed, you're emailed when an account is
+linked. You can unlink it later, as long as you have a password to log in
+with instead. Accounts made through single sign-on have no password; to
+set one, use **Forgot your password?** if the site sends mail. They need
+one to link another account at the provider, too.
 
 ## Two-factor login
 
@@ -146,13 +185,26 @@ When logging in, enter a code from the app, or a recovery code, after
 your password (or after single sign-on). If your device's clock is off by more than about half a
 minute, codes won't work; most phones set the time automatically.
 
+Wrong codes are counted until a right one, even across logins, since
+whoever types them already got past your password:
+
+- After 5 wrong codes in a row, you're emailed about it (on sites that
+  send mail, if your address is confirmed). If it wasn't you, change
+  your password.
+- After 10, codes from the app stop working for 15 minutes, and each
+  further wrong code doubles that, up to a day. Recovery codes still
+  work meanwhile, and logging in with one lifts the wait.
+
 If you've lost both your device and your recovery codes, ask the staff:
 people who can manage users can turn two-factor login off for you
 (**Admin → Users → Turn off 2FA**), which is recorded in the moderation
 log.
 
 [API keys](../api.md) don't need a code: keep them secret, and revoke any
-you no longer use.
+you no longer use. Making one asks for your password (or, on an account
+made through single sign-on, which has none, works only within 10
+minutes of logging in), and a key can't make more keys or change your
+login settings.
 
 ## Saved searches
 
@@ -169,7 +221,8 @@ runs at most 20 saved searches. Only you see your saved searches.
 Favorite groups are your own named lists of posts, in the order you
 choose: make one under **Your favorite groups** (linked from your
 profile) or from a post page, add posts from their pages, and reorder
-them by dragging on the group's edit page. A group is public (listed on
+them by dragging on the group's edit page. As with pools, only posts you
+can see go in, and not deleted ones. A group is public (listed on
 your profile, and anyone can open it) unless you untick *Public*.
 `favgroup:name` searches one of your groups, `favgroup:7` any public
 group by number, and `ordfavgroup:name` shows a group in its own order.

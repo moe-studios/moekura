@@ -887,7 +887,9 @@ function enableNoteEditor(root = document) {
   toggle.className = "secondary note-toggle";
   toggle.textContent = t("notes-edit", "Edit notes");
   toggle.setAttribute("aria-pressed", "false");
-  (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
+  const tools = root.querySelector("[data-note-tools]");
+  if (tools) tools.append(toggle);
+  else (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
   toggle.addEventListener("click", () => {
     const on = !layer.classList.contains("editing-notes");
     layer.classList.toggle("editing-notes", on);
@@ -1151,7 +1153,9 @@ function enableNotes(root = document) {
     apply(hidden);
   });
   apply(remembered());
-  layer.after(toggle);
+  const tools = root.querySelector("[data-note-tools]");
+  if (tools) tools.append(toggle);
+  else layer.after(toggle);
 }
 
 // src/pool-order.ts
@@ -1236,7 +1240,7 @@ function enhanceReactions(root = document) {
           return;
         }
         if (!response.ok) throw new Error(String(response.status));
-        const scope = form.closest(".comment") ?? form.closest(".post-info") ?? root;
+        const scope = form.closest(".comment") ?? form.closest(".post-actions") ?? root;
         update(scope, await response.json());
       }).catch(() => {
         form.dataset["plain"] = "1";

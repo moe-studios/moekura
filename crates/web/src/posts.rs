@@ -1655,7 +1655,7 @@ mod tests {
             body.find(needle)
                 .unwrap_or_else(|| panic!("{needle} missing from {body}"))
         };
-        assert!(position("<h2>Artist</h2>") < position("<h2>General</h2>"));
+        assert!(position("<h2>Artist <") < position("<h2>General <"));
         // Alphabetical within a group.
         assert!(position(">apple<") < position(">zebra<"));
         assert!(body.contains("class=\"tag tag-artist\" href=\"/posts?tags=someone\""));
@@ -1713,14 +1713,6 @@ mod tests {
         assert!(bad.body.contains("expected ratings"), "{}", bad.body);
         let nothing = app.get("/posts?tags=nonexistent", None).await;
         assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
-
-        // Hot posts have their own link.
-        let hot = app.get("/posts?tags=order%3Arank", None).await.body;
-        assert!(
-            hot.contains("href=\"/posts?tags=order%3Arank\" aria-current=\"page\">Hot<"),
-            "{hot}"
-        );
-        assert!(!page.body.contains("aria-current=\"page\">Hot<"));
 
         // Groups and `or`.
         let page = app.get("/posts?tags=(cat+cute)+or+(dog+-cute)", None).await;

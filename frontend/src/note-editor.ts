@@ -92,7 +92,9 @@ export function enableNoteEditor(root: Document = document): void {
   toggle.className = "secondary note-toggle";
   toggle.textContent = t("notes-edit", "Edit notes");
   toggle.setAttribute("aria-pressed", "false");
-  (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
+  const tools = root.querySelector("[data-note-tools]");
+  if (tools) tools.append(toggle);
+  else (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
   toggle.addEventListener("click", () => {
     const on = !layer.classList.contains("editing-notes");
     layer.classList.toggle("editing-notes", on);

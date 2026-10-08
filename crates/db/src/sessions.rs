@@ -37,6 +37,8 @@ pub struct SessionUser {
     pub created_at: OffsetDateTime,
     pub last_used_at: OffsetDateTime,
     pub user: User,
+    /// The user's profile picture's storage key, for the header.
+    pub avatar_key: Option<String>,
     /// The user's ban in force, if any.
     pub ban: Option<ActiveBan>,
 }
@@ -77,6 +79,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
         last_used_at: OffsetDateTime,
         #[sqlx(flatten)]
         user: User,
+        avatar_key: Option<String>,
         banned: bool,
         ban_reason: Option<String>,
         ban_expires_at: Option<OffsetDateTime>,
@@ -84,7 +87,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
     let row: Option<Row> = sqlx::query_as(
         "SELECT s.id AS session_id, s.created_at AS session_created_at, s.last_used_at,
                 u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings,
-                b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
+                u.avatar_key, b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
          FROM sessions s JOIN users u ON u.id = s.user_id
          LEFT JOIN LATERAL (
              SELECT id, reason, expires_at FROM bans
@@ -101,6 +104,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
         created_at: r.session_created_at,
         last_used_at: r.last_used_at,
         user: r.user,
+        avatar_key: r.avatar_key,
         ban: r.banned.then(|| ActiveBan {
             reason: r.ban_reason.unwrap_or_default(),
             expires_at: r.ban_expires_at,

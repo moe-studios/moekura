@@ -1,18 +1,19 @@
 # Themes
 
 A theme sets the site's colours, in both light and dark mode. Moekura
-comes with four:
+comes with five:
 
 | Theme | Colours |
 |---|---|
-| Default | neutral greys with a slate-blue accent |
+| Default | cool drawing-paper white, graphite ink and a deep cyan header |
 | Forest | moss green |
-| Ocean | deep blue-green |
-| Sakura | pink, Moekura's colours before 0.5 |
+| Neutral | greys, near-black ink and a charcoal header |
+| Ocean | sea-foam links under a night-sea navy header |
+| Sakura | pink under a plum header, Moekura's colours before 0.5 |
 
 Choose the theme visitors see under **Admin → Settings → Default
 theme**. Logged-in users can pick any theme the site has, and light,
-dark or their device's mode, under **Settings** or at the foot of any
+dark or their device’s mode, under **Settings** or in the account menu of any
 page. A user whose theme is removed gets the site's default again.
 
 ## Adding a theme
@@ -43,6 +44,17 @@ tokens it leaves out keep the default theme's colours:
   --tag-meta: light-dark(#ad5c00, #ffb54a);
 }
 ```
+
+A few more tokens are made from those, so a theme that sets only the
+colours above still gets a header and ruling to match. Set them too to
+choose them yourself:
+
+| Token | What it colours |
+|---|---|
+| `--shell`, `--shell-text` | the header band and its text (keep 4.5:1 between them) |
+| `--rule` | hairlines between table rows and facts |
+| `--tint` | hovered and highlighted rows |
+| `--staff`, `--staff-text` | the board under staff tools on post pages |
 
 Keep text, links (`--accent`) and tag colours at a contrast of at least
 4.5:1 against `--bg` and `--surface`, and `--accent-text` against

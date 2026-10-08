@@ -157,3 +157,9 @@ settings-feed-token-make = Make a feed token
 settings-feed-token-revoke-confirm = Revoke your feed token? Feed readers using it stop working.
 settings-feed-token-revoke = Revoke it
 settings-saved-searches = <a href="/saved_searches">Saved searches</a>, to see the newest posts of several searches together.
+
+## Sections of the settings page.
+settings-section-browsing = Browsing
+settings-section-appearance = Appearance
+settings-section-region = Language and time
+settings-section-account = Your account

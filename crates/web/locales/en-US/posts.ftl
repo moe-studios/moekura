@@ -214,7 +214,6 @@ posts-syntax = See the <a href="https://github.com/moe-studios/moekura/blob/main
 tag-script = Tag script
 post-mode = On click
 post-mode-view = View the post
-posts-hot-hint = Hot posts: recent ones with the highest scores
 posts-save-search = Save this search
 posts-labels-placeholder = e.g. artists
 posts-your-saved = Your saved searches
@@ -236,6 +235,8 @@ posts-did-you-mean-instead = Did you mean { $options } instead of { $term }?
 posts-try-without = Try without the last term: <a href="{ $url }">{ $terms }</a>.
 posts-look-for-tags = <a href="{ $url }">Look for tags starting with { $term }</a>, in case of a typo.
 posts-none-yet = No posts yet
+posts-end = That’s every post in this search.
+posts-skip-tags = Skip the tags, to the posts
 posts-none-yet-hint = Posts show up here as soon as they are uploaded and tagged.
 posts-upload-first = Upload the first one
 
@@ -345,3 +346,11 @@ post-remove-from = Remove from { $name }
 remove-lower = remove
 post-add-to-pool = Add to a pool
 post-pool-field = Pool name or number
+
+## The post page's action strip.
+post-actions = Post actions
+post-edit-tags = Edit tags
+post-edit-panel = Edit tags, rating and source
+post-more = More
+post-more-hint = links: history, metadata, replacements, look-alikes
+post-file = File

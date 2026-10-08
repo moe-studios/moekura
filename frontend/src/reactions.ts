@@ -57,7 +57,7 @@ export function enhanceReactions(root: Document = document): void {
           }
           if (!response.ok) throw new Error(String(response.status));
           // Only the post's or comment's own counts: a post page has both.
-          const scope = form.closest(".comment") ?? form.closest(".post-info") ?? root;
+          const scope = form.closest(".comment") ?? form.closest(".post-actions") ?? root;
           update(scope, (await response.json()) as Reactions);
         })
         // Fall back to a normal submission, which shows any error.

@@ -1,10 +1,11 @@
-/* Forest: moss green. */
+/* Forest: moss green, on a paper with a little green in it. */
 :root {
-  --bg: light-dark(#f5f7f3, #121611);
-  --surface: light-dark(#ffffff, #1a2018);
+  --bg: light-dark(#f3f5ef, #111510);
+  --surface: light-dark(#ffffff, #192017);
   --text: light-dark(#1a2418, #e5ede2);
-  --muted: light-dark(#5b6857, #9dab98);
-  --border: light-dark(#dbe3d6, #2d392a);
-  --accent: light-dark(#2d6e3a, #74c982);
-  --accent-text: light-dark(#ffffff, #121611);
+  --muted: light-dark(#56634f, #9dab98);
+  --border: light-dark(#d9e1d1, #2d392a);
+  --accent: light-dark(#2f6a2c, #84cf7c);
+  --accent-text: light-dark(#ffffff, #111510);
+  --shell: light-dark(#1f3a22, #142116);
 }

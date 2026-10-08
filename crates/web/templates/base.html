@@ -13,48 +13,70 @@
   {% block head %}{% endblock %}
 </head>
 <body data-messages='{{ js_messages|tojson }}'>
+  {% from "icons.html" import icon, mark %}
+  <a class="skip-link" href="{% block skip_target %}#content{% endblock %}">{{ t("nav-skip") }}</a>
   <header class="site-header">
-    {% if site.full_logo %}
-    <a class="brand full-logo" href="/"><img src="{{ site.full_logo }}" alt="{{ site.name }}"></a>
-    {% else %}
-    <a class="brand" href="/"{% if site.hide_name %} aria-label="{{ site.name }}"{% endif %}>{% if site.logo and not site.hide_icon %}<img src="{{ site.logo }}" alt="" height="32">{% endif %}{% if not site.hide_name %}{{ site.name }}{% endif %}</a>
-    {% endif %}
-    {# Search results put a full-width search above the posts instead. #}
-    {% block header_search %}
-    <form class="search" method="get" action="/posts" role="search">
-      <input type="search" name="tags" value="{{ search.tags if search else '' }}" placeholder="{{ t('nav-search') }}" aria-label="{{ t('nav-search') }}"
-             autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
-    </form>
-    {% endblock %}
-    <nav class="primary" aria-label="{{ t('nav-main') }}">
-      {% macro item(name, url, label) %}<a href="{{ url }}"{% if section == name %} aria-current="{{ 'page' if path == url else 'true' }}"{% endif %}>{{ label }}</a>{% endmacro %}
-      {% set hot = search and search.tags == "order:rank" %}
-      {% if hot %}<a href="/">{{ t("nav-posts") }}</a>{% else %}{{ item("posts", "/", t("nav-posts")) }}{% endif %}
-      <a href="/posts?tags=order%3Arank"{% if hot %} aria-current="page"{% endif %}>{{ t("nav-hot") }}</a>
-      {{ item("explore", "/explore/posts/popular", t("nav-popular")) }}
-      {{ item("tags", "/tags", t("nav-tags")) }}
-      {{ item("pools", "/pools", t("nav-pools")) }}
-      {{ item("comments", "/comments", t("nav-comments")) }}
-      {{ item("forum", "/forum_topics", t("nav-forum")) }}
-      {{ item("more", "/site_map", t("nav-more")) }}
-      {% if can_upload %}{{ item("upload", "/uploads/new", t("nav-upload")) }}{% endif %}
-      {% if moderation_url %}{{ item("moderation", moderation_url, t("nav-moderation")) }}{% endif %}
-      {% if can_admin %}{{ item("admin", "/admin", t("nav-admin")) }}{% endif %}
-    </nav>
-    <nav class="account" aria-label="{{ t('nav-account') }}">
-      {% if me %}
-        <a class="who" href="/users/{{ me.name }}">{{ me.name }}</a>
-        <a href="/dmails"{% if me.unread_messages %} class="unread"{% endif %}>{{ t("nav-messages") }}{% if me.unread_messages %} <span class="count-badge">{{ me.unread_messages }}<span class="visually-hidden">{{ t("nav-unread") }}</span></span>{% endif %}</a>
-        <a href="/notifications" aria-label="{% if me.unread_notifications %}{{ t('nav-notifications-unread', count=me.unread_notifications) }}{% else %}{{ t('nav-notifications') }}{% endif %}">{{ t("nav-notifications") }}{% if me.unread_notifications %} <span class="count-badge" aria-hidden="true">{{ me.unread_notifications }}</span>{% endif %}</a>
-        <a href="/settings">{{ t("nav-settings") }}</a>
-        <form method="post" action="/logout">
-          <button type="submit" class="link">{{ t("nav-log-out") }}</button>
-        </form>
+    <div class="header-bar">
+      {% if site.full_logo %}
+      <a class="brand full-logo" href="/"><img src="{{ site.full_logo }}" alt="{{ site.name }}"></a>
       {% else %}
-        <a href="/login">{{ t("nav-log-in") }}</a>
-        {% if site.registration_open %}<a class="button" href="/register">{{ t("nav-register") }}</a>{% endif %}
+      <a class="brand" href="/"{% if site.hide_name %} aria-label="{{ site.name }}"{% endif %}>{% if not site.hide_icon %}{% if site.logo %}<img src="{{ site.logo }}" alt="" height="32">{% else %}{{ mark() }}{% endif %}{% endif %}{% if not site.hide_name %}<span>{{ site.name }}</span>{% endif %}</a>
       {% endif %}
-    </nav>
+      {# Search results put a full-width search above the posts instead. #}
+      {% block header_search %}
+      <form class="search" method="get" action="/posts" role="search">
+        <input type="search" name="tags" value="{{ search.tags if search else '' }}" placeholder="{{ t('nav-search') }}" aria-label="{{ t('nav-search') }}"
+               autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+      </form>
+      {% endblock %}
+      <div class="header-actions">
+        {% if can_upload %}<a class="button upload-button" href="/uploads/new"{% if section == "upload" %} aria-current="page"{% endif %}>{{ icon("upload") }}<span>{{ t("nav-upload") }}</span></a>{% endif %}
+        <nav class="account" aria-label="{{ t('nav-account') }}">
+          {% if me %}
+          {% set unread = (me.unread_messages or 0) + (me.unread_notifications or 0) %}
+          <details class="account-menu" data-menu>
+            <summary aria-label="{% if unread %}{{ t('nav-account-unread', name=me.name, count=unread) }}{% else %}{{ t('nav-account-name', name=me.name) }}{% endif %}">
+              <span class="avatar" aria-hidden="true">{% if me.avatar %}<img src="{{ me.avatar }}" alt="" width="30" height="30">{% else %}{{ me.name[:1] }}{% endif %}</span><span class="who">{{ me.name }}</span>{% if unread %}<span class="count-badge" aria-hidden="true">{{ unread }}</span>{% endif %}{{ icon("chevron") }}
+            </summary>
+            <div class="menu">
+              <a href="/users/{{ me.name }}">{{ t("nav-profile") }}</a>
+              <a href="/dmails"{% if me.unread_messages %} class="unread"{% endif %}>{{ t("nav-messages") }}{% if me.unread_messages %} <span class="count-badge">{{ me.unread_messages }}<span class="visually-hidden">{{ t("nav-unread") }}</span></span>{% endif %}</a>
+              <a href="/notifications" aria-label="{% if me.unread_notifications %}{{ t('nav-notifications-unread', count=me.unread_notifications) }}{% else %}{{ t('nav-notifications') }}{% endif %}">{{ t("nav-notifications") }}{% if me.unread_notifications %} <span class="count-badge" aria-hidden="true">{{ me.unread_notifications }}</span>{% endif %}</a>
+              <a href="/settings">{{ t("nav-settings") }}</a>
+              {% if mode_choice %}
+              <form class="modes" method="post" action="/settings/theme" aria-label="{{ t('footer-mode-label') }}">
+                <input type="hidden" name="back" value="{{ target }}">
+                <span>{{ t("footer-mode") }}</span>
+                {% for m in modes %}<button type="submit" name="mode" value="{{ m }}" aria-pressed="{{ 'true' if m == mode_choice else 'false' }}">{{ t("mode-" ~ m) }}</button>{% endfor %}
+              </form>
+              {% endif %}
+              <hr>
+              <form method="post" action="/logout">
+                <button type="submit" class="link">{{ t("nav-log-out") }}</button>
+              </form>
+            </div>
+          </details>
+          {% else %}
+          <a href="/login">{{ t("nav-log-in") }}</a>
+          {% if site.registration_open %}<a class="button" href="/register">{{ t("nav-register") }}</a>{% endif %}
+          {% endif %}
+        </nav>
+      </div>
+    </div>
+    <div class="primary-bar">
+      <nav class="primary" aria-label="{{ t('nav-main') }}">
+        {% macro item(name, url, label) %}<a href="{{ url }}"{% if section == name %} aria-current="{{ 'page' if path == url else 'true' }}"{% endif %}>{{ label }}</a>{% endmacro %}
+        <span class="nav-group">{{ item("posts", "/", t("nav-posts")) }}{{ item("explore", "/explore/posts/popular", t("nav-popular")) }}</span>
+        <span class="nav-group">{{ item("tags", "/tags", t("nav-tags")) }}{{ item("pools", "/pools", t("nav-pools")) }}</span>
+        <span class="nav-group">{{ item("comments", "/comments", t("nav-comments")) }}{{ item("forum", "/forum_topics", t("nav-forum")) }}{{ item("more", "/site_map", t("nav-more")) }}</span>
+        {% if moderation_url or can_admin %}
+        <span class="nav-group staff-links">
+          {% if moderation_url %}{{ item("moderation", moderation_url, t("nav-moderation")) }}{% endif %}
+          {% if can_admin %}{{ item("admin", "/admin", t("nav-admin")) }}{% endif %}
+        </span>
+        {% endif %}
+      </nav>
+    </div>
   </header>
   {% if banned %}<div class="flash banned" role="status">{% if banned.until %}{{ t("banned-until", until=banned.until, reason=banned.reason) }}{% else %}{{ t("banned", reason=banned.reason) }}{% endif %}</div>{% endif %}
   {% if flash %}<div class="flash" role="status">{{ flash }}</div>{% endif %}
@@ -62,7 +84,7 @@
     <div class="markup">{{ news.html }}</div>
     <form method="post" action="/news_updates/{{ news.id }}/dismiss"><input type="hidden" name="back" value="{{ target }}"><button type="submit" class="link">{{ t("news-dismiss") }}</button></form>
   </aside>{% endif %}
-  <main>
+  <main id="content" tabindex="-1">
     {% block content %}{% endblock %}
   </main>
   <footer class="site-footer">
@@ -75,25 +97,6 @@
     </nav>
     <p>{{ t("footer-powered", version=build_version) }} · <a href="/api/docs">{{ t("footer-api") }}</a>
       {% if not prefs or prefs.shortcuts %}<span data-shortcuts-link hidden>· <button type="button" class="link">{{ t("footer-shortcuts") }}</button> <kbd>?</kbd></span>{% endif %}</p>
-    {% if mode_choice %}
-    <div class="appearance">
-      <form method="post" action="/settings/theme" aria-label="{{ t('footer-mode-label') }}">
-        <input type="hidden" name="back" value="{{ target }}">
-        {{ t("footer-mode") }}
-        {% for m in modes %}<button type="submit" class="link" name="mode" value="{{ m }}" aria-pressed="{{ 'true' if m == mode_choice else 'false' }}">{{ t("mode-" ~ m) }}</button>{% endfor %}
-      </form>
-      {% if themes|length > 1 %}
-      <form method="post" action="/settings/theme" data-autosubmit>
-        <input type="hidden" name="back" value="{{ target }}">
-        <label for="footer-theme">{{ t("footer-theme") }}</label>
-        <select id="footer-theme" name="theme">
-          {% for choice in themes %}<option value="{{ choice.name }}"{% if choice.name == theme %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
-        </select>
-        <button type="submit" class="secondary">{{ t("footer-change") }}</button>
-      </form>
-      {% endif %}
-    </div>
-    {% endif %}
   </footer>
 </body>
 </html>

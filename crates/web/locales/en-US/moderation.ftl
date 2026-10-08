@@ -256,3 +256,8 @@ disapprove-note-post = Note on #{ $id } for other approvers
 disapprove = Disapprove
 queue-none = Nothing waiting for approval.
 queue-none-match = Nothing waiting for approval matches that search.
+
+## Groups in the moderation menu.
+mod-group-queues = Queues
+mod-group-posts = Posts
+mod-group-people = People

@@ -155,5 +155,8 @@ export function enableNotes(root: Document = document): void {
     apply(hidden);
   });
   apply(remembered());
-  layer.after(toggle);
+  // In the post's action strip, beside its other buttons.
+  const tools = root.querySelector("[data-note-tools]");
+  if (tools) tools.append(toggle);
+  else layer.after(toggle);
 }

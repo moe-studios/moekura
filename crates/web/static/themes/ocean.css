@@ -1,10 +1,11 @@
-/* Ocean: deep blue-green. */
+/* Ocean: a night-sea navy band over sea-foam links. */
 :root {
-  --bg: light-dark(#f4f8fa, #0e191e);
-  --surface: light-dark(#ffffff, #14232a);
-  --text: light-dark(#11272f, #e2eef3);
-  --muted: light-dark(#4f6b77, #92adb8);
-  --border: light-dark(#d6e4ea, #26404a);
-  --accent: light-dark(#006b87, #4cc0dc);
-  --accent-text: light-dark(#ffffff, #0e191e);
+  --bg: light-dark(#f2f6fa, #0b1320);
+  --surface: light-dark(#ffffff, #111c2c);
+  --text: light-dark(#0f2133, #e2ecf6);
+  --muted: light-dark(#4b6075, #94a9bf);
+  --border: light-dark(#d3dfeb, #223349);
+  --accent: light-dark(#00737d, #4fd1c5);
+  --accent-text: light-dark(#ffffff, #0b1320);
+  --shell: light-dark(#132a4d, #0e1d36);
 }

@@ -166,7 +166,7 @@ none.
 | `order:comment`, `order:comment_asc` | most / least recently commented (only posts with comments) |
 | `order:note`, `order:note_asc` | most / least recently noted (only posts with notes) |
 | `order:change`, `order:change_asc` | most / least recently changed, e.g. to follow recent tag edits (`order:updated` works too) |
-| `order:rank` | hot posts: from the last two days with a positive score, highest score first, discounted by age (the **Hot** link) |
+| `order:rank` | hot posts: from the last two days with a positive score, highest score first, discounted by age |
 | `order:upvotes`, `order:downvotes` (and `_asc`) | most / fewest up or down votes |
 | `order:comment_bumped`, `order:comment_bumped_asc` | like `order:comment`, leaving out comments posted with **Don't bump the post** |
 | `order:comment_count`, `order:note_count` (and `_asc`; `commentcount` and `notecount` work too) | most / fewest comments or notes |

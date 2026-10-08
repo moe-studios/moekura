@@ -2,16 +2,14 @@
 {% block title %}{% if search.tags %}{{ search.tags }} · {% endif %}{{ site.name }}{% endblock %}
 {% block head %}{% if feed_url %}<link rel="alternate" type="application/atom+xml" title="{{ search.tags or t('posts-newest') }}" href="{{ feed_url }}">{% endif %}{% endblock %}
 {% block header_search %}{% endblock %}
+{% block skip_target %}#results{% endblock %}
 {% block content %}
 {% macro search_bar() %}
 {% set terms = (search.tags or "")|split %}
-{% set hot = "order:rank" in terms %}
-{% set others = terms|reject("eq", "order:rank")|join(" ") %}
 <form class="search search-bar" method="get" action="/posts" role="search">
   <input type="search" name="tags" value="{{ search.tags or '' }}" placeholder="{{ t('nav-search') }}" aria-label="{{ t('nav-search') }}"
          autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
   <button type="submit">{{ t("search") }}</button>
-  <a class="search-option" href="{{ search_url(others if hot else (others ~ ' order:rank')|trim) }}"{% if hot %} aria-current="true"{% endif %} title="{{ t('posts-hot-hint') }}">{{ t("nav-hot") }}</a>
 </form>
 {% endmacro %}
 {% if search.error %}
@@ -20,7 +18,27 @@
 <p class="hint">{{ t("posts-syntax") }}</p>
 {% else %}
 <div class="results-layout">
-  <aside class="results-sidebar">
+  <div class="results-search">
+    {% if cards %}<h1 class="visually-hidden">{{ search.tags or t("nav-posts") }}</h1>{% endif %}
+    {{ search_bar() }}
+    {% if can_tag_script %}
+    {# Like Danbooru's mode menu: clicking a post opens it, or applies the script. #}
+    <div class="post-mode" data-tag-script hidden>
+      <label for="post-mode">{{ t("post-mode") }}</label>
+      <select id="post-mode" data-tag-script-mode>
+        <option value="view">{{ t("post-mode-view") }}</option>
+        <option value="script">{{ t("tag-script") }}</option>
+      </select>
+      <span class="tag-script-field" data-tag-script-field hidden>
+        <label class="visually-hidden" for="tag-script">{{ t("tag-script") }}</label>
+        <input id="tag-script" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="tag -tag rating:s">
+      </span>
+      <p class="hint" data-tag-script-status aria-live="polite"></p>
+    </div>
+    {% endif %}
+  </div>
+  <aside class="results-sidebar" aria-label="{{ t('nav-tags') }}">
+    {% if sidebar %}<a class="skip-link" href="#results">{{ t("posts-skip-tags") }}</a>{% endif %}
     {% if save_search %}
     <details class="edit save-search">
       <summary>{{ t("posts-save-search") }}</summary>
@@ -39,32 +57,16 @@
     <ul class="tag-list">
       {% for tag in sidebar %}
       <li>
-        <a class="refine" href="{{ tag.include_url }}" title="{{ t('posts-add-to-search') }}" aria-label="{{ t('posts-add-tag', tag=tag.name) }}">+</a>
-        <a class="refine" href="{{ tag.exclude_url }}" title="{{ t('posts-exclude') }}" aria-label="{{ t('posts-exclude-tag', tag=tag.name) }}">–</a>
-        <a class="refine" href="{{ tag.wiki_url }}" title="{{ t('tag-nav-wiki') }}" aria-label="{{ t('posts-wiki-for', tag=tag.name) }}">?</a>
+        <a class="refine" href="{{ tag.include_url }}" tabindex="-1" title="{{ t('posts-add-to-search') }}" aria-label="{{ t('posts-add-tag', tag=tag.name) }}">+</a>
+        <a class="refine exclude" href="{{ tag.exclude_url }}" tabindex="-1" title="{{ t('posts-exclude') }}" aria-label="{{ t('posts-exclude-tag', tag=tag.name) }}">–</a>
+        <a class="refine" href="{{ tag.wiki_url }}" tabindex="-1" title="{{ t('tag-nav-wiki') }}" aria-label="{{ t('posts-wiki-for', tag=tag.name) }}">?</a>
         <a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span>
       </li>
       {% endfor %}
     </ul>
     {% endif %}
   </aside>
-  <section class="results">
-    {{ search_bar() }}
-    {% if can_tag_script %}
-    {# Like Danbooru's mode menu: clicking a post opens it, or applies the script. #}
-    <div class="post-mode" data-tag-script hidden>
-      <label for="post-mode">{{ t("post-mode") }}</label>
-      <select id="post-mode" data-tag-script-mode>
-        <option value="view">{{ t("post-mode-view") }}</option>
-        <option value="script">{{ t("tag-script") }}</option>
-      </select>
-      <span class="tag-script-field" data-tag-script-field hidden>
-        <label class="visually-hidden" for="tag-script">{{ t("tag-script") }}</label>
-        <input id="tag-script" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="tag -tag rating:s">
-      </span>
-      <p class="hint" data-tag-script-status aria-live="polite"></p>
-    </div>
-    {% endif %}
+  <section class="results" id="results" tabindex="-1" aria-label="{{ t('nav-posts') }}">
     {% if wiki %}
     <aside class="wiki-excerpt">
       <div class="markup">{{ wiki.html }}</div>
@@ -95,6 +97,7 @@
       {% if pager.next %}<a class="button" href="{{ pager.next }}" rel="next">{{ t("next") }}</a>{% endif %}
     </nav>
     {% endif %}
+    {% if cards and not pager.next %}<p class="end-of-results">{{ t("posts-end") }}</p>{% endif %}
     {% elif search.tags %}
     <section class="empty">
       <h1>{{ t("posts-nothing-found") }}</h1>
@@ -114,7 +117,7 @@
     <section class="empty">
       <h1>{{ t("posts-none-yet") }}</h1>
       <p>{{ t("posts-none-yet-hint") }}</p>
-      {% if can_upload %}<p><a href="/upload">{{ t("posts-upload-first") }}</a></p>{% endif %}
+      {% if can_upload %}<div class="actions"><a class="button" href="/uploads/new">{{ t("posts-upload-first") }}</a></div>{% endif %}
     </section>
     {% endif %}
   </section>

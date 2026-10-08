@@ -54,22 +54,36 @@ impl Assets {
             urls: HashMap::new(),
             files: HashMap::new(),
         };
-        for (logical, bytes) in sources {
-            let hashed = hashed_path(&logical, &bytes);
-            let content_type = mime_guess::from_path(&logical)
-                .first_or_octet_stream()
-                .essence_str()
-                .to_owned();
-            assets.urls.insert(logical, format!("{PREFIX}{hashed}"));
-            assets.files.insert(
-                hashed,
-                Asset {
-                    content_type,
-                    bytes,
-                },
-            );
+        // Stylesheets last, so the files they point at (fonts) already
+        // have their hashed URLs to point at instead.
+        let (styles, others): (Vec<_>, Vec<_>) = sources
+            .into_iter()
+            .partition(|(logical, _)| logical.ends_with(".css"));
+        for (logical, bytes) in others {
+            assets.insert(logical, bytes);
+        }
+        let known = assets.urls.clone();
+        for (logical, bytes) in styles {
+            let linked = link_urls(&String::from_utf8_lossy(&bytes), &logical, &known);
+            assets.insert(logical, Bytes::from(linked));
         }
         Ok(assets)
+    }
+
+    fn insert(&mut self, logical: String, bytes: Bytes) {
+        let hashed = hashed_path(&logical, &bytes);
+        let content_type = mime_guess::from_path(&logical)
+            .first_or_octet_stream()
+            .essence_str()
+            .to_owned();
+        self.urls.insert(logical, format!("{PREFIX}{hashed}"));
+        self.files.insert(
+            hashed,
+            Asset {
+                content_type,
+                bytes,
+            },
+        );
     }
 
     /// The public URL for a logical path, for templates.
@@ -81,6 +95,40 @@ impl Assets {
     pub fn logical_paths(&self) -> impl Iterator<Item = &str> {
         self.urls.keys().map(String::as_str)
     }
+}
+
+/// `css`'s relative `url(…)`s to other files here, made into those files'
+/// hashed URLs; `logical` is where the stylesheet itself lives.
+fn link_urls(css: &str, logical: &str, urls: &HashMap<String, String>) -> String {
+    let dir = logical.rsplit_once('/').map_or("", |(d, _)| d);
+    let mut out = String::with_capacity(css.len());
+    let mut rest = css;
+    while let Some(start) = rest.find("url(") {
+        let (before, after) = rest.split_at(start + 4);
+        out.push_str(before);
+        let Some(end) = after.find(')') else {
+            rest = after;
+            break;
+        };
+        let target = after[..end].trim().trim_matches(['"', '\'']);
+        let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
+        for segment in target.split('/') {
+            match segment {
+                ".." => {
+                    parts.pop();
+                }
+                "." | "" => {}
+                other => parts.push(other),
+            }
+        }
+        match urls.get(&parts.join("/")) {
+            Some(url) if !target.contains(':') && !target.starts_with('/') => out.push_str(url),
+            _ => out.push_str(&after[..end]),
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `css/main.css` → `css/main.<8 hex chars>.css`.
@@ -134,6 +182,19 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stylesheets_point_at_hashed_files() {
+        let urls = HashMap::from([(
+            "fonts/face.woff2".to_owned(),
+            "/static/fonts/face.12345678.woff2".to_owned(),
+        )]);
+        let css = r#"@font-face{src:url("../fonts/face.woff2")} a{background:url(data:x)} b{background:url(../missing.png)}"#;
+        assert_eq!(
+            link_urls(css, "css/main.css", &urls),
+            "@font-face{src:url(/static/fonts/face.12345678.woff2)} a{background:url(data:x)} b{background:url(../missing.png)}"
+        );
+    }
 
     #[test]
     fn hashes_into_the_file_name() {

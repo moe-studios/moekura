@@ -21,13 +21,13 @@
 
 :root {
   color-scheme: light dark;
-  --bg: light-dark(#f3f6f9, #0e1215);
-  --surface: light-dark(#ffffff, #151b1f);
-  --text: light-dark(#121619, #e6edf1);
-  --muted: light-dark(#4f5a64, #9aa8b2);
-  --border: light-dark(#d3dee6, #2a343b);
-  --accent: light-dark(#0a6884, #5ec4e2);
-  --accent-text: light-dark(#ffffff, #0e1215);
+  --bg: light-dark(#f4f5f8, #1b1c29);
+  --surface: light-dark(#ffffff, #232537);
+  --text: light-dark(#15171c, #e8e9f0);
+  --muted: light-dark(#535a68, #a3a7ba);
+  --border: light-dark(#d8dce5, #363950);
+  --accent: light-dark(#0062d1, #4aaaf2);
+  --accent-text: light-dark(#ffffff, #1b1c29);
   --danger: light-dark(#c3261c, #ff8a7f);
   /* Tag colours, each at least 4.5:1 against --bg and --surface. */
   --tag-general: light-dark(#0068e0, #4fa3ff);
@@ -47,7 +47,7 @@
      --shell is the header band; --rule the hairlines between cells; --tint
      a wash for hovered and current rows; --staff the board under staff
      tools. */
-  --shell: light-dark(color-mix(in oklab, var(--accent) 70%, #03141b), color-mix(in oklab, var(--accent) 46%, #071014));
+  --shell: light-dark(color-mix(in oklab, var(--accent) 42%, #1a2233), color-mix(in oklab, var(--accent) 20%, #112454));
   --shell-text: #ffffff;
   --shell-muted: color-mix(in oklab, var(--shell-text) 86%, var(--shell));
   --rule: color-mix(in oklab, var(--accent) 24%, var(--border));

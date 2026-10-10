@@ -207,6 +207,38 @@ made through single sign-on, which has none, works only within 10
 minutes of logging in), and a key can't make more keys or change your
 login settings.
 
+## Passkeys
+
+A passkey logs you in with your device's screen lock (your fingerprint,
+face or PIN) or a security key, instead of your password. The device
+keeps a private key that never leaves it; the site keeps only the public
+half, so there's nothing to leak or guess.
+
+To add one, open **Settings → Your email address and password**, and
+under **Passkeys** give it a name (such as "Phone"), confirm your password
+and choose **Add a passkey**; your browser then asks your device or
+security key to make it. That needs a browser that supports passkeys,
+with scripts on. You can have up to 20, say one for each device, and the
+list shows when each was added and last used. **Rename** changes a
+passkey's name, and **Remove**, which asks for your password again, stops
+it working. Accounts made through single sign-on, which have no password,
+can add or remove passkeys within 10 minutes of logging in.
+
+To log in with one, choose **Log in with a passkey** on the login page,
+or pick it from the suggestions under **Name**, in browsers that offer
+them. Since a passkey checks that it's you at the device, it needs no
+two-factor code. With [two-factor login](#two-factor-login) on, you can
+also use one instead of the code after your password, with **Use a passkey
+instead**; your recovery codes still work if you lose the device. Logging
+in with a passkey counts towards the same limits as a password or code,
+and, like other logins, adds the address you logged in from to those the
+site keeps for your account.
+
+Passkeys belong to the site's domain: if the site moves to another one,
+they stop working, and you log in with your password and add them again.
+API keys, feed tokens and Danbooru clients work as before, without
+passkeys.
+
 ## Saved searches
 
 Save a search from its results (**Save this search**, beside the

@@ -44,3 +44,7 @@ js-tag-script-error = Post #{$id}: {$error}
 js-tag-script-failed = Post #{$id} couldn't be changed.
 js-related-posts = {$count} posts
 js-related-more = Show all {$count}
+js-passkey-cancelled = No passkey was used. Try again when you're ready.
+js-passkey-exists = This device already has a passkey for your account.
+js-passkey-failed = Something went wrong. Please try again.
+js-passkey-too-many = Too many tries. Wait a minute, then try again.

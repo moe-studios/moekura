@@ -28,6 +28,7 @@ pub mod name_changes;
 pub mod news;
 pub mod notes;
 pub mod notifications;
+pub mod passkeys;
 pub mod pools;
 pub mod post_batches;
 pub mod post_versions;

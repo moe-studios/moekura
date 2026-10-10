@@ -51,6 +51,7 @@ mod notes;
 pub mod notifications;
 pub mod oidc;
 pub mod pages;
+mod passkeys;
 mod pools;
 mod post_batches;
 mod post_history;
@@ -162,6 +163,8 @@ pub struct AppState {
     pub(crate) oidc: Option<Arc<oidc::Oidc>>,
     /// The captcha service, if there is one.
     pub(crate) captcha: Option<Arc<captcha::Captcha>>,
+    /// Passkeys, unless `server.public_url` can't have them.
+    pub(crate) passkeys: Option<Arc<passkeys::Passkeys>>,
     templates: Arc<Templates>,
     assets: Arc<Assets>,
     /// Translations.
@@ -228,6 +231,7 @@ impl AppState {
             .captcha
             .clone()
             .map(|c| Arc::new(captcha::Captcha::new(c)));
+        let passkeys = passkeys::Passkeys::new(&config.server.public_url).map(Arc::new);
         let rate_limits = RateLimits::new(valkey).with_api_limit(
             config.server.api_requests_per_minute,
             config.server.api_burst,
@@ -248,6 +252,7 @@ impl AppState {
             file_signer: files::FileSigner::new(file_key),
             oidc,
             captcha,
+            passkeys,
             templates,
             assets,
             locales,
@@ -352,6 +357,7 @@ pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
         .merge(notes::routes())
         .merge(notifications::routes())
         .merge(oidc::routes())
+        .merge(passkeys::routes())
         .merge(pools::routes())
         .merge(post_batches::routes())
         .merge(post_history::routes())

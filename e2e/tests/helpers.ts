@@ -11,7 +11,7 @@ export async function logIn(page: Page, name: string, password: string): Promise
   await page.goto("/login");
   await page.getByLabel("Name").fill(name);
   await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await page.getByRole("button", { name: "Log in", exact: true }).click();
   await expect(page.getByText("Welcome back!")).toBeVisible();
 }
 

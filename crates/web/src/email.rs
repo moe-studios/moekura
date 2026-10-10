@@ -427,9 +427,25 @@ async fn reset(
 // ---- account settings -----------------------------------------------------
 
 #[derive(Debug, Default, serde::Serialize)]
-struct AccountErrors {
-    email: Option<String>,
-    password: Option<String>,
+pub(crate) struct AccountErrors {
+    pub(crate) email: Option<String>,
+    pub(crate) password: Option<String>,
+    pub(crate) passkeys: Option<String>,
+}
+
+/// The parts of the account page about ways to log in, besides the
+/// password.
+#[derive(Clone)]
+pub(crate) struct LoginMethods {
+    sso: Option<minijinja::Value>,
+    passkeys: minijinja::Value,
+}
+
+pub(crate) async fn login_methods(page: &Page, user: &User) -> Result<LoginMethods, AppError> {
+    Ok(LoginMethods {
+        sso: sso_context(page, user).await?,
+        passkeys: crate::passkeys::account_context(page, user).await?,
+    })
 }
 
 /// The single sign-on part of the account page, if the site has it.
@@ -453,10 +469,10 @@ async fn sso_context(page: &Page, user: &User) -> Result<Option<minijinja::Value
     }))
 }
 
-fn render_account(
+pub(crate) fn render_account(
     page: &Page,
     user: &User,
-    sso: Option<minijinja::Value>,
+    methods: LoginMethods,
     errors: &AccountErrors,
     status: StatusCode,
 ) -> Response {
@@ -467,7 +483,8 @@ fn render_account(
             email => user.email,
             verified => user.email_verified_at.is_some(),
             mail_enabled => mail_enabled(page.state()),
-            sso => sso,
+            sso => methods.sso,
+            passkeys => methods.passkeys,
             errors => errors,
         },
     )
@@ -481,11 +498,11 @@ fn logged_in(page: &Page) -> Result<User, AppError> {
 
 async fn account(page: Page) -> Result<Response, AppError> {
     let user = logged_in(&page)?;
-    let sso = sso_context(&page, &user).await?;
+    let methods = login_methods(&page, &user).await?;
     Ok(render_account(
         &page,
         &user,
-        sso,
+        methods,
         &AccountErrors::default(),
         StatusCode::OK,
     ))
@@ -515,7 +532,7 @@ async fn change_email(
     let user = logged_in(&page)?;
     let state = page.state();
     let db = state.db.primary();
-    let sso = sso_context(&page, &user).await?;
+    let methods = login_methods(&page, &user).await?;
     let failed = |message: String| {
         let errors = AccountErrors {
             email: Some(message),
@@ -524,7 +541,7 @@ async fn change_email(
         Ok(render_account(
             &page,
             &user,
-            sso.clone(),
+            methods.clone(),
             &errors,
             StatusCode::UNPROCESSABLE_ENTITY,
         ))
@@ -608,7 +625,7 @@ async fn change_password(
     let user = logged_in(&page)?;
     let state = page.state();
     let db = state.db.primary();
-    let sso = sso_context(&page, &user).await?;
+    let methods = login_methods(&page, &user).await?;
     let failed = |message: String| {
         let errors = AccountErrors {
             password: Some(message),
@@ -617,7 +634,7 @@ async fn change_password(
         Ok(render_account(
             &page,
             &user,
-            sso.clone(),
+            methods.clone(),
             &errors,
             StatusCode::UNPROCESSABLE_ENTITY,
         ))

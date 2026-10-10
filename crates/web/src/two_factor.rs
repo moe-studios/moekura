@@ -16,7 +16,7 @@ use moekura_core::permissions::Permission;
 use moekura_core::totp::{self, Secret};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, User, UserStatus};
-use moekura_db::{accounts, two_factor};
+use moekura_db::{accounts, passkeys, two_factor};
 use qrcode::QrCode;
 use qrcode::render::svg;
 use serde::Deserialize;
@@ -29,11 +29,11 @@ use crate::flash::{self, Flash};
 use crate::pages::Page;
 
 /// Holds the token of a login waiting for its code.
-const CHALLENGE_COOKIE: &str = "moekura_login";
+pub(crate) const CHALLENGE_COOKIE: &str = "moekura_login";
 /// How long someone has to type the code.
 const CHALLENGE_TTL: Duration = Duration::from_secs(5 * 60);
-/// Wrong codes before the login has to start over.
-const MAX_ATTEMPTS: i32 = 5;
+/// Wrong codes (or passkey answers) before the login has to start over.
+pub(crate) const MAX_ATTEMPTS: i32 = 5;
 /// Wrong codes in a row, across logins, after which the user is emailed:
 /// whoever typed them had the password (or got through single sign-on).
 const ALERT_AFTER: i32 = 5;
@@ -59,7 +59,11 @@ pub fn routes() -> Router<AppState> {
         .route("/admin/users/{name}/reset-two-factor", post(admin_reset))
 }
 
-fn challenge_cookie(state: &AppState, token: String, max_age: time::Duration) -> Cookie<'static> {
+pub(crate) fn challenge_cookie(
+    state: &AppState,
+    token: String,
+    max_age: time::Duration,
+) -> Cookie<'static> {
     Cookie::build((CHALLENGE_COOKIE, token))
         .path("/login")
         .http_only(true)
@@ -87,8 +91,22 @@ pub(crate) async fn challenge_if_enabled(
     Ok(Err((jar, Redirect::to("/login/code")).into_response()))
 }
 
-fn render_code(page: &Page, error: Option<&str>, status: StatusCode) -> Response {
-    page.render_with_status(status, "login_code.html", context! { error => error })
+/// The code form, for user `user_id`: with a button to use a passkey
+/// instead, if they have one.
+async fn render_code(
+    page: &Page,
+    user_id: i64,
+    error: Option<&str>,
+    status: StatusCode,
+) -> Result<Response, AppError> {
+    let state = page.state();
+    let passkeys =
+        state.passkeys.is_some() && passkeys::has_any(state.db.primary(), user_id).await?;
+    Ok(page.render_with_status(
+        status,
+        "login_code.html",
+        context! { error => error, passkeys => passkeys },
+    ))
 }
 
 async fn code_form(page: Page, jar: CookieJar) -> Result<Response, AppError> {
@@ -96,10 +114,10 @@ async fn code_form(page: Page, jar: CookieJar) -> Result<Response, AppError> {
         Some(cookie) => two_factor::pending(page.state().db.primary(), cookie.value()).await?,
         None => None,
     };
-    if waiting.is_none() {
+    let Some(waiting) = waiting else {
         return Ok(Redirect::to("/login").into_response());
-    }
-    Ok(render_code(&page, None, StatusCode::OK))
+    };
+    render_code(&page, waiting.user_id, None, StatusCode::OK).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -280,11 +298,13 @@ async fn code(
     match check_code(&state, user.id, &form.code).await? {
         Checked::Right => {}
         Checked::Locked(until) => {
-            return Ok(render_code(
+            return render_code(
                 &page,
+                user.id,
                 Some(&locked_message(until)),
                 StatusCode::TOO_MANY_REQUESTS,
-            ));
+            )
+            .await;
         }
         Checked::Wrong { failed, locked } => {
             tracing::info!(user_id = user.id, failed, "wrong two-factor code");
@@ -293,19 +313,23 @@ async fn code(
             }
             if let Some(until) = locked {
                 tracing::warn!(user_id = user.id, failed, %until, "two-factor codes locked");
-                return Ok(render_code(
+                return render_code(
                     &page,
+                    user.id,
                     Some(&locked_message(until)),
                     StatusCode::TOO_MANY_REQUESTS,
-                ));
+                )
+                .await;
             }
-            return Ok(render_code(
+            return render_code(
                 &page,
+                user.id,
                 Some(
                     "That code isn't right. Check the time on your device, or use a recovery code.",
                 ),
                 StatusCode::UNPROCESSABLE_ENTITY,
-            ));
+            )
+            .await;
         }
     }
     two_factor::end_challenge(db, &token).await?;

@@ -189,6 +189,19 @@ impl TestApp {
         self.send(builder, session, body).await
     }
 
+    /// A JSON POST carrying an arbitrary `name=value` cookie.
+    pub async fn json_with_cookie(
+        &self,
+        path: &str,
+        cookie: &str,
+        body: serde_json::Value,
+    ) -> TestResponse {
+        let builder = Request::post(path)
+            .header("content-type", "application/json")
+            .header(COOKIE, cookie);
+        self.send(builder, None, Body::from(body.to_string())).await
+    }
+
     /// A GET with extra headers (`Authorization`, …) and no session.
     pub async fn get_with_headers(&self, path: &str, headers: &[(&str, &str)]) -> TestResponse {
         let mut builder = Request::get(path);

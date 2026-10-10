@@ -11,6 +11,12 @@ You need:
 | libvips 8.15+ (`vips`, `vipsheader`, `vipsthumbnail`) | reading images, thumbnails, perceptual hashes | `vips-tools` (AVIF: `vips-heif`, JPEG XL: `vips-jxl`) | `libvips-tools libheif-plugin-dav1d libheif-plugin-aomenc` |
 | ffmpeg 7.0+ (`ffmpeg`, `ffprobe`) | reading videos, poster frames, and videos of ugoira (with libvpx for VP9) | `ffmpeg` (RPM Fusion) or `ffmpeg-free` | `ffmpeg` |
 
+- OpenSSL 3 (`libssl.so.3`), which checks passkeys' signatures: usually
+  installed already (`openssl-libs` on Fedora, `libssl3t64` on Debian and
+  Ubuntu). Building from source also needs its headers and `pkg-config`
+  (`openssl-devel` on Fedora, `libssl-dev pkg-config` on Debian and
+  Ubuntu).
+
 Download a release binary (see [Upgrading](../upgrading.md)), or build one
 with Rust 1.94 or newer:
 

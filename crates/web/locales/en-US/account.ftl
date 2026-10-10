@@ -11,6 +11,8 @@ login-code-title = Two-factor login
 login-code-heading = Enter your code
 login-code-field = Code from your authenticator app
 login-code-hint = Lost your device? Enter one of your recovery codes instead.
+login-code-passkey = Use a passkey instead
+login-passkey = Log in with a passkey
 
 account-email = Email
 account-password = Password
@@ -58,6 +60,25 @@ tfa-new-codes = Make new recovery codes
 tfa-off-confirm = Turn off two-factor login?
 tfa-off = Two-factor login is <strong>off</strong>. Turn it on to need a code from an authenticator app, as well as your password, to log in.
 tfa-set-up = Set it up
+
+passkeys-title = Passkeys
+passkeys-intro = A passkey logs you in with your device's screen lock (your fingerprint, face or PIN) or a security key, without your password. With two-factor login on, a passkey also works instead of a code after your password.
+passkeys-table = Passkeys table
+passkeys-name = Name
+passkeys-name-placeholder = Phone, laptop or security key
+passkeys-none = You haven't added a passkey.
+passkeys-add = Add a passkey
+passkeys-add-hint = Your browser then asks your device or security key to make one.
+passkeys-unsupported = Adding a passkey needs a browser that supports them, with JavaScript on.
+passkeys-full = You have { $max } passkeys, the most an account can have. Remove one to add another.
+passkeys-off = Passkeys don't work on this site, because its address isn't a domain name. You can still remove these.
+passkeys-remove-confirm = Remove this passkey? It won't log you in any more.
+passkeys-name-invalid = Give the passkey a name of up to { $max } characters.
+passkeys-expired = That took too long. Please try again.
+passkeys-not-added = Your device's answer didn't check out, so no passkey was added. Please try again.
+passkeys-taken = That passkey is already registered.
+passkeys-failed = That passkey didn't work. Try again, or use another way to log in.
+passkeys-unknown = That passkey isn't registered here. It may have been removed from its account.
 
 invites-title = Invites
 invites-not-needed = Signing up doesn't need an invite at the moment, but codes keep working if that changes.

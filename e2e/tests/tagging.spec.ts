@@ -49,7 +49,7 @@ test("request a bulk update and discuss it", async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel("Name").fill(member.name);
   await page.getByLabel("Password").fill(member.password);
-  await page.getByRole("button", { name: "Log in" }).click();
+  await page.getByRole("button", { name: "Log in", exact: true }).click();
   await page.goto("/tags/requests/new");
   await page.getByLabel("Title").fill(`Tidy ${run}`);
   await page.getByLabel("Script").fill(`imply ${tag} -> tagged_${run}\nalias oops`);

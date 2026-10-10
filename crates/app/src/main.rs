@@ -414,6 +414,9 @@ async fn hourly_maintenance(state: AppState) {
         if let Err(error) = moekura_db::two_factor::prune_challenges(state.db.primary()).await {
             tracing::warn!(%error, "could not prune expired two-factor logins");
         }
+        if let Err(error) = moekura_db::passkeys::prune_challenges(state.db.primary()).await {
+            tracing::warn!(%error, "could not prune expired passkey challenges");
+        }
         if let Err(error) = moekura_db::identities::prune_logins(state.db.primary()).await {
             tracing::warn!(%error, "could not prune abandoned single sign-on logins");
         }

@@ -363,8 +363,12 @@ async fn remove(
 /// Starts a login with whichever of the site's passkeys the browser
 /// offers. The script asks for one when the login page opens (to offer
 /// them as the name field's suggestions) and again for the button.
-async fn login_options(State(state): State<AppState>) -> Result<Response, AppError> {
+async fn login_options(
+    State(state): State<AppState>,
+    info: RequestInfo,
+) -> Result<Response, AppError> {
     let passkeys = enabled(&state)?;
+    state.rate_limits.check_passkey_start(info.ip).await?;
     let (mut options, pending) = passkeys
         .webauthn
         .start_discoverable_authentication()
@@ -594,14 +598,19 @@ async fn second_factor(
             return Ok(refuse(StatusCode::UNPROCESSABLE_ENTITY, message));
         }
     };
+    // The challenge carries the passkeys the user had when it started;
+    // one removed since then no longer counts.
     let found = stored::by_credential_id(db, result.cred_id().as_ref())
         .await?
         .filter(|p| p.user_id == user.id);
-    if let Some(found) = &found {
-        let mut passkey: Passkey = from_json(found.credential.clone())?;
-        passkey.update_credential(&result);
-        stored::used(db, found.id, &to_json(&passkey)?).await?;
-    }
+    let Some(found) = found else {
+        refused(user.id, None, &WebauthnError::CredentialNotFound);
+        let message = page.say("passkeys-unknown", &[]);
+        return Ok(refuse(StatusCode::UNPROCESSABLE_ENTITY, message));
+    };
+    let mut passkey: Passkey = from_json(found.credential.clone())?;
+    passkey.update_credential(&result);
+    stored::used(db, found.id, &to_json(&passkey)?).await?;
     // Like a right code (or a recovery code): wrong codes before it no
     // longer count towards locking codes from the app.
     moekura_db::two_factor::clear_failures(db, user.id).await?;
@@ -614,7 +623,7 @@ async fn second_factor(
     let jar = auth::log_in(&state, jar, &info, &user).await?;
     tracing::info!(
         user_id = user.id,
-        passkey_id = found.map(|p| p.id),
+        passkey_id = found.id,
         "logged in with a passkey after the password"
     );
     let next = crate::account::safe_next(challenge.next.as_deref()).to_owned();

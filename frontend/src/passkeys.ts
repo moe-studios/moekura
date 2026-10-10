@@ -189,6 +189,12 @@ function enableRegistration(form: HTMLFormElement, root: Document): void {
   });
 }
 
+/** A passkey the browser gave for a login, and the login it's for. */
+interface Picked {
+  token: string | undefined;
+  credential: Credential;
+}
+
 function enableLogin(box: HTMLElement): void {
   const error = box.querySelector<HTMLElement>("[data-passkey-error]");
   const button = box.querySelector<HTMLButtonElement>("button");
@@ -196,37 +202,48 @@ function enableLogin(box: HTMLElement): void {
   let waiting: AbortController | null = null;
   box.hidden = false;
 
-  async function logIn(conditional: boolean): Promise<void> {
+  /** Asks the browser for a passkey; null if none was picked. */
+  async function pick(conditional: boolean): Promise<Picked | null> {
     waiting?.abort();
     const controller = new AbortController();
     waiting = controller;
     const asked = await post("/login/passkey/options");
-    if (follow(asked) || !asked.options) return;
+    if (follow(asked) || !asked.options) return null;
     const request: CredentialRequestOptions = {
       publicKey: requestOptions(asked.options.publicKey),
       signal: controller.signal,
     };
     if (conditional) request.mediation = "conditional";
     const credential = await navigator.credentials.get(request);
-    if (!credential) return;
+    return credential ? { token: asked.token, credential } : null;
+  }
+
+  async function logIn(picked: Picked): Promise<void> {
     const done = await post("/login/passkey", {
-      token: asked.token,
-      credential: credentialJSON(credential as PublicKeyCredential),
+      token: picked.token,
+      credential: credentialJSON(picked.credential as PublicKeyCredential),
       next,
     });
     follow(done);
   }
 
   // Among the name field's suggestions, where the browser can: the
-  // request waits until a passkey is picked there.
+  // request waits until a passkey is picked there. Picking none isn't a
+  // problem, and neither is the site failing to start (the button says
+  // why); a passkey the site refused is, and then the others are offered
+  // again.
   function offer(): void {
-    logIn(true).catch((e: unknown) => {
-      // Picking none isn't a problem; a passkey the site refused is.
-      if (e instanceof Refusal) {
-        show(error, e.message);
-        offer();
-      }
-    });
+    pick(true)
+      .then((picked) =>
+        picked
+          ? logIn(picked).catch((e: unknown) => {
+              if (!(e instanceof Refusal)) throw e;
+              show(error, e.message);
+              offer();
+            })
+          : undefined,
+      )
+      .catch(() => undefined);
   }
   void PublicKeyCredential.isConditionalMediationAvailable?.().then((available) => {
     if (available) offer();
@@ -234,7 +251,9 @@ function enableLogin(box: HTMLElement): void {
 
   button?.addEventListener("click", () => {
     show(error, null);
-    logIn(false).catch((e: unknown) => show(error, problem(e)));
+    pick(false)
+      .then((picked) => (picked ? logIn(picked) : undefined))
+      .catch((e: unknown) => show(error, problem(e)));
   });
 }
 

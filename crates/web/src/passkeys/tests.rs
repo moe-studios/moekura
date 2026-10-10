@@ -482,6 +482,55 @@ async fn passkey_logins_count_against_the_login_limit(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+async fn starting_passkey_logins_is_limited_per_network(pool: PgPool) {
+    let peer = std::net::SocketAddr::new(crate::shared::tests::unique_ip(), 443);
+    let app = TestApp::with_peer(test_state(&pool).await, routes(), peer);
+    for _ in 0..30 {
+        let asked = app.json("POST", "/login/passkey/options", None, None).await;
+        assert_eq!(asked.status, StatusCode::OK, "{}", asked.body);
+    }
+    let late = app.json("POST", "/login/passkey/options", None, None).await;
+    assert_eq!(late.status, StatusCode::TOO_MANY_REQUESTS);
+    // Refused before storing a challenge.
+    let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM passkey_challenges")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, 30);
+}
+
+#[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+async fn a_passkey_removed_during_the_second_step_doesnt_finish_it(pool: PgPool) {
+    let app = app(&pool).await;
+    let (alice, session) = member(&pool, "alice", "alice@example.com").await;
+    turn_on_two_factor(&pool, alice.id).await;
+    let mut phone = Authenticator::new(ORIGIN);
+    add(&app, &session, &mut phone, "Phone").await;
+    let cookie = password(&app).await;
+    let asked = json(
+        &app.json_with_cookie("/login/code/passkey/options", &cookie, Value::Null)
+            .await,
+    );
+    let credential = phone.sign(&asked["options"], 0);
+    let id = stored::for_user(&pool, alice.id).await.unwrap()[0].id;
+    assert!(stored::remove(&pool, alice.id, id).await.unwrap());
+    let done = app
+        .json_with_cookie(
+            "/login/code/passkey",
+            &cookie,
+            serde_json::json!({ "token": asked["token"], "credential": credential }),
+        )
+        .await;
+    assert_eq!(
+        done.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        done.body
+    );
+    assert!(done.session_cookie().is_none());
+}
+
+#[sqlx::test(migrator = "moekura_db::MIGRATOR")]
 async fn deactivated_accounts_cant_log_in_with_one(pool: PgPool) {
     let app = app(&pool).await;
     let (alice, session) = member(&pool, "alice", "alice@example.com").await;

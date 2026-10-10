@@ -1310,40 +1310,43 @@ function enableLogin(box) {
   const next = box.dataset["next"] || null;
   let waiting = null;
   box.hidden = false;
-  async function logIn(conditional) {
+  async function pick(conditional) {
     waiting?.abort();
     const controller = new AbortController();
     waiting = controller;
     const asked = await post("/login/passkey/options");
-    if (follow(asked) || !asked.options) return;
+    if (follow(asked) || !asked.options) return null;
     const request = {
       publicKey: requestOptions(asked.options.publicKey),
       signal: controller.signal
     };
     if (conditional) request.mediation = "conditional";
     const credential = await navigator.credentials.get(request);
-    if (!credential) return;
+    return credential ? { token: asked.token, credential } : null;
+  }
+  async function logIn(picked) {
     const done = await post("/login/passkey", {
-      token: asked.token,
-      credential: credentialJSON(credential),
+      token: picked.token,
+      credential: credentialJSON(picked.credential),
       next
     });
     follow(done);
   }
   function offer() {
-    logIn(true).catch((e) => {
-      if (e instanceof Refusal) {
+    pick(true).then(
+      (picked) => picked ? logIn(picked).catch((e) => {
+        if (!(e instanceof Refusal)) throw e;
         show(error, e.message);
         offer();
-      }
-    });
+      }) : void 0
+    ).catch(() => void 0);
   }
   void PublicKeyCredential.isConditionalMediationAvailable?.().then((available) => {
     if (available) offer();
   });
   button?.addEventListener("click", () => {
     show(error, null);
-    logIn(false).catch((e) => show(error, problem(e)));
+    pick(false).then((picked) => picked ? logIn(picked) : void 0).catch((e) => show(error, problem(e)));
   });
 }
 function enableSecondFactor(box) {

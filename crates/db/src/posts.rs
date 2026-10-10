@@ -279,6 +279,8 @@ pub struct Card {
     /// Length of a video or animation, when known.
     pub duration_ms: Option<i32>,
     pub has_audio: bool,
+    pub score: i32,
+    pub fav_count: i32,
 }
 
 /// Grid cards for `ids`, in the same order. Ids without a post (deleted
@@ -294,7 +296,7 @@ pub async fn cards(
                 p.parent_id IS NOT NULL AS has_parent,
                 EXISTS (SELECT 1 FROM posts c WHERE c.parent_id = p.id
                         AND c.status <> 'deleted') AS has_children,
-                a.duration_ms, a.has_audio
+                a.duration_ms, a.has_audio, p.score, p.fav_count
          FROM posts p
          JOIN media_assets a ON a.post_id = p.id
          LEFT JOIN media_variants t1 ON t1.asset_id = a.id AND t1.kind = $2

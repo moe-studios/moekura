@@ -4,10 +4,12 @@
 {% if card.status in ("pending", "flagged", "deleted") %}{% set marks = marks + [t("card-" ~ card.status)] %}{% endif %}
 {% if card.has_parent %}{% set marks = marks + [t("card-has-parent")] %}{% endif %}
 {% if card.has_children %}{% set marks = marks + [t("card-has-children")] %}{% endif %}
-<a href="{{ card.href }}" class="post-card rating-{{ card.rating }} is-{{ card.status }}{% if card.has_parent %} has-parent{% endif %}{% if card.has_children %} has-children{% endif %}{% if card.blacklisted %} is-blacklisted{% endif %}">
+{# The tooltip says what the post is, as Danbooru's does. #}
+{% set tip %}{% if card.label and not card.blacklisted %}{{ card.label }} · {% endif %}{{ t("rating-" ~ card.rating) }} · {{ t("score") }}: {{ card.score }} · {{ t("stats-favorites") }}: {{ card.fav_count }}{% endset %}
+<a href="{{ card.href }}"{% if card.score is defined %} title="{{ tip }}"{% endif %} class="post-card rating-{{ card.rating }} is-{{ card.status }}{% if card.has_parent %} has-parent{% endif %}{% if card.has_children %} has-children{% endif %}{% if card.blacklisted %} is-blacklisted{% endif %}">
   {% if card.thumb %}
   <img class="thumb" src="{{ card.thumb }}"{% if card.thumb_2x %} srcset="{{ card.thumb }} 1x, {{ card.thumb_2x }} 2x"{% endif %}
-       width="{{ card.width }}" height="{{ card.height }}" alt="{{ t('card-alt', id=card.id) }}" loading="lazy" decoding="async">
+       width="{{ card.width }}" height="{{ card.height }}" alt="{% if card.label and not card.blacklisted %}{{ t('card-alt-tags', tags=card.label, id=card.id) }}{% else %}{{ t('card-alt', id=card.id) }}{% endif %}" loading="lazy" decoding="async">
   {% else %}
   <img class="thumb pending-media" src="{{ asset('processing.svg') }}"
        width="{{ card.width }}" height="{{ card.height }}" alt="{{ t('card-alt-processing', id=card.id) }}">

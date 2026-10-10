@@ -271,20 +271,18 @@ async fn begin(
             .await
             .map_err(|e| upload_refused(&e))?;
     }
-    let db = state.db.primary();
-    let sending = transfers::unfinished(db, uploader_id)
-        .await
-        .map_err(internal)?;
-    if sending >= transfers::MAX_PER_USER {
-        return Err(upload_refused(&UploadError::Limit(format!(
-            "You're sending {sending} files already, the most at once. \
-             Wait for them to finish, or for those you gave up on to expire (in an hour)."
-        ))));
-    }
     let length = i64::try_from(length).map_err(internal)?;
-    let (token, _) = transfers::create(db, uploader_id, &name, purpose, length)
-        .await
-        .map_err(internal)?;
+    let created = transfers::create(state.db.primary(), uploader_id, &name, purpose, length).await;
+    let token = match created {
+        Ok((token, _)) => token,
+        Err(transfers::CreateError::TooMany(sending)) => {
+            return Err(upload_refused(&UploadError::Limit(format!(
+                "You're sending {sending} files already, the most at once. \
+                 Wait for them to finish, or for those you gave up on to expire (in an hour)."
+            ))));
+        }
+        Err(transfers::CreateError::Db(error)) => return Err(internal(error)),
+    };
     let mut response = tus(StatusCode::CREATED);
     response
         .headers_mut()
@@ -449,16 +447,18 @@ async fn cancel(
 ) -> Result<Response, Refused> {
     let uploader_id = sender(&current, None)?;
     check_version(&headers)?;
-    let transfer = transfers::take(state.db.primary(), uploader_id, &token)
-        .await
-        .map_err(internal)?
-        .ok_or_else(|| {
-            refused(
-                StatusCode::NOT_FOUND,
-                "This file transfer doesn't exist, or expired.",
-            )
-        })?;
-    remove_parts(&state, &transfer).await;
+    let db = state.db.primary().clone();
+    remove_whole(&state, async move {
+        transfers::take(&db, uploader_id, &token).await
+    })
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| {
+        refused(
+            StatusCode::NOT_FOUND,
+            "This file transfer doesn't exist, or expired.",
+        )
+    })?;
     Ok(tus(StatusCode::NO_CONTENT))
 }
 
@@ -478,28 +478,59 @@ async fn remove_parts(state: &AppState, transfer: &Transfer) {
     }
 }
 
+/// Removes a transfer (the one `removing` deletes from the database, if
+/// any) and then its pieces, in a task of its own: a request ending early
+/// (the client gone, the time up) can't stop it halfway, leaving pieces
+/// that nothing records. Returns the transfer, if there was one.
+async fn remove_whole(
+    state: &AppState,
+    removing: impl Future<Output = sqlx::Result<Option<Transfer>>> + Send + 'static,
+) -> Result<Option<Transfer>, String> {
+    let state = state.clone();
+    let removal = tokio::spawn(async move {
+        let removed = removing.await?;
+        if let Some(transfer) = &removed {
+            remove_parts(&state, transfer).await;
+        }
+        Ok::<_, sqlx::Error>(removed)
+    });
+    match removal.await {
+        Ok(removed) => removed.map_err(|e| format!("removing a file transfer: {e}")),
+        Err(error) => Err(format!("removing a file transfer: {error}")),
+    }
+}
+
 /// The whole file of `uploader_id`'s transfer named `token`, put together
-/// for a form for `purpose` that named it. The transfer is used up,
-/// whatever happens.
+/// for a form for `purpose` that named it, which uses the transfer up.
+/// Until the file is put together, the transfer stays: if the request ends
+/// early meanwhile, the file can be named again (or expires, with its
+/// pieces, when left).
 pub(crate) async fn take(
     state: &AppState,
     uploader_id: i64,
     token: &str,
     purpose: Purpose,
 ) -> Result<TempUpload, UploadError> {
-    let token = token.trim();
-    let transfer = transfers::take_for(state.db.primary(), uploader_id, token, purpose)
+    let gone = || {
+        UploadError::Invalid(
+            "A file sent earlier wasn't found: it may have waited for over an hour. \
+             Please send it again."
+                .into(),
+        )
+    };
+    let transfer = transfers::find(state.db.primary(), uploader_id, token.trim())
         .await?
-        .ok_or_else(|| {
-            UploadError::Invalid(
-                "A file sent earlier wasn't found: it may have waited for over an hour. \
-                 Please send it again."
-                    .into(),
-            )
-        })?;
-    let file = assemble(state, &transfer).await;
-    remove_parts(state, &transfer).await;
-    file
+        .filter(|transfer| transfer.purpose == purpose)
+        .ok_or_else(gone)?;
+    let file = assemble(state, &transfer).await?;
+    // Another request may have used it meanwhile; only one gets it.
+    let db = state.db.primary().clone();
+    let id = transfer.id;
+    remove_whole(state, async move { transfers::remove(&db, id).await })
+        .await
+        .map_err(UploadError::Internal)?
+        .ok_or_else(gone)?;
+    Ok(file)
 }
 
 /// Puts `transfer`'s pieces together into one file.
@@ -884,7 +915,84 @@ mod tests {
             "{}",
             sent.body
         );
+        // It stays, to be finished or to expire.
+        assert_eq!(offset(&app, &alice, &url).await.status, StatusCode::OK);
+        assert_eq!(
+            stored_parts(&state, &url).await,
+            [true, false, false, false]
+        );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn a_file_not_put_together_can_be_named_again(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let png = fixture::png(40, 30);
+        let url = begin(&app, &alice, png.len(), "cat.png").await;
+        send(&app, &alice, &url, &png, 100).await;
+        let transfer = [("transfer", token(&url).to_owned())];
+
+        // A piece storage can't give back: the file isn't put together,
+        // and the transfer isn't used up.
+        let missing = stored_part(&url, 1);
+        let kept = state.storage.read(&missing, None).await.unwrap();
+        let mut bytes = Vec::new();
+        let mut stream = kept.stream;
+        while let Some(chunk) = stream.next().await {
+            bytes.extend_from_slice(&chunk.unwrap());
+        }
+        state.storage.delete(&missing).await.unwrap();
+        let failed = app
+            .post_multipart_files("/uploads", Some(&alice), &transfer, &[])
+            .await;
+        assert_eq!(failed.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(offset(&app, &alice, &url).await.status, StatusCode::OK);
+
+        // Once it's back, naming the file again works.
+        state
+            .storage
+            .put_bytes(&missing, bytes.into())
+            .await
+            .unwrap();
+        let sent = app
+            .post_multipart_files("/uploads", Some(&alice), &transfer, &[])
+            .await;
+        assert_eq!(sent.status, StatusCode::SEE_OTHER, "{}", sent.body);
         assert_eq!(stored_parts(&state, &url).await, [false; 4]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn removal_finishes_when_the_request_ends_early(pool: PgPool) {
+        use futures_util::FutureExt;
+
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let png = fixture::png(40, 30);
+        let url = begin(&app, &alice, png.len(), "cat.png").await;
+        send(&app, &alice, &url, &png, 100).await;
+        let user = crate::test_support::current_user(&state, &alice).await;
+        let id = transfers::find(&pool, user.user.unwrap().id, token(&url))
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+
+        // Started, then dropped, as a request is when its time runs out.
+        let db = pool.clone();
+        let removing = remove_whole(&state, async move { transfers::remove(&db, id).await });
+        assert!(removing.now_or_never().is_none());
+
+        for _ in 0..100 {
+            if stored_parts(&state, &url).await == [false; 4] {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(stored_parts(&state, &url).await, [false; 4]);
+        assert_eq!(
+            offset(&app, &alice, &url).await.status,
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

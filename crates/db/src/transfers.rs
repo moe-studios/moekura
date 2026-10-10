@@ -5,7 +5,7 @@
 use std::time::Duration;
 
 use moekura_core::tokens::{NewToken, hash_token};
-use sqlx::{PgConnection, PgExecutor};
+use sqlx::{PgConnection, PgExecutor, PgPool};
 use time::OffsetDateTime;
 
 /// Most transfers one user may have unfinished (not yet used by a form).
@@ -78,16 +78,35 @@ macro_rules! columns {
     };
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum CreateError {
+    /// The uploader has [`MAX_PER_USER`] unfinished already: this many.
+    #[error("{0} files are being sent already, the most at once")]
+    TooMany(i64),
+    #[error(transparent)]
+    Db(#[from] sqlx::Error),
+}
+
 /// Begins a transfer of a file of `length` bytes named `file_name` for
-/// `uploader_id`, sent for `purpose`. Returns the token that names it, and
-/// the transfer.
+/// `uploader_id`, sent for `purpose`, unless they have [`MAX_PER_USER`]
+/// unfinished. Returns the token that names it, and the transfer.
 pub async fn create(
-    db: impl PgExecutor<'_>,
+    db: &PgPool,
     uploader_id: i64,
     file_name: &str,
     purpose: Purpose,
     length: i64,
-) -> sqlx::Result<(String, Transfer)> {
+) -> Result<(String, Transfer), CreateError> {
+    let mut tx = db.begin().await?;
+    // Serialises beginning transfers per user, so the limit holds.
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(uploader_id)
+        .execute(&mut *tx)
+        .await?;
+    let sending = unfinished(&mut *tx, uploader_id).await?;
+    if sending >= MAX_PER_USER {
+        return Err(CreateError::TooMany(sending));
+    }
     let token = NewToken::generate();
     let transfer = sqlx::query_as(concat!(
         "INSERT INTO file_transfers (token_hash, uploader_id, file_name, purpose, length)
@@ -99,8 +118,9 @@ pub async fn create(
     .bind(file_name)
     .bind(purpose)
     .bind(length)
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok((token.token, transfer))
 }
 
@@ -165,21 +185,14 @@ pub async fn take(
     .await
 }
 
-/// [`take`], only if the file was sent for `purpose`.
-pub async fn take_for(
-    db: impl PgExecutor<'_>,
-    uploader_id: i64,
-    token: &str,
-    purpose: Purpose,
-) -> sqlx::Result<Option<Transfer>> {
+/// Removes transfer `id`, returning it if it was still there: once its
+/// file is used, only one user of it gets it.
+pub async fn remove(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<Transfer>> {
     sqlx::query_as(concat!(
-        "DELETE FROM file_transfers
-         WHERE token_hash = $1 AND uploader_id = $2 AND purpose = $3 RETURNING ",
+        "DELETE FROM file_transfers WHERE id = $1 RETURNING ",
         columns!()
     ))
-    .bind(&hash_token(token)[..])
-    .bind(uploader_id)
-    .bind(purpose)
+    .bind(id)
     .fetch_optional(db)
     .await
 }
@@ -259,22 +272,39 @@ mod tests {
         assert!(add_part(&mut tx, transfer.id, 1).await.is_err());
         drop(tx);
 
-        assert_eq!(take(&pool, bob, &token).await.unwrap(), None);
-        // Only a form for what it was sent for takes it.
-        assert_eq!(
-            take_for(&pool, alice, &token, Purpose::Search)
-                .await
-                .unwrap(),
-            None
-        );
-        let taken = take_for(&pool, alice, &token, Purpose::Upload)
+        // Used once.
+        let used = remove(&pool, transfer.id).await.unwrap().unwrap();
+        assert_eq!(used.purpose, Purpose::Upload);
+        assert_eq!(remove(&pool, transfer.id).await.unwrap(), None);
+        assert_eq!(find(&pool, alice, &token).await.unwrap(), None);
+
+        // Given up on by its sender only.
+        let (token, transfer) = create(&pool, alice, "big.mp4", Purpose::Search, 10)
             .await
-            .unwrap()
             .unwrap();
-        assert_eq!(taken.purpose, Purpose::Upload);
+        assert_eq!(take(&pool, bob, &token).await.unwrap(), None);
+        let taken = take(&pool, alice, &token).await.unwrap().unwrap();
         assert_eq!(taken.id, transfer.id);
         assert_eq!(take(&pool, alice, &token).await.unwrap(), None);
         assert_eq!(unfinished(&pool, alice).await.unwrap(), 0);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn the_limit_holds_for_transfers_begun_at_once(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let begun = futures_util::future::join_all((0..MAX_PER_USER + 10).map(|n| {
+            let pool = pool.clone();
+            async move { create(&pool, alice, &format!("{n}.png"), Purpose::Upload, 5).await }
+        }))
+        .await;
+        let made = begun.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(i64::try_from(made).unwrap(), MAX_PER_USER);
+        assert!(
+            begun
+                .iter()
+                .any(|r| matches!(r, Err(CreateError::TooMany(n)) if *n == MAX_PER_USER))
+        );
+        assert_eq!(unfinished(&pool, alice).await.unwrap(), MAX_PER_USER);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

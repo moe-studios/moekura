@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::blacklist::Blacklist;
 use moekura_core::permissions::Permission;
-use moekura_core::user_settings::{MAX_CUSTOM_CSS, Mode, PER_PAGE_CHOICES, UserSettings};
+use moekura_core::user_settings::{Layout, MAX_CUSTOM_CSS, Mode, PER_PAGE_CHOICES, UserSettings};
 use moekura_db::users::{self, UserStatus};
 use moekura_db::{favorites, posts};
 use serde::Deserialize;
@@ -355,6 +355,9 @@ fn render_settings(
             per_page_choices => PER_PAGE_CHOICES.iter().filter(|&&n| n <= max).collect::<Vec<_>>(),
             current_mode => settings.mode.as_str(),
             current_theme => settings.theme,
+            current_layout => settings.layout.map(Layout::as_str),
+            layouts => Layout::ALL.iter().map(|l| l.as_str()).collect::<Vec<_>>(),
+            site_layout => page.state().site.get().settings.default_layout.as_str(),
             prefs_form => context! {
                 safe_mode => settings.safe_mode,
                 original_images => settings.original_images,
@@ -393,6 +396,9 @@ struct SettingsForm {
     /// Empty for the site default.
     #[serde(default)]
     theme: String,
+    /// Empty for the site default.
+    #[serde(default)]
+    layout: String,
     #[serde(default)]
     blacklist: String,
     // Checkboxes: present when ticked.
@@ -417,6 +423,16 @@ struct SettingsForm {
 
 fn parse_mode(text: &str) -> Result<Mode, AppError> {
     Mode::parse(text).ok_or_else(|| AppError::BadRequest("Unknown mode".into()))
+}
+
+/// A layout, or `None` for an empty field: the site default.
+fn parse_layout(text: &str) -> Result<Option<Layout>, AppError> {
+    if text.is_empty() {
+        return Ok(None);
+    }
+    Layout::parse(text)
+        .map(Some)
+        .ok_or_else(|| AppError::BadRequest("Unknown layout".into()))
 }
 
 /// A theme the site has, or `None` for an empty field: the site default.
@@ -448,6 +464,7 @@ async fn save_settings(
     };
     let mode = parse_mode(&form.mode)?;
     let theme = parse_theme(&page, &form.theme)?;
+    let layout = parse_layout(&form.layout)?;
     let blacklist = form.blacklist.replace("\r\n", "\n");
     let time_zone = match form.time_zone.as_str() {
         "" => None,
@@ -464,6 +481,7 @@ async fn save_settings(
         per_page,
         mode,
         theme,
+        layout,
         blacklist: Some(blacklist.trim().to_owned()),
         safe_mode: form.safe_mode.is_some(),
         original_images: form.original_images.is_some(),
@@ -543,12 +561,13 @@ async fn custom_css(current: crate::auth::CurrentUser) -> Response {
 struct ThemeForm {
     mode: Option<String>,
     theme: Option<String>,
+    layout: Option<String>,
     /// The page to go back to.
     back: Option<String>,
 }
 
-/// Changes only the mode or theme, from the switcher in every page's
-/// footer.
+/// Changes only the mode, theme or layout, from the switchers on every
+/// page.
 async fn set_theme(page: Page, Form(form): Form<ThemeForm>) -> Result<Response, AppError> {
     let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
     let mut settings = UserSettings::from_json(&user.settings);
@@ -557,6 +576,9 @@ async fn set_theme(page: Page, Form(form): Form<ThemeForm>) -> Result<Response, 
     }
     if let Some(theme) = &form.theme {
         settings.theme = parse_theme(&page, theme)?;
+    }
+    if let Some(layout) = &form.layout {
+        settings.layout = parse_layout(layout)?;
     }
     users::set_settings(
         page.state().db.primary(),

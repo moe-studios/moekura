@@ -242,6 +242,12 @@ posts-upload-first = Upload the first one
 
 ## The post page
 
+# Headings in the classic layout's post sidebar, as on Danbooru.
+post-information = Information
+post-options = Options
+post-id = ID
+post-status = Status
+
 post-is = This post is { $status }.
 post-locked = Locked: { $locks }.
 lock-rating = Rating

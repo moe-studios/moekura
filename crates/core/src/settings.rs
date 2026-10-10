@@ -68,6 +68,8 @@ pub struct SiteSettings {
     /// Colour theme for visitors and for users who haven't picked one. A
     /// theme the site doesn't have falls back to the built-in default.
     pub default_theme: String,
+    /// Layout for visitors and for users who haven't picked one.
+    pub default_layout: crate::user_settings::Layout,
     /// What the tagger's suggestions are used for (see
     /// [`crate::tagger::TaggerSettings`]).
     pub tagger: crate::tagger::TaggerSettings,
@@ -213,6 +215,7 @@ impl Default for SiteSettings {
             default_blacklist: String::new(),
             visitor_ratings: Vec::new(),
             default_theme: crate::user_settings::DEFAULT_THEME.to_owned(),
+            default_layout: crate::user_settings::Layout::default(),
             tagger: crate::tagger::TaggerSettings::default(),
             ip_history_days: 365,
             email_domains: crate::spam::EmailDomains::default(),
@@ -434,6 +437,7 @@ mod tests {
                 "banned_artists",
                 "captcha",
                 "default_blacklist",
+                "default_layout",
                 "default_theme",
                 "email_domains",
                 "email_verification",
@@ -542,6 +546,17 @@ mod tests {
             defaults.with_value("default_theme", json!("../css/main")),
             Err(SettingError::InvalidValue { .. })
         ));
+        assert!(matches!(
+            defaults.with_value("default_layout", json!("fancy")),
+            Err(SettingError::InvalidValue { .. })
+        ));
+        assert_eq!(
+            defaults
+                .with_value("default_layout", json!("classic"))
+                .unwrap()
+                .default_layout,
+            crate::user_settings::Layout::Classic
+        );
         let thresholds = json!({ "thresholds": { "general": 0 } });
         assert!(matches!(
             defaults.with_value("tagger", thresholds),

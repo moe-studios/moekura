@@ -34,6 +34,31 @@ impl Mode {
     }
 }
 
+/// How pages are laid out: the site's own modern look, or a classic booru
+/// look after Danbooru. Every theme works with both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Layout {
+    #[default]
+    Modern,
+    Classic,
+}
+
+impl Layout {
+    pub const ALL: [Layout; 2] = [Layout::Modern, Layout::Classic];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Layout::Modern => "modern",
+            Layout::Classic => "classic",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|l| l.as_str() == s)
+    }
+}
+
 /// The theme built into the stylesheet, used when no other is chosen.
 pub const DEFAULT_THEME: &str = "default";
 
@@ -69,6 +94,8 @@ pub struct UserSettings {
     /// The colour theme's name; `None` uses the site's default. It may name
     /// a theme the site no longer has, which also falls back to the default.
     pub theme: Option<String>,
+    /// `None` uses the site's default.
+    pub layout: Option<Layout>,
     /// `None` until the user saves one: the site's default applies.
     pub blacklist: Option<String>,
     /// Only general-rated posts, everywhere.
@@ -104,6 +131,7 @@ impl Default for UserSettings {
             per_page: None,
             mode: Mode::default(),
             theme: None,
+            layout: None,
             blacklist: None,
             safe_mode: false,
             original_images: false,
@@ -146,6 +174,10 @@ impl UserSettings {
             .and_then(Mode::parse)
             .unwrap_or_default();
         let theme = theme.filter(|name| is_theme_name(name)).map(str::to_owned);
+        let layout = value
+            .get("layout")
+            .and_then(Value::as_str)
+            .and_then(Layout::parse);
         let blacklist = value
             .get("blacklist")
             .and_then(Value::as_str)
@@ -176,6 +208,7 @@ impl UserSettings {
             per_page,
             mode,
             theme,
+            layout,
             blacklist,
             safe_mode: flag("safe_mode"),
             original_images: flag("original_images"),
@@ -204,6 +237,10 @@ impl UserSettings {
         match &self.theme {
             Some(name) => map.insert("theme".into(), name.as_str().into()),
             None => map.remove("theme"),
+        };
+        match self.layout {
+            Some(layout) => map.insert("layout".into(), layout.as_str().into()),
+            None => map.remove("layout"),
         };
         match &self.blacklist {
             Some(text) => map.insert("blacklist".into(), text.as_str().into()),
@@ -254,7 +291,9 @@ mod tests {
     fn reads_leniently() {
         assert_eq!(UserSettings::from_json(&json!({})), UserSettings::default());
         assert_eq!(
-            UserSettings::from_json(&json!({ "per_page": "lots", "theme": 3, "mode": "dim" })),
+            UserSettings::from_json(
+                &json!({ "per_page": "lots", "theme": 3, "mode": "dim", "layout": "fancy" })
+            ),
             UserSettings::default()
         );
         assert_eq!(
@@ -303,8 +342,10 @@ mod tests {
         );
         let themed = UserSettings {
             theme: Some("ocean".into()),
+            layout: Some(Layout::Classic),
             ..settings
         };
+        assert_eq!(themed.to_json(&previous)["layout"], "classic");
         assert_eq!(UserSettings::from_json(&themed.to_json(&previous)), themed);
     }
 

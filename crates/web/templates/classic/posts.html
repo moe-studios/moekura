@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}{% if search.tags %}{{ search.tags }} · {% endif %}{{ site.name }}{% endblock %}
+{% block head %}{% if feed_url %}<link rel="alternate" type="application/atom+xml" title="{{ search.tags or t('posts-newest') }}" href="{{ feed_url }}">{% endif %}{% endblock %}
+{% block header_search %}{% endblock %}
+{% block content %}
+{% macro search_bar() %}
+<form class="search search-bar" method="get" action="/posts" role="search">
+  <input type="search" name="tags" value="{{ search.tags or '' }}" placeholder="{{ t('nav-search') }}" aria-label="{{ t('nav-search') }}"
+         autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+  <button type="submit">{{ t("search") }}</button>
+</form>
+{% endmacro %}
+{% if search.error %}
+{{ search_bar() }}
+<p class="form-error" role="alert">{{ search.error }}</p>
+<p class="hint">{{ t("posts-syntax") }}</p>
+{% else %}
+<div class="results-layout">
+  <div class="sidebar-search">
+    {{ search_bar() }}
+    {% if can_tag_script %}
+    {# Like Danbooru's mode menu: clicking a post opens it, or applies the script. #}
+    <div class="post-mode" data-tag-script hidden>
+      <label for="post-mode">{{ t("post-mode") }}</label>
+      <select id="post-mode" data-tag-script-mode>
+        <option value="view">{{ t("post-mode-view") }}</option>
+        <option value="script">{{ t("tag-script") }}</option>
+      </select>
+      <span class="tag-script-field" data-tag-script-field hidden>
+        <label class="visually-hidden" for="tag-script">{{ t("tag-script") }}</label>
+        <input id="tag-script" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="tag -tag rating:s">
+      </span>
+      <p class="hint" data-tag-script-status aria-live="polite"></p>
+    </div>
+    {% endif %}
+  </div>
+  <aside class="results-sidebar">
+    {% if save_search %}
+    <details class="edit save-search">
+      <summary>{{ t("posts-save-search") }}</summary>
+      <form method="post" action="/saved_searches">
+        <input type="hidden" name="query" value="{{ save_search.query }}">
+        <input type="hidden" name="back" value="true">
+        <label for="save-labels">{{ t("saved-labels") }} <span class="hint">{{ t("optional") }}</span></label>
+        <input id="save-labels" name="labels" autocomplete="off" spellcheck="false" placeholder="{{ t('posts-labels-placeholder') }}">
+        <button type="submit">{{ t("common-save") }}</button>
+      </form>
+      <p class="hint"><a href="{{ save_search.list_url }}">{{ t("posts-your-saved") }}</a></p>
+    </details>
+    {% endif %}
+    {% if sidebar %}
+    <h2>{{ t("nav-tags") }}</h2>
+    <ul class="tag-list">
+      {% for tag in sidebar %}
+      <li>
+        <a class="refine" href="{{ tag.wiki_url }}" title="{{ t('tag-nav-wiki') }}" aria-label="{{ t('posts-wiki-for', tag=tag.name) }}">?</a>
+        <a class="refine" href="{{ tag.include_url }}" title="{{ t('posts-add-to-search') }}" aria-label="{{ t('posts-add-tag', tag=tag.name) }}">+</a>
+        <a class="refine" href="{{ tag.exclude_url }}" title="{{ t('posts-exclude') }}" aria-label="{{ t('posts-exclude-tag', tag=tag.name) }}">–</a>
+        <a class="tag tag-{{ tag.category }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </aside>
+  <section class="results">
+    {% if wiki %}
+    <aside class="wiki-excerpt">
+      <div class="markup">{{ wiki.html }}</div>
+      <p class="hint"><a href="{{ wiki.url }}">{{ t("posts-read-wiki", title=wiki.title) }}</a></p>
+    </aside>
+    {% endif %}
+    {% if count %}<p class="result-count">{{ count }}{% if feed_url %} · <a href="{{ feed_url }}">{{ t("feed") }}</a>{% endif %}
+      {% if blacklisted.show_url %}· {% if blacklisted.hidden %}{{ t("posts-blacklist-hidden", count=blacklisted.hidden, url=blacklisted.show_url) }}{% elif blacklisted.left_out %}{{ t("posts-blacklist-left-out", url=blacklisted.show_url) }}{% else %}{{ t("posts-blacklist-blurred", count=blacklisted.blurred, url=blacklisted.show_url) }}{% endif %}{% endif %}
+      {% if deleted %}· {{ t("posts-deleted-hidden", count=deleted.count, url=deleted.show_url) }}{% endif %}
+      {% if blacklisted.hide_url %}· {{ t("posts-blacklist-showing", url=blacklisted.hide_url) }}{% endif %}
+    </p>{% endif %}
+    {% if cards or blacklisted.hidden %}
+    <ul class="post-grid">
+      {% for card in cards %}
+      <li>
+        {% include "card.html" %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% if pager.previous or pager.next or pager.numbers %}
+    <nav class="pager" aria-label="{{ t('pages') }}">
+      {% if pager.previous %}<a class="button" href="{{ pager.previous }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+      {% for n in pager.numbers %}
+        {% if n.gap %}<span class="gap">…</span>
+        {% elif n.current %}<span class="current" aria-current="page">{{ n.number }}</span>
+        {% else %}<a href="{{ n.url }}">{{ n.number }}</a>{% endif %}
+      {% endfor %}
+      {% if pager.next %}<a class="button" href="{{ pager.next }}" rel="next">{{ t("next") }}</a>{% endif %}
+    </nav>
+    {% endif %}
+    {% elif search.tags %}
+    <section class="empty">
+      <h1>{{ t("posts-nothing-found") }}</h1>
+      <p>{{ t("posts-no-match", tags=search.tags) }}</p>
+      {% for item in did_you_mean %}
+      {% set options %}{% for r in item.replacements %}<a href="{{ r.url }}"><strong>{{ r.name }}</strong></a>{% if not loop.last %} {{ t("or") }} {% endif %}{% endfor %}{% endset %}
+      <p>{% if did_you_mean|length > 1 or search.tags != item.term %}{{ t("posts-did-you-mean-instead", options=options, term=item.term) }}{% else %}{{ t("posts-did-you-mean", options=options) }}{% endif %}</p>
+      {% endfor %}
+      {% set terms = search.tags|split %}
+      <p>
+        {% if terms|length > 1 %}{% if terms[-2]|lower != "or" and terms[-1] is not endingwith(")") %}{{ t("posts-try-without", url=search_url(terms[:-1]|join(' ')), terms=terms[:-1]|join(' ')) }}{% endif %}
+        {% elif not did_you_mean and terms[0] is not startingwith("-") and ":" not in terms[0] %}{{ t("posts-look-for-tags", url="/tags?name=" ~ terms[0]|urlencode ~ "*", term=terms[0]) }}{% endif %}
+      </p>
+      <p class="hint">{{ t("posts-syntax") }}</p>
+    </section>
+    {% else %}
+    <section class="empty">
+      <h1>{{ t("posts-none-yet") }}</h1>
+      <p>{{ t("posts-none-yet-hint") }}</p>
+      {% if can_upload %}<p><a href="/upload">{{ t("posts-upload-first") }}</a></p>{% endif %}
+    </section>
+    {% endif %}
+  </section>
+</div>
+{% endif %}
+{% endblock %}

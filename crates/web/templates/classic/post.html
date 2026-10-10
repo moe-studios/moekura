@@ -1,0 +1,449 @@
+{% extends "base.html" %}
+{% from "site_icon.html" import site_icon %}
+{% from "reason_fields.html" import reason_fields %}
+{# The first few names that say what the post is, so tabs and history can be told apart. #}
+{% block title %}{% for group in tag_groups if group.name in ("character", "copyright", "artist") %}{% for tag in group.tags[:2] %}{{ tag.name }} · {% endfor %}{% endfor %}{{ t("post-number", id=post.id) }} · {{ site.name }}{% endblock %}
+{% block head %}{% include "preview_meta.html" %}{% endblock %}
+{% block header_search %}{% endblock %}
+{% block content %}
+<div class="post-layout">
+  <div class="sidebar-search">
+    <form class="search search-bar" method="get" action="/posts" role="search">
+      <input type="search" name="tags" value="{{ search.tags or '' }}" placeholder="{{ t('nav-search') }}" aria-label="{{ t('nav-search') }}"
+             autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+      <button type="submit">{{ t("search") }}</button>
+    </form>
+  </div>
+  <aside class="post-info">
+    <h1 class="visually-hidden">{{ t("post-number", id=post.id) }}</h1>
+    {% for group in tag_groups %}
+    <section class="tag-group">
+      <h2>{{ group.label }}</h2>
+      <ul class="tag-list">
+        {% for tag in group.tags %}
+        <li><a class="refine" href="{{ tag.wiki_url }}" title="{{ t('tag-nav-wiki') }}" aria-label="{{ t('posts-wiki-for', tag=tag.name) }}">?</a> <a class="tag tag-{{ group.name }}" href="{{ tag.url }}">{{ tag.name }}</a> <span class="count">{{ tag.count }}</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endfor %}
+    <section class="tag-group post-information">
+      <h2>{{ t("post-information") }}</h2>
+      <dl class="post-facts">
+        <dt>{{ t("post-id") }}</dt><dd>{{ post.id }}</dd>
+        <dt>{{ t("post-uploaded") }}</dt><dd><time datetime="{{ post.created_iso }}">{{ post.created }}</time>{% if uploader %} {{ t("by-user", user=uploader) }}{% endif %}</dd>
+        <dt>{{ t("post-size") }}</dt><dd>{{ file.width }}×{{ file.height }} · {{ file.size }}</dd>
+        <dt>{{ t("api-type") }}</dt><dd>{{ file.media_type }}{% if file.duration %} · {{ file.duration }}{% if not file.has_audio %} · {{ t("post-no-sound") }}{% endif %}{% endif %}{% if file.animated %} · {{ t("post-animated") }}{% endif %}</dd>
+        {% if post.source %}
+        <dt>{{ t("source") }}</dt>
+        <dd class="source">{% if post.source_link %}{{ site_icon(post.source) }}<a href="{{ post.source }}" rel="noopener noreferrer nofollow">{{ post.source }}</a>{% else %}{{ post.source }}{% endif %}</dd>
+        {% endif %}
+        <dt>{{ t("rating") }}</dt><dd class="rating-{{ post.rating_code }}">{{ t("rating-" ~ post.rating_code) }}</dd>
+        <dt>{{ t("score") }}</dt>
+        <dd>
+          {% if reactions.can_vote %}
+          <form class="vote" method="post" action="/posts/{{ post.id }}/vote{{ reactions.query or '' }}" data-reaction>
+            <button type="submit" name="score" value="{{ 0 if reactions.vote == 1 else 1 }}" class="icon" data-vote="up" aria-pressed="{{ 'true' if reactions.vote == 1 else 'false' }}" aria-label="{{ t('vote-up') }}" title="{{ t('vote-up') }}">▲</button>
+            <span class="score">{{ reactions.score }}</span>
+            <button type="submit" name="score" value="{{ 0 if reactions.vote == -1 else -1 }}" class="icon" data-vote="down" aria-pressed="{{ 'true' if reactions.vote == -1 else 'false' }}" aria-label="{{ t('vote-down') }}" title="{{ t('vote-down') }}">▼</button>
+          </form>
+          {% else %}<span class="score">{{ reactions.score }}</span>{% endif %}
+        </dd>
+        <dt>{{ t("stats-favorites") }}</dt>
+        <dd>
+          {% if reactions.can_favorite %}
+          <form class="favorite" method="post" action="/posts/{{ post.id }}/favorite{{ reactions.query or '' }}" data-reaction>
+            <button type="submit" name="favorite" value="{{ 'remove' if reactions.favorited else 'add' }}" class="icon" aria-pressed="{{ 'true' if reactions.favorited else 'false' }}" aria-label="{{ t('favorite') }}" title="{{ t('favorite') }}">♥</button>
+            <span class="fav-count">{{ reactions.fav_count }}</span>
+          </form>
+          {% else %}<span class="fav-count">{{ reactions.fav_count }}</span>{% endif %}
+        </dd>
+        {% if post.status != "active" %}<dt>{{ t("post-status") }}</dt><dd><span class="status status-{{ post.status }}">{{ t("status-" ~ post.status) }}</span></dd>{% endif %}
+      </dl>
+    </section>
+    <section class="tag-group post-options">
+      <h2>{{ t("post-options") }}</h2>
+      <ul class="tag-list">
+        {% if edit %}<li><a href="#edit-tags" data-open-edit>{{ t("edit") }}</a></li>{% endif %}
+        <li><a href="{{ file.original }}" download>{{ t("post-download") }}</a></li>
+        <li><a href="/iqdb_queries?post_id={{ post.id }}">{{ t("post-look-alikes") }}</a></li>
+        <li><a href="/posts/{{ post.id }}/metadata">{{ t("post-metadata") }}</a></li>
+        <li><a href="/posts/{{ post.id }}/replacements">{{ t("post-replacements") }}</a></li>
+      </ul>
+    </section>
+    {% if favorite_groups %}
+    <section class="tag-group post-favorite-groups">
+      <h2>{{ t("fav-groups-yours") }}</h2>
+      {% if favorite_groups.holding %}
+      <ul class="tag-list">
+        {% for g in favorite_groups.holding %}
+        <li><a href="{{ g.url }}">{{ g.name }}</a>
+          <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups/remove"><input type="hidden" name="group" value="{{ g.id }}"><button type="submit" class="link" aria-label="{{ t('post-remove-from', name=g.name) }}">{{ t("remove-lower") }}</button></form></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      {% if favorite_groups.others %}
+      <form class="inline" method="post" action="/posts/{{ post.id }}/favorite_groups">
+        <label class="visually-hidden" for="add-group">{{ t("artist-group") }}</label>
+        <select id="add-group" name="group">
+          {% for g in favorite_groups.others %}<option value="{{ g.id }}">{{ g.name }}</option>{% endfor %}
+        </select>
+        <button type="submit">{{ t("add") }}</button>
+      </form>
+      {% endif %}
+      <p class="hint"><a href="/favorite_groups/new">{{ t("fav-group-new-button") }}</a></p>
+    </section>
+    {% endif %}
+    {% if pools.can_add %}
+    <section class="tag-group post-pools">
+      <h2>{{ t("nav-pools") }}</h2>
+      <details class="edit">
+        <summary>{{ t("post-add-to-pool") }}</summary>
+        <form method="post" action="/posts/{{ post.id }}/pools">
+          <label for="add-pool">{{ t("post-pool-field") }}</label>
+          <input id="add-pool" name="pool" required autocomplete="off" spellcheck="false">
+          <button type="submit">{{ t("add") }}</button>
+        </form>
+      </details>
+    </section>
+    {% endif %}
+    <section class="tag-group post-history">
+      <h2>{{ t("tag-nav-history") }}</h2>
+      <ul class="tag-list">
+        <li><a href="/posts/{{ post.id }}/history">{{ t("nav-tags") }}</a></li>
+        {% if post.has_notes %}<li><a href="/posts/{{ post.id }}/notes/history">{{ t("sm-notes") }}</a></li>{% endif %}
+        {% if commentary and commentary.history_url %}<li><a href="{{ commentary.history_url }}">{{ t("commentary") }}</a></li>{% endif %}
+      </ul>
+    </section>
+  </aside>
+  <section class="post-media">
+    {% if search.back_url %}
+    <nav class="search-nav" aria-label="{{ t('post-search-results') }}">
+      {% if search.steps %}<a href="{{ search.steps.previous }}" rel="prev" title="{{ t('post-previous-key') }}">‹ {{ t("previous") }}</a>{% endif %}
+      <span class="back">{{ t("search") }}: <a href="{{ search.back_url }}">{{ search.tags or t("post-all-posts") }}</a></span>
+      {% if search.steps %}<a href="{{ search.steps.next }}" rel="next" title="{{ t('post-next-key') }}">{{ t("next") }} ›</a>{% endif %}
+    </nav>
+    {% endif %}
+    {% if deleted %}<p class="notice">{% if deleted.by %}{{ t("deleted-when-by", when=deleted.when, user=deleted.by) }}{% else %}{{ t("deleted-when", when=deleted.when) }}{% endif %}{% if deleted.reason %}: “{{ deleted.reason }}”{% endif %}</p>
+    {% elif post.status != "active" %}<p class="notice">{{ t("post-is", status=t("status-" ~ post.status)) }}</p>{% endif %}
+    {% if moderate.locked %}<p class="notice">{% set names %}{% for l in moderate.locked %}{{ t("lock-" ~ l)|lower }}{% if not loop.last %}, {% endif %}{% endfor %}{% endset %}{{ t("post-locked", locks=names) }}</p>{% endif %}
+    {% if processing %}<p class="notice">{{ t("post-processing") }}</p>{% endif %}
+    {% if tag_warnings %}
+    <div class="notice tag-warnings" role="status">
+      <p>{{ t("post-warnings") }}</p>
+      <ul>
+        {% for w in tag_warnings %}
+        <li>{{ t("tag-warning-" ~ w.key, count=w.count, min=w.min, name=w.name, actual=w.actual, wanted=w.wanted, vowel=w.vowel) }}{% if w.tags %} {% for tag in w.tags %}<a href="{{ tag.url }}">{{ tag.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+    {% for p in pools.pools %}
+    <nav class="pool-nav{% if p.current %} current{% endif %}" aria-label="{{ t('post-pool', name=p.name) }}">
+      <span class="pool-steps">
+        {% if p.first %}<a href="{{ p.first }}" title="{{ t('first') }}">«</a>{% else %}<span aria-hidden="true">«</span>{% endif %}
+        {% if p.previous %}<a href="{{ p.previous }}"{% if p.current %} rel="prev"{% endif %} title="{{ t('previous') }}">{{ t("post-pool-prev") }}</a>{% else %}<span aria-hidden="true">{{ t("post-pool-prev") }}</span>{% endif %}
+      </span>
+      <span class="pool-name"><a href="{{ p.url }}">{{ p.name }}</a> <span class="hint">{{ p.position }}/{{ p.post_count }}</span>{% if p.category == "series" %} · <a href="{{ p.read_url }}/{{ p.position }}">{{ t("pool-read") }}</a>{% endif %}</span>
+      <span class="pool-steps">
+        {% if p.next %}<a href="{{ p.next }}"{% if p.current %} rel="next"{% endif %} title="{{ t('next') }}">{{ t("post-pool-next") }}</a>{% else %}<span aria-hidden="true">{{ t("post-pool-next") }}</span>{% endif %}
+        {% if p.last %}<a href="{{ p.last }}" title="{{ t('last') }}">»</a>{% else %}<span aria-hidden="true">»</span>{% endif %}
+      </span>
+    </nav>
+    {% endfor %}
+    {% if blacklisted %}
+    <p class="notice blacklisted">{{ t("post-blacklisted", rule=blacklisted.rule, url=blacklisted.show_url) }}</p>
+    {% elif file.ugoira and not file.play %}
+    <p class="notice">{{ t("post-ugoira-preparing") }}</p>
+    {% if file.poster %}<img src="{{ file.poster }}" width="{{ file.width }}" height="{{ file.height }}" alt="{{ t('post-number', id=post.id) }}">{% endif %}
+    {% elif file.video %}
+    <video src="{{ file.play }}"{% if file.poster %} poster="{{ file.poster }}"{% endif %}
+           width="{{ file.width }}" height="{{ file.height }}" controls loop preload="metadata" playsinline{% if file.ugoira %} autoplay muted{% endif %}></video>
+    {% if file.ugoira %}<p class="hint">{{ t("post-ugoira", url=file.original) }}</p>{% endif %}
+    {% else %}
+    {% if file.resized %}
+    <p class="notice resized" data-resized data-percent="{{ file.resized.percent }}" data-sample="{{ file.resized.sample }}" data-original="{{ file.original }}">
+      <span>{% if file.resized.showing_original %}{{ t("js-resized-original") }}{% else %}{{ t("post-resized-to", percent=file.resized.percent) }}{% endif %}</span>
+      <a href="{{ file.resized.toggle_url }}">{% if file.resized.showing_original %}{{ t("js-resized-show-resized") }}{% else %}{{ t("js-resized-show-original") }}{% endif %}</a>
+    </p>
+    {% endif %}
+    <div class="note-layer" data-notes{% if post.embedded_notes %} data-notes-embedded{% endif %}{% if can_edit_notes %} data-notes-editable data-post="{{ post.id }}"{% endif %}>
+      <a href="{{ file.original }}">
+        <img src="{{ file.display }}" width="{{ file.width }}" height="{{ file.height }}" alt="{{ t('post-number', id=post.id) }}">
+      </a>
+      {% if notes or can_edit_notes %}
+      <svg class="notes" viewBox="0 0 {{ file.width }} {{ file.height }}" preserveAspectRatio="none" aria-hidden="true">
+        {% for n in notes %}<rect class="note-box" data-note="{{ n.id }}" data-version="{{ n.version }}" data-body="{{ n.body }}" x="{{ n.x }}" y="{{ n.y }}" width="{{ n.width }}" height="{{ n.height }}" vector-effect="non-scaling-stroke"><title>{{ n.body }}</title></rect>{% endfor %}
+      </svg>
+      {% endif %}
+    </div>
+    {% if notes %}
+    <details class="note-list">
+      <summary>{{ t("post-notes", count=notes|length) }}</summary>
+      <ol>
+        {% for n in notes %}<li id="note-{{ n.id }}" data-note-text="{{ n.id }}"><div class="markup">{{ n.html }}</div></li>{% endfor %}
+      </ol>
+      {% if can_edit_notes %}
+      <form method="post" action="/posts/{{ post.id }}/notes/embed" class="inline">
+        <input type="hidden" name="embedded" value="{{ '0' if post.embedded_notes else '1' }}">
+        <button type="submit" class="secondary">{% if post.embedded_notes %}{{ t("post-notes-hover") }}{% else %}{{ t("post-notes-embed") }}{% endif %}</button>
+      </form>
+      {% endif %}
+    </details>
+    {% endif %}
+    {% endif %}
+    {% if post.description %}<p class="description">{{ post.description }}</p>{% endif %}
+    {% if commentary %}
+    <section id="commentary" class="commentary" aria-labelledby="commentary-heading">
+      {% if commentary.shown %}
+      {% set c = commentary.shown %}
+      <h2 id="commentary-heading">{{ t("commentary") }}</h2>
+      {% if c.translated %}
+      <div class="commentary-text">
+        {% if c.translated_title %}<h3>{{ c.translated_title }}</h3>{% endif %}
+        {% if c.translated_html %}<div class="markup">{{ c.translated_html }}</div>{% endif %}
+      </div>
+      {% if c.original %}
+      <details class="commentary-original">
+        <summary>{{ t("commentary-original") }}</summary>
+        {% if c.original_title %}<h3>{{ c.original_title }}</h3>{% endif %}
+        {% if c.original_html %}<div class="markup">{{ c.original_html }}</div>{% endif %}
+      </details>
+      {% endif %}
+      {% else %}
+      <div class="commentary-text">
+        {% if c.original_title %}<h3>{{ c.original_title }}</h3>{% endif %}
+        {% if c.original_html %}<div class="markup">{{ c.original_html }}</div>{% endif %}
+      </div>
+      {% endif %}
+      {% if commentary.history_url %}<p class="hint"><a href="{{ commentary.history_url }}">{{ t("post-commentary-history") }}</a></p>{% endif %}
+      {% else %}
+      <h2 id="commentary-heading" class="visually-hidden">{{ t("commentary") }}</h2>
+      {% endif %}
+      {% if commentary.form %}
+      {% set f = commentary.form %}
+      <details class="edit">
+        <summary>{% if commentary.shown %}{{ t("post-commentary-edit") }}{% else %}{{ t("post-commentary-add") }}{% endif %}</summary>
+        <form method="post" action="/posts/{{ post.id }}/commentary">
+          <input type="hidden" name="base" value="{{ f.base }}">
+          <label for="commentary-original-title">{{ t("post-commentary-original-title") }}</label>
+          <input id="commentary-original-title" name="original_title" value="{{ f.original_title }}" maxlength="1000">
+          <label for="commentary-original-description">{{ t("post-commentary-original-description") }}</label>
+          <textarea id="commentary-original-description" name="original_description" rows="4">{{ f.original_description }}</textarea>
+          <label for="commentary-translated-title">{{ t("post-commentary-translated-title") }}</label>
+          <input id="commentary-translated-title" name="translated_title" value="{{ f.translated_title }}" maxlength="1000">
+          <label for="commentary-translated-description">{{ t("post-commentary-translated-description") }}</label>
+          <textarea id="commentary-translated-description" name="translated_description" rows="4">{{ f.translated_description }}</textarea>
+          <p class="hint">{{ t("post-commentary-hint") }}</p>
+          <button type="submit">{{ t("common-save") }}</button>
+        </form>
+      </details>
+      {% endif %}
+    </section>
+    {% endif %}
+    {% if family %}
+    <section class="family" aria-label="{{ t('post-family') }}">
+      <p>{% if family.is_child %}{{ t("post-has-parent", id=family.root) }}{% else %}{{ t("post-has-children") }}{% endif %}</p>
+      <ul class="family-cards">
+        {% for card in family.cards %}
+        <li{% if card.current %} class="current"{% endif %}>
+          <a href="{{ card.href }}">
+            {% if card.thumb %}<img src="{{ card.thumb }}" width="{{ card.width }}" height="{{ card.height }}" alt="{{ t('post-number', id=card.id) }}" loading="lazy">
+            {% else %}<img class="pending-media" src="{{ asset('processing.svg') }}" width="{{ card.width }}" height="{{ card.height }}" alt="{{ t('post-number', id=card.id) }}">{% endif %}
+          </a>
+        </li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if similar %}
+    <section class="family similar" aria-label="{{ t('post-similar') }}">
+      <p>{{ t('post-similar') }} <a class="hint" href="{{ search_url('similar:' ~ post.id) }}">{{ t('post-similar-search') }}</a></p>
+      <ul class="family-cards">
+        {% for card in similar %}
+        <li><a href="{{ card.href }}">{% if card.thumb %}<img src="{{ card.thumb }}" width="{{ card.width }}" height="{{ card.height }}" alt="{{ t('post-number', id=card.id) }}" loading="lazy">{% else %}#{{ card.id }}{% endif %}</a></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if moderate.disapprovals %}
+    <section class="family flags" aria-label="{{ t('post-disapprovals') }}">
+      <p>{{ t("post-disapprovals-intro") }}</p>
+      <ul class="plain">
+        {% for d in moderate.disapprovals %}<li>{{ d.when }} {{ d.by }}: {{ t("disapproval-reason-" ~ d.reason) if d.known else d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if moderate.flags %}
+    <section class="family flags" aria-label="{{ t('mod-nav-flags') }}">
+      <p>{{ t("mod-nav-flags") }}</p>
+      <ul class="plain">
+        {% for f in moderate.flags %}<li><span class="status status-{{ f.status }}">{{ t("status-" ~ f.status) }}</span> {{ f.when }}{% if f.by %} {{ t("by-user", user=f.by) }}{% endif %}: {{ f.reason }}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if moderate.appeal.history %}
+    <section class="family flags" aria-label="{{ t('mod-nav-appeals') }}">
+      <p>{{ t("mod-nav-appeals") }}</p>
+      <ul class="plain">
+        {% for a in moderate.appeal.history %}<li><span class="status status-{{ 'open' if a.status == 'open' else 'dismissed' }}">{{ t('status-' ~ a.status) }}</span> {{ a.when }}{% if a.by %} {{ t('by-user', user=a.by) }}{% endif %}: {{ a.reason }}{% if a.decided_by %} <span class="hint">({{ t('decided-by', user=a.decided_by) }})</span>{% endif %}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if moderate.appeal.can_appeal %}
+    <details class="edit">
+      <summary>{{ t("appeal") }}</summary>
+      <form method="post" action="/posts/{{ post.id }}/appeal">
+        <label for="appeal-reason">{{ t("post-appeal-why") }}</label>
+        <input id="appeal-reason" name="reason" maxlength="2000" required>
+        <button type="submit">{{ t("appeal") }}</button>
+      </form>
+    </details>
+    {% endif %}
+    {% if can_replace %}
+    <details class="edit">
+      <summary>{{ t("post-replace") }}</summary>
+      <form method="post" action="/posts/{{ post.id }}/replace" enctype="multipart/form-data">
+        <label for="replace-file">{{ t("post-replace-file") }}</label>
+        <input id="replace-file" name="file" type="file">
+        <label for="replace-url">{{ t("upload-url") }}</label>
+        <input id="replace-url" name="url" type="url" placeholder="https://">
+        <label for="replace-reason">{{ t("post-replace-why") }}</label>
+        <input id="replace-reason" name="reason" maxlength="1000" placeholder="{{ t('post-replace-placeholder') }}">
+        <label class="choice"><input type="checkbox" name="rescale_notes" checked> {{ t("post-replace-notes") }}</label>
+        <p class="hint">{{ t("post-replace-hint", id=post.id) }}</p>
+        <button type="submit" data-confirm="{{ t('post-replace-confirm') }}">{{ t("post-replace-button") }}</button>
+      </form>
+    </details>
+    {% endif %}
+    {% if moderate.can_flag %}
+    <details class="edit">
+      <summary>{{ t("flag") }}</summary>
+      <form method="post" action="/posts/{{ post.id }}/flag">
+        {{ reason_fields("flag-reason", reasons.flag, t("post-flag-why")) }}
+        <button type="submit">{{ t("post-flag") }}</button>
+      </form>
+    </details>
+    {% endif %}
+    {% if moderate.can_review or moderate.can_delete or moderate.can_restore or moderate.can_lock %}
+    <details class="edit moderate"{% if moderate.can_review %} open{% endif %}>
+      <summary>{{ t("moderate") }}</summary>
+      {% if moderate.can_review %}
+      <p class="hint">{{ t("post-waiting") }}</p>
+      <form method="post" action="/posts/{{ post.id }}/approve?from=post"><button type="submit">{{ t("approve") }}</button></form>
+      <form method="post" action="/posts/{{ post.id }}/reject?from=post">
+        {{ reason_fields("reject-reason", reasons.deletion, t("reason-rejecting"), required=false) }}
+        <button type="submit" class="secondary">{{ t("reject") }}</button>
+      </form>
+      {% endif %}
+      {% if moderate.can_lock %}
+      <form method="post" action="/posts/{{ post.id }}/locks">
+        <fieldset class="locks">
+          <legend>{{ t("post-locks") }}</legend>
+          {% for l in moderate.locks %}<label class="choice"><input type="checkbox" name="{{ l.name }}"{% if l.on %} checked{% endif %}> {{ t("lock-" ~ l.name) }}</label>{% endfor %}
+        </fieldset>
+        <button type="submit" class="secondary">{{ t("post-locks-save") }}</button>
+      </form>
+      {% endif %}
+      {% if moderate.can_delete %}
+      <form method="post" action="/posts/{{ post.id }}/delete">
+        {{ reason_fields("delete-reason", reasons.deletion, t("reason-deleting")) }}
+        <button type="submit">{{ t("delete") }}</button>
+      </form>
+      {% endif %}
+      {% if moderate.can_restore %}
+      <form method="post" action="/posts/{{ post.id }}/restore"><button type="submit">{{ t("restore") }}</button></form>
+      {% endif %}
+      {% if moderate.can_purge %}
+      <form method="post" action="/posts/{{ post.id }}/purge">
+        <p class="hint">{{ t("post-purge-hint") }}</p>
+        <button type="submit" class="danger" data-confirm="{{ t('post-purge-confirm', id=post.id) }}">{{ t("mod-nav-purge") }}</button>
+      </form>
+      {% endif %}
+    </details>
+    {% endif %}
+    {% if edit %}
+    <details id="edit" class="edit"{% if edit.error %} open{% endif %}>
+      <summary>{{ t("edit") }}</summary>
+      {% if edit.error %}<p class="form-error" role="alert">{{ edit.error }}</p>{% endif %}
+      <form method="post" action="/posts/{{ post.id }}/edit{% if search.tags %}?q={{ search.tags|urlencode }}{% endif %}">
+        <input type="hidden" name="old_tags" value="{{ edit.old_tags }}">
+        <label for="edit-tags">{{ t("nav-tags") }}</label>
+        <textarea id="edit-tags" name="tags" rows="4" autocapitalize="none" spellcheck="false" data-autocomplete="edit"{% if edit.tags_locked %} readonly{% endif %}>{{ edit.tags }}</textarea>
+        {% if edit.tags_locked %}<p class="hint">{{ t("post-tags-locked") }}</p>
+        {% else %}<div class="related-tags" data-related-tags="edit-tags"><a class="hint" href="/tags/related?tags={{ edit.old_tags | urlencode }}">{{ t("related-title") }}</a></div>{% endif %}
+        <fieldset class="ratings">
+          <legend>{{ t("rating") }}</legend>
+          {% for rating in ratings %}
+          <label class="choice"><input type="radio" name="rating" value="{{ rating.code }}"{% if edit.rating == rating.code %} checked{% elif edit.rating_locked %} disabled{% endif %}> {{ t("rating-" ~ rating.code) }}</label>
+          {% endfor %}
+        </fieldset>
+        <label for="edit-source">{{ t("source") }}</label>
+        <input id="edit-source" name="source" type="url" value="{{ edit.source }}" maxlength="2048">
+        <label for="edit-parent">{{ t("post-parent") }}</label>
+        <input id="edit-parent" name="parent" value="{{ edit.parent }}" inputmode="numeric" placeholder="{{ t('none') }}">
+        <label for="edit-description">{{ t("description") }}</label>
+        <textarea id="edit-description" name="description" rows="3" maxlength="20000">{{ edit.description }}</textarea>
+        <button type="submit">{{ t("common-save") }}</button>
+        {# After Save, which Enter in a field must keep pressing. #}
+        {% if copy_tags %}
+        <div class="copy-tags" data-copy-tags>
+          <h3>{{ t("post-copy-tags") }}</h3>
+          <ul>
+            {% for source in copy_tags %}
+            <li><button type="submit" name="copy_from" value="{{ source.id }}" class="secondary" data-tags="{{ source.tags }}" title="{{ source.tags }}">{% if source.parent %}{{ t("post-copy-from-parent", id=source.id) }}{% else %}{{ t("post-copy-from-child", id=source.id) }}{% endif %}</button></li>
+            {% endfor %}
+          </ul>
+          <p class="hint" data-copy-tags-hint>{{ t("post-copy-hint") }}</p>
+        </div>
+        {% endif %}
+        {% if suggestions %}
+        <div class="suggestions" data-suggestions>
+          <h3>{{ t("post-suggested") }}</h3>
+          {% if suggestions.pending %}
+          <p class="hint">{{ t("post-suggested-pending") }}</p>
+          {% else %}
+          {% if suggestions.tags %}
+          <ul class="suggested-tags">
+            {% for tag in suggestions.tags %}
+            <li><button type="submit" name="add" value="{{ tag.name }}" title="{{ t('post-suggested-add', tag=tag.name, percent=tag.confidence) }}"><span class="tag-{{ tag.category }}">{{ tag.name }}</span> <span class="confidence">{{ tag.confidence }}%</span></button></li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+          {% if suggestions.rating %}
+          <p class="suggested-rating">{{ t("post-suggested-rating") }} <button type="submit" name="suggested_rating" value="{{ suggestions.rating.code }}" title="{{ t('post-rate-it', rating=t('rating-' ~ suggestions.rating.code)) }}">{{ t("rating-" ~ suggestions.rating.code) }} <span class="confidence">{{ suggestions.rating.confidence }}%</span></button></p>
+          {% endif %}
+          <p class="hint" data-suggestions-hint>{{ t("post-suggested-hint") }}</p>
+          {% endif %}
+        </div>
+        {% endif %}
+      </form>
+    </details>
+    {% endif %}
+    <section id="comments" class="comments" aria-labelledby="comments-heading">
+      <h2 id="comments-heading">{{ t("nav-comments") }}{% if comments.count %} <span class="count">{{ comments.count }}</span>{% endif %}</h2>
+      {% if comments.hidden %}
+      <p class="hint">{{ t("post-comments-hidden", url=comments.all_url) }}</p>
+      {% else %}
+      {% if comments.older %}<p><a href="{{ comments.all_url }}">{{ t("post-older-comments", count=comments.older) }}</a></p>{% endif %}
+      {% for comment in comments.comments %}{% include "comment.html" %}{% else %}<p class="hint">{{ t("comments-none") }}</p>{% endfor %}
+      {% if comments.error %}<p class="form-error" role="alert">{{ comments.error }}</p>{% endif %}
+      {% if comments.can_comment %}
+      <form id="new-comment" class="comment-form" method="post" action="/posts/{{ post.id }}/comments">
+        <label for="comment-body">{{ t("comment-add") }}</label>
+        <textarea id="comment-body" name="body" rows="4" maxlength="{{ comments.max_len }}" required>{{ comments.draft }}</textarea>
+        {% include "comment_help.html" %}
+        <label class="choice"><input type="checkbox" name="do_not_bump" value="1"> {{ t("post-do-not-bump") }}</label>
+        {% if comments.captcha %}
+        <script src="{{ comments.captcha.script }}" async defer></script>
+        <div class="{{ comments.captcha.class }}" data-sitekey="{{ comments.captcha.site_key }}"></div>
+        {% endif %}
+        <button type="submit">{{ t("comment-post") }}</button>
+      </form>
+      {% elif comments.login_needed %}
+      <p class="hint">{{ t("post-log-in-to-comment", id=post.id) }}</p>
+      {% endif %}
+      {% endif %}
+    </section>
+  </section>
+</div>
+{% endblock %}

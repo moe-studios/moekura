@@ -9,3 +9,18 @@
   --accent-text: light-dark(#ffffff, #0b1320);
   --shell: light-dark(#132a4d, #0e1d36);
 }
+
+/* The classic layout: deep teal links under a sea-foam menu. */
+:root[data-layout="classic"] {
+  --bg: light-dark(#ffffff, #0f1b21);
+  --surface: light-dark(#ffffff, #14242b);
+  --text: light-dark(#11272f, #e0edf2);
+  --muted: light-dark(#4f6b77, #92adb8);
+  --border: light-dark(#cfe0e7, #28414b);
+  --accent: light-dark(#006b87, #4cc0dc);
+  --accent-hover: light-dark(#00465a, #9be0f0);
+  --accent-text: light-dark(#ffffff, #0f1b21);
+  --menu: light-dark(#e2f2f6, #1b3440);
+  --stripe: light-dark(#f2f8fa, #13222a);
+  --tint: light-dark(#dceff5, #1f3a46);
+}

@@ -4,7 +4,8 @@
 
 **Settings**, at the top of every page, holds how the site looks to you:
 
-- **Posts per page**, the **theme** and light or dark **mode**.
+- **Posts per page**, the **layout** (Modern, or Classic like Danbooru), the
+  **theme** and light or dark **mode**.
 - **Blacklist**: posts matching a line are left out of grids, with a
   count and a link to show them. Searches, popular posts, an artist's
   posts and your feeds leave them out as part of the search, so every

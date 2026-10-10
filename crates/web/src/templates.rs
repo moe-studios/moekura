@@ -124,6 +124,7 @@ fn environment(
             load_source(override_dir.as_ref(), name)
         }
     });
+    let icons = assets.clone();
     // Asset URLs are built by us from hex hashes and embedded paths, so
     // they are marked safe; escaping would turn `/` into `&#x2f;`.
     env.add_function("asset", move |path: &str| {
@@ -137,11 +138,16 @@ fn environment(
                 )
             })
     });
-    // The site a link is on, if it's one we know: its icon's id and
-    // name.
-    env.add_function("site_of", |url: &str| {
+    // The site a link is on, if it's one we know: its key, name and
+    // icon's URL (its favicon, or its initials where that couldn't be
+    // fetched; see scripts/fetch-site-icons.py).
+    env.add_function("site_of", move |url: &str| {
         moekura_core::sites::site_of(url).map_or(Value::UNDEFINED, |site| {
-            minijinja::context! { key => site.key, name => site.name }
+            let icon = ["png", "svg"]
+                .iter()
+                .find_map(|ext| icons.url(&format!("site-icons/{}.{ext}", site.key)))
+                .map(|url| Value::from_safe_string(url.to_owned()));
+            minijinja::context! { key => site.key, name => site.name, icon }
         })
     });
     env.add_function("search_url", |query: &str| {
@@ -200,6 +206,27 @@ mod tests {
 
     fn locales() -> Arc<Locales> {
         Arc::new(Locales::load(None).unwrap())
+    }
+
+    /// Every site links are recognised on has an icon.
+    #[test]
+    fn sites_have_icons() {
+        let assets = assets();
+        let missing: Vec<_> = moekura_core::sites::ALL
+            .iter()
+            .filter(|site| {
+                ["png", "svg"].iter().all(|ext| {
+                    assets
+                        .url(&format!("site-icons/{}.{ext}", site.key))
+                        .is_none()
+                })
+            })
+            .map(|site| site.key)
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "no icon in static/site-icons for {missing:?}"
+        );
     }
 
     /// Every `t("key")` with a literal key names a message.

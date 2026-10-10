@@ -698,7 +698,7 @@ button.fave[aria-pressed="true"] { background: var(--danger); border-color: var(
 .post-facts dt { padding-right: 14px; color: var(--muted); font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; align-self: stretch; display: flex; align-items: center; }
 .post-facts dd { font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 /* The site a link is on (site_icon.html). */
-.site-icon { width: 1em; height: 1em; fill: currentColor; vertical-align: -0.125em; margin-inline-end: .3em; flex: none; }
+.site-icon { width: 1em; height: 1em; border-radius: 3px; object-fit: contain; vertical-align: -0.125em; margin-inline-end: .3em; flex: none; }
 /* Kept beside a long source as it wraps. */
 dd.source:has(> .site-icon) { display: flex; align-items: flex-start; }
 dd.source > .site-icon { margin-top: .2em; }

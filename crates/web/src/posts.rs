@@ -1628,7 +1628,7 @@ mod tests {
             .unwrap();
         let page = app.get(&format!("/posts/{id}"), None).await;
         assert!(
-            page.body.contains("<title>Pixiv</title>") && page.body.contains("#pixiv\""),
+            page.body.contains(r#"alt="Pixiv""#) && page.body.contains("/site-icons/pixiv."),
             "{}",
             page.body
         );

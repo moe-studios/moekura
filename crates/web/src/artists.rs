@@ -999,7 +999,7 @@ mod tests {
         // Saved in its canonical form, with the site's icon.
         assert!(shown.body.contains("x.com&#x2f;catart"), "{}", shown.body);
         assert!(
-            shown.body.contains(r#"<title>X</title>"#) && shown.body.contains("#twitter"),
+            shown.body.contains(r#"alt="X""#) && shown.body.contains("/site-icons/twitter."),
             "{}",
             shown.body
         );

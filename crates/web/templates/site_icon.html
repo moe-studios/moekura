@@ -1,2 +1,2 @@
 {# The icon of the site a link is on (moekura_core::sites), named for screen readers and on hover; nothing for other sites. #}
-{% macro site_icon(url) %}{% set found = site_of(url) %}{% if found %}<svg class="site-icon" role="img" aria-label="{{ found.name }}"><title>{{ found.name }}</title><use href="{{ asset('site-icons.svg') }}#{{ found.key }}"></use></svg>{% endif %}{% endmacro %}
+{% macro site_icon(url) %}{% set found = site_of(url) %}{% if found and found.icon %}<img class="site-icon" src="{{ found.icon }}" alt="{{ found.name }}" title="{{ found.name }}" width="16" height="16" loading="lazy" decoding="async">{% endif %}{% endmacro %}

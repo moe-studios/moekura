@@ -569,6 +569,8 @@ form .suggestions button[type="submit"] { background: var(--border); color: var(
 .related-group button { margin: 0; padding: 0; background: none; border: 0; font: inherit; cursor: pointer; text-align: start; }
 .related-group button[aria-pressed="true"], .related-group a.selected { font-weight: 700; }
 .related-group button[aria-pressed="true"]::before { content: "✓ "; }
+/* Long lists show their first ten (related-tags.ts) until "Show all". */
+.related-group.collapsed li:nth-child(n + 11) { display: none; }
 .copy-tags { margin-top: 20px; }
 .copy-tags h3 { margin: 0 0 6px; font-size: 0.95rem; }
 .copy-tags ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }

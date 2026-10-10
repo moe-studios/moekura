@@ -42,7 +42,7 @@
       <select id="ban-days" name="days">
         {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ t("ban-for-" ~ (d.days or "ever")) }}</option>{% endfor %}
       </select>
-      <button type="submit" class="danger">{{ t("ban-user", user=user.name) }}</button>
+      <button type="submit" class="danger" data-confirm="{{ t('ban-user-confirm', user=user.name) }}">{{ t("ban-user", user=user.name) }}</button>
     </form>
   </details>
   {% if banned %}

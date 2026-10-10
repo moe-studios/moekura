@@ -59,6 +59,9 @@ function sourceOf(field: HTMLTextAreaElement): string | null {
   return null;
 }
 
+/** Tags a related list shows before "Show all". Kept in step with main.css. */
+const RELATED_SHOWN = 10;
+
 export function enableRelatedTags(root: Document = document): void {
   for (const panel of root.querySelectorAll<HTMLElement>("[data-related-tags]")) {
     const field = root.getElementById(panel.dataset["relatedTags"] ?? "");
@@ -98,6 +101,20 @@ function attach(panel: HTMLElement, field: HTMLTextAreaElement): void {
           items.append(item);
         }
         section.append(title, items);
+        // Long lists show their first rows, with a button for the rest.
+        if (group.tags.length > RELATED_SHOWN) {
+          section.classList.add("collapsed");
+          const more = document.createElement("button");
+          more.type = "button";
+          more.className = "link related-more";
+          more.textContent = t("related-more", "Show all {$count}", { count: group.tags.length });
+          more.addEventListener("click", () => {
+            section.classList.remove("collapsed");
+            more.remove();
+            items.querySelector<HTMLButtonElement>(`li:nth-child(${RELATED_SHOWN + 1}) button`)?.focus();
+          });
+          section.append(more);
+        }
         return section;
       }),
     );

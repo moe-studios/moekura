@@ -138,6 +138,8 @@ ban-for-30 = 1 month
 ban-for-365 = 1 year
 ban-for-ever = Until lifted
 ban-user = Ban { $user }
+# %days% is filled in from the form.
+ban-user-confirm = Ban { $user }? Length: %days%. They can still look around, but not post, edit or vote.
 ban-lift = Lift the ban
 ban-lifted = lifted
 never-banned = Never banned.
@@ -225,6 +227,8 @@ ban-network-placeholder = 203.0.113.7, 203.0.113.0/24 or 2001:db8::/64
 ban-partial-option = Partial: can look, can't register, log in or change anything
 ban-full-option = Full: can't see the site
 ban-network = Ban network
+# Asked before banning; %network%, %kind% and %days% are filled in from the form as typed and chosen.
+ban-network-confirm = Ban %network%? %kind%. Length: %days%.
 queue-hint = Pending posts you didn't upload and haven't disapproved (<a href="{ $url }">status:unmoderated</a>). Disapproving passes on a post without rejecting it: it leaves your queue, and other approvers see why.
 queue-placeholder = tags, user:name, rating:e…
 order = Order

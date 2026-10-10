@@ -3,6 +3,11 @@
 //! Templates are embedded from `crates/web/templates`. A file with the same
 //! name in `paths.templates_override` replaces the built-in one, so admins
 //! can restyle pages without recompiling. Output is HTML-escaped by default.
+//!
+//! The classic layout has its own versions of a few templates (the page
+//! shell, the post grid and page, thumbnails, profiles) under `classic/`;
+//! every other page is shared. In that layout `classic/<name>` is looked
+//! for first, in the override directory and then built in.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,6 +17,8 @@ use minijinja::{Environment, Error, ErrorKind, State, Value};
 use rust_embed::RustEmbed;
 use serde::Serialize;
 
+use moekura_core::user_settings::Layout;
+
 use crate::assets::Assets;
 use crate::i18n::{self, Locales};
 
@@ -19,8 +26,13 @@ use crate::i18n::{self, Locales};
 #[folder = "templates/"]
 struct Embedded;
 
+/// Where the classic layout's own templates live, among the others.
+const CLASSIC_DIR: &str = "classic/";
+
 pub struct Templates {
     env: Environment<'static>,
+    /// The same, loading the classic layout's templates where it has them.
+    classic: Environment<'static>,
 }
 
 impl Templates {
@@ -31,63 +43,111 @@ impl Templates {
         assets: Arc<Assets>,
         locales: Arc<Locales>,
     ) -> Result<Self, Error> {
-        let mut env = Environment::new();
-        // `t("key", name=value, …)`: message `key` in the page's language
-        // (`lang`), its values escaped unless safe.
-        env.add_function(
-            "t",
-            move |state: &State, key: &str, kwargs: Kwargs| -> Result<Value, Error> {
-                let lang = i18n::rendering()
-                    .or_else(|| state.lookup("lang")?.as_str().map(str::to_owned))
-                    .unwrap_or_else(|| i18n::DEFAULT.to_owned());
-                let lang = lang.as_str();
-                let mut args = fluent_bundle::FluentArgs::new();
-                for name in kwargs.args() {
-                    let value: Value = kwargs.get(name)?;
-                    args.set(name.to_owned(), i18n::argument(&value));
-                }
-                Ok(Value::from_safe_string(locales.format(
-                    lang,
-                    key,
-                    Some(&args),
-                )))
-            },
-        );
-        env.add_global("build_version", env!("MOEKURA_BUILD_VERSION"));
-        env.set_loader(move |name| load_source(override_dir.as_ref(), name));
-        // Asset URLs are built by us from hex hashes and embedded paths, so
-        // they are marked safe; escaping would turn `/` into `&#x2f;`.
-        env.add_function("asset", move |path: &str| {
-            assets
-                .url(path)
-                .map(|url| Value::from_safe_string(url.to_owned()))
-                .ok_or_else(|| {
-                    Error::new(
-                        ErrorKind::InvalidOperation,
-                        format!("unknown asset `{path}`"),
-                    )
-                })
-        });
-        // The site a link is on, if it's one we know: its icon's id and
-        // name.
-        env.add_function("site_of", |url: &str| {
-            moekura_core::sites::site_of(url).map_or(Value::UNDEFINED, |site| {
-                minijinja::context! { key => site.key, name => site.name }
-            })
-        });
-        env.add_function("search_url", |query: &str| {
-            Value::from_safe_string(search_url(query))
-        });
-        let templates = Self { env };
+        let templates = Self {
+            env: environment(
+                Layout::Modern,
+                override_dir.clone(),
+                assets.clone(),
+                locales.clone(),
+            ),
+            classic: environment(Layout::Classic, override_dir, assets, locales),
+        };
         for name in Embedded::iter() {
             templates.env.get_template(&name)?;
+            if !name.starts_with(CLASSIC_DIR) {
+                templates.classic.get_template(&name)?;
+            }
         }
         Ok(templates)
     }
 
+    /// Renders `name` in the modern layout.
+    #[cfg(test)]
     pub fn render(&self, name: &str, context: impl Serialize) -> Result<String, Error> {
-        self.env.get_template(name)?.render(context)
+        self.render_in(Layout::Modern, name, context)
     }
+
+    /// Renders `name` in `layout`'s versions of the templates.
+    pub fn render_in(
+        &self,
+        layout: Layout,
+        name: &str,
+        context: impl Serialize,
+    ) -> Result<String, Error> {
+        let env = match layout {
+            Layout::Modern => &self.env,
+            Layout::Classic => &self.classic,
+        };
+        env.get_template(name)?.render(context)
+    }
+}
+
+/// The template environment for `layout`, with the functions templates use.
+fn environment(
+    layout: Layout,
+    override_dir: Option<PathBuf>,
+    assets: Arc<Assets>,
+    locales: Arc<Locales>,
+) -> Environment<'static> {
+    let mut env = Environment::new();
+    // `t("key", name=value, …)`: message `key` in the page's language
+    // (`lang`), its values escaped unless safe.
+    env.add_function(
+        "t",
+        move |state: &State, key: &str, kwargs: Kwargs| -> Result<Value, Error> {
+            let lang = i18n::rendering()
+                .or_else(|| state.lookup("lang")?.as_str().map(str::to_owned))
+                .unwrap_or_else(|| i18n::DEFAULT.to_owned());
+            let lang = lang.as_str();
+            let mut args = fluent_bundle::FluentArgs::new();
+            for name in kwargs.args() {
+                let value: Value = kwargs.get(name)?;
+                args.set(name.to_owned(), i18n::argument(&value));
+            }
+            Ok(Value::from_safe_string(locales.format(
+                lang,
+                key,
+                Some(&args),
+            )))
+        },
+    );
+    env.add_global("build_version", env!("MOEKURA_BUILD_VERSION"));
+    env.set_loader(move |name| match layout {
+        Layout::Modern => load_source(override_dir.as_ref(), name),
+        Layout::Classic => {
+            if !name.starts_with(CLASSIC_DIR)
+                && let Some(source) =
+                    load_source(override_dir.as_ref(), &format!("{CLASSIC_DIR}{name}"))?
+            {
+                return Ok(Some(source));
+            }
+            load_source(override_dir.as_ref(), name)
+        }
+    });
+    // Asset URLs are built by us from hex hashes and embedded paths, so
+    // they are marked safe; escaping would turn `/` into `&#x2f;`.
+    env.add_function("asset", move |path: &str| {
+        assets
+            .url(path)
+            .map(|url| Value::from_safe_string(url.to_owned()))
+            .ok_or_else(|| {
+                Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!("unknown asset `{path}`"),
+                )
+            })
+    });
+    // The site a link is on, if it's one we know: its icon's id and
+    // name.
+    env.add_function("site_of", |url: &str| {
+        moekura_core::sites::site_of(url).map_or(Value::UNDEFINED, |site| {
+            minijinja::context! { key => site.key, name => site.name }
+        })
+    });
+    env.add_function("search_url", |query: &str| {
+        Value::from_safe_string(search_url(query))
+    });
+    env
 }
 
 /// The search results page for `query`. Only URL-safe characters remain
@@ -245,6 +305,27 @@ mod tests {
                 .render("error.html", context! { status => 404 })
                 .unwrap(),
             "custom 404"
+        );
+
+        // The classic layout looks in `classic/` first, here and built in.
+        std::fs::create_dir_all(dir.join("classic")).unwrap();
+        std::fs::write(dir.join("classic/error.html"), "classic {{ status }}").unwrap();
+        let templates = Templates::load(Some(dir.clone()), assets(), locales()).unwrap();
+        let render = |layout| {
+            templates
+                .render_in(layout, "error.html", context! { status => 404 })
+                .unwrap()
+        };
+        assert_eq!(render(Layout::Modern), "custom 404");
+        assert_eq!(render(Layout::Classic), "classic 404");
+        std::fs::remove_file(dir.join("classic/error.html")).unwrap();
+        let templates = Templates::load(Some(dir.clone()), assets(), locales()).unwrap();
+        assert_eq!(
+            templates
+                .render_in(Layout::Classic, "error.html", context! { status => 404 })
+                .unwrap(),
+            "custom 404",
+            "the shared override when the layout has none"
         );
 
         std::fs::write(dir.join("error.html"), "{% if %}").unwrap();

@@ -26,6 +26,7 @@ markup-help = <code>[b]bold[/b]</code>, <code>[i]italic[/i]</code>, <code>[quote
     <code>[[tag]]</code> for a wiki page, <code>post #123</code>, <code>comment #45</code>, <code>@name</code> to notify someone, and plain links.
 chart-label = { $label }, at most { $most }
 card-alt = Post #{ $id }
+card-alt-tags = { $tags }, post #{ $id }
 card-alt-processing = Post #{ $id } (still processing)
 card-blacklisted = blacklisted
 card-video = video
@@ -293,3 +294,4 @@ api-body = Request body
 api-body-as = { $type } as <code>{ $content_type }</code>
 api-responses = Responses
 api-field = Field
+error-search-hint = The page may have moved or been deleted. Try searching for what you were after:

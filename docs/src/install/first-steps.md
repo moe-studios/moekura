@@ -19,8 +19,16 @@ Under **Admin → Settings**:
 
 - **Site name** and **Description** show in the header, the footer and to
   search engines (`<meta name="description">`).
-- **Logo**: an image (PNG, JPEG, GIF, WebP or AVIF, up to 1 MB) shown
-  beside the name in the header.
+- **Icon**: an image shown beside the name in the header, in place of
+  the house.
+- **Full logo**: an image shown in the header in place of both the icon
+  and the name, up to 56 pixels high.
+- **Favicon**: the icon in browser tabs and bookmarks, in place of the
+  house. A square PNG of at least 64 by 64 pixels works best.
+- **Hide the icon** and **Hide the site's name** leave either out of the
+  header; the name stays in page titles.
+
+  The images can be PNG, JPEG, GIF, WebP or AVIF, up to 1 MB each.
 - **Rules**: what may be posted and how to behave, in the same
   [markup](../using/wiki.md) as the wiki. They're shown at `/rules`, which
   anyone can read (on private sites too), and linked from the footer, the

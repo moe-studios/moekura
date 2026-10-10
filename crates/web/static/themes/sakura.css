@@ -1,10 +1,28 @@
-/* Sakura: pink, Moekura's first colours. */
+/* Sakura: pink, Moekura's first colours, under a plum band. */
 :root {
-  --bg: light-dark(#fbfafc, #16141a);
-  --surface: light-dark(#ffffff, #1f1c24);
-  --text: light-dark(#1f1d24, #ece9f1);
-  --muted: light-dark(#6b6775, #a39fad);
-  --border: light-dark(#e4e1ea, #34303b);
-  --accent: light-dark(#c42a61, #f06595);
-  --accent-text: light-dark(#ffffff, #16141a);
+  --bg: light-dark(#fbf8fa, #16121a);
+  --surface: light-dark(#ffffff, #1f1a24);
+  --text: light-dark(#221b24, #ece6f1);
+  --muted: light-dark(#6b6070, #a99fb0);
+  --border: light-dark(#ebe0e8, #362e3c);
+  /* Pinker than the artist tags' red, so links and artists stay apart. */
+  --accent: light-dark(#b8256f, #f590c8);
+  --accent-text: light-dark(#ffffff, #16121a);
+  --shell: light-dark(#5b1d43, #2b1426);
+}
+
+/* The classic layout: pink links under a blossom-pink menu, Moekura's first colours. */
+:root[data-layout="classic"] {
+  --bg: light-dark(#ffffff, #1d1820);
+  --surface: light-dark(#ffffff, #251f29);
+  --text: light-dark(#231c25, #ede6f0);
+  --muted: light-dark(#6d6172, #ab9fb2);
+  --border: light-dark(#e6d6e1, #3e3343);
+  /* Pinker than the artist tags' red, so links and artists stay apart. */
+  --accent: light-dark(#b8256f, #f590c8);
+  --accent-hover: light-dark(#7d1349, #ffc3e2);
+  --accent-text: light-dark(#ffffff, #1d1820);
+  --menu: light-dark(#fbe9f2, #36263a);
+  --stripe: light-dark(#fcf5f9, #241e28);
+  --tint: light-dark(#f8e3ee, #3a2a3f);
 }

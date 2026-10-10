@@ -1,83 +1,109 @@
 {% extends "base.html" %}
 {% block title %}{{ t("nav-settings") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<section class="card medium">
+<div class="settings medium">
   <h1>{{ t("nav-settings") }}</h1>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
-  <form method="post" action="/settings">
-    <label for="per_page">{{ t("settings-per-page") }}</label>
-    <select id="per_page" name="per_page">
-      <option value="">{{ t("settings-site-default", value=default_per_page) }}</option>
-      {% for n in per_page_choices %}
-      <option value="{{ n }}"{% if per_page == n %} selected{% endif %}>{{ n }}</option>
-      {% endfor %}
-    </select>
-    <label for="theme">{{ t("settings-theme") }}</label>
-    <select id="theme" name="theme">
-      <option value="">{{ t("settings-site-default", value=site_theme) }}</option>
-      {% for choice in themes %}
-      <option value="{{ choice.name }}"{% if current_theme == choice.name %} selected{% endif %}>{{ choice.label }}</option>
-      {% endfor %}
-    </select>
-    <fieldset class="ratings">
-      <legend>{{ t("footer-mode-label") }}</legend>
-      {% for m in modes %}
-      <label class="choice"><input type="radio" name="mode" value="{{ m }}"{% if current_mode == m %} checked{% endif %}> {{ t("settings-mode-" ~ m) }}</label>
-      {% endfor %}
-    </fieldset>
-    <label for="blacklist">{{ t("settings-blacklist") }}</label>
-    <textarea id="blacklist" name="blacklist" rows="5" autocapitalize="none" spellcheck="false">{{ blacklist }}</textarea>
-    <p class="hint">{{ t("settings-blacklist-hint") }}</p>
-    <label class="choice"><input type="checkbox" name="blur_blacklisted" value="1"{% if prefs_form.blur_blacklisted %} checked{% endif %}> {{ t("settings-blur") }}</label>
-    <fieldset class="group">
-      <legend>{{ t("settings-display") }}</legend>
-      <label class="choice"><input type="checkbox" name="safe_mode" value="1"{% if prefs_form.safe_mode %} checked{% endif %}> {{ t("settings-safe-mode") }}</label>
-      <label class="choice"><input type="checkbox" name="original_images" value="1"{% if prefs_form.original_images %} checked{% endif %}> {{ t("settings-original") }}</label>
-      {% if can_view_deleted %}<label class="choice"><input type="checkbox" name="show_deleted" value="1"{% if prefs_form.show_deleted %} checked{% endif %}> {{ t("settings-show-deleted") }}</label>{% endif %}
-      {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> {{ t("settings-large-thumbs", size=large_thumbnail_size) }}</label>{% endif %}
-      <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> {{ t("settings-hide-comments") }}</label>
-      <label class="choice"><input type="checkbox" name="email_notifications" value="1"{% if prefs_form.email_notifications %} checked{% endif %}> {{ t("settings-email-notifications") }}</label>
-      <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> {{ t("settings-autocomplete") }}</label>
-      <label class="choice"><input type="checkbox" name="shortcuts" value="1"{% if prefs_form.shortcuts %} checked{% endif %}> {{ t("footer-shortcuts") }}</label>
-    </fieldset>
-    <label for="time_zone">{{ t("settings-time-zone") }}</label>
-    <select id="time_zone" name="time_zone">
-      <option value="">UTC</option>
-      {% for zone in time_zones %}{% if zone != "UTC" %}<option{% if prefs_form.time_zone == zone %} selected{% endif %}>{{ zone }}</option>{% endif %}{% endfor %}
-    </select>
-    <p class="hint">{{ t("settings-time-zone-hint") }}</p>
-    {% if languages %}
-    <label for="language">{{ t("settings-language") }}</label>
-    <select id="language" name="language">
-      <option value="">{{ t("settings-language-browser") }}</option>
-      {% for l in languages %}<option value="{{ l[0] }}"{% if prefs_form.language == l[0] %} selected{% endif %}>{{ l[1] }}</option>{% endfor %}
-    </select>
+  <form class="card settings-form" method="post" action="/settings">
+    <section class="settings-section" aria-labelledby="settings-browsing">
+      <h2 id="settings-browsing">{{ t("settings-section-browsing") }}</h2>
+      <label for="per_page">{{ t("settings-per-page") }}</label>
+      <select id="per_page" name="per_page">
+        <option value="">{{ t("settings-site-default", value=default_per_page) }}</option>
+        {% for n in per_page_choices %}
+        <option value="{{ n }}"{% if per_page == n %} selected{% endif %}>{{ n }}</option>
+        {% endfor %}
+      </select>
+      <label for="blacklist">{{ t("settings-blacklist") }}</label>
+      <textarea id="blacklist" name="blacklist" rows="5" autocapitalize="none" spellcheck="false">{{ blacklist }}</textarea>
+      <p class="hint">{{ t("settings-blacklist-hint") }}</p>
+      <label class="choice"><input type="checkbox" name="blur_blacklisted" value="1"{% if prefs_form.blur_blacklisted %} checked{% endif %}> {{ t("settings-blur") }}</label>
+      <fieldset class="group">
+        <legend>{{ t("settings-display") }}</legend>
+        <label class="choice"><input type="checkbox" name="safe_mode" value="1"{% if prefs_form.safe_mode %} checked{% endif %}> {{ t("settings-safe-mode") }}</label>
+        <label class="choice"><input type="checkbox" name="original_images" value="1"{% if prefs_form.original_images %} checked{% endif %}> {{ t("settings-original") }}</label>
+        {% if can_view_deleted %}<label class="choice"><input type="checkbox" name="show_deleted" value="1"{% if prefs_form.show_deleted %} checked{% endif %}> {{ t("settings-show-deleted") }}</label>{% endif %}
+        {% if large_thumbnail_size %}<label class="choice"><input type="checkbox" name="large_thumbnails" value="1"{% if prefs_form.large_thumbnails %} checked{% endif %}> {{ t("settings-large-thumbs", size=large_thumbnail_size) }}</label>{% endif %}
+        <label class="choice"><input type="checkbox" name="hide_comments" value="1"{% if prefs_form.hide_comments %} checked{% endif %}> {{ t("settings-hide-comments") }}</label>
+        <label class="choice"><input type="checkbox" name="email_notifications" value="1"{% if prefs_form.email_notifications %} checked{% endif %}> {{ t("settings-email-notifications") }}</label>
+        <label class="choice"><input type="checkbox" name="autocomplete" value="1"{% if prefs_form.autocomplete %} checked{% endif %}> {{ t("settings-autocomplete") }}</label>
+        <label class="choice"><input type="checkbox" name="shortcuts" value="1"{% if prefs_form.shortcuts %} checked{% endif %}> {{ t("footer-shortcuts") }}</label>
+      </fieldset>
+    </section>
+    <section class="settings-section" aria-labelledby="settings-appearance">
+      <h2 id="settings-appearance">{{ t("settings-section-appearance") }}</h2>
+      <label for="layout">{{ t("settings-layout") }}</label>
+      <select id="layout" name="layout">
+        <option value="">{{ t("settings-site-default", value=t("layout-" ~ site_layout)) }}</option>
+        {% for l in layouts %}<option value="{{ l }}"{% if current_layout == l %} selected{% endif %}>{{ t("layout-" ~ l) }}</option>{% endfor %}
+      </select>
+      <p class="hint">{{ t("settings-layout-hint") }}</p>
+      <label for="theme">{{ t("settings-theme") }}</label>
+      <select id="theme" name="theme">
+        <option value="">{{ t("settings-site-default", value=site_theme) }}</option>
+        {% for choice in themes %}
+        <option value="{{ choice.name }}"{% if current_theme == choice.name %} selected{% endif %}>{{ choice.label }}</option>
+        {% endfor %}
+      </select>
+      <fieldset class="ratings">
+        <legend>{{ t("footer-mode-label") }}</legend>
+        {% for m in modes %}
+        <label class="choice"><input type="radio" name="mode" value="{{ m }}"{% if current_mode == m %} checked{% endif %}> {{ t("settings-mode-" ~ m) }}</label>
+        {% endfor %}
+      </fieldset>
+      <label for="custom_css">{{ t("settings-custom-css") }}</label>
+      <textarea id="custom_css" name="custom_css" rows="5" autocapitalize="none" spellcheck="false">{{ prefs_form.custom_css }}</textarea>
+      <p class="hint">{{ t("settings-custom-css-hint") }}</p>
+    </section>
+    <section class="settings-section" aria-labelledby="settings-region">
+      <h2 id="settings-region">{{ t("settings-section-region") }}</h2>
+      <label for="time_zone">{{ t("settings-time-zone") }}</label>
+      <select id="time_zone" name="time_zone">
+        <option value="">UTC</option>
+        {% for zone in time_zones %}{% if zone != "UTC" %}<option{% if prefs_form.time_zone == zone %} selected{% endif %}>{{ zone }}</option>{% endif %}{% endfor %}
+      </select>
+      <p class="hint">{{ t("settings-time-zone-hint") }}</p>
+      {% if languages %}
+      <label for="language">{{ t("settings-language") }}</label>
+      <select id="language" name="language">
+        <option value="">{{ t("settings-language-browser") }}</option>
+        {% for l in languages %}<option value="{{ l[0] }}"{% if prefs_form.language == l[0] %} selected{% endif %}>{{ l[1] }}</option>{% endfor %}
+      </select>
+      {% endif %}
+    </section>
+    <div class="form-footer">
+      <button type="submit">{{ t("common-save") }}</button>
+    </div>
+  </form>
+  <section class="card settings-section" aria-labelledby="settings-account">
+    <h2 id="settings-account">{{ t("settings-section-account") }}</h2>
+    <ul class="link-list">
+      <li><a href="/settings/profile">{{ t("settings-profile-link") }}</a></li>
+      <li><a href="/settings/account">{{ t("settings-account-link") }}</a></li>
+      <li><a href="/settings/name">{{ t("name-title") }}</a></li>
+    </ul>
+    <p>{{ t("settings-api-keys") }}</p>
+    {% if can_invite %}<p>{{ t("settings-invites") }}</p>{% endif %}
+    <p>{{ t("settings-saved-searches") }}</p>
+  </section>
+  <section class="card settings-section">
+    <h2>{{ t("settings-feeds") }}</h2>
+    <p class="hint">{{ t("settings-feeds-hint") }}</p>
+    <form method="post" action="/settings/feed-token">
+      <input type="hidden" name="action" value="new">
+      {% if has_password %}
+      <label for="feed-password">{{ t("your-password") }}</label>
+      <input id="feed-password" name="password" type="password" autocomplete="current-password" required>
+      {% else %}
+      <p class="hint">{{ t("confirm-fresh-login", minutes=fresh_login_minutes) }}</p>
+      {% endif %}
+      <button type="submit" class="secondary">{% if has_feed_token %}{{ t("settings-feed-token-new") }}{% else %}{{ t("settings-feed-token-make") }}{% endif %}</button>
+    </form>
+    {% if has_feed_token %}
+    <form class="inline" method="post" action="/settings/feed-token">
+      <button type="submit" name="action" value="revoke" class="secondary" data-confirm="{{ t('settings-feed-token-revoke-confirm') }}">{{ t("settings-feed-token-revoke") }}</button>
+    </form>
     {% endif %}
-    <label for="custom_css">{{ t("settings-custom-css") }}</label>
-    <textarea id="custom_css" name="custom_css" rows="5" autocapitalize="none" spellcheck="false">{{ prefs_form.custom_css }}</textarea>
-    <p class="hint">{{ t("settings-custom-css-hint") }}</p>
-    <button type="submit">{{ t("common-save") }}</button>
-  </form>
-  <p><a href="/settings/profile">{{ t("settings-profile-link") }}</a> · <a href="/settings/account">{{ t("settings-account-link") }}</a> · <a href="/settings/name">{{ t("name-title") }}</a></p>
-  <p>{{ t("settings-api-keys") }}</p>
-  {% if can_invite %}<p>{{ t("settings-invites") }}</p>{% endif %}
-  <h2>{{ t("settings-feeds") }}</h2>
-  <p class="hint">{{ t("settings-feeds-hint") }}</p>
-  <form method="post" action="/settings/feed-token">
-    <input type="hidden" name="action" value="new">
-    {% if has_password %}
-    <label for="feed-password">{{ t("your-password") }}</label>
-    <input id="feed-password" name="password" type="password" autocomplete="current-password" required>
-    {% else %}
-    <p class="hint">{{ t("confirm-fresh-login", minutes=fresh_login_minutes) }}</p>
-    {% endif %}
-    <button type="submit" class="secondary">{% if has_feed_token %}{{ t("settings-feed-token-new") }}{% else %}{{ t("settings-feed-token-make") }}{% endif %}</button>
-  </form>
-  {% if has_feed_token %}
-  <form class="inline" method="post" action="/settings/feed-token">
-    <button type="submit" name="action" value="revoke" class="secondary" data-confirm="{{ t('settings-feed-token-revoke-confirm') }}">{{ t("settings-feed-token-revoke") }}</button>
-  </form>
-  {% endif %}
-  <p>{{ t("settings-saved-searches") }}</p>
-</section>
+  </section>
+</div>
 {% endblock %}

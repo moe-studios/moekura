@@ -54,6 +54,9 @@ pub struct CurrentUser {
     pub unread_messages: i64,
     /// Their notifications not read yet, likewise.
     pub unread_notifications: i64,
+    /// Their profile picture's storage key, for the header (logged in
+    /// through the site only).
+    pub avatar_key: Option<String>,
     /// Sent with an API key rather than a session cookie.
     pub with_api_key: bool,
     /// When they logged in, for a session cookie: see
@@ -82,6 +85,7 @@ impl CurrentUser {
             ratings: site.settings.visitor_ratings.clone(),
             unread_messages: 0,
             unread_notifications: 0,
+            avatar_key: None,
             with_api_key: false,
             logged_in_at: None,
         }
@@ -112,6 +116,7 @@ impl CurrentUser {
             },
             unread_messages: 0,
             unread_notifications: 0,
+            avatar_key: None,
             with_api_key: false,
             logged_in_at: None,
         }
@@ -329,6 +334,7 @@ pub async fn resolve_session(
                 }
                 let mut current = CurrentUser::for_user(session.user, session.ban, &site);
                 current.logged_in_at = Some(session.created_at);
+                current.avatar_key = session.avatar_key;
                 current
             }
             Ok(None) => {

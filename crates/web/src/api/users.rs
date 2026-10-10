@@ -122,6 +122,9 @@ pub struct ApiSettings {
     pub mode: String,
     /// The colour theme shown: the account's choice, or the site's default.
     pub theme: String,
+    /// The layout shown, `modern` or `classic`: the account's choice, or the
+    /// site's default.
+    pub layout: String,
     /// The blacklist in effect: the account's own, or the site's default.
     pub blacklist: String,
     /// Only general-rated posts are shown, here too.
@@ -173,6 +176,11 @@ pub(crate) async fn me(
                 &state.site.get().settings.default_theme,
             )
             .to_owned(),
+            layout: settings
+                .layout
+                .unwrap_or(state.site.get().settings.default_layout)
+                .as_str()
+                .to_owned(),
             blacklist: crate::blacklist::text_for(&state, &current),
             safe_mode: settings.safe_mode,
             time_zone: settings.time_zone.clone(),

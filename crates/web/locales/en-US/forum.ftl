@@ -36,3 +36,4 @@ forum-merge-into = Merge into topic number
 forum-merge-hint = Moves every post here into that topic, and deletes this one; readers are sent there.
 forum-merge-confirm = Merge this topic?
 forum-merge = Merge
+forum-no-topics-hint = Topics are for talking about the site itself: tagging questions, requests and news.

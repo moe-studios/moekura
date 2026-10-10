@@ -1,14 +1,25 @@
-<nav class="subnav" aria-label="{{ t('nav-moderation') }}">
-  <a href="/moderation/queue"{% if path == "/moderation/queue" or path is startingwith("/moderation/queue/") %} aria-current="page"{% endif %}>{{ t("mod-nav-queue") }}</a>
-  <a href="/moderation/flags"{% if path == "/moderation/flags" or path is startingwith("/moderation/flags/") %} aria-current="page"{% endif %}>{{ t("mod-nav-flags") }}</a>
-  <a href="/moderation/appeals"{% if path == "/moderation/appeals" or path is startingwith("/moderation/appeals/") %} aria-current="page"{% endif %}>{{ t("mod-nav-appeals") }}</a>
-  <a href="/moderation/comments"{% if path == "/moderation/comments" or path is startingwith("/moderation/comments/") %} aria-current="page"{% endif %}>{{ t("mod-nav-comments") }}</a>
-  <a href="/moderation/held"{% if path == "/moderation/held" %} aria-current="page"{% endif %}>{{ t("mod-nav-held") }}</a>
-  <a href="/moderation/dmails"{% if path == "/moderation/dmails" %} aria-current="page"{% endif %}>{{ t("mod-nav-dmails") }}</a>
-  <a href="/posts?tags=status%3Adeleted">{{ t("mod-nav-deleted") }}</a>
-  {% if can_purge %}<a href="/moderation/purge"{% if path == "/moderation/purge" %} aria-current="page"{% endif %}>{{ t("mod-nav-purge") }}</a>{% endif %}
-  <a href="/post_versions">{{ t("mod-nav-changes") }}</a>
-  <a href="/moderation/mass-edit"{% if path == "/moderation/mass-edit" or path is startingwith("/moderation/mass-edit/") %} aria-current="page"{% endif %}>{{ t("mod-nav-mass-edit") }}</a>
-  <a href="/moderation/bans"{% if path == "/moderation/bans" or path is startingwith("/moderation/bans/") %} aria-current="page"{% endif %}>{{ t("mod-nav-bans") }}</a>
-  <a href="/moderation/log"{% if path == "/moderation/log" or path is startingwith("/moderation/log/") %} aria-current="page"{% endif %}>{{ t("mod-nav-log") }}</a>
+{# Twelve places, grouped by the job: queues to work through, posts as a
+   whole, and people. #}
+<nav class="subnav staff" aria-label="{{ t('nav-moderation') }}">
+  <div class="group" role="group" aria-labelledby="mod-group-queues">
+    <span class="group-label" id="mod-group-queues">{{ t("mod-group-queues") }}</span>
+    <a href="/moderation/queue"{% if path == "/moderation/queue" or path is startingwith("/moderation/queue/") %} aria-current="page"{% endif %}>{{ t("mod-nav-queue") }}</a>
+    <a href="/moderation/flags"{% if path == "/moderation/flags" or path is startingwith("/moderation/flags/") %} aria-current="page"{% endif %}>{{ t("mod-nav-flags") }}</a>
+    <a href="/moderation/appeals"{% if path == "/moderation/appeals" or path is startingwith("/moderation/appeals/") %} aria-current="page"{% endif %}>{{ t("mod-nav-appeals") }}</a>
+    <a href="/moderation/comments"{% if path == "/moderation/comments" or path is startingwith("/moderation/comments/") %} aria-current="page"{% endif %}>{{ t("mod-nav-comments") }}</a>
+    <a href="/moderation/held"{% if path == "/moderation/held" %} aria-current="page"{% endif %}>{{ t("mod-nav-held") }}</a>
+    <a href="/moderation/dmails"{% if path == "/moderation/dmails" %} aria-current="page"{% endif %}>{{ t("mod-nav-dmails") }}</a>
+  </div>
+  <div class="group" role="group" aria-labelledby="mod-group-posts">
+    <span class="group-label" id="mod-group-posts">{{ t("mod-group-posts") }}</span>
+    <a href="/posts?tags=status%3Adeleted">{{ t("mod-nav-deleted") }}</a>
+    <a href="/post_versions">{{ t("mod-nav-changes") }}</a>
+    <a href="/moderation/mass-edit"{% if path == "/moderation/mass-edit" or path is startingwith("/moderation/mass-edit/") %} aria-current="page"{% endif %}>{{ t("mod-nav-mass-edit") }}</a>
+    {% if can_purge %}<a href="/moderation/purge"{% if path == "/moderation/purge" %} aria-current="page"{% endif %}>{{ t("mod-nav-purge") }}</a>{% endif %}
+  </div>
+  <div class="group" role="group" aria-labelledby="mod-group-people">
+    <span class="group-label" id="mod-group-people">{{ t("mod-group-people") }}</span>
+    <a href="/moderation/bans"{% if path == "/moderation/bans" or path is startingwith("/moderation/bans/") %} aria-current="page"{% endif %}>{{ t("mod-nav-bans") }}</a>
+    <a href="/moderation/log"{% if path == "/moderation/log" or path is startingwith("/moderation/log/") %} aria-current="page"{% endif %}>{{ t("mod-nav-log") }}</a>
+  </div>
 </nav>

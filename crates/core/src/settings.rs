@@ -21,9 +21,19 @@ pub struct SiteSettings {
     /// A sentence or two about the site, for the footer, search engines
     /// and link previews. Empty: none.
     pub site_description: String,
-    /// The storage key of the logo shown beside the site's name (uploaded
-    /// from the settings page). Empty: none.
+    /// The storage key of the icon shown beside the site's name in the
+    /// header, in place of the built-in mark (uploaded from the settings
+    /// page). Empty: the mark.
     pub logo: String,
+    /// The storage key of a whole logo shown in the header in place of the
+    /// icon and the name. Empty: none.
+    pub full_logo: String,
+    /// The storage key of the browser tab's icon. Empty: the built-in one.
+    pub favicon: String,
+    /// The header leaves out the icon beside the site's name.
+    pub hide_header_icon: bool,
+    /// The header leaves out the site's name (it stays the pages' title).
+    pub hide_header_name: bool,
     /// The site's content rules, in markup, shown at `/rules` and linked
     /// from the footer, sign-up and uploads. Empty: no rules page.
     pub rules: String,
@@ -58,6 +68,8 @@ pub struct SiteSettings {
     /// Colour theme for visitors and for users who haven't picked one. A
     /// theme the site doesn't have falls back to the built-in default.
     pub default_theme: String,
+    /// Layout for visitors and for users who haven't picked one.
+    pub default_layout: crate::user_settings::Layout,
     /// What the tagger's suggestions are used for (see
     /// [`crate::tagger::TaggerSettings`]).
     pub tagger: crate::tagger::TaggerSettings,
@@ -180,6 +192,10 @@ impl Default for SiteSettings {
             site_name: "Moekura".to_owned(),
             site_description: String::new(),
             logo: String::new(),
+            full_logo: String::new(),
+            favicon: String::new(),
+            hide_header_icon: false,
+            hide_header_name: false,
             rules: String::new(),
             footer_links: Vec::new(),
             registration_mode: RegistrationMode::Open,
@@ -199,6 +215,7 @@ impl Default for SiteSettings {
             default_blacklist: String::new(),
             visitor_ratings: Vec::new(),
             default_theme: crate::user_settings::DEFAULT_THEME.to_owned(),
+            default_layout: crate::user_settings::Layout::default(),
             tagger: crate::tagger::TaggerSettings::default(),
             ip_history_days: 365,
             email_domains: crate::spam::EmailDomains::default(),
@@ -363,14 +380,15 @@ impl SiteSettings {
                 "the rules must be at most {RULES_MAX_LEN} characters"
             ));
         }
-        // A storage key; the web layer checks it names a real file.
-        if !self
-            .logo
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'-'))
-            || self.logo.contains("..")
-        {
-            return Err("not a stored file".into());
+        // Storage keys; the web layer checks they name real files.
+        for key in [&self.logo, &self.full_logo, &self.favicon] {
+            if !key
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'.' | b'-'))
+                || key.contains("..")
+            {
+                return Err("not a stored file".into());
+            }
         }
         if self.footer_links.len() > MAX_FOOTER_LINKS {
             return Err(format!("at most {MAX_FOOTER_LINKS} footer links"));
@@ -419,10 +437,15 @@ mod tests {
                 "banned_artists",
                 "captcha",
                 "default_blacklist",
+                "default_layout",
                 "default_theme",
                 "email_domains",
                 "email_verification",
+                "favicon",
                 "footer_links",
+                "full_logo",
+                "hide_header_icon",
+                "hide_header_name",
                 "invite_quota",
                 "ip_history_days",
                 "logo",
@@ -523,6 +546,17 @@ mod tests {
             defaults.with_value("default_theme", json!("../css/main")),
             Err(SettingError::InvalidValue { .. })
         ));
+        assert!(matches!(
+            defaults.with_value("default_layout", json!("fancy")),
+            Err(SettingError::InvalidValue { .. })
+        ));
+        assert_eq!(
+            defaults
+                .with_value("default_layout", json!("classic"))
+                .unwrap()
+                .default_layout,
+            crate::user_settings::Layout::Classic
+        );
         let thresholds = json!({ "thresholds": { "general": 0 } });
         assert!(matches!(
             defaults.with_value("tagger", thresholds),
@@ -562,11 +596,12 @@ mod tests {
         ] {
             assert!(set(bad).is_err(), "{bad}");
         }
-        assert!(
-            defaults
-                .with_value("logo", json!("../../etc/passwd"))
-                .is_err()
-        );
+        for key in ["logo", "full_logo", "favicon"] {
+            assert!(
+                defaults.with_value(key, json!("../../etc/passwd")).is_err(),
+                "{key}"
+            );
+        }
     }
 
     #[test]

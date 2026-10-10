@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}{{ t("sm-title") }} · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>{{ t("sm-title") }}</h1>
+{% macro links(heading, items) %}
+<section>
+  <h2>{{ heading }}</h2>
+  <ul>{% for item in items if item %}<li><a href="{{ item[0] }}">{{ item[1] }}</a></li>{% endfor %}</ul>
+</section>
+{% endmacro %}
+<div class="site-map">
+  {{ links(t("nav-posts"), [
+    ["/posts", t("nav-posts")],
+    ["/uploads/new", t("nav-upload")] if can_upload,
+    ["/uploads", t("uploads-mine")] if can_upload,
+    ["/explore/posts/popular", t("nav-popular")],
+    ["/explore/posts/viewed", t("sm-most-viewed")],
+    ["/explore/posts/searches", t("sm-popular-searches")],
+    ["/explore/posts/missed_searches", t("sm-missed-searches")],
+    ["/iqdb_queries", t("image-search-title")],
+    ["/post_versions", t("sm-history")],
+    ["/uploads/bookmarklet", t("bookmarklet-title")] if can_upload,
+  ]) }}
+  {{ links(t("nav-tags"), [
+    ["/tags", t("nav-tags")],
+    ["/tags/aliases", t("tag-nav-aliases")],
+    ["/tags/implications", t("tag-nav-implications")],
+    ["/tags/requests", t("bur-title")],
+    ["/tags/related", t("related-title")],
+    ["/tag_versions", t("sm-history")],
+  ]) }}
+  {{ links(t("tag-nav-artists"), [
+    ["/artists", t("tag-nav-artists")],
+    ["/artists/finder", t("finder-title")],
+    ["/artist_versions", t("sm-history")],
+    ["/artist_commentary_versions", t("sm-commentary-history")],
+  ]) }}
+  {{ links(t("nav-pools"), [
+    ["/pools", t("nav-pools")],
+    ["/pool_versions", t("sm-history")],
+  ]) }}
+  {{ links(t("sm-notes"), [
+    ["/note_versions", t("sm-history")],
+  ]) }}
+  {{ links(t("nav-comments"), [
+    ["/comments", t("nav-comments")],
+  ]) }}
+  {{ links(t("nav-forum"), [
+    ["/forum_topics", t("forum-nav-topics")],
+    ["/forum_posts", t("forum-nav-search")],
+  ]) }}
+  {{ links(t("tag-nav-wiki"), [
+    ["/wiki", t("tag-nav-wiki")],
+    ["/wiki_page_versions", t("sm-history")],
+  ]) }}
+  {% if me %}
+  {{ links(t("sm-profile"), [
+    ["/users/" ~ me.name, t("nav-profile")],
+    ["/settings", t("nav-settings")],
+    ["/settings/profile", t("profile-edit-title")],
+    ["/settings/account", t("account-email-password")],
+    ["/settings/api-keys", t("api-keys-title")],
+    ["/settings/two-factor", t("login-code-title")],
+    ["/dmails", t("nav-messages")],
+    ["/notifications", t("nav-notifications")],
+    ["/favorite_groups", t("sm-favorite-groups")],
+    ["/saved_searches", t("saved-title")],
+  ]) }}
+  {% endif %}
+  {{ links(t("sm-users"), [
+    ["/user_feedbacks", t("feedback-user")],
+  ]) }}
+  {% if moderation_url %}
+  {{ links(t("nav-moderation"), [
+    ["/moderation/queue", t("mod-nav-queue")],
+    ["/moderation/flags", t("mod-nav-flags")],
+    ["/moderation/appeals", t("mod-nav-appeals")],
+    ["/moderation/comments", t("mod-nav-comments")],
+    ["/moderation/held", t("mod-nav-held")],
+    ["/moderation/dmails", t("mod-nav-dmails")],
+    ["/posts?tags=status%3Adeleted", t("mod-nav-deleted")],
+    ["/moderation/mass-edit", t("mod-nav-mass-edit")],
+    ["/moderation/purge", t("mod-nav-purge")] if can_purge,
+    ["/moderation/bans", t("mod-nav-bans")],
+    ["/moderation/log", t("mod-nav-log")],
+    ["/reports", t("reports-title")],
+  ]) }}
+  {% endif %}
+  {% if can_admin %}
+  {{ links(t("nav-admin"), [
+    ["/admin", t("admin-nav-overview")],
+    ["/admin/settings", t("admin-nav-settings")],
+    ["/admin/users", t("admin-nav-users")],
+    ["/admin/roles", t("admin-nav-roles")],
+    ["/admin/tag-categories", t("admin-nav-tag-categories")],
+    ["/admin/news", t("admin-nav-news")],
+    ["/admin/webhooks", t("admin-nav-webhooks")],
+  ]) }}
+  {% endif %}
+  {{ links(t("footer-site"), [
+    ["/rules", t("footer-rules")] if site.has_rules,
+    ["/stats", t("footer-stats")],
+    ["/api/docs", t("sm-api-docs")],
+  ]) }}
+</div>
+{% endblock %}

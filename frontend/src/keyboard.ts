@@ -85,6 +85,17 @@ export function showHelp(): void {
   dialog.showModal();
 }
 
+/** Focuses `field` with the caret after its text, past a space, so what
+ * is typed next starts a new tag instead of joining the last one. */
+export function focusAtEnd(field: HTMLElement): void {
+  field.focus();
+  if (!(field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement)) return;
+  if (field.readOnly || field.disabled) return;
+  if (field.value !== "" && !/\s$/.test(field.value)) field.value += " ";
+  const end = field.value.length;
+  field.setSelectionRange(end, end);
+}
+
 function run(action: string): boolean {
   switch (action) {
     case "prev":
@@ -98,7 +109,8 @@ function run(action: string): boolean {
       const details = document.querySelector<HTMLDetailsElement>("details#edit");
       if (!details) return false;
       details.open = true;
-      details.querySelector("textarea")?.focus();
+      const textarea = details.querySelector("textarea");
+      if (textarea) focusAtEnd(textarea);
       return true;
     }
     case "favorite": {

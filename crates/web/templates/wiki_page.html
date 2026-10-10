@@ -20,7 +20,11 @@
   {% if html %}
   <div class="markup">{{ html }}</div>
   {% else %}
-  <p class="empty">{{ t("wiki-none", title=title) }}</p>
+  <section class="empty">
+    <h2>{{ t("wiki-none", title=title) }}</h2>
+    <p>{{ t("wiki-none-hint") }}</p>
+    {% if tag %}<div class="actions"><a class="button secondary" href="{{ search_url }}">{{ t("post-count", count=tag.count) }}</a></div>{% endif %}
+  </section>
   {% endif %}
 </article>
 {% endblock %}

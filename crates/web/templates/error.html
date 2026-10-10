@@ -4,6 +4,14 @@
 <section class="empty">
   <p class="status-code">{{ status }}</p>
   <h1>{{ message }}</h1>
+  {% if status == 404 %}
+  <p>{{ t("error-search-hint") }}</p>
+  <form class="search" method="get" action="/posts" role="search">
+    <input type="search" name="tags" placeholder="{{ t('nav-search') }}" aria-label="{{ t('nav-search') }}"
+           autocomplete="off" autocapitalize="none" spellcheck="false" data-autocomplete="search">
+    <button type="submit">{{ t("search") }}</button>
+  </form>
+  {% endif %}
   <p><a href="/">{{ t("error-back") }}</a></p>
 </section>
 {% endblock %}

@@ -1,4 +1,4 @@
-<nav class="subnav" aria-label="{{ t('nav-admin') }}">
+<nav class="subnav staff" aria-label="{{ t('nav-admin') }}">
   <a href="/admin"{% if path == "/admin" %} aria-current="page"{% endif %}>{{ t("admin-nav-overview") }}</a>
   <a href="/admin/settings"{% if path == "/admin/settings" or path is startingwith("/admin/settings/") %} aria-current="page"{% endif %}>{{ t("admin-nav-settings") }}</a>
   <a href="/admin/users"{% if path == "/admin/users" or path is startingwith("/admin/users/") %} aria-current="page"{% endif %}>{{ t("admin-nav-users") }}</a>

@@ -157,6 +157,8 @@ fn render_settings(
             settings => context! {
                 site_name => current.site_name,
                 site_description => current.site_description,
+                hide_header_icon => current.hide_header_icon,
+                hide_header_name => current.hide_header_name,
                 rules => current.rules,
                 footer_links => moekura_core::settings::FooterLink::to_list(&current.footer_links),
                 registration_mode => mode_name(current.registration_mode),
@@ -216,6 +218,7 @@ fn render_settings(
                     words => current.spam_filter.words.join("\n"),
                 },
                 default_theme => current.default_theme,
+                default_layout => current.default_layout.as_str(),
                 pagination => context! {
                     per_page => current.pagination.per_page,
                     max_per_page => current.pagination.max_per_page,
@@ -236,8 +239,11 @@ fn render_settings(
             tagger_enabled => page.state().config.tagger.enabled,
             tagger_account => page.state().config.tagger.account,
             logo => crate::site::logo_url(page.state()),
+            full_logo => crate::site::full_logo_url(page.state()),
+            favicon => crate::site::favicon_url(page.state()),
             registration_modes => ["open", "invite", "approval", "closed"],
             themes => crate::themes::choices(&page.state().assets),
+            layouts => moekura_core::user_settings::Layout::ALL.iter().map(|l| l.as_str()).collect::<Vec<_>>(),
             default_robots => crate::sitemap::default_robots(page.state()),
             pagination_defaults => context! {
                 per_page => page.state().config.search.per_page,
@@ -295,6 +301,10 @@ struct SettingsForm {
     rules: Option<String>,
     /// One per line: the text, then the address.
     footer_links: Option<String>,
+    /// Present when ticked.
+    hide_header_icon: Option<String>,
+    /// Present when ticked.
+    hide_header_name: Option<String>,
     #[serde(default)]
     registration_mode: String,
     /// Present when ticked.
@@ -352,6 +362,7 @@ struct SettingsForm {
     /// One per line.
     flag_reasons: Option<String>,
     default_theme: Option<String>,
+    default_layout: Option<String>,
     /// Blank: the server configuration's.
     pagination_per_page: Option<String>,
     pagination_max_per_page: Option<String>,
@@ -484,6 +495,8 @@ async fn save_settings(
                 |text| json!(moekura_core::settings::FooterLink::parse_list(text)),
             ),
         ),
+        ("hide_header_icon", json!(form.hide_header_icon.is_some())),
+        ("hide_header_name", json!(form.hide_header_name.is_some())),
         ("registration_mode", json!(form.registration_mode)),
         (
             "email_verification",
@@ -527,6 +540,12 @@ async fn save_settings(
         ),
         ("visitor_ratings", json!(visitor_ratings(&form))),
         ("default_theme", json!(default_theme)),
+        (
+            "default_layout",
+            form.default_layout
+                .as_deref()
+                .map_or_else(|| json!(before.default_layout), |layout| json!(layout)),
+        ),
         (
             "robots_txt",
             form.robots_txt.as_deref().map_or_else(

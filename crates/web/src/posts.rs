@@ -1,5 +1,7 @@
 //! The post grid (front page) and single post pages.
 
+use std::collections::HashMap;
+
 use axum::Router;
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
@@ -223,10 +225,11 @@ async fn index(
         show_url => (left_out || blurred > 0).then(|| blacklist_url(true)),
         hide_url => (show_all && blacklist.is_some()).then(|| blacklist_url(false)),
     };
+    let labels = card_labels(db, &cards).await?;
     let card_values: Vec<Value> = cards
         .iter()
         .map(|card| {
-            let value = card_context(state, card, thumbs.size, post_query.as_deref());
+            let value = card_context(state, card, &labels, thumbs.size, post_query.as_deref());
             if is_blacklisted(card) {
                 with_blur(value)
             } else {
@@ -637,6 +640,7 @@ pub(crate) async fn grid_for(
     let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
     let blacklist = crate::blacklist::for_viewer(state, db, &page.current).await?;
     let blur = crate::blacklist::blurs(&page.current);
+    let labels = card_labels(db, &cards).await?;
     Ok(cards
         .iter()
         .filter_map(|card| {
@@ -644,7 +648,7 @@ pub(crate) async fn grid_for(
                 let rating = card.rating.parse().unwrap_or(Rating::Explicit);
                 list.matching(rating, &card.tag_ids).is_some()
             });
-            let value = card_context(state, card, thumbs.size, post_query);
+            let value = card_context(state, card, &labels, thumbs.size, post_query);
             match (blacklisted, blur) {
                 (false, _) => Some((card.id, value)),
                 (true, true) => Some((card.id, with_blur(value))),
@@ -709,8 +713,14 @@ pub(crate) async fn displays(
 }
 
 /// A grid card. `post_query` (`q=…`) is added to the post link so the post
-/// page can lead back to the search.
-fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option<&str>) -> Value {
+/// page can lead back to the search; `labels` are from [`card_labels`].
+fn card_context(
+    state: &AppState,
+    card: &Card,
+    labels: &HashMap<i64, String>,
+    box_size: u32,
+    post_query: Option<&str>,
+) -> Value {
     let url = |key: &Option<String>| key.as_deref().and_then(|k| file_url(state, k));
     let (width, height) = fit(card.width, card.height, box_size);
     let href = match post_query {
@@ -732,7 +742,61 @@ fn card_context(state: &AppState, card: &Card, box_size: u32, post_query: Option
         animated => card.frames > 1,
         duration => card.duration_ms.map(duration),
         sound => card.has_audio,
+        label => labels.get(&card.id).filter(|label| !label.is_empty()),
+        score => card.score,
+        fav_count => card.fav_count,
     }
+}
+
+/// What each card shows, in words, for its alt text: its characters,
+/// copyrights and artists (two of each, the most used first), or its three
+/// most used tags when it has none of those. Keyed by post id.
+async fn card_labels(db: &sqlx::PgPool, cards: &[Card]) -> Result<HashMap<i64, String>, AppError> {
+    let mut ids: Vec<i32> = cards
+        .iter()
+        .flat_map(|c| c.tag_ids.iter().copied())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let found = tags::by_ids(db, &ids).await?;
+    let by_id: HashMap<i32, &tags::Tag> = found.iter().map(|t| (t.id, t)).collect();
+    let categories = tags::categories(db).await?;
+    let named: Vec<i16> = ["character", "copyright", "artist"]
+        .iter()
+        .filter_map(|name| categories.iter().find(|c| c.name == *name).map(|c| c.id))
+        .collect();
+    Ok(cards
+        .iter()
+        .map(|card| {
+            let mut own: Vec<&tags::Tag> = card
+                .tag_ids
+                .iter()
+                .filter_map(|id| by_id.get(id).copied())
+                .collect();
+            own.sort_by(|a, b| {
+                b.post_count
+                    .cmp(&a.post_count)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            let mut names: Vec<&str> = named
+                .iter()
+                .flat_map(|&category| {
+                    own.iter()
+                        .filter(move |t| t.category_id == category)
+                        .take(2)
+                        .map(|t| t.name.as_str())
+                })
+                .collect();
+            if names.is_empty() {
+                names = own.iter().take(3).map(|t| t.name.as_str()).collect();
+            }
+            // Read as words, not as one long identifier.
+            (card.id, names.join(", ").replace('_', " "))
+        })
+        .collect())
 }
 
 /// A video's or animation's length as `m:ss`, or `h:mm:ss` from an hour.
@@ -1278,14 +1342,15 @@ async fn similar_context(
     let ids: Vec<i64> = found.iter().map(|s| s.post_id).collect();
     let ids = posts::visible_ids(db, &ids, &visibility(&page.current)).await?;
     let thumbs = Thumbs::for_viewer(state, &page.current);
-    Ok(posts::cards(db, &ids, thumbs.kinds())
-        .await?
+    let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
+    let labels = card_labels(db, &cards).await?;
+    Ok(cards
         .iter()
         .filter(|card| {
             let rating = card.rating.parse().unwrap_or(Rating::Explicit);
             blacklist.is_none_or(|list| list.matching(rating, &card.tag_ids).is_none())
         })
-        .map(|card| card_context(state, card, thumbs.size, None))
+        .map(|card| card_context(state, card, &labels, thumbs.size, None))
         .collect())
 }
 
@@ -1340,13 +1405,14 @@ async fn family_context(page: &Page, post: &Post) -> Result<Option<Value>, AppEr
     }
     let thumbs = Thumbs::for_viewer(state, &page.current);
     let cards = posts::cards(db, &ids, thumbs.kinds()).await?;
+    let labels = card_labels(db, &cards).await?;
     Ok(Some(context! {
         is_child => post.parent_id.is_some(),
         root => root,
         cards => cards
             .iter()
             .map(|card| context! {
-                ..card_context(state, card, thumbs.size, None),
+                ..card_context(state, card, &labels, thumbs.size, None),
                 ..context! { current => card.id == post.id }
             })
             .collect::<Vec<_>>(),
@@ -1589,7 +1655,7 @@ mod tests {
             body.find(needle)
                 .unwrap_or_else(|| panic!("{needle} missing from {body}"))
         };
-        assert!(position("<h2>Artist</h2>") < position("<h2>General</h2>"));
+        assert!(position("<h2>Artist <") < position("<h2>General <"));
         // Alphabetical within a group.
         assert!(position(">apple<") < position(">zebra<"));
         assert!(body.contains("class=\"tag tag-artist\" href=\"/posts?tags=someone\""));
@@ -1647,14 +1713,6 @@ mod tests {
         assert!(bad.body.contains("expected ratings"), "{}", bad.body);
         let nothing = app.get("/posts?tags=nonexistent", None).await;
         assert!(nothing.body.contains("Nothing found"), "{}", nothing.body);
-
-        // Hot posts have their own link.
-        let hot = app.get("/posts?tags=order%3Arank", None).await.body;
-        assert!(
-            hot.contains("href=\"/posts?tags=order%3Arank\" aria-current=\"page\">Hot<"),
-            "{hot}"
-        );
-        assert!(!page.body.contains("aria-current=\"page\">Hot<"));
 
         // Groups and `or`.
         let page = app.get("/posts?tags=(cat+cute)+or+(dog+-cute)", None).await;

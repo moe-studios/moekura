@@ -22,6 +22,7 @@ wiki-other-names = Other names:
 wiki-alias-of = This tag is an alias of <a href="{ $url }">{ $title }</a>.
 wiki-old-version = This is an old version ({ $version }) of the page. <a href="{ $url }">See the current one</a>.
 wiki-none = There's no wiki page for { $title } yet.
+wiki-none-hint = A wiki page says what a tag means and when to use it, so everyone tags the same way.
 
 wiki-search-placeholder = long_ha, *_hair or an other name
 wiki-recent-changes = <a href="/wiki_page_versions">Recent changes</a> to every page.

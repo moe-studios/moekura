@@ -1,0 +1,32 @@
+/* Neutral: grey paper, near-black ink and a charcoal band, with quiet
+   blue links. */
+:root {
+  --bg: light-dark(#f6f6f7, #121214);
+  --surface: light-dark(#ffffff, #1b1b1e);
+  --text: light-dark(#18181b, #ececef);
+  --muted: light-dark(#56565e, #a1a1aa);
+  --border: light-dark(#e1e1e5, #2f2f34);
+  --accent: light-dark(#2f5ca8, #8fb2ec);
+  --accent-text: light-dark(#ffffff, #121214);
+  --shell: #1f1f23;
+  --rule: var(--border);
+  --tint: color-mix(in oklab, var(--text) 5%, var(--surface));
+  --staff: light-dark(#e4e4e7, #2f2f34);
+  --staff-text: var(--text);
+}
+
+/* The classic layout: greys and near-black ink, with quiet slate links. */
+:root[data-layout="classic"] {
+  --bg: light-dark(#ffffff, #151517);
+  --surface: light-dark(#ffffff, #1c1c1f);
+  --text: light-dark(#18181b, #ececef);
+  --muted: light-dark(#5c5c64, #a1a1aa);
+  --border: light-dark(#dcdce0, #34343a);
+  --accent: light-dark(#34508a, #9ab4e6);
+  --accent-hover: light-dark(#1d2f55, #cbdaf6);
+  --accent-text: light-dark(#ffffff, #151517);
+  --brand: var(--text);
+  --menu: light-dark(#ececee, #29292e);
+  --stripe: light-dark(#f6f6f7, #1b1b1e);
+  --tint: light-dark(#e8e8ec, #2e2e34);
+}

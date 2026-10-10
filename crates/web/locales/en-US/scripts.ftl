@@ -43,3 +43,4 @@ js-tag-script-changed = Post #{$id} changed.
 js-tag-script-error = Post #{$id}: {$error}
 js-tag-script-failed = Post #{$id} couldn't be changed.
 js-related-posts = {$count} posts
+js-related-more = Show all {$count}

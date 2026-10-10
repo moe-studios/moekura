@@ -614,7 +614,14 @@ function enableClipboard(root = document) {
 
 // src/confirm.ts
 function questionFor(form, submitter) {
-  return submitter?.getAttribute("data-confirm") ?? form.getAttribute("data-confirm");
+  const question = submitter?.getAttribute("data-confirm") ?? form.getAttribute("data-confirm");
+  if (question === null) return null;
+  return question.replace(/%([\w-]+)%/g, (whole, name) => {
+    const field = form.querySelector(`[name="${name}"]`);
+    if (!field) return whole;
+    const option = field.selectedOptions?.[0];
+    return (option ? option.text : field.value ?? "").trim();
+  });
 }
 function enableConfirm() {
   document.addEventListener(
@@ -721,6 +728,14 @@ function showHelp() {
   }
   dialog.showModal();
 }
+function focusAtEnd(field) {
+  field.focus();
+  if (!(field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement)) return;
+  if (field.readOnly || field.disabled) return;
+  if (field.value !== "" && !/\s$/.test(field.value)) field.value += " ";
+  const end = field.value.length;
+  field.setSelectionRange(end, end);
+}
 function run(action) {
   switch (action) {
     case "prev":
@@ -734,7 +749,8 @@ function run(action) {
       const details = document.querySelector("details#edit");
       if (!details) return false;
       details.open = true;
-      details.querySelector("textarea")?.focus();
+      const textarea = details.querySelector("textarea");
+      if (textarea) focusAtEnd(textarea);
       return true;
     }
     case "favorite": {
@@ -784,7 +800,22 @@ function reveal(target2) {
   if (!(target2 instanceof HTMLElement)) return;
   const details = target2.closest("details");
   if (details) details.open = true;
-  target2.focus();
+  focusAtEnd(target2);
+}
+function enableMenus() {
+  const menus = () => document.querySelectorAll("details[data-menu][open]");
+  document.addEventListener("click", (event) => {
+    for (const menu of menus()) {
+      if (!menu.contains(event.target)) menu.open = false;
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    for (const menu of menus()) {
+      menu.open = false;
+      menu.querySelector("summary")?.focus();
+    }
+  });
 }
 function enableLayout() {
   for (const link of document.querySelectorAll("a[data-open-edit]")) {
@@ -794,6 +825,7 @@ function enableLayout() {
     });
   }
   if (window.location.hash === "#edit-tags") reveal(document.getElementById("edit-tags"));
+  enableMenus();
   const shortcuts = document.querySelector("[data-shortcuts-link]");
   if (shortcuts) {
     shortcuts.hidden = false;
@@ -855,7 +887,9 @@ function enableNoteEditor(root = document) {
   toggle.className = "secondary note-toggle";
   toggle.textContent = t("notes-edit", "Edit notes");
   toggle.setAttribute("aria-pressed", "false");
-  (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
+  const tools = root.querySelector("[data-note-tools]");
+  if (tools) tools.append(toggle);
+  else (root.querySelector("[data-notes-toggle]") ?? layer).after(toggle);
   toggle.addEventListener("click", () => {
     const on = !layer.classList.contains("editing-notes");
     layer.classList.toggle("editing-notes", on);
@@ -1119,7 +1153,9 @@ function enableNotes(root = document) {
     apply(hidden);
   });
   apply(remembered());
-  layer.after(toggle);
+  const tools = root.querySelector("[data-note-tools]");
+  if (tools) tools.append(toggle);
+  else layer.after(toggle);
 }
 
 // src/pool-order.ts
@@ -1204,7 +1240,7 @@ function enhanceReactions(root = document) {
           return;
         }
         if (!response.ok) throw new Error(String(response.status));
-        const scope = form.closest(".comment") ?? form.closest(".post-info") ?? root;
+        const scope = form.closest(".comment") ?? form.closest(".post-actions, .post-info") ?? root;
         update(scope, await response.json());
       }).catch(() => {
         form.dataset["plain"] = "1";
@@ -1291,6 +1327,7 @@ function sourceOf(field) {
   }
   return null;
 }
+var RELATED_SHOWN = 10;
 function enableRelatedTags(root = document) {
   for (const panel of root.querySelectorAll("[data-related-tags]")) {
     const field = root.getElementById(panel.dataset["relatedTags"] ?? "");
@@ -1326,6 +1363,19 @@ function attach(panel, field) {
           items.append(item);
         }
         section.append(title, items);
+        if (group.tags.length > RELATED_SHOWN) {
+          section.classList.add("collapsed");
+          const more = document.createElement("button");
+          more.type = "button";
+          more.className = "link related-more";
+          more.textContent = t("related-more", "Show all {$count}", { count: group.tags.length });
+          more.addEventListener("click", () => {
+            section.classList.remove("collapsed");
+            more.remove();
+            items.querySelector(`li:nth-child(${RELATED_SHOWN + 1}) button`)?.focus();
+          });
+          section.append(more);
+        }
         return section;
       })
     );

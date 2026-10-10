@@ -1,0 +1,24 @@
+{# Line icons, drawn on a 24px grid with one stroke weight. `icon("heart")`
+   gives an inline SVG that takes the text's colour; screen readers skip
+   it, so the control around it needs its own name. #}
+{% macro icon(name) -%}
+<svg class="glyph glyph-{{ name }}" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+{%- if name == "heart" %}<path d="M12 20.2s-7.6-4.6-7.6-10.1A4.3 4.3 0 0 1 12 7.3a4.3 4.3 0 0 1 7.6 2.8c0 5.5-7.6 10.1-7.6 10.1Z"/>
+{%- elif name == "up" %}<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>
+{%- elif name == "down" %}<path d="M12 5v14M5.5 12.5 12 19l6.5-6.5"/>
+{%- elif name == "edit" %}<path d="M4 20h4L19.3 8.7a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m14.5 7.5 2 2"/>
+{%- elif name == "download" %}<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>
+{%- elif name == "upload" %}<path d="M12 20V9M7 13.5l5-5 5 5M5 4h14"/>
+{%- elif name == "more" %}<circle cx="5.5" cy="12" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="18.5" cy="12" r="1.2" fill="currentColor"/>
+{%- elif name == "chevron" %}<path d="m6.5 9.5 5.5 5.5 5.5-5.5"/>
+{%- elif name == "prev" %}<path d="M14.5 6 8.5 12l6 6"/>
+{%- elif name == "next" %}<path d="m9.5 6 6 6-6 6"/>
+{%- elif name == "search" %}<circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/>
+{%- endif %}
+</svg>
+{%- endmacro %}
+
+{# The storehouse mark: a kura's gable over a heart, as in the favicon. #}
+{% macro mark() -%}
+<svg class="mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false"><path d="M16 5.5 26.5 14.5h-2.5V25.5H8V14.5H5.5Z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M16 23.5c-3.4-2.3-4.6-3.9-4.6-5.8 0-1.5 1.1-2.6 2.5-2.6.9 0 1.6.5 2.1 1.2.5-.7 1.2-1.2 2.1-1.2 1.4 0 2.5 1.1 2.5 2.6 0 1.9-1.2 3.5-4.6 5.8Z" class="heart"/></svg>
+{%- endmacro %}

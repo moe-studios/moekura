@@ -4,13 +4,17 @@
 {% include "forum_nav.html" %}
 <h1>{{ t("nav-forum") }}</h1>
 <form class="filters" method="get" action="/forum_topics">
-  <label for="forum-category">{{ t("forum-category") }}</label>
-  <select id="forum-category" name="category">
-    <option value="">{{ t("all") }}</option>
-    {% for c in categories %}<option value="{{ c.id }}"{% if query.category == c.id %} selected{% endif %}>{{ c.name }}</option>{% endfor %}
-  </select>
-  <label for="forum-title">{{ t("field-title") }}</label>
-  <input id="forum-title" name="title" value="{{ query.title }}" size="20">
+  <div class="filter-field">
+    <label for="forum-category">{{ t("forum-category") }}</label>
+    <select id="forum-category" name="category">
+      <option value="">{{ t("all") }}</option>
+      {% for c in categories %}<option value="{{ c.id }}"{% if query.category == c.id %} selected{% endif %}>{{ c.name }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label for="forum-title">{{ t("field-title") }}</label>
+    <input id="forum-title" name="title" value="{{ query.title }}" size="20">
+  </div>
   <button type="submit">{{ t("search") }}</button>
 </form>
 <div class="actions">
@@ -34,7 +38,11 @@
 </table>
 </div>
 {% else %}
-<p class="empty">{{ t("forum-no-topics") }}</p>
+<section class="empty">
+  <h2>{{ t("forum-no-topics") }}</h2>
+  <p>{{ t("forum-no-topics-hint") }}</p>
+  {% if can_post %}<div class="actions"><a class="button" href="/forum_topics/new{% if query.category %}?category={{ query.category }}{% endif %}">{{ t("forum-topic-new-title") }}</a></div>{% endif %}
+</section>
 {% endif %}
 {% if previous_url or next_url %}
 <nav class="pager" aria-label="{{ t('pages') }}">

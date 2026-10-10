@@ -210,7 +210,7 @@ upload-pixel-duplicate-one = It has exactly the pixels of <a href="/posts/{ $id 
 upload-pixel-duplicate-many = It has exactly the pixels of <a href="{ $url }">{ $count } other posts</a>.
 
 posts-newest = Newest posts
-posts-syntax = See the <a href="https://github.com/moe-studios/moekura/blob/main/docs/src/using/search.md">search syntax</a>.
+posts-syntax = See the <a href="https://docs.moekura.net/using/search.html">search syntax</a>.
 tag-script = Tag script
 post-mode = On click
 post-mode-view = View the post

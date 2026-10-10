@@ -119,6 +119,52 @@ curl -H "Authorization: Bearer $KEY" \
   https://booru.example.com/api/v1/posts
 ```
 
+### Large files
+
+A proxy or CDN in front of the site may limit how large one request can
+be (Cloudflare's limit is 100 MB). Send a larger file in pieces first,
+with the [tus](https://tus.io) protocol (1.0.0, with its creation and
+termination extensions) at `/uploads/files`, then name it in a
+`transfer` field instead of sending `file`:
+
+```sh
+f=big.mp4
+# Begin: the file's size, and its name in base64. The answer's Location
+# is the transfer's address.
+url=$(curl -s -D - -o /dev/null -X POST -H "Authorization: Bearer $KEY" \
+  -H "Tus-Resumable: 1.0.0" -H "Upload-Length: $(stat -c %s "$f")" \
+  -H "Upload-Metadata: filename $(printf %s "$f" | base64 -w0)" \
+  https://booru.example.com/uploads/files | tr -d '\r' | sed -n 's/^location: //Ip')
+# Send it 50 MB at a time, each piece from where the last ended.
+split -b 50M "$f" piece.
+offset=0
+for piece in piece.*; do
+  curl -s -X PATCH -H "Authorization: Bearer $KEY" -H "Tus-Resumable: 1.0.0" \
+    -H "Upload-Offset: $offset" -H "Content-Type: application/offset+octet-stream" \
+    --data-binary @"$piece" "https://booru.example.com$url"
+  offset=$((offset + $(stat -c %s "$piece")))
+done
+# Post it.
+curl -H "Authorization: Bearer $KEY" -F transfer="${url##*/}" -F rating=g -F tags=cat \
+  https://booru.example.com/api/v1/posts
+```
+
+A file is sent for one purpose, named in `Upload-Metadata` beside
+`filename`: `upload` (the default), `replace`, to replace a post's file,
+or `search`, to search by image. Only that takes it: `transfer` works in
+`POST /api/v1/posts` for `upload`, and in `POST /api/v1/posts/similar` for
+`search` (`purpose c2VhcmNo`, "search" in base64).
+
+Any tus client works as well (tus-js-client, tus-py-client, …), given
+the address and the `Authorization` header. `HEAD` on a transfer's
+address says how much has come (`Upload-Offset`), so a piece that failed
+can be sent again from there; `DELETE` gives the file up. These answers
+aren't the API's: refusals are plain text, with the protocol's statuses
+(`409` for a piece sent from the wrong offset, `413` for a file larger
+than the site takes, `412` without `Tus-Resumable: 1.0.0`). A transfer is
+used up by the upload that names it, and one no piece came for in an
+hour is removed.
+
 Add and remove tags without touching the others:
 
 ```sh

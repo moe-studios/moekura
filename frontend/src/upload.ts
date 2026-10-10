@@ -1,10 +1,14 @@
 // The upload form sends files as soon as they're chosen, as Danbooru's
-// does: from the picker, the clipboard or a drop anywhere on the page, all
-// through the same native multipart field. A link is sent as soon as it's
-// pasted anywhere on the page, or when the user's bookmarklet opened the
-// page with one; a typed one is sent with the button.
+// does: from the picker, the clipboard or a drop anywhere on the page.
+// Each file is sent in pieces first (see transfer.ts), so no request has
+// to carry a whole file, let alone all of them; the form then names the
+// files sent. Without scripts, the form sends the files itself. A link is
+// sent as soon as it's pasted anywhere on the page, or when the user's
+// bookmarklet opened the page with one; a typed one is sent with the
+// button.
 
 import { t } from "./i18n.ts";
+import { TRANSFERS, TransferError, sendFile } from "./transfer.ts";
 
 /** Where the upload form sends what it's given. */
 const UPLOADS = "/uploads";
@@ -85,22 +89,71 @@ export function enableUpload(root: Document = document): void {
     for (const button of form.querySelectorAll<HTMLButtonElement>("button[type=submit]")) button.disabled = on;
   };
 
+  const piece = Number(attribute("data-upload-piece")) || 50 * 1024 * 1024;
+
   const send = (files: FileList): void => {
     if (sending || files.length === 0) return;
     if (files.length > max) {
       status.textContent = t("upload-too-many", "Choose at most {$max} files at once.", { max });
       return;
     }
-    if (files !== input.files) {
-      const transfer = new DataTransfer();
-      for (const file of files) transfer.items.add(file);
-      input.files = transfer.files;
-    }
-    status.textContent = files.length === 1
-      ? t("upload-sending-one", "Uploading {$name}…", { name: files[0]!.name })
-      : t("upload-sending-many", "Uploading {$count} files…", { count: files.length });
+    void sendInPieces(Array.from(files));
+  };
+
+  // Sends each file in pieces, then the form naming them.
+  const sendInPieces = async (files: File[]): Promise<void> => {
+    const error = form.querySelector<HTMLElement>("[data-upload-error]");
+    if (error) error.hidden = true;
     busy(true);
+    const total = files.reduce((sum, file) => sum + file.size, 0) || 1;
+    let before = 0;
+    const show = (sent: number): void => {
+      const percent = Math.min(100, Math.floor(((before + sent) * 100) / total));
+      status.textContent = files.length === 1
+        ? t("upload-progress-one", "Uploading {$name}… {$percent}%", { name: files[0]!.name, percent })
+        : t("upload-progress-many", "Uploading {$count} files… {$percent}%", { count: files.length, percent });
+    };
+    const tokens: string[] = [];
+    try {
+      for (const file of files) {
+        show(0);
+        const retrying = (): void => {
+          status.textContent = t("upload-retrying", "The connection faltered; trying again…");
+        };
+        tokens.push(await sendFile(file, file.name, { maxPiece: piece, base: here, progress: show, retrying }));
+        before += file.size;
+      }
+    } catch (failure) {
+      // The files sent already are given up on too.
+      for (const token of tokens) {
+        const url = new URL(`${TRANSFERS}/${token}`, here);
+        void fetch(url, { method: "DELETE", headers: { "Tus-Resumable": "1.0.0" }, credentials: "same-origin" }).catch(() => undefined);
+      }
+      if (error) {
+        error.textContent = (failure instanceof TransferError && failure.message) || t("upload-failed", "The upload failed. Please try again.");
+        error.hidden = false;
+      }
+      status.textContent = "";
+      busy(false);
+      return;
+    }
+    // The form names the files instead of sending them again.
+    input.value = "";
+    forgetTransfers();
+    for (const token of tokens) {
+      const field = root.createElement("input");
+      field.type = "hidden";
+      field.name = "transfer";
+      field.value = token;
+      field.setAttribute("data-upload-transfer", "");
+      form.append(field);
+    }
     form.requestSubmit();
+  };
+
+  // Files named by an earlier send are used up.
+  const forgetTransfers = (): void => {
+    for (const field of form.querySelectorAll("input[data-upload-transfer]")) field.remove();
   };
 
   // A link the bookmarklet gave with the page (`?url=`) is sent in the
@@ -143,7 +196,10 @@ export function enableUpload(root: Document = document): void {
   });
   form.addEventListener("submit", () => busy(true));
   // Coming back to the page (the back button) finds the form usable.
-  root.defaultView?.addEventListener("pageshow", () => busy(false));
+  root.defaultView?.addEventListener("pageshow", () => {
+    forgetTransfers();
+    busy(false);
+  });
 
   // Pasted text that's a link is sent, wherever it's pasted.
   root.addEventListener("paste", (event) => {

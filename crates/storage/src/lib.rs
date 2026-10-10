@@ -31,6 +31,10 @@ const PART_SIZE: usize = 8 * 1024 * 1024;
 /// Where the app itself serves files when no public base URL is set.
 pub const LOCAL_URL_PREFIX: &str = "/data/";
 
+/// What the keys of [pieces of files being sent](Key::transfer_part)
+/// start with.
+const TRANSFER_PREFIX: &str = "transfer";
+
 /// Keys never change content, so anything may cache them forever.
 pub const CACHE_FOREVER: &str = "public, max-age=31536000, immutable";
 
@@ -62,6 +66,20 @@ impl Key {
     /// `sha256_hex`.
     pub fn variant(kind: &str, sha256_hex: &str, extension: &str) -> Self {
         Self::build(kind, sha256_hex, extension)
+    }
+
+    /// Piece `index` of a file being sent in pieces, the transfer named
+    /// `name_hex`. Pieces are kept only until the file is put together,
+    /// and never served.
+    pub fn transfer_part(name_hex: &str, index: u32) -> Self {
+        Self::build(TRANSFER_PREFIX, name_hex, &index.to_string())
+    }
+
+    /// Whether this is a [piece of a file being sent](Self::transfer_part).
+    pub fn is_transfer_part(&self) -> bool {
+        self.0
+            .split_once('/')
+            .is_some_and(|(prefix, _)| prefix == TRANSFER_PREFIX)
     }
 
     fn build(prefix: &str, hash: &str, extension: &str) -> Self {
@@ -398,6 +416,16 @@ mod tests {
             Key::variant("thumb-250", HASH, "webp").as_str(),
             format!("thumb-250/ab/cd/{HASH}.webp")
         );
+    }
+
+    #[test]
+    fn transfer_parts_are_told_apart() {
+        let part = Key::transfer_part(HASH, 12);
+        assert_eq!(part.as_str(), format!("transfer/ab/cd/{HASH}.12"));
+        assert!(part.is_transfer_part());
+        assert_eq!(Key::parse(part.as_str()), Some(part));
+        assert!(!Key::original(HASH, "png").is_transfer_part());
+        assert!(!Key::variant("transfers", HASH, "png").is_transfer_part());
     }
 
     #[test]

@@ -23,6 +23,7 @@ import { enableSuggestions } from "./suggestions.ts";
 import { enableTagScript } from "./tag-script.ts";
 import { enableToasts } from "./toast.ts";
 import { enableUpload } from "./upload.ts";
+import { enableTransferForms } from "./transfer-forms.ts";
 import { enableUploadForm } from "./upload-form.ts";
 import { enableUploadProgress } from "./upload-progress.ts";
 
@@ -51,6 +52,7 @@ enableRelatedTags();
 enableSelectAll();
 enableUpload();
 enableUploadForm();
+enableTransferForms();
 enableUploadProgress();
 enableArtistFinder();
 enableClipboard();

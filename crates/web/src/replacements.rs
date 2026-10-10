@@ -15,6 +15,7 @@ use moekura_core::permissions::Permission;
 use moekura_db::media::NewAsset;
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::replacements::{self, ReplaceError};
+use moekura_db::transfers::Purpose;
 use moekura_db::{notes, posts};
 use moekura_storage::Key;
 
@@ -24,7 +25,8 @@ use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
 use crate::upload::{
-    LINK_FIELD_MAX, TEXT_FIELD_MAX, TempUpload, UploadError, UploadFields, text_field,
+    LINK_FIELD_MAX, TEXT_FIELD_MAX, TOKEN_FIELD_MAX, TempUpload, UploadError, UploadFields,
+    text_field,
 };
 
 pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
@@ -232,6 +234,16 @@ async fn replace(
                 }
                 file = Some(
                     crate::upload::save_to_temp(state, field)
+                        .await
+                        .map_err(refused)?,
+                );
+            }
+            // A file sent earlier in pieces (see crate::transfers).
+            "transfer" => {
+                let token = text_field(field, TOKEN_FIELD_MAX).await?;
+                let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+                file = Some(
+                    crate::transfers::take(state, user.id, &token, Purpose::Replace)
                         .await
                         .map_err(refused)?,
                 );

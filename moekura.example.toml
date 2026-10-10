@@ -176,6 +176,10 @@ path_style = false
 
 [media]
 max_upload_mb = 100
+# The upload page sends files in pieces of at most this many MB. Keep it
+# below the request size limit of a proxy or CDN in front of the site
+# (Cloudflare's is 100 MB).
+upload_chunk_mb = 50
 # Images with more pixels are refused before decoding (decompression bombs).
 max_pixels = 200000000
 max_duration_secs = 600

@@ -247,6 +247,22 @@ impl TestApp {
             .await
     }
 
+    /// A request with any method, `headers` and raw `body`.
+    pub async fn request(
+        &self,
+        method: &str,
+        path: &str,
+        session: Option<&str>,
+        headers: &[(&str, &str)],
+        body: Vec<u8>,
+    ) -> TestResponse {
+        let mut builder = Request::builder().method(method).uri(path);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        self.send(builder, session, Body::from(body)).await
+    }
+
     pub async fn post_form(
         &self,
         path: &str,

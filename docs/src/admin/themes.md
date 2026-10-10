@@ -5,7 +5,7 @@ comes with five:
 
 | Theme | Colours |
 |---|---|
-| Default | cool drawing-paper white, graphite ink and a deep cyan header |
+| Default | cool greys and blue links under a navy header |
 | Forest | moss green |
 | Neutral | greys, near-black ink and a charcoal header |
 | Ocean | sea-foam links under a night-sea navy header |

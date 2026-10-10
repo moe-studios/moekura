@@ -36,11 +36,22 @@ tagger's model, …). Names stay, so it still shows what is sent where.
 | Key | Default | Meaning |
 |---|---|---|
 | `bind` | `"0.0.0.0:8080"` | address the HTTP server listens on |
-| `public_url` | `"http://localhost:8080"` | the address people use; set it to your `https://` URL (cookies become `Secure`, and forms are only accepted from this origin) |
+| `public_url` | `"http://localhost:8080"` | the address people use; set it to your `https://` URL (cookies become `Secure`, forms are only accepted from this origin, and [passkeys](#passkeys-and-public_url) belong to its host) |
 | `trusted_proxies` | `[]` | reverse proxies allowed to report the client's address in `X-Forwarded-For` (addresses or CIDR ranges); see [Behind a reverse proxy](install/reverse-proxy.md) |
 | `request_timeout_secs` | `30` | requests running longer are stopped with a 408 |
 | `api_requests_per_minute` | `300` | [API](api.md#rate-limits) requests a client may make a minute on average (per account, or per address for visitors); `0` for no limit |
 | `api_burst` | `60` | how many API requests may come at once before the per-minute rate applies |
+
+### Passkeys and `public_url`
+
+[Passkeys](using/account.md#passkeys) need no settings of their own: they
+are made for the host name in `public_url` (their *relying party ID*), and
+only work on pages from its origin. If the site moves to another domain,
+every passkey stops working, and people log in with their password (or
+single sign-on) and add new ones; a reverse proxy redirecting the old
+domain doesn't change that. Passkeys are off when `public_url` names an IP
+address rather than a domain, since browsers don't allow them there;
+`http://localhost` works for development.
 
 ## `[server.cors]`
 

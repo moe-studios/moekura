@@ -349,6 +349,16 @@ async fn login_form(page: Page, Query(query): Query<NextQuery>) -> Response {
     render_login(&page, "", query.next.as_deref(), None, None, StatusCode::OK)
 }
 
+/// Why a login was refused, for the person logging in.
+pub(crate) fn refusal(error: &AuthError) -> &'static str {
+    match error {
+        AuthError::Pending => "Your account is still waiting for approval.",
+        AuthError::Unverified => "Confirm your email address first, with the link we sent you.",
+        AuthError::Deactivated => "This account has been deactivated.",
+        _ => "Wrong name or password.",
+    }
+}
+
 fn render_login(
     page: &Page,
     name: &str,
@@ -357,12 +367,7 @@ fn render_login(
     captcha: Option<CaptchaPrompt>,
     status: StatusCode,
 ) -> Response {
-    let message = error.map(|error| match error {
-        AuthError::Pending => "Your account is still waiting for approval.",
-        AuthError::Unverified => "Confirm your email address first, with the link we sent you.",
-        AuthError::Deactivated => "This account has been deactivated.",
-        _ => "Wrong name or password.",
-    });
+    let message = error.map(refusal);
     page.render_with_status(
         status,
         "login.html",
@@ -375,6 +380,7 @@ fn render_login(
             captcha_error => captcha.and_then(|(_, error)| error),
             mail_enabled => crate::email::mail_enabled(page.state()),
             sso_label => page.state().oidc.as_ref().map(|o| o.button_label().to_owned()),
+            passkeys => page.state().passkeys.is_some(),
         },
     )
 }

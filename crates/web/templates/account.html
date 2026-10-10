@@ -56,6 +56,76 @@
   {% endif %}
 </section>
 {% endif %}
+{% if passkeys.enabled or passkeys.list %}
+<section class="card medium" id="passkeys">
+  <h1>{{ t("passkeys-title") }}</h1>
+  <p>{{ t("passkeys-intro") }}</p>
+  {{ field_error(errors.passkeys) }}
+  {% if passkeys.list %}
+  <div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('passkeys-table') }}">
+  <table class="tag-table passkeys">
+    <thead><tr><th scope="col">{{ t("passkeys-name") }}</th><th scope="col">{{ t("added") }}</th><th scope="col">{{ t("api-keys-last-used") }}</th><th scope="col"><span class="visually-hidden">{{ t("actions") }}</span></th></tr></thead>
+    <tbody>
+      {% for p in passkeys.list %}
+      <tr>
+        <td>{{ p.name }}</td>
+        <td>{{ p.created }}</td>
+        <td>{{ p.last_used or t("never") }}</td>
+        <td>
+          <details class="inline">
+            <summary>{{ t("rename") }}</summary>
+            <form method="post" action="/settings/passkeys/rename">
+              <input type="hidden" name="id" value="{{ p.id }}">
+              <label for="passkey-name-{{ p.id }}">{{ t("passkeys-name") }}</label>
+              <input id="passkey-name-{{ p.id }}" name="name" value="{{ p.name }}" required maxlength="{{ passkeys.name_max }}">
+              <button type="submit">{{ t("rename") }}</button>
+            </form>
+          </details>
+          <details class="inline">
+            <summary>{{ t("remove") }}</summary>
+            <form method="post" action="/settings/passkeys/remove">
+              <input type="hidden" name="id" value="{{ p.id }}">
+              {% if passkeys.has_password %}
+              <label for="passkey-password-{{ p.id }}">{{ t("your-password") }}</label>
+              <input id="passkey-password-{{ p.id }}" name="password" type="password" autocomplete="current-password" required>
+              {% else %}
+              <p class="hint">{{ t("confirm-fresh-login", minutes=passkeys.fresh_login_minutes) }}</p>
+              {% endif %}
+              <button type="submit" class="danger" data-confirm="{{ t('passkeys-remove-confirm') }}">{{ t("remove") }}</button>
+            </form>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="hint">{{ t("passkeys-none") }}</p>
+  {% endif %}
+  {% if not passkeys.enabled %}
+  <p class="hint">{{ t("passkeys-off") }}</p>
+  {% elif passkeys.full %}
+  <p class="hint">{{ t("passkeys-full", max=passkeys.max) }}</p>
+  {% else %}
+  <h2>{{ t("passkeys-add") }}</h2>
+  <form method="post" action="/settings/passkeys" data-passkey-register hidden>
+    <p class="form-error" role="alert" data-passkey-error hidden></p>
+    <label for="passkey-name">{{ t("passkeys-name") }}</label>
+    <input id="passkey-name" name="name" required maxlength="{{ passkeys.name_max }}" placeholder="{{ t('passkeys-name-placeholder') }}" autocomplete="off">
+    {% if passkeys.has_password %}
+    <label for="passkey-password">{{ t("your-password") }}</label>
+    <input id="passkey-password" name="password" type="password" autocomplete="current-password" required>
+    {% else %}
+    <p class="hint">{{ t("confirm-fresh-login", minutes=passkeys.fresh_login_minutes) }}</p>
+    {% endif %}
+    <p class="hint">{{ t("passkeys-add-hint") }}</p>
+    <button type="submit">{{ t("passkeys-add") }}</button>
+  </form>
+  <p class="hint" data-passkey-unsupported>{{ t("passkeys-unsupported") }}</p>
+  {% endif %}
+</section>
+{% endif %}
 <section class="card medium">
   <h1>{{ t("login-code-title") }}</h1>
   <p>{{ t("account-tfa-intro") }}</p>

@@ -59,6 +59,14 @@ const LOGIN_BY_NAME: Limit = Limit {
     burst: 10,
     period: Duration::from_secs(30),
 };
+// Starting a passkey login, which stores a challenge until it expires.
+// The login page starts one each time it opens (for the name field's
+// suggestions), so this is apart from the login limits, and generous.
+const PASSKEY_START_BY_IP: Limit = Limit {
+    name: "passkey_start_ip",
+    burst: 30,
+    period: Duration::from_secs(2),
+};
 const REGISTER_BY_IP: Limit = Limit {
     name: "register_ip",
     burst: 5,
@@ -197,6 +205,7 @@ pub struct RateLimits {
     login_by_ip: DefaultKeyedRateLimiter<IpAddr>,
     login_by_name_and_net: DefaultKeyedRateLimiter<String>,
     login_by_name: DefaultKeyedRateLimiter<String>,
+    passkey_start_by_ip: DefaultKeyedRateLimiter<IpAddr>,
     register_by_ip: DefaultKeyedRateLimiter<IpAddr>,
     mail_by_ip: DefaultKeyedRateLimiter<IpAddr>,
     mail_by_address: DefaultKeyedRateLimiter<String>,
@@ -228,6 +237,7 @@ impl RateLimits {
             login_by_ip: RateLimiter::keyed(quota(LOGIN_BY_IP)),
             login_by_name_and_net: RateLimiter::keyed(quota(LOGIN_BY_NAME_AND_NET)),
             login_by_name: RateLimiter::keyed(quota(LOGIN_BY_NAME)),
+            passkey_start_by_ip: RateLimiter::keyed(quota(PASSKEY_START_BY_IP)),
             register_by_ip: RateLimiter::keyed(quota(REGISTER_BY_IP)),
             mail_by_ip: RateLimiter::keyed(quota(MAIL_BY_IP)),
             mail_by_address: RateLimiter::keyed(quota(MAIL_BY_ADDRESS)),
@@ -332,6 +342,23 @@ impl RateLimits {
         let name = digest(&fold(name));
         self.check(LOGIN_BY_NAME, &self.login_by_name, &name, &name)
             .await
+    }
+
+    /// Counts a passkey login started from the client's network, before
+    /// it stores a challenge.
+    pub async fn check_passkey_start(&self, ip: Option<IpAddr>) -> Result<(), AppError> {
+        match ip.map(ip_bucket) {
+            Some(net) => {
+                self.check(
+                    PASSKEY_START_BY_IP,
+                    &self.passkey_start_by_ip,
+                    &net,
+                    &net.to_string(),
+                )
+                .await
+            }
+            None => Ok(()),
+        }
     }
 
     pub async fn check_register(&self, ip: Option<IpAddr>) -> Result<(), AppError> {
@@ -473,6 +500,7 @@ impl RateLimits {
         self.login_by_ip.retain_recent();
         self.login_by_name_and_net.retain_recent();
         self.login_by_name.retain_recent();
+        self.passkey_start_by_ip.retain_recent();
         self.register_by_ip.retain_recent();
         self.mail_by_ip.retain_recent();
         self.mail_by_address.retain_recent();
@@ -765,6 +793,26 @@ mod tests {
             }
             assert!(limits.check_register(Some(address)).await.is_err());
             limits.check_register(None).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn limits_passkey_logins_started_per_ip() {
+        for limits in backends().await {
+            let address = crate::shared::tests::unique_ip();
+            for _ in 0..30 {
+                limits.check_passkey_start(Some(address)).await.unwrap();
+            }
+            assert!(limits.check_passkey_start(Some(address)).await.is_err());
+            // Apart from logging in with a password.
+            limits
+                .check_login(Some(address), &crate::shared::tests::unique("alice"))
+                .await
+                .unwrap();
+            limits
+                .check_passkey_start(Some(crate::shared::tests::unique_ip()))
+                .await
+                .unwrap();
         }
     }
 

@@ -110,7 +110,7 @@ function enableArtistFinder(root = document) {
   let timer;
   let request;
   let last = "";
-  const show = ({ artists: found, unknown }) => {
+  const show2 = ({ artists: found, unknown }) => {
     if (found.length === 0 && unknown) {
       const label2 = document.createElement("span");
       label2.className = "hint";
@@ -147,7 +147,7 @@ function enableArtistFinder(root = document) {
     const url = firstUrl(inputs.map((input) => input.value));
     if (url === null) {
       last = "";
-      show({ artists: [] });
+      show2({ artists: [] });
       return;
     }
     if (url === last) return;
@@ -160,7 +160,7 @@ function enableArtistFinder(root = document) {
         headers: { Accept: "application/json" }
       });
       if (!response.ok) return;
-      show(await response.json());
+      show2(await response.json());
     } catch {
     }
   };
@@ -871,8 +871,8 @@ async function send(method, url, body) {
 function enableNoteEditor(root = document) {
   const layer = root.querySelector("[data-notes-editable]");
   const svg = layer?.querySelector("svg.notes");
-  const post = layer?.dataset["post"];
-  if (!layer || !svg || !post) return;
+  const post2 = layer?.dataset["post"];
+  if (!layer || !svg || !post2) return;
   const [, , width, height] = (svg.getAttribute("viewBox") ?? "0 0 1 1").split(" ").map(Number);
   const toImage = (event) => {
     const box = svg.getBoundingClientRect();
@@ -943,7 +943,7 @@ function enableNoteEditor(root = document) {
     if (!editing) return;
     const body = text.value;
     if (editing.id === void 0) {
-      void send("POST", `/api/v1/posts/${post}/notes`, { ...editing.box, body }).then(done);
+      void send("POST", `/api/v1/posts/${post2}/notes`, { ...editing.box, body }).then(done);
     } else {
       void send("PUT", `/api/v1/notes/${editing.id}`, { body, base_version: Number(editing.version) }).then(done);
     }
@@ -1097,7 +1097,7 @@ function enableNotes(root = document) {
     shown?.classList.remove("active");
     shown = null;
   };
-  const show = (rect) => {
+  const show2 = (rect) => {
     if (layer.classList.contains("editing-notes")) return;
     const text = root.querySelector(`[data-note-text="${rect.dataset["note"]}"] .markup`);
     if (!text) return;
@@ -1125,12 +1125,12 @@ function enableNotes(root = document) {
   for (const rect of embedded ? [] : svg.querySelectorAll("rect.note-box")) {
     rect.querySelector("title")?.remove();
     rect.setAttribute("tabindex", "0");
-    rect.addEventListener("mouseenter", () => show(rect));
-    rect.addEventListener("focus", () => show(rect));
+    rect.addEventListener("mouseenter", () => show2(rect));
+    rect.addEventListener("focus", () => show2(rect));
     rect.addEventListener("click", (event) => {
       event.preventDefault();
       if (shown === rect) hide();
-      else show(rect);
+      else show2(rect);
     });
   }
   layer.addEventListener("mouseleave", hide);
@@ -1156,6 +1156,226 @@ function enableNotes(root = document) {
   const tools = root.querySelector("[data-note-tools]");
   if (tools) tools.append(toggle);
   else layer.after(toggle);
+}
+
+// src/passkeys.ts
+function toBase64url(bytes) {
+  const array = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  let binary = "";
+  for (const byte of array) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+function fromBase64url(text) {
+  const base64 = text.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = base64 + "=".repeat((4 - base64.length % 4) % 4);
+  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+}
+function descriptors(list) {
+  if (!Array.isArray(list)) return void 0;
+  return list.map((d) => ({ ...d, id: fromBase64url(d["id"]) }));
+}
+function creationOptions(json) {
+  const user = json["user"];
+  const options = {
+    ...json,
+    challenge: fromBase64url(json["challenge"]),
+    user: { ...user, id: fromBase64url(user["id"]) }
+  };
+  const exclude = descriptors(json["excludeCredentials"]);
+  if (exclude) options["excludeCredentials"] = exclude;
+  return options;
+}
+function requestOptions(json) {
+  const options = { ...json, challenge: fromBase64url(json["challenge"]) };
+  const allow = descriptors(json["allowCredentials"]);
+  if (allow) options["allowCredentials"] = allow;
+  return options;
+}
+function attestation(response) {
+  return {
+    clientDataJSON: toBase64url(response.clientDataJSON),
+    attestationObject: toBase64url(response.attestationObject),
+    transports: response.getTransports?.() ?? []
+  };
+}
+function assertion(response) {
+  return {
+    clientDataJSON: toBase64url(response.clientDataJSON),
+    authenticatorData: toBase64url(response.authenticatorData),
+    signature: toBase64url(response.signature),
+    userHandle: response.userHandle ? toBase64url(response.userHandle) : null
+  };
+}
+function credentialJSON(credential) {
+  const response = credential.response;
+  const answer = "attestationObject" in response ? attestation(response) : assertion(response);
+  return {
+    id: credential.id,
+    rawId: toBase64url(credential.rawId),
+    type: credential.type,
+    response: answer,
+    clientExtensionResults: credential.getClientExtensionResults()
+  };
+}
+var Refusal = class extends Error {
+  name = "Refusal";
+};
+function problem(error) {
+  if (!(error instanceof Error)) return t("passkey-failed", "Something went wrong. Please try again.");
+  switch (error.name) {
+    // Aborted on purpose: the button took over from the suggestions.
+    case "AbortError":
+      return null;
+    // Cancelled, timed out, or no passkey for the site on the device.
+    case "NotAllowedError":
+      return t("passkey-cancelled", "No passkey was used. Try again when you're ready.");
+    // Making one the device already has for the account.
+    case "InvalidStateError":
+      return t("passkey-exists", "This device already has a passkey for your account.");
+    case "Refusal":
+      return error.message;
+    default:
+      return t("passkey-failed", "Something went wrong. Please try again.");
+  }
+}
+async function post(url, body = {}) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    credentials: "same-origin",
+    body: JSON.stringify(body)
+  });
+  let reply = {};
+  try {
+    reply = await response.json();
+  } catch {
+  }
+  if (!response.ok && !reply.redirect) {
+    if (reply.error) throw new Refusal(reply.error);
+    if (response.status === 429) throw new Refusal(t("passkey-too-many", "Too many tries. Wait a minute, then try again."));
+    throw new Refusal(t("error-status", "Error {$status}", { status: response.status }));
+  }
+  return reply;
+}
+function follow(reply) {
+  if (!reply.redirect) return false;
+  const to = new URL(reply.redirect, location.href);
+  if (to.pathname === location.pathname && to.search === location.search) {
+    location.hash = to.hash;
+    location.reload();
+  } else {
+    location.assign(to);
+  }
+  return true;
+}
+function show(box, message) {
+  if (!box) return;
+  box.textContent = message ?? "";
+  box.hidden = message === null;
+}
+function supported() {
+  return typeof PublicKeyCredential !== "undefined" && !!navigator.credentials;
+}
+function enableRegistration(form, root) {
+  const error = form.querySelector("[data-passkey-error]");
+  const button = form.querySelector("button[type=submit]");
+  form.hidden = false;
+  for (const note of root.querySelectorAll("[data-passkey-unsupported]")) note.hidden = true;
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    show(error, null);
+    if (button) button.disabled = true;
+    const data = new FormData(form);
+    (async () => {
+      const asked = await post("/settings/passkeys/options", {
+        name: data.get("name") ?? "",
+        password: data.get("password") ?? ""
+      });
+      if (follow(asked) || !asked.options) return;
+      const credential = await navigator.credentials.create({ publicKey: creationOptions(asked.options.publicKey) });
+      if (!credential) return;
+      const added = await post("/settings/passkeys", {
+        token: asked.token,
+        credential: credentialJSON(credential)
+      });
+      follow(added);
+    })().catch((e) => show(error, problem(e))).finally(() => {
+      if (button) button.disabled = false;
+    });
+  });
+}
+function enableLogin(box) {
+  const error = box.querySelector("[data-passkey-error]");
+  const button = box.querySelector("button");
+  const next = box.dataset["next"] || null;
+  let waiting = null;
+  box.hidden = false;
+  async function pick(conditional) {
+    waiting?.abort();
+    const controller = new AbortController();
+    waiting = controller;
+    const asked = await post("/login/passkey/options");
+    if (follow(asked) || !asked.options) return null;
+    const request = {
+      publicKey: requestOptions(asked.options.publicKey),
+      signal: controller.signal
+    };
+    if (conditional) request.mediation = "conditional";
+    const credential = await navigator.credentials.get(request);
+    return credential ? { token: asked.token, credential } : null;
+  }
+  async function logIn(picked) {
+    const done = await post("/login/passkey", {
+      token: picked.token,
+      credential: credentialJSON(picked.credential),
+      next
+    });
+    follow(done);
+  }
+  function offer() {
+    pick(true).then(
+      (picked) => picked ? logIn(picked).catch((e) => {
+        if (!(e instanceof Refusal)) throw e;
+        show(error, e.message);
+        offer();
+      }) : void 0
+    ).catch(() => void 0);
+  }
+  void PublicKeyCredential.isConditionalMediationAvailable?.().then((available) => {
+    if (available) offer();
+  });
+  button?.addEventListener("click", () => {
+    show(error, null);
+    pick(false).then((picked) => picked ? logIn(picked) : void 0).catch((e) => show(error, problem(e)));
+  });
+}
+function enableSecondFactor(box) {
+  const error = box.querySelector("[data-passkey-error]");
+  const button = box.querySelector("button");
+  box.hidden = false;
+  button?.addEventListener("click", () => {
+    show(error, null);
+    (async () => {
+      const asked = await post("/login/code/passkey/options");
+      if (follow(asked) || !asked.options) return;
+      const credential = await navigator.credentials.get({ publicKey: requestOptions(asked.options.publicKey) });
+      if (!credential) return;
+      const done = await post("/login/code/passkey", {
+        token: asked.token,
+        credential: credentialJSON(credential)
+      });
+      follow(done);
+    })().catch((e) => show(error, problem(e)));
+  });
+}
+function enablePasskeys(root = document) {
+  if (!supported()) return;
+  const form = root.querySelector("form[data-passkey-register]");
+  if (form) enableRegistration(form, root);
+  const login = root.querySelector("[data-passkey-login]");
+  if (login) enableLogin(login);
+  const secondFactor = root.querySelector("[data-passkey-second-factor]");
+  if (secondFactor) enableSecondFactor(secondFactor);
 }
 
 // src/pool-order.ts
@@ -1525,7 +1745,7 @@ function enableTagScript(root = document) {
   if (!panel || !mode || !field || !status || !text) return;
   panel.hidden = false;
   const scripting = () => mode.value === "script";
-  const show = () => {
+  const show2 = () => {
     field.hidden = !scripting();
     root.querySelector(".post-grid")?.classList.toggle("scripting", scripting());
   };
@@ -1544,10 +1764,10 @@ function enableTagScript(root = document) {
   };
   if (stored2(MODE_KEY) === "script") mode.value = "script";
   text.value = stored2(SCRIPT_KEY) ?? text.value;
-  show();
+  show2();
   mode.addEventListener("change", () => {
     store2(MODE_KEY, mode.value);
-    show();
+    show2();
     if (scripting()) text.focus();
   });
   text.addEventListener("input", () => store2(SCRIPT_KEY, text.value));
@@ -1892,14 +2112,14 @@ function nextStep(now, before, file) {
   return now.pending < before.pending ? "reload" : null;
 }
 function enableUploadProgress(root = document) {
-  const follow = root.querySelector("[data-upload-follow]");
-  const url = follow?.dataset["uploadFollow"];
-  if (!follow || !url) return;
+  const follow2 = root.querySelector("[data-upload-follow]");
+  const url = follow2?.dataset["uploadFollow"];
+  if (!follow2 || !url) return;
   const before = {
-    pending: Number(follow.dataset["pending"] ?? "0"),
-    ready: Number(follow.dataset["ready"] ?? "0")
+    pending: Number(follow2.dataset["pending"] ?? "0"),
+    ready: Number(follow2.dataset["ready"] ?? "0")
   };
-  const fileId = follow.dataset["file"] ? Number(follow.dataset["file"]) : void 0;
+  const fileId = follow2.dataset["file"] ? Number(follow2.dataset["file"]) : void 0;
   const started = Date.now();
   const check = async () => {
     try {
@@ -1948,3 +2168,4 @@ enableUploadProgress();
 enableArtistFinder();
 enableClipboard();
 enableSourceData();
+enablePasskeys();

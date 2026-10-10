@@ -936,6 +936,11 @@ fieldset.permissions legend { font-weight: bold; margin-bottom: 3px; padding: 0;
 .plain-list { list-style: none; padding: 0; margin: 0 0 10px; }
 .plain-list li { padding: 2px 0; }
 
+/* Passkeys */
+
+.passkey-login { margin-top: 10px; }
+.passkey-login button { width: 100%; }
+
 /* The site map: every page, in columns by area. */
 .site-map { columns: 15em; column-gap: 24px; }
 .site-map section { break-inside: avoid; margin-bottom: 14px; }

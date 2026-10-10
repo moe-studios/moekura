@@ -11,5 +11,11 @@
     <p class="hint">{{ t("login-code-hint") }}</p>
     <button type="submit">{{ t("nav-log-in") }}</button>
   </form>
+  {% if passkeys %}
+  <div class="passkey-login" data-passkey-second-factor hidden>
+    <p class="form-error" role="alert" data-passkey-error hidden></p>
+    <button type="button" class="secondary">{{ t("login-code-passkey") }}</button>
+  </div>
+  {% endif %}
 </section>
 {% endblock %}

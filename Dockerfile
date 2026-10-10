@@ -95,10 +95,11 @@ RUN curl -fsSLo vips.tar.xz "https://github.com/libvips/libvips/releases/downloa
         /opt/media/bin/vipsprofile /opt/media/bin/vips-*
 
 FROM docker.io/library/debian:trixie-slim AS base
-# The libraries the media tools above link to.
+# The libraries the media tools above link to, and OpenSSL, which checks
+# passkeys' signatures.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates \
+        ca-certificates libssl3t64 \
         libdav1d7 libaom3 libvpx9 \
         libglib2.0-0t64 libexpat1 libjpeg62-turbo libpng16-16t64 \
         libwebp7 libwebpmux3 libwebpdemux2 libsharpyuv0 \
@@ -107,10 +108,10 @@ RUN apt-get update \
     && useradd --system --uid 10001 --home-dir /var/lib/moekura --create-home moekura \
     && install -d -o moekura -g moekura /var/lib/moekura/data
 COPY --from=media /opt/media /usr/local
+COPY --from=build /usr/local/bin/moekura /usr/local/bin/moekura
 # Fails the build if a library is missing.
 RUN ldconfig \
     && ! ldd /usr/local/bin/* /usr/local/lib/*.so | grep "not found"
-COPY --from=build /usr/local/bin/moekura /usr/local/bin/moekura
 USER moekura
 WORKDIR /var/lib/moekura
 # glibc gives each thread that allocates at once a heap of its own, up to

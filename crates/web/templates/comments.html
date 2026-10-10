@@ -18,6 +18,10 @@
 </ol>
 {% if next_url %}<nav class="pager" aria-label="{{ t('pages') }}"><a rel="next" href="{{ next_url }}">{{ t("older") }}</a></nav>{% endif %}
 {% else %}
-<p class="empty">{{ t("comments-none") }}</p>
+<section class="empty">
+  <h2>{{ t("comments-none") }}</h2>
+  <p>{{ t("comments-none-hint") }}</p>
+  <div class="actions"><a class="button secondary" href="/">{{ t("comments-none-browse") }}</a></div>
+</section>
 {% endif %}
 {% endblock %}

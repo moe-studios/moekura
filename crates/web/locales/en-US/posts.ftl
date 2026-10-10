@@ -236,6 +236,7 @@ posts-did-you-mean-instead = Did you mean { $options } instead of { $term }?
 posts-try-without = Try without the last term: <a href="{ $url }">{ $terms }</a>.
 posts-look-for-tags = <a href="{ $url }">Look for tags starting with { $term }</a>, in case of a typo.
 posts-none-yet = No posts yet
+posts-none-yet-hint = Posts show up here as soon as they are uploaded and tagged.
 posts-upload-first = Upload the first one
 
 ## The post page

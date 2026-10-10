@@ -113,6 +113,7 @@
     {% else %}
     <section class="empty">
       <h1>{{ t("posts-none-yet") }}</h1>
+      <p>{{ t("posts-none-yet-hint") }}</p>
       {% if can_upload %}<p><a href="/upload">{{ t("posts-upload-first") }}</a></p>{% endif %}
     </section>
     {% endif %}

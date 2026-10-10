@@ -36,7 +36,11 @@
 </table>
 </div>
 {% else %}
-<p class="empty">{{ t("pools-none") }}</p>
+<section class="empty">
+  <h2>{{ t("pools-none") }}</h2>
+  <p>{{ t("pools-none-hint") }}</p>
+  {% if can_create %}<div class="actions"><a class="button secondary" href="/pools/new">{{ t("pool-new") }}</a></div>{% endif %}
+</section>
 {% endif %}
 {% if previous_url or next_url %}
 <nav class="pager" aria-label="{{ t('pages') }}">

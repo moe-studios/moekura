@@ -294,3 +294,4 @@ api-body = Request body
 api-body-as = { $type } as <code>{ $content_type }</code>
 api-responses = Responses
 api-field = Field
+error-search-hint = The page may have moved or been deleted. Try searching for what you were after:

@@ -36,3 +36,4 @@ pools-placeholder = my_comic or *comic
 pools-recent = <a href="/pool_versions">Recent changes</a> to every pool.
 pools-table = Pools table
 pools-none = No pools found.
+pools-none-hint = A pool keeps posts in order, like the pages of a comic or a themed set. Add a post to one from its page.

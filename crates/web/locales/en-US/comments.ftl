@@ -16,3 +16,5 @@ comment-collapsed = Hidden for its low score. Show
 comment-report-why = What's wrong with this comment?
 comment-unpin = Unpin
 comment-pin = Pin to top
+comments-none-hint = Comments on any post show up here, newest first. Open a post to start a conversation.
+comments-none-browse = Browse posts

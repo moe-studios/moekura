@@ -5,19 +5,27 @@
 <section class="card medium">
   <h1>{{ t("as-title") }}</h1>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
-  <form method="post" action="/admin/settings/logo" enctype="multipart/form-data" class="logo-form">
-    <label for="logo">{{ t("as-logo") }}</label>
-    {% if logo %}<p><img class="logo-preview" src="{{ logo }}" alt="{{ t('as-logo-alt') }}" height="48"></p>{% endif %}
-    <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif">
-    <p class="hint">{{ t("as-logo-hint") }}</p>
+  {% macro image_form(name, action, field, url) %}
+  <form method="post" action="{{ action }}" enctype="multipart/form-data" class="logo-form">
+    <label for="{{ field }}">{{ t("as-" ~ name) }}</label>
+    {% if url %}<p><img class="logo-preview" src="{{ url }}" alt="{{ t('as-' ~ name ~ '-alt') }}" height="48"></p>{% endif %}
+    <input id="{{ field }}" name="{{ field }}" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif">
+    <p class="hint">{{ t("as-" ~ name ~ "-hint") }}</p>
     <div class="actions">
-      <button type="submit" class="secondary">{{ t("as-logo-upload") }}</button>
-      {% if logo %}<button type="submit" class="secondary" name="remove" value="1">{{ t("as-logo-remove") }}</button>{% endif %}
+      <button type="submit" class="secondary">{{ t("as-" ~ name ~ "-upload") }}</button>
+      {% if url %}<button type="submit" class="secondary" name="remove" value="1">{{ t("as-" ~ name ~ "-remove") }}</button>{% endif %}
     </div>
   </form>
+  {% endmacro %}
+  {{ image_form("logo", "/admin/settings/logo", "logo", logo) }}
+  {{ image_form("full-logo", "/admin/settings/full-logo", "full_logo", full_logo) }}
+  {{ image_form("favicon", "/admin/settings/favicon", "favicon", favicon) }}
   <form method="post" action="/admin/settings">
     <label for="site_name">{{ t("as-site-name") }}</label>
     <input id="site_name" name="site_name" value="{{ settings.site_name }}" maxlength="64" required>
+    <label class="choice"><input type="checkbox" name="hide_header_icon"{% if settings.hide_header_icon %} checked{% endif %}> {{ t("as-hide-header-icon") }}</label>
+    <label class="choice"><input type="checkbox" name="hide_header_name"{% if settings.hide_header_name %} checked{% endif %}> {{ t("as-hide-header-name") }}</label>
+    <p class="hint">{{ t("as-hide-header-hint") }}</p>
     <label for="site_description">{{ t("description") }}</label>
     <textarea id="site_description" name="site_description" rows="2" maxlength="300">{{ settings.site_description }}</textarea>
     <p class="hint">{{ t("as-description-hint") }}</p>

@@ -9,10 +9,14 @@ nav-tags = Tags
 nav-pools = Pools
 nav-comments = Comments
 nav-forum = Forum
+nav-more = More »
 nav-upload = Upload
 nav-moderation = Moderation
 nav-admin = Admin
 nav-account = Account
+nav-my-account = My account
+nav-profile = Your profile
+nav-skip = Skip to content
 nav-messages = Messages
 # After the count of unread messages.
 nav-unread = {" "}unread
@@ -43,3 +47,17 @@ footer-change = Change
 mode-system = System
 mode-light = Light
 mode-dark = Dark
+
+## The site map
+
+sm-title = Site map
+sm-most-viewed = Most viewed
+sm-popular-searches = Popular searches
+sm-missed-searches = Missed searches
+sm-history = History
+sm-commentary-history = Commentary history
+sm-notes = Notes
+sm-profile = Profile
+sm-favorite-groups = Favorite groups
+sm-users = Users
+sm-api-docs = API documentation

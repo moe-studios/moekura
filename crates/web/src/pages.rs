@@ -139,6 +139,7 @@ fn section(path: &str) -> Option<&'static str> {
         "upload" | "uploads" => "upload",
         "moderation" => "moderation",
         "admin" => "admin",
+        "site_map" => "more",
         _ => return None,
     })
 }
@@ -176,6 +177,10 @@ pub(crate) fn render(
             name => settings.site_name,
             description => Some(&settings.site_description).filter(|d| !d.is_empty()),
             logo => crate::site::logo_url(state),
+            full_logo => crate::site::full_logo_url(state),
+            favicon => crate::site::favicon_url(state),
+            hide_icon => settings.hide_header_icon,
+            hide_name => settings.hide_header_name,
             has_rules => !settings.rules.trim().is_empty(),
             footer_links => settings.footer_links.iter().map(|link| context! {
                 label => link.label,

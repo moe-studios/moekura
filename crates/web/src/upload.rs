@@ -299,7 +299,7 @@ async fn upload(
     if let Err(error) = check_limits(&state, &page.current).await {
         return Ok(failed(&page, &UploadFields::default(), error));
     }
-    let (mut fields, file) = match receive(&state, multipart).await {
+    let (mut fields, file) = match receive(&state, &page.current, multipart).await {
         (fields, Ok(file)) => (fields, file),
         (fields, Err(error)) => return Ok(failed(&page, &fields, error)),
     };
@@ -514,10 +514,13 @@ pub(crate) fn error_status(error: &UploadError) -> StatusCode {
     }
 }
 
-/// Reads the form, streaming the file to disk. The fields read so far come
-/// back even on error, so the form can be shown again filled in.
+/// Reads `uploader`'s form, streaming the file to disk, or putting
+/// together the one a `transfer` field names (sent earlier in pieces, see
+/// [`crate::transfers`]). The fields read so far come back even on error,
+/// so the form can be shown again filled in.
 pub(crate) async fn receive(
     state: &AppState,
+    uploader: &CurrentUser,
     mut multipart: Multipart,
 ) -> (UploadFields, Result<Option<TempUpload>, UploadError>) {
     let mut fields = UploadFields::default();
@@ -537,6 +540,20 @@ pub(crate) async fn receive(
                 }
                 match save_to_temp(state, field).await {
                     Ok(saved) => file = Some(saved),
+                    Err(error) => return (fields, Err(error)),
+                }
+            }
+            "transfer" => {
+                let taken = match (
+                    upload_text(state, field, TOKEN_FIELD_MAX).await,
+                    &uploader.user,
+                ) {
+                    (Ok(token), Some(user)) => crate::transfers::take(state, user.id, &token).await,
+                    (Ok(_), None) => Err(UploadError::Invalid("Log in to upload.".into())),
+                    (Err(error), _) => Err(error),
+                };
+                match taken {
+                    Ok(taken) => file = Some(taken),
                     Err(error) => return (fields, Err(error)),
                 }
             }
@@ -615,6 +632,9 @@ fn too_large(state: &AppState) -> UploadError {
 /// commentary, in characters of up to four bytes. Only this keeps a field
 /// far below the route's body limit, which is sized for files.
 pub(crate) const TEXT_FIELD_MAX: usize = 4 * crate::commentary::DESCRIPTION_MAX_LEN;
+/// Most bytes a field naming a [file transfer](crate::transfers) may
+/// have; its token is 64 characters.
+pub(crate) const TOKEN_FIELD_MAX: usize = 128;
 /// Most bytes a link field may have: [`SOURCE_MAX_LEN`] characters of up
 /// to four bytes.
 pub(crate) const LINK_FIELD_MAX: usize = 4 * SOURCE_MAX_LEN;

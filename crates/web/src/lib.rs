@@ -80,6 +80,7 @@ mod templates;
 #[cfg(test)]
 mod test_support;
 mod themes;
+pub mod transfers;
 mod two_factor;
 mod upload;
 pub mod uploads;
@@ -382,6 +383,7 @@ pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
         .merge(wiki::routes())
         .merge(upload::routes(max_upload_bytes))
         .merge(uploads::routes(max_upload_bytes))
+        .merge(transfers::routes())
 }
 
 /// Wraps `routes` (the pages and API) in session handling and the global

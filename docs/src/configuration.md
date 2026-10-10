@@ -256,6 +256,7 @@ See [File storage](admin/storage.md).
 | Key | Default | Meaning |
 |---|---|---|
 | `max_upload_mb` | `100` | largest upload |
+| `upload_chunk_mb` | `50` | largest piece the upload page sends a file in (it sends large files in several requests, smaller pieces on slow connections); keep it below the request size limit of a proxy or CDN in front of the site, such as Cloudflare's 100 MB. See [Large uploads behind a CDN](install/reverse-proxy.md#large-uploads-behind-a-cdn) |
 | `max_pixels` | `200000000` | larger images are refused before decoding |
 | `max_duration_secs` | `600` | longest video |
 | `allowed_types` | `["jpeg", "png", "gif", "webp", "avif", "mp4", "webm", "ugoira"]` | `ugoira` is Pixiv's zip of animation frames; add `"jxl"` for JPEG XL (off by default: libvips doesn't consider its decoder hardened against malicious files) |

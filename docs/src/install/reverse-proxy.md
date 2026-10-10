@@ -94,7 +94,8 @@ server {
     server_name booru.example.com;
     # ssl_certificate …
 
-    # At least media.max_upload_mb.
+    # At least media.max_upload_mb, for forms sent without scripts (the
+    # upload page sends files in pieces of media.upload_chunk_mb).
     client_max_body_size 110m;
 
     location / {
@@ -107,6 +108,45 @@ server {
     }
 }
 ```
+
+## Large uploads behind a CDN
+
+CDNs and some proxies limit how large one request can be: Cloudflare
+allows 100 MB on its Free and Pro plans (200 MB on Business, 500 MB on
+Enterprise), and nginx 1 MB unless `client_max_body_size` says otherwise.
+The upload page doesn't send a file in one request: it sends each file in
+pieces of at most `media.upload_chunk_mb` (50 MB by default), each in a
+request of its own, then the form naming the files. So the CDN's limit
+caps the pieces, not the files, and `media.max_upload_mb` can be larger
+than it. Keep `upload_chunk_mb` below the limit:
+
+```toml
+[media]
+max_upload_mb = 500
+# Below Cloudflare's 100 MB.
+upload_chunk_mb = 50
+```
+
+The page sizes pieces to take about ten seconds on the uploader's
+connection, so each request also ends well within
+`server.request_timeout_secs` and the CDN's own timeouts. A piece that
+fails (a dropped connection, a timeout, a proxy refusing it as too large)
+is sent again, smaller, from where the server says the file got to.
+
+The pieces wait in [storage](../admin/storage.md), under `transfer/`,
+until the form naming the file is sent; then they're put together and
+removed. With several web servers, any of them can take each piece. A
+file no piece came for in an hour is removed, with its pieces. Each user
+can be sending at most 40 files at once. Pieces are never served under
+`/data/`; with a public bucket, their names are unguessable and they live
+only minutes, but keep the `transfer/` prefix private if your bucket lets
+you.
+
+Scripts can send files the same way (see [the API](../api.md#large-files)).
+What still goes in one request, so the CDN's limit still applies: the
+upload form without scripts, a `file` sent to `POST /upload` or the API,
+replacing a post's file, searching by image, and uploads through the
+[Danbooru-compatible API](../using/danbooru-clients.md).
 
 ## Health checks
 

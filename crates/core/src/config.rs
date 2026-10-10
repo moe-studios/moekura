@@ -719,6 +719,11 @@ impl Default for S3Config {
 #[serde(default, deny_unknown_fields)]
 pub struct MediaConfig {
     pub max_upload_mb: u64,
+    /// Largest piece the upload page sends a file in, in MB. Keep it below
+    /// the request size limit of any proxy or CDN in front of the site
+    /// (Cloudflare's is 100 MB); files are sent in as many pieces as they
+    /// need, so it doesn't limit their size.
+    pub upload_chunk_mb: u64,
     /// Larger images are refused before they are decoded (decompression
     /// bombs).
     pub max_pixels: u64,
@@ -788,6 +793,7 @@ impl Default for MediaConfig {
     fn default() -> Self {
         Self {
             max_upload_mb: 100,
+            upload_chunk_mb: 50,
             max_pixels: 200_000_000,
             max_duration_secs: 600,
             allowed_types: [
@@ -1138,6 +1144,12 @@ impl Config {
         if self.media.max_upload_mb == 0 {
             problems.push(ConfigProblem {
                 key: "media.max_upload_mb",
+                message: "must be at least 1".into(),
+            });
+        }
+        if self.media.upload_chunk_mb == 0 {
+            problems.push(ConfigProblem {
+                key: "media.upload_chunk_mb",
                 message: "must be at least 1".into(),
             });
         }

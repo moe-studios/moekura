@@ -508,9 +508,14 @@ pub(crate) async fn versions(
 #[derive(ToSchema)]
 #[allow(dead_code)]
 pub struct UploadRequest {
-    /// The file. Send either this or `url`.
+    /// The file. Send this, `transfer` or `url`.
     #[schema(value_type = Option<String>, format = Binary)]
     file: Option<Vec<u8>>,
+    /// Instead of `file`, the token of a file sent earlier in pieces: the
+    /// last part of the URL that `POST /uploads/files` (tus 1.0.0) answered
+    /// with, once the whole file was sent. Large files are sent this way
+    /// when a proxy or CDN limits how large a request can be.
+    transfer: Option<String>,
     /// A link to download the file from, instead of sending it. It also
     /// becomes the source when none is given.
     url: Option<String>,
@@ -576,7 +581,7 @@ pub(crate) async fn upload(
     crate::upload::check_limits(&state, &current)
         .await
         .map_err(upload_error)?;
-    let (mut fields, file) = crate::upload::receive(&state, multipart).await;
+    let (mut fields, file) = crate::upload::receive(&state, &current, multipart).await;
     let id = match (file.map_err(upload_error)?, fields.staged) {
         (Some(file), _) => crate::upload::ingest(&state, &current, &file, &fields, true).await,
         (None, Some(staged)) => crate::upload::post_staged(&state, &current, staged, &fields).await,
@@ -588,7 +593,7 @@ pub(crate) async fn upload(
         }
         (None, None) => {
             return Err(AppError::Unprocessable(
-                "Send a `file`, or a `url` to download it from.".into(),
+                "Send a `file` (or a `transfer`), or a `url` to download it from.".into(),
             ));
         }
     }

@@ -29,6 +29,7 @@ use moekura_core::uploads::{self, UploadLimits};
 use moekura_db::media::{self, InsertAssetError, NewAsset};
 use moekura_db::posts::{self, NewPost};
 use moekura_db::staged_uploads;
+use moekura_db::transfers::Purpose;
 use moekura_media::MediaError;
 use moekura_storage::Key;
 use sha2::{Digest, Sha256};
@@ -548,7 +549,9 @@ pub(crate) async fn receive(
                     upload_text(state, field, TOKEN_FIELD_MAX).await,
                     &uploader.user,
                 ) {
-                    (Ok(token), Some(user)) => crate::transfers::take(state, user.id, &token).await,
+                    (Ok(token), Some(user)) => {
+                        crate::transfers::take(state, user.id, &token, Purpose::Upload).await
+                    }
                     (Ok(_), None) => Err(UploadError::Invalid("Log in to upload.".into())),
                     (Err(error), _) => Err(error),
                 };

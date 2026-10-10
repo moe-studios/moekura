@@ -11,12 +11,48 @@ use time::OffsetDateTime;
 /// Most transfers one user may have unfinished (not yet used by a form).
 pub const MAX_PER_USER: i64 = 40;
 
+/// What a file is sent for. Only a form for that takes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+pub enum Purpose {
+    /// To upload (a post, or files staged to post).
+    Upload,
+    /// To replace a post's file.
+    Replace,
+    /// To search by image.
+    Search,
+}
+
+impl Purpose {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Purpose::Upload => "upload",
+            Purpose::Replace => "replace",
+            Purpose::Search => "search",
+        }
+    }
+}
+
+impl std::str::FromStr for Purpose {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, ()> {
+        match s {
+            "upload" => Ok(Purpose::Upload),
+            "replace" => Ok(Purpose::Replace),
+            "search" => Ok(Purpose::Search),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Transfer {
     pub id: i64,
     pub token_hash: Vec<u8>,
     pub uploader_id: i64,
     pub file_name: String,
+    pub purpose: Purpose,
     /// The file's size, as declared when it began.
     pub length: i64,
     /// Bytes received so far.
@@ -37,27 +73,31 @@ impl Transfer {
 /// The columns of a [`Transfer`], for queries.
 macro_rules! columns {
     () => {
-        "id, token_hash, uploader_id, file_name, length, received, parts, created_at, updated_at"
+        "id, token_hash, uploader_id, file_name, purpose, length, received, parts, created_at, \
+         updated_at"
     };
 }
 
 /// Begins a transfer of a file of `length` bytes named `file_name` for
-/// `uploader_id`. Returns the token that names it, and the transfer.
+/// `uploader_id`, sent for `purpose`. Returns the token that names it, and
+/// the transfer.
 pub async fn create(
     db: impl PgExecutor<'_>,
     uploader_id: i64,
     file_name: &str,
+    purpose: Purpose,
     length: i64,
 ) -> sqlx::Result<(String, Transfer)> {
     let token = NewToken::generate();
     let transfer = sqlx::query_as(concat!(
-        "INSERT INTO file_transfers (token_hash, uploader_id, file_name, length)
-         VALUES ($1, $2, $3, $4) RETURNING ",
+        "INSERT INTO file_transfers (token_hash, uploader_id, file_name, purpose, length)
+         VALUES ($1, $2, $3, $4, $5) RETURNING ",
         columns!()
     ))
     .bind(&token.hash[..])
     .bind(uploader_id)
     .bind(file_name)
+    .bind(purpose)
     .bind(length)
     .fetch_one(db)
     .await?;
@@ -125,6 +165,25 @@ pub async fn take(
     .await
 }
 
+/// [`take`], only if the file was sent for `purpose`.
+pub async fn take_for(
+    db: impl PgExecutor<'_>,
+    uploader_id: i64,
+    token: &str,
+    purpose: Purpose,
+) -> sqlx::Result<Option<Transfer>> {
+    sqlx::query_as(concat!(
+        "DELETE FROM file_transfers
+         WHERE token_hash = $1 AND uploader_id = $2 AND purpose = $3 RETURNING ",
+        columns!()
+    ))
+    .bind(&hash_token(token)[..])
+    .bind(uploader_id)
+    .bind(purpose)
+    .fetch_optional(db)
+    .await
+}
+
 /// How many transfers `uploader_id` has unfinished.
 pub async fn unfinished(db: impl PgExecutor<'_>, uploader_id: i64) -> sqlx::Result<i64> {
     sqlx::query_scalar("SELECT count(*) FROM file_transfers WHERE uploader_id = $1")
@@ -175,7 +234,9 @@ mod tests {
     async fn pieces_are_counted_and_the_file_taken_once(pool: PgPool) {
         let alice = user(&pool, "alice").await;
         let bob = user(&pool, "bob").await;
-        let (token, transfer) = create(&pool, alice, "big.mp4", 10).await.unwrap();
+        let (token, transfer) = create(&pool, alice, "big.mp4", Purpose::Upload, 10)
+            .await
+            .unwrap();
         assert_eq!((transfer.received, transfer.parts), (0, 0));
         assert!(!transfer.is_complete());
         assert_eq!(unfinished(&pool, alice).await.unwrap(), 1);
@@ -199,7 +260,18 @@ mod tests {
         drop(tx);
 
         assert_eq!(take(&pool, bob, &token).await.unwrap(), None);
-        let taken = take(&pool, alice, &token).await.unwrap().unwrap();
+        // Only a form for what it was sent for takes it.
+        assert_eq!(
+            take_for(&pool, alice, &token, Purpose::Search)
+                .await
+                .unwrap(),
+            None
+        );
+        let taken = take_for(&pool, alice, &token, Purpose::Upload)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(taken.purpose, Purpose::Upload);
         assert_eq!(taken.id, transfer.id);
         assert_eq!(take(&pool, alice, &token).await.unwrap(), None);
         assert_eq!(unfinished(&pool, alice).await.unwrap(), 0);
@@ -208,8 +280,12 @@ mod tests {
     #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn idle_transfers_are_taken(pool: PgPool) {
         let alice = user(&pool, "alice").await;
-        let (_, old) = create(&pool, alice, "old.png", 5).await.unwrap();
-        let (_, new) = create(&pool, alice, "new.png", 5).await.unwrap();
+        let (_, old) = create(&pool, alice, "old.png", Purpose::Upload, 5)
+            .await
+            .unwrap();
+        let (_, new) = create(&pool, alice, "new.png", Purpose::Search, 5)
+            .await
+            .unwrap();
         sqlx::query(
             "UPDATE file_transfers SET updated_at = now() - interval '2 hours' WHERE id = $1",
         )

@@ -29,6 +29,8 @@ test("a failed piece is sent again at half its size, down to the smallest", () =
 test("the file's name goes in base64, as UTF-8", () => {
   assert.equal(metadata("a.png"), "filename YS5wbmc=");
   assert.equal(metadata("猫.png"), `filename ${Buffer.from("猫.png").toString("base64")}`);
+  // What it's for, when it isn't an upload.
+  assert.equal(metadata("a.png", "search"), "filename YS5wbmc=,purpose c2VhcmNo");
 });
 
 test("the token is the end of the transfer's URL", () => {

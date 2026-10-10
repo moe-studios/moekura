@@ -57,11 +57,21 @@ export function smaller(size: number): number {
   return size <= MIN_PIECE ? size : Math.max(MIN_PIECE, Math.floor(size / 2));
 }
 
-/** The `Upload-Metadata` naming a file `name`: `filename` and the name in base64. */
-export function metadata(name: string): string {
+/** `text` in base64, as UTF-8. */
+function base64(text: string): string {
   let binary = "";
-  for (const byte of new TextEncoder().encode(name)) binary += String.fromCharCode(byte);
-  return `filename ${btoa(binary)}`;
+  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/**
+ * The `Upload-Metadata` for a file named `name`, sent for `purpose`
+ * (`upload` when not given): each key, and its value in base64.
+ */
+export function metadata(name: string, purpose?: string): string {
+  const pairs = [`filename ${base64(name)}`];
+  if (purpose) pairs.push(`purpose ${base64(purpose)}`);
+  return pairs.join(",");
 }
 
 /** The token at the end of a transfer's URL. */
@@ -74,6 +84,8 @@ export interface SendOptions {
   maxPiece: number;
   /** The page's URL, which the transfers' are relative to. */
   base: string;
+  /** What the file is for: `upload` (when not given), `replace` or `search`. */
+  purpose?: string;
   transport?: Transport;
   /** Bytes of the file the server has, as they go. */
   progress?: (sent: number) => void;
@@ -100,7 +112,7 @@ export async function sendFile(file: Blob, name: string, options: SendOptions): 
   const created = await transport.request("POST", new URL(TRANSFERS, options.base).href, {
     ...tus,
     "Upload-Length": String(file.size),
-    "Upload-Metadata": metadata(name),
+    "Upload-Metadata": metadata(name, options.purpose),
   });
   const location = created.header("Location");
   if (created.status !== 201 || !location) throw refusal(created);

@@ -6,7 +6,7 @@ const template = readFileSync(new URL("../../crates/web/templates/upload.html", 
 const form = template.slice(template.indexOf("  <form"), template.indexOf("</form>") + 7)
   .replace("{{ max_files }}", "3")
   // Files go in pieces of at most 4 bytes.
-  .replace("{{ piece_bytes }}", "4")
+  .replace("{{ site.upload_piece_bytes }}", "4")
   .replace(/{%[\s\S]*?%}/g, "").replace(/{{\s*t\("([\w-]+)"[\s\S]*?}}/g, "$1").replace(/{{[\s\S]*?}}/g, "");
 const script = readFileSync(new URL("../../crates/web/static/js/main.js", import.meta.url), "utf8");
 

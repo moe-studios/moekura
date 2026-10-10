@@ -25,6 +25,7 @@ use moekura_core::permissions::Permission;
 use moekura_core::posts::{Rating, SOURCE_MAX_LEN};
 use moekura_db::posts;
 use moekura_db::staged_uploads::{self, Slot, Staged, Status, Upload};
+use moekura_db::transfers::Purpose;
 use moekura_db::users::User;
 use serde::Deserialize;
 use sha2::Sha256;
@@ -315,7 +316,6 @@ fn form_page(
             many_files => notes.many_files,
             max_link_files => MAX_LINK_FILES,
             max_mb => page.state().media.config().max_upload_mb,
-            piece_bytes => page.state().media.config().upload_chunk_mb.saturating_mul(1024 * 1024),
             max_files => MAX_FILES,
             allowance => notes.allowance.map(|a| context! {
                 refusal => a.refusal,
@@ -376,7 +376,9 @@ async fn receive(
             },
             "transfer" => {
                 let taken = match upload::upload_text(state, field, upload::TOKEN_FIELD_MAX).await {
-                    Ok(token) => crate::transfers::take(state, uploader_id, &token).await,
+                    Ok(token) => {
+                        crate::transfers::take(state, uploader_id, &token, Purpose::Upload).await
+                    }
                     Err(error) => Err(error),
                 };
                 match taken {

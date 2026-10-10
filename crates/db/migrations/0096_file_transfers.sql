@@ -1,8 +1,8 @@
--- Files sent to the upload form in pieces (the tus protocol), so that a
--- proxy's or CDN's limit on one request's size doesn't limit a file's.
--- The pieces wait in storage, under keys named after token_hash, until
--- the form that uses the file is sent, or the transfer goes idle and is
--- removed.
+-- Files sent in pieces (the tus protocol), so that a proxy's or CDN's
+-- limit on one request's size doesn't limit a file's. The pieces wait in
+-- storage, under keys named after token_hash, until the form that uses
+-- the file (an upload, a replacement or a search by image) is sent, or
+-- the transfer goes idle and is removed.
 
 CREATE TABLE file_transfers (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -10,6 +10,9 @@ CREATE TABLE file_transfers (
     token_hash bytea NOT NULL UNIQUE,
     uploader_id bigint NOT NULL REFERENCES users (id) ON DELETE CASCADE,
     file_name text NOT NULL,
+    -- What the file is for: only a form for that takes it, so a file
+    -- sent to search with can't skip the checks an upload's file passed.
+    purpose text NOT NULL CHECK (purpose IN ('upload', 'replace', 'search')),
     -- The file's size, as declared when the transfer began.
     length bigint NOT NULL CHECK (length >= 0),
     received bigint NOT NULL DEFAULT 0 CHECK (received BETWEEN 0 AND length),

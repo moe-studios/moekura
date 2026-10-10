@@ -1166,8 +1166,8 @@ function toBase64url(bytes) {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 function fromBase64url(text) {
-  const base64 = text.replaceAll("-", "+").replaceAll("_", "/");
-  const padded = base64 + "=".repeat((4 - base64.length % 4) % 4);
+  const base642 = text.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = base642 + "=".repeat((4 - base642.length % 4) % 4);
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 }
 function descriptors(list) {
@@ -1848,10 +1848,15 @@ function pieceSize(previous, bytesPerSecond, max) {
 function smaller(size) {
   return size <= MIN_PIECE ? size : Math.max(MIN_PIECE, Math.floor(size / 2));
 }
-function metadata(name) {
+function base64(text) {
   let binary = "";
-  for (const byte of new TextEncoder().encode(name)) binary += String.fromCharCode(byte);
-  return `filename ${btoa(binary)}`;
+  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+function metadata(name, purpose) {
+  const pairs = [`filename ${base64(name)}`];
+  if (purpose) pairs.push(`purpose ${base64(purpose)}`);
+  return pairs.join(",");
 }
 function tokenOf(url) {
   return new URL(url, "http://x").pathname.split("/").pop() ?? "";
@@ -1865,7 +1870,7 @@ async function sendFile(file, name, options) {
   const created = await transport.request("POST", new URL(TRANSFERS, options.base).href, {
     ...tus,
     "Upload-Length": String(file.size),
-    "Upload-Metadata": metadata(name)
+    "Upload-Metadata": metadata(name, options.purpose)
   });
   const location2 = created.header("Location");
   if (created.status !== 201 || !location2) throw refusal(created);
@@ -2143,6 +2148,84 @@ function enableUpload(root = document) {
   });
 }
 
+// src/transfer-forms.ts
+var PURPOSES = ["upload", "replace", "search"];
+function enableTransferForms(root = document) {
+  for (const form of root.querySelectorAll("form[data-transfer-files]")) enable(root, form);
+}
+function enable(root, form) {
+  const attribute = (name) => Element.prototype.getAttribute.call(form, name);
+  const purpose = attribute("data-transfer-files") ?? "";
+  const input = form.querySelector('input[type="file"][name="file"]');
+  if (!PURPOSES.includes(purpose) || !input) return;
+  const piece = Number(attribute("data-transfer-piece")) || 50 * 1024 * 1024;
+  const status = form.querySelector("[data-transfer-status]");
+  const error = form.querySelector("[data-transfer-error]");
+  const here = root.location?.href ?? "";
+  let sending = false;
+  const busy2 = (on) => {
+    sending = on;
+    for (const button of form.querySelectorAll("button[type=submit], button:not([type])")) button.disabled = on;
+  };
+  const forget = () => {
+    for (const field of form.querySelectorAll("input[data-transfer-token]")) field.remove();
+  };
+  const send2 = async (files) => {
+    busy2(true);
+    if (error) error.hidden = true;
+    const total = files.reduce((sum, file) => sum + file.size, 0) || 1;
+    let before = 0;
+    const show2 = (sent) => {
+      const percent = Math.min(100, Math.floor((before + sent) * 100 / total));
+      if (status) status.textContent = t("transfer-progress", "Sending {$name}\u2026 {$percent}%", { name: files[0].name, percent });
+    };
+    const retrying = () => {
+      if (status) status.textContent = t("upload-retrying", "The connection faltered; trying again\u2026");
+    };
+    const tokens = [];
+    try {
+      for (const file of files) {
+        show2(0);
+        tokens.push(await sendFile(file, file.name, { maxPiece: piece, base: here, purpose, progress: show2, retrying }));
+        before += file.size;
+      }
+    } catch (failure) {
+      for (const token of tokens) {
+        const url = new URL(`${TRANSFERS}/${token}`, here);
+        void fetch(url, { method: "DELETE", headers: { "Tus-Resumable": "1.0.0" }, credentials: "same-origin" }).catch(() => void 0);
+      }
+      if (error) {
+        error.textContent = failure instanceof TransferError && failure.message || t("transfer-failed", "Sending the file failed. Please try again.");
+        error.hidden = false;
+      }
+      if (status) status.textContent = "";
+      busy2(false);
+      return;
+    }
+    input.value = "";
+    forget();
+    for (const token of tokens) {
+      const field = root.createElement("input");
+      field.type = "hidden";
+      field.name = "transfer";
+      field.value = token;
+      field.setAttribute("data-transfer-token", "");
+      form.append(field);
+    }
+    HTMLFormElement.prototype.submit.call(form);
+  };
+  form.addEventListener("submit", (event) => {
+    const files = Array.from(input.files ?? []);
+    if (files.length === 0 || event.defaultPrevented) return;
+    event.preventDefault();
+    if (!sending) void send2(files);
+  });
+  root.defaultView?.addEventListener("pageshow", () => {
+    forget();
+    busy2(false);
+  });
+}
+
 // src/upload-form.ts
 var DOCK_KEY = "upload-dock";
 var WIDTH_KEY = "upload-form-width";
@@ -2318,6 +2401,7 @@ enableRelatedTags();
 enableSelectAll();
 enableUpload();
 enableUploadForm();
+enableTransferForms();
 enableUploadProgress();
 enableArtistFinder();
 enableClipboard();

@@ -15,7 +15,7 @@ renamed except through a [deprecation](#deprecations).
 | Surface | Covers |
 |---|---|
 | [`/api/v1`](api.md) | its endpoints, fields, parameters, error shape, status codes and rate limit headers, as its OpenAPI description at `/api/v1/openapi.json` lists them |
-| [File transfers](api.md#large-files) | `/uploads/files` speaking tus 1.0.0 with its creation and termination extensions, and the `transfer` field that names a file sent there |
+| [File transfers](api.md#large-files) | `/uploads/files` speaking tus 1.0.0 with its creation and termination extensions, the `filename` and `purpose` (`upload`, `replace`, `search`) metadata, and the `transfer` field that names a file sent there |
 | The [Danbooru-compatible API](using/danbooru-clients.md) | what gallery-dl, Grabber and Boorusama use, which the tests check on every change; the rest of it follows Danbooru as closely as it can, which may change when Danbooru does |
 | [Configuration](configuration.md) | every key in `moekura.toml`, its `MOEKURA_*` variable, its unit and its default's meaning; `MOEKURA_CONFIG`; site settings keys (`moekura admin settings`) |
 | [Commands](admin/commands.md) | every `moekura` command, its flags and arguments, and its exit status (`0` for success); the built-in role keys (`member`, `admin`, …) |

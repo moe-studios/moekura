@@ -149,6 +149,12 @@ curl -H "Authorization: Bearer $KEY" -F transfer="${url##*/}" -F rating=g -F tag
   https://booru.example.com/api/v1/posts
 ```
 
+A file is sent for one purpose, named in `Upload-Metadata` beside
+`filename`: `upload` (the default), `replace`, to replace a post's file,
+or `search`, to search by image. Only that takes it: `transfer` works in
+`POST /api/v1/posts` for `upload`, and in `POST /api/v1/posts/similar` for
+`search` (`purpose c2VhcmNo`, "search" in base64).
+
 Any tus client works as well (tus-js-client, tus-py-client, …), given
 the address and the `Authorization` header. `HEAD` on a transfer's
 address says how much has come (`Upload-Offset`), so a piece that failed

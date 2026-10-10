@@ -5,13 +5,14 @@
 //! larger, and a piece that fails is sent again without starting over.
 //!
 //! `POST /uploads/files` begins a transfer of a file of `Upload-Length`
-//! bytes, named by `Upload-Metadata`'s `filename`, and answers with the
-//! transfer's URL. A `PATCH` there sends the next piece, from
+//! bytes, named by `Upload-Metadata`'s `filename` and sent for its
+//! `purpose` (`upload`, the default; `replace`, to replace a post's file;
+//! or `search`, to search by image), and answers with the transfer's URL. A `PATCH` there sends the next piece, from
 //! `Upload-Offset`; `HEAD` says how much has come, and `DELETE` gives up.
 //! The pieces are kept in storage, so that any of several web servers can
-//! take each one. Once the whole file has come, a form names it by its
-//! token in a `transfer` field instead of sending it, and [`take`] puts it
-//! together. Transfers left idle are removed ([`prune`]).
+//! take each one. Once the whole file has come, a form for its purpose
+//! names it by its token in a `transfer` field instead of sending it, and
+//! [`take`] puts it together. Transfers left idle are removed ([`prune`]).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -28,7 +29,7 @@ use base64::engine::general_purpose::STANDARD;
 use futures_util::StreamExt;
 use moekura_core::permissions::Permission;
 use moekura_core::posts::SOURCE_MAX_LEN;
-use moekura_db::transfers::{self, Transfer};
+use moekura_db::transfers::{self, Purpose, Transfer};
 use moekura_storage::Key;
 use tokio::io::AsyncWriteExt;
 
@@ -128,12 +129,24 @@ fn header_value(value: impl ToString) -> HeaderValue {
     HeaderValue::from_str(&value.to_string()).expect("numbers and paths are valid header values")
 }
 
-/// The user sending: one who may upload.
-fn sender(current: &CurrentUser) -> Result<i64, Refused> {
-    match (&current.user, current.can(Permission::Upload)) {
+/// What a user must be allowed to do to send a file for `purpose`.
+fn permission(purpose: Purpose) -> Permission {
+    match purpose {
+        Purpose::Upload => Permission::Upload,
+        Purpose::Replace => Permission::ReplacePosts,
+        Purpose::Search => Permission::ViewPosts,
+    }
+}
+
+/// The user sending: logged in (files wait in their name), and allowed to
+/// do what the file is for. Only what a transfer is begun for is known;
+/// once it's begun, its sender may go on.
+fn sender(current: &CurrentUser, purpose: Option<Purpose>) -> Result<i64, Refused> {
+    let allowed = purpose.is_none_or(|purpose| current.can(permission(purpose)));
+    match (&current.user, allowed) {
         (Some(user), true) => Ok(user.id),
-        (Some(_), false) => Err(refused(StatusCode::FORBIDDEN, "You can't upload.")),
-        (None, _) => Err(refused(StatusCode::UNAUTHORIZED, "Log in to upload.")),
+        (Some(_), false) => Err(refused(StatusCode::FORBIDDEN, "You can't do that.")),
+        (None, _) => Err(refused(StatusCode::UNAUTHORIZED, "Log in to send files.")),
     }
 }
 
@@ -165,19 +178,24 @@ fn bytes_header(headers: &HeaderMap, name: &HeaderName) -> Option<u64> {
     value.parse().ok()
 }
 
-/// The `filename` an `Upload-Metadata` header gives, if any: its pairs
-/// are a key and a value in base64, separated by commas.
-fn file_name(metadata: &str) -> Option<String> {
+/// The value an `Upload-Metadata` header gives `wanted`, if any: its
+/// pairs are a key and a value in base64, separated by commas.
+fn metadata_value(metadata: &str, wanted: &str) -> Option<String> {
     metadata.split(',').find_map(|pair| {
         let (key, value) = pair.trim().split_once(' ')?;
-        if key != "filename" {
+        if key != wanted {
             return None;
         }
         let bytes = STANDARD.decode(value.trim()).ok()?;
-        let name = String::from_utf8_lossy(&bytes);
-        let name = name.trim();
-        (!name.is_empty()).then(|| name.chars().take(SOURCE_MAX_LEN).collect())
+        let value = String::from_utf8_lossy(&bytes);
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_owned())
     })
+}
+
+/// The `filename` an `Upload-Metadata` header gives, if any.
+fn file_name(metadata: &str) -> Option<String> {
+    metadata_value(metadata, "filename").map(|name| name.chars().take(SOURCE_MAX_LEN).collect())
 }
 
 fn max_bytes(state: &AppState) -> u64 {
@@ -204,7 +222,20 @@ async fn begin(
     current: CurrentUser,
     headers: HeaderMap,
 ) -> Result<Response, Refused> {
-    let uploader_id = sender(&current)?;
+    let metadata = headers
+        .get(&UPLOAD_METADATA)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    let purpose = match metadata_value(metadata, "purpose") {
+        None => Purpose::Upload,
+        Some(purpose) => purpose.parse().map_err(|()| {
+            refused(
+                StatusCode::BAD_REQUEST,
+                "The purpose may be upload, replace or search.",
+            )
+        })?,
+    };
+    let uploader_id = sender(&current, Some(purpose))?;
     check_version(&headers)?;
     let Some(length) = bytes_header(&headers, &UPLOAD_LENGTH) else {
         return Err(refused(
@@ -225,23 +256,21 @@ async fn begin(
             "The file is empty.",
         ));
     }
-    let name = headers
-        .get(&UPLOAD_METADATA)
-        .and_then(|v| v.to_str().ok())
-        .and_then(file_name)
-        .unwrap_or_else(|| "file".to_owned());
-    // What would refuse the form later refuses the file now, before it's
-    // sent for nothing. Pace is counted once, by the form.
-    let allowance = upload::allowance(&state, &current)
-        .await
-        .map_err(internal)?;
-    if let Some(refusal) = allowance.refusal {
-        return Err(upload_refused(&UploadError::Limit(refusal)));
+    let name = file_name(metadata).unwrap_or_else(|| "file".to_owned());
+    if purpose == Purpose::Upload {
+        // What would refuse the upload later refuses the file now, before
+        // it's sent for nothing. Pace is counted once, by the form.
+        let allowance = upload::allowance(&state, &current)
+            .await
+            .map_err(internal)?;
+        if let Some(refusal) = allowance.refusal {
+            return Err(upload_refused(&UploadError::Limit(refusal)));
+        }
+        let user = current.user.as_ref().expect("a sender is logged in");
+        crate::uploads::room(&state, user)
+            .await
+            .map_err(|e| upload_refused(&e))?;
     }
-    let user = current.user.as_ref().expect("a sender is logged in");
-    crate::uploads::room(&state, user)
-        .await
-        .map_err(|e| upload_refused(&e))?;
     let db = state.db.primary();
     let sending = transfers::unfinished(db, uploader_id)
         .await
@@ -253,7 +282,7 @@ async fn begin(
         ))));
     }
     let length = i64::try_from(length).map_err(internal)?;
-    let (token, _) = transfers::create(db, uploader_id, &name, length)
+    let (token, _) = transfers::create(db, uploader_id, &name, purpose, length)
         .await
         .map_err(internal)?;
     let mut response = tus(StatusCode::CREATED);
@@ -283,7 +312,7 @@ async fn offset(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Response, Refused> {
-    let uploader_id = sender(&current)?;
+    let uploader_id = sender(&current, None)?;
     check_version(&headers)?;
     let transfer = find(&state, uploader_id, &token).await?;
     let mut response = tus(StatusCode::OK);
@@ -312,7 +341,7 @@ async fn append(
     Path(token): Path<String>,
     body: Body,
 ) -> Result<Response, Refused> {
-    let uploader_id = sender(&current)?;
+    let uploader_id = sender(&current, None)?;
     check_version(&headers)?;
     if headers.get(CONTENT_TYPE).is_none_or(|v| v != OFFSET_TYPE) {
         return Err(refused(
@@ -418,7 +447,7 @@ async fn cancel(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Result<Response, Refused> {
-    let uploader_id = sender(&current)?;
+    let uploader_id = sender(&current, None)?;
     check_version(&headers)?;
     let transfer = transfers::take(state.db.primary(), uploader_id, &token)
         .await
@@ -450,14 +479,16 @@ async fn remove_parts(state: &AppState, transfer: &Transfer) {
 }
 
 /// The whole file of `uploader_id`'s transfer named `token`, put together
-/// for a form that named it. The transfer is used up, whatever happens.
+/// for a form for `purpose` that named it. The transfer is used up,
+/// whatever happens.
 pub(crate) async fn take(
     state: &AppState,
     uploader_id: i64,
     token: &str,
+    purpose: Purpose,
 ) -> Result<TempUpload, UploadError> {
     let token = token.trim();
-    let transfer = transfers::take(state.db.primary(), uploader_id, token)
+    let transfer = transfers::take_for(state.db.primary(), uploader_id, token, purpose)
         .await?
         .ok_or_else(|| {
             UploadError::Invalid(
@@ -555,13 +586,30 @@ mod tests {
         let max = max_bytes(&state);
         let routes = routes()
             .merge(crate::uploads::routes(max))
-            .merge(crate::upload::routes(max));
+            .merge(crate::upload::routes(max))
+            .merge(crate::replacements::routes(max))
+            .merge(crate::image_search::routes(max));
         (TestApp::new(state.clone(), routes), state)
     }
 
     /// Begins a transfer of `length` bytes named `name`, returning its URL.
     async fn begin(app: &TestApp, session: &str, length: usize, name: &str) -> String {
-        let metadata = format!("filename {}", STANDARD.encode(name));
+        begin_for(app, session, length, name, "upload").await
+    }
+
+    /// [`begin`], for `purpose`.
+    async fn begin_for(
+        app: &TestApp,
+        session: &str,
+        length: usize,
+        name: &str,
+        purpose: &str,
+    ) -> String {
+        let metadata = format!(
+            "filename {},purpose {}",
+            STANDARD.encode(name),
+            STANDARD.encode(purpose)
+        );
         let length = length.to_string();
         let created = app
             .request(
@@ -848,7 +896,14 @@ mod tests {
 
         let visitor = post_begin(&app, None, &[TUS, five]).await;
         assert_eq!(visitor.status, StatusCode::UNAUTHORIZED);
-        assert_eq!(visitor.body, "Log in to upload.");
+        assert_eq!(visitor.body, "Log in to send files.");
+        let purpose = format!("purpose {}", STANDARD.encode("delete"));
+        let unknown = post_begin(&app, alice, &[TUS, five, ("upload-metadata", &purpose)]).await;
+        assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
+        // Members may search by image, but not replace posts' files.
+        let purpose = format!("purpose {}", STANDARD.encode("replace"));
+        let replace = post_begin(&app, alice, &[TUS, five, ("upload-metadata", &purpose)]).await;
+        assert_eq!(replace.status, StatusCode::FORBIDDEN);
 
         let unversioned = post_begin(&app, alice, &[five]).await;
         assert_eq!(unversioned.status, StatusCode::PRECONDITION_FAILED);
@@ -925,6 +980,88 @@ mod tests {
             stored_parts(&state, &busy).await,
             [true, false, false, false]
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn replacing_and_searching_take_files_sent_for_them(pool: PgPool) {
+        let (app, state) = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let boss = session_for(&pool, "boss", SystemRole::Moderator).await;
+        let post = crate::danbooru::test_support::upload(&app, &alice, 20, "cat").await;
+
+        // A moderator replaces the post's file with one sent in pieces.
+        let bigger = fixture::png(40, 40);
+        let url = begin_for(&app, &boss, bigger.len(), "bigger.png", "replace").await;
+        send(&app, &boss, &url, &bigger, 100).await;
+        let fields = [
+            ("transfer", token(&url).to_owned()),
+            ("reason", "Larger".to_owned()),
+        ];
+        let replaced = app
+            .post_multipart(
+                &format!("/posts/{post}/replace"),
+                Some(&boss),
+                &fields,
+                None,
+            )
+            .await;
+        assert_eq!(replaced.status, StatusCode::SEE_OTHER, "{}", replaced.body);
+        let asset = moekura_db::media::for_post(&pool, post)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((asset.width, asset.height), (40, 40));
+        assert_eq!(stored_parts(&state, &url).await, [false; 4]);
+
+        // A file sent to search with isn't an upload's: the upload form
+        // doesn't take it (it skipped the upload limits), and leaves it.
+        let picture = fixture::png(64, 20);
+        let url = begin_for(&app, &alice, picture.len(), "like.png", "search").await;
+        send(&app, &alice, &url, &picture, 100).await;
+        let transfer = [("transfer", token(&url).to_owned())];
+        let uploaded = app
+            .post_multipart_files("/uploads", Some(&alice), &transfer, &[])
+            .await;
+        assert_eq!(uploaded.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            uploaded.body.contains("wasn&#x27;t found"),
+            "{}",
+            uploaded.body
+        );
+        assert_eq!(offset(&app, &alice, &url).await.status, StatusCode::OK);
+        // Nor does the replace form; the search does.
+        let other = app
+            .post_multipart(
+                &format!("/posts/{post}/replace"),
+                Some(&boss),
+                &transfer,
+                None,
+            )
+            .await;
+        assert_eq!(other.status, StatusCode::UNPROCESSABLE_ENTITY);
+        let searched = app
+            .post_multipart("/iqdb_queries", Some(&alice), &transfer, None)
+            .await;
+        assert_eq!(searched.status, StatusCode::OK, "{}", searched.body);
+        assert!(searched.body.contains("Posts like it"), "{}", searched.body);
+        assert_eq!(
+            offset(&app, &alice, &url).await.status,
+            StatusCode::NOT_FOUND
+        );
+
+        // The API's search takes one too.
+        let url = begin_for(&app, &alice, picture.len(), "like.png", "search").await;
+        send(&app, &alice, &url, &picture, 100).await;
+        let api = TestApp::new(state.clone(), crate::api::routes(max_bytes(&state)));
+        let found = api
+            .post_multipart(
+                "/api/v1/posts/similar",
+                Some(&alice),
+                &[("transfer", token(&url).to_owned())],
+                None,
+            )
+            .await;
+        assert_eq!(found.status, StatusCode::OK, "{}", found.body);
     }
 
     #[test]

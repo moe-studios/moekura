@@ -513,7 +513,8 @@ pub struct UploadRequest {
     file: Option<Vec<u8>>,
     /// Instead of `file`, the token of a file sent earlier in pieces: the
     /// last part of the URL that `POST /uploads/files` (tus 1.0.0) answered
-    /// with, once the whole file was sent. Large files are sent this way
+    /// with, once the whole file was sent (with the purpose `upload`, the
+    /// default). Large files are sent this way
     /// when a proxy or CDN limits how large a request can be.
     transfer: Option<String>,
     /// A link to download the file from, instead of sending it. It also
@@ -1401,6 +1402,9 @@ pub struct SimilarRequest {
     /// A picture.
     #[schema(value_type = Option<String>, format = Binary)]
     file: Option<Vec<u8>>,
+    /// Instead of `file`, the token of a picture sent earlier in pieces
+    /// to `POST /uploads/files` (tus 1.0.0) with the purpose `search`.
+    transfer: Option<String>,
     /// A link to a picture of at most 20 MB, or to a work's page on a site
     /// Moekura reads.
     url: Option<String>,
@@ -1443,7 +1447,7 @@ pub(crate) async fn similar(
     form: Multipart,
 ) -> Result<Json<Vec<SimilarPost>>, AppError> {
     current.require(Permission::ViewPosts)?;
-    let asked = crate::image_search::Asked::from_multipart(&state, form).await?;
+    let asked = crate::image_search::Asked::from_multipart(&state, &current, form).await?;
     let matches = asked
         .run(&state, &current, &info)
         .await?

@@ -2,50 +2,67 @@
 {% block title %}{{ t("admin-nav-tag-categories") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "admin_nav.html" %}
+<div class="column">
 <h1>{{ t("admin-nav-tag-categories") }}</h1>
 <p class="hint">{{ t("tc-hint") }}</p>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
 {% for category in categories %}
-<section class="card role" id="category-{{ category.id }}">
-  <h2><span class="tag-{{ category.name }}">{{ category.label }}</span> <span class="optional">{{ t("tc-id", id=category.id) }} · {{ t("tc-tags", count=category.tag_count) }}{% if category.built_in %} · {{ t("tc-built-in") }}{% endif %}</span></h2>
+<section class="card role" id="category-{{ category.id }}" aria-labelledby="category-{{ category.id }}-heading">
+  {# The name, then moving and deleting it, on one line. #}
+  <div class="card-head">
+    <h2 id="category-{{ category.id }}-heading"><span class="tag-{{ category.name }}">{{ category.label }}</span> <span class="optional">{{ t("tc-id", id=category.id) }} · {{ t("tc-tags", count=category.tag_count) }}{% if category.built_in %} · {{ t("tc-built-in") }}{% endif %}</span></h2>
+    <div class="actions">
+      {% if not category.first %}
+      <form method="post" action="/admin/tag-categories/{{ category.id }}/move">
+        <input type="hidden" name="direction" value="up">
+        <button type="submit" class="secondary">{{ t("tc-up") }}</button>
+      </form>
+      {% endif %}
+      {% if not category.last %}
+      <form method="post" action="/admin/tag-categories/{{ category.id }}/move">
+        <input type="hidden" name="direction" value="down">
+        <button type="submit" class="secondary">{{ t("tc-down") }}</button>
+      </form>
+      {% endif %}
+      {% if category.deletable %}
+      <form method="post" action="/admin/tag-categories/{{ category.id }}/delete">
+        <button type="submit" class="danger">{{ t("delete-thing", name=category.label) }}</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
   <form method="post" action="/admin/tag-categories/{{ category.id }}">
-    <label for="category-name-{{ category.id }}">{{ t("tc-name") }}</label>
-    <input id="category-name-{{ category.id }}" name="name" value="{{ category.name }}" maxlength="{{ name_max }}" pattern="[a-z][a-z0-9_]*" required{% if category.built_in %} readonly aria-describedby="category-fixed-{{ category.id }}"{% endif %}>
-    {% if category.built_in %}<p class="hint" id="category-fixed-{{ category.id }}">{{ t("tc-name-fixed") }}</p>{% endif %}
-    <label for="category-label-{{ category.id }}">{{ t("tc-label") }}</label>
-    <input id="category-label-{{ category.id }}" name="label" value="{{ category.label }}" maxlength="{{ label_max }}" required>
+    <div class="field-grid">
+      <div>
+        <label for="category-name-{{ category.id }}">{{ t("tc-name") }}</label>
+        <input id="category-name-{{ category.id }}" name="name" value="{{ category.name }}" maxlength="{{ name_max }}" pattern="[a-z][a-z0-9_]*" required{% if category.built_in %} readonly aria-describedby="category-fixed-{{ category.id }}"{% endif %}>
+        {% if category.built_in %}<p class="hint" id="category-fixed-{{ category.id }}">{{ t("tc-name-fixed") }}</p>{% endif %}
+      </div>
+      <div>
+        <label for="category-label-{{ category.id }}">{{ t("tc-label") }}</label>
+        <input id="category-label-{{ category.id }}" name="label" value="{{ category.label }}" maxlength="{{ label_max }}" required>
+      </div>
+    </div>
     <button type="submit">{{ t("save-thing", name=category.label) }}</button>
   </form>
-  <div class="actions">
-    {% if not category.first %}
-    <form method="post" action="/admin/tag-categories/{{ category.id }}/move">
-      <input type="hidden" name="direction" value="up">
-      <button type="submit" class="secondary">{{ t("tc-up") }}</button>
-    </form>
-    {% endif %}
-    {% if not category.last %}
-    <form method="post" action="/admin/tag-categories/{{ category.id }}/move">
-      <input type="hidden" name="direction" value="down">
-      <button type="submit" class="secondary">{{ t("tc-down") }}</button>
-    </form>
-    {% endif %}
-    {% if category.deletable %}
-    <form method="post" action="/admin/tag-categories/{{ category.id }}/delete">
-      <button type="submit" class="danger">{{ t("delete-thing", name=category.label) }}</button>
-    </form>
-    {% endif %}
-  </div>
 </section>
 {% endfor %}
-<section class="card role">
-  <h2>{{ t("tc-new") }}</h2>
+<section class="card role" aria-labelledby="new-category-heading">
+  <h2 id="new-category-heading">{{ t("tc-new") }}</h2>
   <form method="post" action="/admin/tag-categories/new">
-    <label for="new-category-name">{{ t("tc-name") }}</label>
-    <input id="new-category-name" name="name" maxlength="{{ name_max }}" pattern="[a-z][a-z0-9_]*" required aria-describedby="new-category-hint">
+    <div class="field-grid">
+      <div>
+        <label for="new-category-name">{{ t("tc-name") }}</label>
+        <input id="new-category-name" name="name" maxlength="{{ name_max }}" pattern="[a-z][a-z0-9_]*" required aria-describedby="new-category-hint">
+      </div>
+      <div>
+        <label for="new-category-label">{{ t("tc-label") }}</label>
+        <input id="new-category-label" name="label" maxlength="{{ label_max }}" required>
+      </div>
+    </div>
     <p class="hint" id="new-category-hint">{{ t("tc-name-hint") }}</p>
-    <label for="new-category-label">{{ t("tc-label") }}</label>
-    <input id="new-category-label" name="label" maxlength="{{ label_max }}" required>
     <button type="submit">{{ t("tc-add") }}</button>
   </form>
 </section>
+</div>
 {% endblock %}

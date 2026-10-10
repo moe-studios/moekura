@@ -180,6 +180,15 @@ roles-add = Add role
 ## Admin → Settings
 
 as-title = Site settings
+as-sections = Sections
+as-section-branding = Logo and icons
+as-section-site = About the site
+as-section-look = Look
+as-section-accounts = Accounts
+as-section-uploads = Uploads
+as-section-visitors = Ratings and blacklist
+as-section-privacy = Privacy and crawlers
+as-captcha = Captcha
 as-logo = Icon
 as-logo-alt = The current icon
 as-logo-hint = Shown beside the site's name in the header, in place of the house. PNG, JPEG, GIF, WebP or AVIF, up to 1 MB; it is shown 32 pixels high.

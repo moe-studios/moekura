@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ t("login-code-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<p class="back"><a href="/settings/account">« {{ t("account-email-password") }}</a></p>
-<section class="card medium">
-  <h1>{{ t("login-code-title") }}</h1>
+<div class="with-rail">
+{% include "settings_nav.html" %}
+<div class="settings">
+<h1>{{ t("login-code-title") }}</h1>
+<section class="card">
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   {% if recovery_codes %}
   <p>{{ t("tfa-save-codes") }}</p>
@@ -27,7 +29,7 @@
     <input id="codes-password" name="password" type="password" autocomplete="current-password" required>
     <button type="submit" class="secondary">{{ t("tfa-new-codes") }}</button>
   </form>
-  <form method="post" action="/settings/two-factor/disable">
+  <form class="danger-zone" method="post" action="/settings/two-factor/disable">
     <label for="off-password">{{ t("your-password") }}</label>
     <input id="off-password" name="password" type="password" autocomplete="current-password" required>
     <button type="submit" class="danger" data-confirm="{{ t('tfa-off-confirm') }}">{{ t("turn-off") }}</button>
@@ -41,4 +43,6 @@
   </form>
   {% endif %}
 </section>
+</div>
+</div>
 {% endblock %}

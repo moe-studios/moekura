@@ -3,10 +3,11 @@
 {% block content %}
 {% include "admin_nav.html" %}
 <h1>{{ t("admin-nav-overview") }}</h1>
+{# What waits on staff first, then the size of the site. #}
 <dl class="stats">
-  <div><dt>{{ t("nav-posts") }}</dt><dd>{{ stats.active_posts }}</dd></div>
   <div><dt>{{ t("overview-pending") }}</dt><dd><a href="/moderation/queue">{{ stats.pending_posts }}</a></dd></div>
   <div><dt>{{ t("overview-flagged") }}</dt><dd><a href="/moderation/flags">{{ stats.flagged_posts }}</a></dd></div>
+  <div><dt>{{ t("nav-posts") }}</dt><dd>{{ stats.active_posts }}</dd></div>
   <div><dt>{{ t("overview-deleted") }}</dt><dd>{{ stats.deleted_posts }}</dd></div>
   <div><dt>{{ t("stats-users") }}</dt><dd>{{ stats.users }}</dd></div>
   <div><dt>{{ t("stats-tags") }}</dt><dd>{{ stats.tags }}</dd></div>
@@ -14,7 +15,9 @@
   <div><dt>{{ t("overview-database") }}</dt><dd>{{ stats.database }}</dd></div>
 </dl>
 
-<h2>{{ t("overview-jobs") }}</h2>
+<div class="overview-grid">
+<section aria-labelledby="overview-jobs">
+<h2 id="overview-jobs">{{ t("overview-jobs") }}</h2>
 {% if jobs %}
 <div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('overview-jobs-table') }}">
 <table class="tag-table">
@@ -25,9 +28,10 @@
 {% else %}
 <p class="hint">{{ t("overview-queue-empty") }}</p>
 {% endif %}
-
+</section>
 {% if dead %}
-<h2>{{ t("overview-failed") }}</h2>
+<section aria-labelledby="overview-failed">
+<h2 id="overview-failed">{{ t("overview-failed") }}</h2>
 <p class="hint">{{ t("overview-failed-hint") }}</p>
 <ul class="log">
   {% for j in dead %}
@@ -43,5 +47,7 @@
   </li>
   {% endfor %}
 </ul>
+</section>
 {% endif %}
+</div>
 {% endblock %}

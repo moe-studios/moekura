@@ -24,9 +24,14 @@
   <input type="hidden" name="back" value="{{ back }}">
   <p class="hint">{{ t("queue-bulk-hint") }}</p>
   <label class="choice select-all"><input type="checkbox" data-select-all="bulk"> {{ t("tick-every-page") }}</label>
-  <button type="submit" name="action" value="approve">{{ t("approve-ticked") }}</button>
-  {{ reason_fields("bulk-reason", reasons.deletion, t("reason-reject-ticked"), required=false, compact=true) }}
-  <button type="submit" name="action" value="reject" class="secondary">{{ t("reject-ticked") }}</button>
+  {# Approving, then rejecting with its reason, as two groups. #}
+  <div class="bulk-group">
+    <button type="submit" name="action" value="approve">{{ t("approve-ticked") }}</button>
+  </div>
+  <div class="bulk-group">
+    {{ reason_fields("bulk-reason", reasons.deletion, t("reason-reject-ticked"), required=false, compact=true) }}
+    <button type="submit" name="action" value="reject" class="secondary">{{ t("reject-ticked") }}</button>
+  </div>
 </form>
 <ul class="review">
   {% for p in posts %}

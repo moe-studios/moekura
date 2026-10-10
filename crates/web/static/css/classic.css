@@ -554,6 +554,7 @@ code.secret { display: inline-block; overflow-wrap: anywhere; user-select: all; 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .actions form { margin: 0; }
 .logo-form { margin-bottom: 20px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.logo-form:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
 .logo-preview { height: 48px; width: auto; }
 .status { font-weight: bold; text-transform: capitalize; }
 .status-active { color: var(--tag-character); }
@@ -640,6 +641,7 @@ form .suggestions button[type="submit"] { background: var(--stripe); border-colo
 .history > li:nth-child(even) { background: var(--stripe); }
 .history-head { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 12px; }
 .history-head form { margin: 0 0 0 auto; }
+.history-head form + form { margin-left: 0; }
 .changes { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 12px; }
 .changes .added, .added { color: var(--tag-character); }
 .changes .removed, .removed { color: var(--danger); }
@@ -818,6 +820,12 @@ form.vote button[type="submit"], form.favorite button[type="submit"] { margin: 0
 .log > li { padding: 5px 8px; }
 .log > li:nth-child(even) { background: var(--stripe); }
 .log .reason { margin-top: 2px; }
+/* Logs read down a column of times. */
+.log.timed > li { display: grid; grid-template-columns: 9em minmax(0, 1fr); gap: 0 12px; align-items: baseline; }
+.log.timed .when { margin: 0; font-variant-numeric: tabular-nums; }
+@media (max-width: 599px) {
+  .log.timed > li { grid-template-columns: minmax(0, 1fr); }
+}
 .log .actions { margin-top: 5px; }
 .moderate form + form { margin-top: 10px; }
 .review { list-style: none; margin: 0; padding: 0; }
@@ -829,6 +837,7 @@ form.vote button[type="submit"], form.favorite button[type="submit"] { margin: 0
 .bulk-review button { margin-top: 0; }
 .bulk-review select, .bulk-review input:not([type="checkbox"]) { width: auto; }
 html:not(.js) .select-all { display: none; }
+.review-thumb { flex: 0 0 var(--thumb); }
 .review-thumb img { display: block; max-width: var(--thumb); max-height: var(--thumb); width: auto; height: auto; }
 .review-body { flex: 1; min-width: 0; }
 .review-body p { margin: 0 0 5px; }
@@ -837,6 +846,7 @@ html:not(.js) .select-all { display: none; }
 @media (max-width: 599px) {
   .review > li { flex-wrap: wrap; gap: 10px; }
   .review-body { flex-basis: 100%; }
+  .review-thumb { flex-basis: 120px; }
   .review-thumb img { max-width: 120px; max-height: 120px; }
 }
 .plain { list-style: none; margin: 0 0 6px; padding: 0; }
@@ -903,7 +913,45 @@ html:not(.js) .select-all { display: none; }
 .settings-section h2 { margin: 12px 0 2px; }
 .form-footer { margin-top: 14px; }
 .form-footer button[type="submit"] { margin: 0; }
+.settings > .card + .card, .settings > .card + form { margin-top: 20px; }
+.settings-section h3 { margin: 14px 0 0; font-size: 1em; }
 .link-list { list-style: none; margin: 14px 0; padding: 0; }
+
+/* A page with a menu of its own (the settings pages) or of its parts
+   (long staff pages): a list down the left, or a row above on narrow
+   screens. */
+.with-rail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 24px; }
+.with-rail > * { min-width: 0; }
+.rail ul { list-style: none; margin: 0; padding: 0; }
+.rail a[aria-current] { color: var(--text); font-weight: bold; }
+.rail-title { margin: 0 0 4px; font-weight: bold; }
+@media (min-width: 900px) {
+  .with-rail { grid-template-columns: 11em minmax(0, 720px); }
+  .with-rail.wide { grid-template-columns: 11em minmax(0, 1fr); }
+  .rail { position: sticky; top: 8px; margin-top: 12px; }
+  .rail li { padding: 2px 0; }
+}
+@media (max-width: 899px) {
+  .rail { margin: 0 0 10px; }
+  .rail-title { display: none; }
+  .rail ul { display: flex; flex-wrap: wrap; gap: 2px 14px; }
+  .rail.sections { display: none; }
+}
+/* Short fields side by side, each over its own label. */
+.field-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(13em, 100%), 1fr)); gap: 0 14px; }
+.field-grid > div { display: flex; flex-direction: column; min-width: 0; }
+input[type="number"] { width: 10em; }
+.card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 12px; }
+.card-head h2 { margin: 0; }
+.column { max-width: 760px; }
+.overview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(26em, 100%), 1fr)); gap: 0 28px; align-items: start; }
+/* A user's moderation record: where they stand beside what they did. */
+.record { display: grid; gap: 14px 24px; align-items: start; }
+.record-side, .record-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+@media (min-width: 1000px) {
+  .record { grid-template-columns: 20em minmax(0, 1fr); }
+}
+.bulk-group { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .link-list li { padding: 1px 0; }
 .card.upload-file { position: relative; display: block; width: fit-content; max-width: 100%; padding: 0; border: 0; }
 
@@ -914,6 +962,10 @@ form.inline { flex-direction: row; flex-wrap: wrap; gap: 5px; align-items: cente
 .role h2 { margin: 0 0 3px; }
 fieldset.permissions { border: 0; padding: 0; margin: 10px 0 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 3px 14px; }
 fieldset.permissions legend { font-weight: bold; margin-bottom: 3px; padding: 0; }
+fieldset.permissions > .hint { grid-column: 1 / -1; margin: 0 0 3px; }
+fieldset + label.choice { margin-top: 12px; }
+.card > form + .actions { margin-top: 12px; }
+.api-keys td:not(:first-child), .passkeys td:nth-child(2), .passkeys td:nth-child(3) { white-space: nowrap; }
 .automatic-tags th[scope="row"] { text-align: start; font-weight: normal; }
 .automatic-tags th[scope="row"] label { font-weight: normal; margin: 0; }
 .automatic-tags td input { width: 100%; }

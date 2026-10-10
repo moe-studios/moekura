@@ -1,8 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ t("api-keys-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<section class="card medium">
-  <h1>{{ t("api-keys-title") }}</h1>
+<div class="with-rail">
+{% include "settings_nav.html" %}
+<div class="settings">
+<h1>{{ t("api-keys-title") }}</h1>
+<section class="card">
   <p>{{ t("api-keys-intro", url=docs_url) }}</p>
   {% if created %}
   <div class="notice" role="status">
@@ -12,7 +15,7 @@
   {% endif %}
   {% if keys %}
   <div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('api-keys-table') }}">
-  <table class="tag-table">
+  <table class="tag-table api-keys">
     <thead><tr><th>{{ t("account-name") }}</th><th>{{ t("api-key") }}</th><th>{{ t("api-keys-created-heading") }}</th><th>{{ t("api-keys-last-used") }}</th><th>{{ t("invites-expires") }}</th><th></th></tr></thead>
     <tbody>
       {% for k in keys %}
@@ -35,7 +38,8 @@
   {% else %}
   <p class="hint">{{ t("api-keys-none") }}</p>
   {% endif %}
-
+</section>
+<section class="card settings-section">
   <h2>{{ t("api-keys-new") }}</h2>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/settings/api-keys">
@@ -55,6 +59,7 @@
     {% endif %}
     <button type="submit">{{ t("api-keys-create") }}</button>
   </form>
-  <p><a href="/settings">{{ t("back-to-settings") }}</a></p>
 </section>
+</div>
+</div>
 {% endblock %}

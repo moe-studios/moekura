@@ -22,8 +22,8 @@
 </ol>
 {% if previous_url or next_url %}
 <nav class="pager" aria-label="{{ t('pages') }}">
-  {% if previous_url %}<a href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
-  {% if next_url %}<a href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
+  {% if previous_url %}<a class="button" href="{{ previous_url }}" rel="prev">{{ t("previous") }}</a>{% endif %}
+  {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
 {% else %}

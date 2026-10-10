@@ -2,9 +2,12 @@
 {% block title %}{{ t("account-email-password") }} · {{ site.name }}{% endblock %}
 {% macro field_error(message) %}{% if message %}<p class="form-error" role="alert">{{ message }}</p>{% endif %}{% endmacro %}
 {% block content %}
-<p class="back"><a href="/settings">« {{ t("nav-settings") }}</a></p>
-<section class="card medium">
-  <h1>{{ t("account-email-heading") }}</h1>
+<div class="with-rail">
+{% include "settings_nav.html" %}
+<div class="settings">
+<h1>{{ t("account-email-password") }}</h1>
+<section class="card settings-section">
+  <h2>{{ t("account-email-heading") }}</h2>
   <p>
     {% if email %}{% if mail_enabled and verified %}{{ t("account-email-confirmed", email=email) }}{% elif mail_enabled %}{{ t("account-email-unconfirmed", email=email) }}{% else %}{{ t("account-email-is", email=email) }}{% endif %}
     {% else %}{% if mail_enabled %}{{ t("account-no-email-mail") }}{% else %}{{ t("account-no-email") }}{% endif %}{% endif %}
@@ -19,8 +22,8 @@
     <button type="submit">{% if mail_enabled %}{{ t("resend-send") }}{% else %}{{ t("account-change-address") }}{% endif %}</button>
   </form>
 </section>
-<section class="card medium">
-  <h1>{{ t("account-password") }}</h1>
+<section class="card settings-section">
+  <h2>{{ t("account-password") }}</h2>
   {{ field_error(errors.password) }}
   <form method="post" action="/settings/account/password">
     <label for="current">{{ t("account-current-password") }}</label>
@@ -35,8 +38,8 @@
   </form>
 </section>
 {% if sso %}
-<section class="card medium">
-  <h1>{{ t("account-sso") }}</h1>
+<section class="card settings-section">
+  <h2>{{ t("account-sso") }}</h2>
   {% if sso.linked %}
   <ul class="plain-list">
     {% for i in sso.linked %}
@@ -57,8 +60,8 @@
 </section>
 {% endif %}
 {% if passkeys.enabled or passkeys.list %}
-<section class="card medium" id="passkeys">
-  <h1>{{ t("passkeys-title") }}</h1>
+<section class="card settings-section" id="passkeys">
+  <h2>{{ t("passkeys-title") }}</h2>
   <p>{{ t("passkeys-intro") }}</p>
   {{ field_error(errors.passkeys) }}
   {% if passkeys.list %}
@@ -108,7 +111,7 @@
   {% elif passkeys.full %}
   <p class="hint">{{ t("passkeys-full", max=passkeys.max) }}</p>
   {% else %}
-  <h2>{{ t("passkeys-add") }}</h2>
+  <h3>{{ t("passkeys-add") }}</h3>
   <form method="post" action="/settings/passkeys" data-passkey-register hidden>
     <p class="form-error" role="alert" data-passkey-error hidden></p>
     <label for="passkey-name">{{ t("passkeys-name") }}</label>
@@ -126,8 +129,10 @@
   {% endif %}
 </section>
 {% endif %}
-<section class="card medium">
-  <h1>{{ t("login-code-title") }}</h1>
+<section class="card settings-section">
+  <h2>{{ t("login-code-title") }}</h2>
   <p>{{ t("account-tfa-intro") }}</p>
 </section>
+</div>
+</div>
 {% endblock %}

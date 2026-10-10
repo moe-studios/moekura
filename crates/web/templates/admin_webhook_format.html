@@ -2,7 +2,7 @@
     <select id="hook-format" name="format">
       {% for f in discord.formats %}<option value="{{ f.name }}"{% if f.chosen %} selected{% endif %}>{{ t("webhook-format-" ~ f.name) }}</option>{% endfor %}
     </select>
-    <fieldset class="permissions">
+    <fieldset class="limits">
       <legend>{{ t("webhook-discord") }}</legend>
       <p class="hint">{{ t("webhook-discord-hint") }}</p>
       <label for="hook-username">{{ t("webhook-username") }} <span class="optional">{{ t("optional") }}</span></label>

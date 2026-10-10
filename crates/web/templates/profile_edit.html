@@ -1,8 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ t("profile-edit-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<section class="card medium">
-  <h1>{{ t("profile-edit-title") }}</h1>
+<div class="with-rail">
+{% include "settings_nav.html" %}
+<div class="settings">
+<h1>{{ t("profile-edit-title") }}</h1>
+<section class="card">
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <div class="profile-preview" aria-hidden="true">
     <div class="profile-banner">{% if banner %}<img src="{{ banner }}" alt="">{% endif %}</div>
@@ -24,4 +27,6 @@
   </form>
   {% if name %}<p class="aside"><a href="/users/{{ name|urlencode }}">{{ t("profile-view") }}</a></p>{% endif %}
 </section>
+</div>
+</div>
 {% endblock %}

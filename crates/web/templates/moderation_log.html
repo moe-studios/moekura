@@ -34,15 +34,17 @@
   <button type="submit">{{ t("filter") }}</button>
 </form>
 {% if entries %}
-<ol class="log">
+<ol class="log timed">
   {% for e in entries %}
   <li>
-    <span class="hint"><time>{{ e.when }} {{ e.time }}</time></span>
+    <span class="hint when"><time>{{ e.when }} {{ e.time }}</time></span>
+    <div>
     <strong>{{ e.actor or t("command-line") }}</strong> {{ t("action-" ~ e.action|replace(".", "_")) if e.known else e.action }}
     {% if e.post_id %}<a href="/posts/{{ e.post_id }}">#{{ e.post_id }}</a>{% endif %}
     {% if e.user %}<a href="/moderation/users/{{ e.user }}">{{ e.user }}</a>{% endif %}
     {% if e.reason %}<div class="reason">“{{ e.reason }}”</div>{% endif %}
     {% if e.details %}<div class="hint">{% for d in e.details %}{{ d.key }}: {{ d.value }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
+    </div>
   </li>
   {% endfor %}
 </ol>

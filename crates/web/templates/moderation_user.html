@@ -4,8 +4,10 @@
 {% block content %}
 {% include "moderation_nav.html" %}
 <h1>{{ user.name }}</h1>
-<p><a href="{{ user.profile_url }}">{{ t("profile") }}</a> · <a href="/post_versions?user={{ user.name | urlencode }}">{{ t("mod-nav-changes") }}</a> · <a href="/tag_versions?user={{ user.name | urlencode }}">{{ t("tag-changes") }}</a> · <a href="/wiki_page_versions?user={{ user.name | urlencode }}">{{ t("recent-wiki_page_versions") }}</a> · <a href="/pool_versions?user={{ user.name | urlencode }}">{{ t("recent-pool_versions") }}</a> · <a href="/note_versions?user={{ user.name | urlencode }}">{{ t("recent-note_versions") }}</a></p>
+<p class="record-links"><a href="{{ user.profile_url }}">{{ t("profile") }}</a> · <a href="/post_versions?user={{ user.name | urlencode }}">{{ t("mod-nav-changes") }}</a> · <a href="/tag_versions?user={{ user.name | urlencode }}">{{ t("tag-changes") }}</a> · <a href="/wiki_page_versions?user={{ user.name | urlencode }}">{{ t("recent-wiki_page_versions") }}</a> · <a href="/pool_versions?user={{ user.name | urlencode }}">{{ t("recent-pool_versions") }}</a> · <a href="/note_versions?user={{ user.name | urlencode }}">{{ t("recent-note_versions") }}</a></p>
 
+<div class="record">
+<div class="record-side">
 <section class="card">
   <h2>{{ t("record-account") }}</h2>
   <dl class="facts">
@@ -54,6 +56,8 @@
 <section class="card">
   {% include "user_notes.html" %}
 </section>
+</div>
+<div class="record-main">
 
 {% if show_addresses %}
 <section class="card">
@@ -161,14 +165,16 @@
 <section class="card">
   <h2>{{ t("mod-nav-log") }}</h2>
   {% if about %}
-  <ol class="log">
+  <ol class="log timed">
     {% for e in about %}
     <li>
-      <span class="hint"><time>{{ e.when }} {{ e.time }}</time></span>
+      <span class="hint when"><time>{{ e.when }} {{ e.time }}</time></span>
+      <div>
       <strong>{{ e.actor or t("command-line") }}</strong> {{ t("action-" ~ e.action|replace(".", "_")) if e.known else e.action }}
       {% if e.post_id %}<a href="/posts/{{ e.post_id }}">#{{ e.post_id }}</a>{% endif %}
       {% if e.user %}{{ e.user }}{% endif %}
       {% if e.reason %}<div class="reason">“{{ e.reason }}”</div>{% endif %}
+      </div>
     </li>
     {% endfor %}
   </ol>
@@ -178,14 +184,16 @@
   {% endif %}
   {% if by %}
   <h3>{{ t("log-by-heading", user=user.name) }}</h3>
-  <ol class="log">
+  <ol class="log timed">
     {% for e in by %}
     <li>
-      <span class="hint"><time>{{ e.when }} {{ e.time }}</time></span>
+      <span class="hint when"><time>{{ e.when }} {{ e.time }}</time></span>
+      <div>
       {{ t("action-" ~ e.action|replace(".", "_")) if e.known else e.action }}
       {% if e.post_id %}<a href="/posts/{{ e.post_id }}">#{{ e.post_id }}</a>{% endif %}
       {% if e.user %}<a href="/moderation/users/{{ e.user }}">{{ e.user }}</a>{% endif %}
       {% if e.reason %}<div class="reason">“{{ e.reason }}”</div>{% endif %}
+      </div>
     </li>
     {% endfor %}
   </ol>
@@ -193,4 +201,6 @@
   {% endif %}
 </section>
 {% endif %}
+</div>
+</div>
 {% endblock %}

@@ -1,7 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ t("nav-settings") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<div class="settings medium">
+<div class="with-rail">
+{% include "settings_nav.html" %}
+<div class="settings">
   <h1>{{ t("nav-settings") }}</h1>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form class="card settings-form" method="post" action="/settings">
@@ -77,11 +79,6 @@
   </form>
   <section class="card settings-section" aria-labelledby="settings-account">
     <h2 id="settings-account">{{ t("settings-section-account") }}</h2>
-    <ul class="link-list">
-      <li><a href="/settings/profile">{{ t("settings-profile-link") }}</a></li>
-      <li><a href="/settings/account">{{ t("settings-account-link") }}</a></li>
-      <li><a href="/settings/name">{{ t("name-title") }}</a></li>
-    </ul>
     <p>{{ t("settings-api-keys") }}</p>
     {% if can_invite %}<p>{{ t("settings-invites") }}</p>{% endif %}
     <p>{{ t("settings-saved-searches") }}</p>
@@ -105,5 +102,6 @@
     </form>
     {% endif %}
   </section>
+</div>
 </div>
 {% endblock %}

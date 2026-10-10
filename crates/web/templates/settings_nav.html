@@ -1,0 +1,14 @@
+{# The settings pages' own menu: a rail beside the page on wide screens, a
+   strip of tabs above it on narrow ones. #}
+{% macro item(url, label) %}<li><a href="{{ url }}"{% if path == url %} aria-current="page"{% endif %}>{{ label }}</a></li>{% endmacro %}
+<nav class="rail" aria-label="{{ t('nav-settings') }}">
+  <p class="rail-title" aria-hidden="true">{{ t("nav-settings") }}</p>
+  <ul>
+    {{ item("/settings", t("settings-nav-preferences")) }}
+    {{ item("/settings/profile", t("nav-profile")) }}
+    {{ item("/settings/account", t("account-email-password")) }}
+    {{ item("/settings/two-factor", t("login-code-title")) }}
+    {{ item("/settings/name", t("name-title")) }}
+    {{ item("/settings/api-keys", t("api-keys-title")) }}
+  </ul>
+</nav>

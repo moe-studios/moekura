@@ -169,8 +169,6 @@ settings-language = Language
 settings-language-browser = Your browser's
 settings-custom-css = Custom CSS
 settings-custom-css-hint = Applied after the site's styles, on every page, for you alone.
-settings-account-link = Your email address and password
-settings-profile-link = Your profile picture, banner and bio
 settings-api-keys = <a href="/settings/api-keys">API keys</a> let scripts and apps use the site as you.
 settings-invites = <a href="/invites">Invites</a> let people sign up when it takes an invite code.
 settings-feeds = Feeds
@@ -182,6 +180,7 @@ settings-feed-token-revoke = Revoke it
 settings-saved-searches = <a href="/saved_searches">Saved searches</a>, to see the newest posts of several searches together.
 
 ## Sections of the settings page.
+settings-nav-preferences = Preferences
 settings-section-browsing = Browsing
 settings-section-appearance = Appearance
 settings-section-region = Language and time

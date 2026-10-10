@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ t("name-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<p class="back"><a href="/settings">« {{ t("nav-settings") }}</a></p>
-<section class="card medium">
-  <h1>{{ t("name-title") }}</h1>
+<div class="with-rail">
+{% include "settings_nav.html" %}
+<div class="settings">
+<h1>{{ t("name-title") }}</h1>
+<section class="card">
   <p>{{ t("name-current", name=current) }}</p>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   {% if next %}
@@ -17,4 +19,6 @@
   </form>
   {% endif %}
 </section>
+</div>
+</div>
 {% endblock %}

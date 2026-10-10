@@ -1,7 +1,7 @@
 # Themes
 
 A theme sets the site's colours, in both light and dark mode. Moekura
-comes with five:
+comes with six:
 
 | Theme | Colours |
 |---|---|
@@ -10,6 +10,7 @@ comes with five:
 | Neutral | greys, near-black ink and a charcoal header |
 | Ocean | sea-foam links under a night-sea navy header |
 | Sakura | pink under a plum header, Moekura's colours before 0.5 |
+| Wisteria | violet links under an indigo header |
 
 Choose the theme visitors see under **Admin → Settings → Default
 theme**. Logged-in users can pick any theme the site has, and light,

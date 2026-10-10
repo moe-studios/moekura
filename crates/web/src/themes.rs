@@ -69,7 +69,7 @@ mod tests {
 
         let names = names(&assets);
         assert_eq!(names[0], "default");
-        for name in ["aurora", "forest", "ocean", "sakura"] {
+        for name in ["aurora", "forest", "ocean", "sakura", "wisteria"] {
             assert!(names.contains(&name), "{names:?}");
         }
         assert!(!names.contains(&"dark"), "mode names aren't themes");

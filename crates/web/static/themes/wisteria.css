@@ -1,0 +1,12 @@
+/* Wisteria: violet links under an indigo band. Bluer than the copyright
+   tags' magenta, so links and copyrights stay apart. */
+:root {
+  --bg: light-dark(#f8f7fb, #15131d);
+  --surface: light-dark(#ffffff, #1d1a28);
+  --text: light-dark(#1c1826, #ebe8f3);
+  --muted: light-dark(#5c5670, #a7a1b8);
+  --border: light-dark(#e0dcea, #332e44);
+  --accent: light-dark(#5b34c4, #ab9cff);
+  --accent-text: light-dark(#ffffff, #15131d);
+  --shell: light-dark(#2e1f5c, #1f1638);
+}

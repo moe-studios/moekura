@@ -9,7 +9,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::permissions::Permission;
 use moekura_core::settings::RegistrationMode;
-use moekura_core::user_settings::{Layout, Mode, UserSettings};
+use moekura_core::user_settings::{Mode, UserSettings};
 
 use crate::AppState;
 use crate::auth::CurrentUser;
@@ -144,30 +144,6 @@ fn section(path: &str) -> Option<&'static str> {
     })
 }
 
-/// Where a path belongs in the classic layout's main menu, which, like
-/// Danbooru's, has more tabs than the modern one (and a strip of the
-/// current one's links under them).
-fn area(path: &str) -> Option<&'static str> {
-    let first = path.trim_start_matches('/').split('/').next().unwrap_or("");
-    Some(match first {
-        "" | "posts" | "post_versions" | "note_versions" | "explore" | "iqdb_queries"
-        | "recent_changes" | "favorites" => "posts",
-        "upload" | "uploads" => "upload",
-        "comments" => "comments",
-        "artists" | "artist_versions" | "artist_commentary_versions" => "artists",
-        "tags" | "tag_versions" => "tags",
-        "pools" | "pool_versions" => "pools",
-        "wiki" | "wiki_page_versions" => "wiki",
-        "forum_topics" | "forum_posts" => "forum",
-        "settings" | "dmails" | "notifications" | "saved_searches" | "favorite_groups" => "account",
-        "login" | "register" | "forgot-password" | "reset-password" => "login",
-        "moderation" | "reports" => "moderation",
-        "admin" => "admin",
-        "site_map" | "stats" | "rules" | "users" | "user_feedbacks" => "more",
-        _ => return None,
-    })
-}
-
 /// Renders `template` with the layout variables (`site`, `me`, `flash`)
 /// merged into `context`. `target` is the request's path and query.
 pub(crate) fn render(
@@ -190,10 +166,6 @@ pub(crate) fn render(
         user_settings.as_ref().and_then(|s| s.theme.as_deref()),
         &settings.default_theme,
     );
-    let page_layout = user_settings
-        .as_ref()
-        .and_then(|s| s.layout)
-        .unwrap_or(settings.default_layout);
     let layout = context! {
         lang => notices.lang,
         // Messages for scripts, by key, `{$name}` left for them to fill.
@@ -201,8 +173,6 @@ pub(crate) fn render(
         path => path,
         target => target,
         section => section(path),
-        area => area(path),
-        page_layout => page_layout.as_str(),
         site => context! {
             name => settings.site_name,
             description => Some(&settings.site_description).filter(|d| !d.is_empty()),
@@ -246,9 +216,6 @@ pub(crate) fn render(
         mode_choice => user_settings.as_ref().map(|s| s.mode.as_str()),
         modes => Mode::ALL.iter().map(|m| m.as_str()).collect::<Vec<_>>(),
         themes => crate::themes::choices(&state.assets),
-        // The user's choice, for the switcher; `None` follows the site.
-        layout_choice => user_settings.as_ref().and_then(|s| s.layout).map(Layout::as_str),
-        layouts => Layout::ALL.iter().map(|l| l.as_str()).collect::<Vec<_>>(),
         // Display settings; visitors get the defaults.
         prefs => {
             let prefs = user_settings.clone().unwrap_or_default();
@@ -288,7 +255,7 @@ pub(crate) fn render(
     match crate::i18n::rendering_in(&notices.lang, || {
         state
             .templates
-            .render_in(page_layout, template, context! { ..context, ..layout })
+            .render(template, context! { ..context, ..layout })
     }) {
         Ok(html) => (status, Html(html)).into_response(),
         Err(error) => {
@@ -417,78 +384,6 @@ mod tests {
         );
         assert_eq!(
             app.post_form("/settings", Some(&alice), &[], "mode=system&language=xx")
-                .await
-                .status,
-            StatusCode::BAD_REQUEST
-        );
-    }
-
-    #[test]
-    fn paths_map_to_classic_menu_areas() {
-        assert_eq!(super::area("/"), Some("posts"));
-        assert_eq!(super::area("/explore/posts/popular"), Some("posts"));
-        assert_eq!(super::area("/wiki/long_hair"), Some("wiki"));
-        assert_eq!(super::area("/artist_versions"), Some("artists"));
-        assert_eq!(super::area("/tags/aliases"), Some("tags"));
-        assert_eq!(super::area("/settings"), Some("account"));
-        assert_eq!(super::area("/api/docs"), None);
-    }
-
-    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
-    async fn layouts_follow_the_site_and_the_user(pool: PgPool) {
-        moekura_db::settings::set(&pool, "default_layout", serde_json::json!("classic"))
-            .await
-            .unwrap();
-        let state = test_state(&pool).await;
-        let app = TestApp::new(state, crate::posts::routes().merge(crate::users::routes()));
-        let alice = crate::test_support::session_for(
-            &pool,
-            "alice",
-            moekura_core::permissions::SystemRole::Member,
-        )
-        .await;
-
-        // Visitors and users who haven't chosen get the site's.
-        let classic = app.get("/", None).await.body;
-        assert!(classic.contains("data-layout=\"classic\""), "{classic}");
-        assert!(classic.contains("/static/css/classic."), "{classic}");
-        assert!(classic.contains("class=\"subnav\""), "{classic}");
-        let settings = app.get("/settings", Some(&alice)).await.body;
-        assert!(
-            settings.contains("<option value=\"\">Site default (Classic)</option>"),
-            "{settings}"
-        );
-
-        // Users choose, in their settings or with the switcher.
-        let saved = app
-            .post_form("/settings", Some(&alice), &[], "mode=system&layout=modern")
-            .await;
-        assert_eq!(saved.status, StatusCode::SEE_OTHER);
-        let modern = app.get("/", Some(&alice)).await.body;
-        assert!(modern.contains("data-layout=\"modern\""), "{modern}");
-        assert!(modern.contains("/static/css/main."), "{modern}");
-        let switched = app
-            .post_form(
-                "/settings/theme",
-                Some(&alice),
-                &[],
-                "layout=classic&back=/",
-            )
-            .await;
-        assert_eq!(switched.status, StatusCode::SEE_OTHER);
-        assert!(
-            app.get("/", Some(&alice))
-                .await
-                .body
-                .contains("data-layout=\"classic\"")
-        );
-        // Shared pages render in either.
-        assert_eq!(
-            app.get("/settings", Some(&alice)).await.status,
-            StatusCode::OK
-        );
-        assert_eq!(
-            app.post_form("/settings", Some(&alice), &[], "mode=system&layout=fancy")
                 .await
                 .status,
             StatusCode::BAD_REQUEST

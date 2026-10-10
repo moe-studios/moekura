@@ -1,25 +1,4 @@
-# Themes and layouts
-
-## Layouts
-
-Moekura has two layouts, and every theme works with both:
-
-| Layout | Looks like |
-|---|---|
-| Modern | Moekura's own: a header band with the search and an account menu, and the image first on post pages |
-| Classic | Danbooru: tabs along the top with a strip of the current section's links under them, and the search, tags and post details in a left sidebar |
-
-Choose the layout visitors see under **Admin → Settings → Default
-layout**. Logged-in users can choose the other under **Settings**, or
-switch from the account menu (Modern) or the foot of any page (Classic).
-
-The classic layout has its own versions of a few templates (the page
-around everything, the post grid and post page, thumbnails and profiles)
-in `classic/`; every other page is shared. To replace one of them, put it
-in `classic/` in your
-[`templates_override`](../configuration.md#paths) directory.
-
-## Themes
+# Themes
 
 A theme sets the site's colours, in both light and dark mode. Moekura
 comes with five:
@@ -77,24 +56,8 @@ choose them yourself:
 | `--tint` | hovered and highlighted rows |
 | `--staff`, `--staff-text` | the board under staff tools on post pages |
 
-The classic layout uses `css/classic.css` and reads the same tokens,
-so a theme written for the modern layout colours it too. It has a few of
-its own: `--accent-hover` (links under the pointer), `--brand` (the site's
-name), `--menu` (the current tab and the strip under the tabs),
-`--stripe` (every other table row) and `--notice` and `--notice-border`
-(messages). To give the classic layout different colours, add a block
-for it to the theme's file:
-
-```css
-:root[data-layout="classic"] {
-  --bg: light-dark(#ffffff, #17140f);
-  --menu: light-dark(#f6ece0, #2b241c);
-}
-```
-
 Keep text, links (`--accent`) and tag colours at a contrast of at least
-4.5:1 against `--bg` and `--surface` (and `--menu`, `--stripe` and
-`--tint` in the classic layout), and `--accent-text` against `--accent`,
-so everyone can read them. Restart `moekura serve` to pick
+4.5:1 against `--bg` and `--surface`, and `--accent-text` against
+`--accent`, so everyone can read them. Restart `moekura serve` to pick
 up new or changed themes. A file with a built-in theme's name replaces
 it.

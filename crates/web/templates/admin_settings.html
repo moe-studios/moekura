@@ -70,11 +70,6 @@
         {% for choice in themes %}<option value="{{ choice.name }}"{% if settings.default_theme == choice.name %} selected{% endif %}>{{ choice.label }}</option>{% endfor %}
       </select>
       <p class="hint">{{ t("as-default-theme-hint") }}</p>
-      <label for="default_layout">{{ t("as-default-layout") }}</label>
-      <select id="default_layout" name="default_layout">
-        {% for l in layouts %}<option value="{{ l }}"{% if settings.default_layout == l %} selected{% endif %}>{{ t("layout-" ~ l) }}</option>{% endfor %}
-      </select>
-      <p class="hint">{{ t("as-default-layout-hint") }}</p>
     </section>
     <section class="settings-section" id="as-accounts" aria-labelledby="as-accounts-heading">
       <h2 id="as-accounts-heading">{{ t("as-section-accounts") }}</h2>

@@ -34,12 +34,6 @@
     </section>
     <section class="settings-section" aria-labelledby="settings-appearance">
       <h2 id="settings-appearance">{{ t("settings-section-appearance") }}</h2>
-      <label for="layout">{{ t("settings-layout") }}</label>
-      <select id="layout" name="layout">
-        <option value="">{{ t("settings-site-default", value=t("layout-" ~ site_layout)) }}</option>
-        {% for l in layouts %}<option value="{{ l }}"{% if current_layout == l %} selected{% endif %}>{{ t("layout-" ~ l) }}</option>{% endfor %}
-      </select>
-      <p class="hint">{{ t("settings-layout-hint") }}</p>
       <label for="theme">{{ t("settings-theme") }}</label>
       <select id="theme" name="theme">
         <option value="">{{ t("settings-site-default", value=site_theme) }}</option>

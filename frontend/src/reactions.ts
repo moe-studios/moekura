@@ -57,8 +57,8 @@ export function enhanceReactions(root: Document = document): void {
           }
           if (!response.ok) throw new Error(String(response.status));
           // Only the post's or comment's own counts: a post page has both.
-          // The post's are in its action strip, or the classic layout's sidebar.
-          const scope = form.closest(".comment") ?? form.closest(".post-actions, .post-info") ?? root;
+          // The post's are in its action strip.
+          const scope = form.closest(".comment") ?? form.closest(".post-actions") ?? root;
           update(scope, (await response.json()) as Reactions);
         })
         // Fall back to a normal submission, which shows any error.

@@ -9,19 +9,6 @@ nav-pools = Pools
 nav-comments = Comments
 nav-forum = Forum
 nav-more = More
-nav-hot = Hot
-
-## The classic layout's main menu and the strip of links under it.
-
-nav-my-account = My account
-nav-artists = Artists
-nav-wiki = Wiki
-nav-more-tab = More »
-nav-listing = Listing
-nav-changes = Changes
-nav-new = New
-nav-recent-changes = Recent changes
-nav-forgot-password = Forgot password
 nav-upload = Upload
 nav-moderation = Moderation
 nav-admin = Admin
@@ -54,12 +41,6 @@ footer-api = API
 footer-shortcuts = Keyboard shortcuts
 footer-mode-label = Mode
 footer-mode = Mode:
-footer-layout-label = Layout
-footer-layout = Layout:
-layout-modern = Modern
-layout-classic = Classic
-footer-theme = Theme:
-footer-change = Change
 
 mode-system = System
 mode-light = Light

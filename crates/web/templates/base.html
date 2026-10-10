@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="{{ lang or 'en-US' }}" data-layout="modern" data-theme="{{ theme }}"{% if mode %} data-mode="{{ mode }}"{% endif %}{% if prefs and prefs.large_thumbnails %} data-thumbs="large"{% endif %}{% if prefs and not prefs.autocomplete %} data-autocomplete="off"{% endif %}{% if prefs and not prefs.shortcuts %} data-shortcuts="off"{% endif %}>
+<html lang="{{ lang or 'en-US' }}" data-theme="{{ theme }}"{% if mode %} data-mode="{{ mode }}"{% endif %}{% if prefs and prefs.large_thumbnails %} data-thumbs="large"{% endif %}{% if prefs and not prefs.autocomplete %} data-autocomplete="off"{% endif %}{% if prefs and not prefs.shortcuts %} data-shortcuts="off"{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -48,11 +48,6 @@
                 <input type="hidden" name="back" value="{{ target }}">
                 <span>{{ t("footer-mode") }}</span>
                 {% for m in modes %}<button type="submit" name="mode" value="{{ m }}" aria-pressed="{{ 'true' if m == mode_choice else 'false' }}">{{ t("mode-" ~ m) }}</button>{% endfor %}
-              </form>
-              <form class="modes" method="post" action="/settings/theme" aria-label="{{ t('footer-layout-label') }}">
-                <input type="hidden" name="back" value="{{ target }}">
-                <span>{{ t("footer-layout") }}</span>
-                {% for l in layouts %}<button type="submit" name="layout" value="{{ l }}" aria-pressed="{{ 'true' if l == page_layout else 'false' }}">{{ t("layout-" ~ l) }}</button>{% endfor %}
               </form>
               {% endif %}
               <hr>

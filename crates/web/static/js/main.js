@@ -1460,7 +1460,7 @@ function enhanceReactions(root = document) {
           return;
         }
         if (!response.ok) throw new Error(String(response.status));
-        const scope = form.closest(".comment") ?? form.closest(".post-actions, .post-info") ?? root;
+        const scope = form.closest(".comment") ?? form.closest(".post-actions") ?? root;
         update(scope, await response.json());
       }).catch(() => {
         form.dataset["plain"] = "1";

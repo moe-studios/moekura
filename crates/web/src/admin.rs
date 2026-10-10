@@ -218,7 +218,6 @@ fn render_settings(
                     words => current.spam_filter.words.join("\n"),
                 },
                 default_theme => current.default_theme,
-                default_layout => current.default_layout.as_str(),
                 pagination => context! {
                     per_page => current.pagination.per_page,
                     max_per_page => current.pagination.max_per_page,
@@ -243,7 +242,6 @@ fn render_settings(
             favicon => crate::site::favicon_url(page.state()),
             registration_modes => ["open", "invite", "approval", "closed"],
             themes => crate::themes::choices(&page.state().assets),
-            layouts => moekura_core::user_settings::Layout::ALL.iter().map(|l| l.as_str()).collect::<Vec<_>>(),
             default_robots => crate::sitemap::default_robots(page.state()),
             pagination_defaults => context! {
                 per_page => page.state().config.search.per_page,
@@ -362,7 +360,6 @@ struct SettingsForm {
     /// One per line.
     flag_reasons: Option<String>,
     default_theme: Option<String>,
-    default_layout: Option<String>,
     /// Blank: the server configuration's.
     pagination_per_page: Option<String>,
     pagination_max_per_page: Option<String>,
@@ -540,12 +537,6 @@ async fn save_settings(
         ),
         ("visitor_ratings", json!(visitor_ratings(&form))),
         ("default_theme", json!(default_theme)),
-        (
-            "default_layout",
-            form.default_layout
-                .as_deref()
-                .map_or_else(|| json!(before.default_layout), |layout| json!(layout)),
-        ),
         (
             "robots_txt",
             form.robots_txt.as_deref().map_or_else(

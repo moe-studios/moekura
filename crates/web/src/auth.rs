@@ -122,6 +122,13 @@ impl CurrentUser {
         }
     }
 
+    /// Narrows what they may do to `permissions`, for an API key that may
+    /// do only some of what its user can.
+    fn limit_to(&mut self, permissions: Permissions, site: &SiteSnapshot) {
+        self.role.permissions = self.role.permissions.and(permissions);
+        self.hidden_tags = hidden_tags(site, &self.role);
+    }
+
     pub fn is_logged_in(&self) -> bool {
         self.user.is_some()
     }
@@ -205,7 +212,9 @@ async fn key_user(state: &AppState, token: &str) -> sqlx::Result<Option<CurrentU
     {
         tracing::warn!(%error, "could not record API key use");
     }
-    let mut current = CurrentUser::for_user(key.user, key.ban, &state.site.get());
+    let site = state.site.get();
+    let mut current = CurrentUser::for_user(key.user, key.ban, &site);
+    current.limit_to(key.permissions, &site);
     current.with_api_key = true;
     Ok(Some(current))
 }

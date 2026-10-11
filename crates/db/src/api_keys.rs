@@ -4,6 +4,7 @@
 
 use std::time::Duration;
 
+use moekura_core::permissions::Permissions;
 use moekura_core::tokens::{NewToken, hash_token};
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
@@ -20,7 +21,7 @@ pub const MAX_PER_USER: i64 = 20;
 /// Longest key name.
 pub const NAME_MAX_LEN: usize = 64;
 
-#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ApiKey {
     pub id: i64,
     pub name: String,
@@ -29,6 +30,9 @@ pub struct ApiKey {
     pub created_at: OffsetDateTime,
     pub last_used_at: Option<OffsetDateTime>,
     pub expires_at: Option<OffsetDateTime>,
+    /// What the key may do, of what its user can; [`Permissions::ALL`]
+    /// for everything.
+    pub permissions: Permissions,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -39,13 +43,25 @@ pub enum CreateError {
     Db(#[from] sqlx::Error),
 }
 
-/// Creates a key for `user_id` and returns it; this is the only time the
-/// key itself is available.
+/// Creates a key for `user_id` that can do everything they can, and
+/// returns it; this is the only time the key itself is available.
 pub async fn create(
     db: &sqlx::PgPool,
     user_id: i64,
     name: &str,
     expires_at: Option<OffsetDateTime>,
+) -> Result<String, CreateError> {
+    create_with_permissions(db, user_id, name, expires_at, Permissions::ALL).await
+}
+
+/// Creates a key for `user_id` that may do only what both they and
+/// `permissions` allow, and returns it.
+pub async fn create_with_permissions(
+    db: &sqlx::PgPool,
+    user_id: i64,
+    name: &str,
+    expires_at: Option<OffsetDateTime>,
+    permissions: Permissions,
 ) -> Result<String, CreateError> {
     let NewToken { token, hash } = NewToken::api_key();
     let mut tx = db.begin().await?;
@@ -62,14 +78,15 @@ pub async fn create(
         return Err(CreateError::TooMany);
     }
     sqlx::query(
-        "INSERT INTO api_keys (user_id, name, token_hash, prefix, expires_at)
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO api_keys (user_id, name, token_hash, prefix, expires_at, permissions)
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(user_id)
     .bind(name)
     .bind(&hash[..])
     .bind(&token[..12])
     .bind(expires_at)
+    .bind(permissions.to_db())
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -78,13 +95,35 @@ pub async fn create(
 
 /// `user_id`'s keys, oldest first.
 pub async fn list(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<Vec<ApiKey>> {
-    sqlx::query_as(
-        "SELECT id, name, prefix, created_at, last_used_at, expires_at
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        id: i64,
+        name: String,
+        prefix: String,
+        created_at: OffsetDateTime,
+        last_used_at: Option<OffsetDateTime>,
+        expires_at: Option<OffsetDateTime>,
+        permissions: i64,
+    }
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT id, name, prefix, created_at, last_used_at, expires_at, permissions
          FROM api_keys WHERE user_id = $1 ORDER BY id",
     )
     .bind(user_id)
     .fetch_all(db)
-    .await
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| ApiKey {
+            id: r.id,
+            name: r.name,
+            prefix: r.prefix,
+            created_at: r.created_at,
+            last_used_at: r.last_used_at,
+            expires_at: r.expires_at,
+            permissions: Permissions::from_db(r.permissions),
+        })
+        .collect())
 }
 
 /// Deletes one of `user_id`'s keys; false if they have no such key.
@@ -112,6 +151,8 @@ pub async fn delete_all_for_user(db: impl PgExecutor<'_>, user_id: i64) -> sqlx:
 pub struct KeyUser {
     pub key_id: i64,
     pub last_used_at: Option<OffsetDateTime>,
+    /// What the key may do, of what the user can.
+    pub permissions: Permissions,
     pub user: User,
     /// The user's ban in force, if any.
     pub ban: Option<ActiveBan>,
@@ -130,6 +171,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
     struct Row {
         key_id: i64,
         last_used_at: Option<OffsetDateTime>,
+        permissions: i64,
         #[sqlx(flatten)]
         user: User,
         banned: bool,
@@ -137,7 +179,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
         ban_expires_at: Option<OffsetDateTime>,
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT k.id AS key_id, k.last_used_at,
+        "SELECT k.id AS key_id, k.last_used_at, k.permissions,
                 u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings,
                 b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
          FROM api_keys k JOIN users u ON u.id = k.user_id
@@ -155,6 +197,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
     Ok(row.map(|r| KeyUser {
         key_id: r.key_id,
         last_used_at: r.last_used_at,
+        permissions: Permissions::from_db(r.permissions),
         user: r.user,
         ban: r.banned.then(|| ActiveBan {
             reason: r.ban_reason.unwrap_or_default(),
@@ -218,6 +261,8 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].prefix, &key[..12]);
         assert!(listed[0].last_used_at.is_some());
+        assert_eq!(listed[0].permissions, Permissions::ALL);
+        assert_eq!(found.permissions, Permissions::ALL);
 
         // Only the owner can revoke it.
         assert!(!revoke(&pool, bob.id, listed[0].id).await.unwrap());
@@ -241,6 +286,21 @@ mod tests {
             .await
             .unwrap();
         assert!(lookup(&pool, &key).await.unwrap().is_none());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn keys_keep_their_permissions(pool: PgPool) {
+        use moekura_core::permissions::Permission;
+        let alice = user(&pool, "alice").await;
+        let some = Permissions::of(&[Permission::ViewPosts, Permission::Upload]);
+        let key = create_with_permissions(&pool, alice.id, "uploader", None, some)
+            .await
+            .unwrap();
+        assert_eq!(
+            lookup(&pool, &key).await.unwrap().unwrap().permissions,
+            some
+        );
+        assert_eq!(list(&pool, alice.id).await.unwrap()[0].permissions, some);
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

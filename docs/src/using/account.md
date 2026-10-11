@@ -204,7 +204,8 @@ log.
 you no longer use. Making one asks for your password (or, on an account
 made through single sign-on, which has none, works only within 10
 minutes of logging in), and a key can't make more keys or change your
-login settings.
+login settings. A key may do everything you can, or only what you tick
+when making it: see [the API](../api.md#authenticating).
 
 ## Passkeys
 

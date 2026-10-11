@@ -16,12 +16,13 @@
   {% if keys %}
   <div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('api-keys-table') }}">
   <table class="tag-table api-keys">
-    <thead><tr><th>{{ t("account-name") }}</th><th>{{ t("api-key") }}</th><th>{{ t("api-keys-created-heading") }}</th><th>{{ t("api-keys-last-used") }}</th><th>{{ t("invites-expires") }}</th><th></th></tr></thead>
+    <thead><tr><th>{{ t("account-name") }}</th><th>{{ t("api-key") }}</th><th>{{ t("api-keys-access") }}</th><th>{{ t("api-keys-created-heading") }}</th><th>{{ t("api-keys-last-used") }}</th><th>{{ t("invites-expires") }}</th><th></th></tr></thead>
     <tbody>
       {% for k in keys %}
       <tr>
         <td>{{ k.name }}</td>
         <td><code>{{ k.prefix }}…</code></td>
+        <td>{% if k.permissions is none %}{{ t("api-keys-access-everything") }}{% else %}{% for p in k.permissions %}{{ t("permission-" ~ p) }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}</td>
         <td>{{ k.created }}</td>
         <td>{{ k.last_used or t("never") }}</td>
         <td>{% if k.expired %}{{ t("api-keys-expired", day=k.expires) }}{% else %}{{ k.expires or t("never") }}{% endif %}</td>
@@ -51,6 +52,15 @@
       <option value="{{ d.value }}"{% if d.value == expires %} selected{% endif %}>{{ t("api-keys-expiry-" ~ d.value) }}</option>
       {% endfor %}
     </select>
+    <fieldset class="permissions">
+      <legend>{{ t("api-keys-access") }}</legend>
+      <label class="choice"><input type="radio" name="access" value="all"{% if not limited %} checked{% endif %}> {{ t("api-keys-access-all") }}</label>
+      <label class="choice"><input type="radio" name="access" value="some"{% if limited %} checked{% endif %}> {{ t("api-keys-access-some") }}</label>
+      <p class="hint">{{ t("api-keys-access-hint") }}</p>
+      {% for p in permissions %}
+      <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.ticked %} checked{% endif %}> {{ t("permission-" ~ p.key) }}</label>
+      {% endfor %}
+    </fieldset>
     {% if has_password %}
     <label for="key-password">{{ t("your-password") }}</label>
     <input id="key-password" name="password" type="password" autocomplete="current-password" required>

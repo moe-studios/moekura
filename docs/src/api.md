@@ -29,6 +29,10 @@ account's things that need no permission, such as your saved searches,
 stay reachable with any key. `GET /api/v1/me` lists what the key in use
 may do.
 
+Site admins can also make keys from the shell, with
+[`moekura admin create-api-key`](admin/commands.md), for
+bots or scripts set up alongside the site.
+
 Making a key asks for your password. Accounts made through single
 sign-on have none to give, so for them it works only within 10 minutes
 of logging in. A key can't manage keys or the feed token,

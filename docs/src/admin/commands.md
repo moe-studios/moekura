@@ -12,6 +12,9 @@
 | `moekura admin set-role NAME ROLE` | changes someone's role |
 | `moekura admin lift-network-ban ADDRESS_OR_RANGE` | lifts the [network bans](moderation.md#bans) covering an address, or overlapping a range, such as one that locks staff out |
 | `moekura admin create-invite [--uses N] [--expires-days D]` | makes an invite code, shown once |
+| `moekura admin create-api-key USER --name N [--permission P]… [--expires-days D]` | makes an [API key](../api.md#authenticating) for someone, such as a bot, and prints it once; each `--permission` (`view_posts`, `upload`, …) limits the key to the ones given, and without any it can do everything the user can |
+| `moekura admin api-keys USER` | lists someone's API keys: id, name, first characters, what each may do, and when it was made, last used and expires |
+| `moekura admin revoke-api-key USER ID` | revokes one of them, by its id from `api-keys` |
 | `moekura admin settings` | shows the site settings |
 | `moekura admin settings set KEY VALUE` | changes one; `VALUE` is JSON, or else a plain string |
 | `moekura admin regenerate-media (--all \| IDS…)` | remakes thumbnails and samples, and rereads the files' metadata |

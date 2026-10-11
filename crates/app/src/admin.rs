@@ -9,11 +9,11 @@ use anyhow::{Context, bail};
 use clap::Subcommand;
 use moekura_core::jobs::ProcessMedia;
 use moekura_core::moderation::ActionKind;
-use moekura_core::permissions::{Role, SystemRole};
+use moekura_core::permissions::{Permission, Permissions, Role, SystemRole};
 use moekura_db::accounts::{self, NewAccount};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, User, UserStatus};
-use moekura_db::{bans, invites, roles, settings};
+use moekura_db::{api_keys, bans, invites, roles, settings};
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -47,6 +47,26 @@ pub enum AdminCommand {
         #[arg(long)]
         expires_days: Option<u32>,
     },
+    /// Create an API key for a user, such as a bot. The key is printed
+    /// once.
+    CreateApiKey {
+        /// The user the key acts as
+        user: String,
+        /// What will use it
+        #[arg(long)]
+        name: String,
+        /// A permission the key may use (view_posts, upload, …); repeat
+        /// for more. Without any, the key can do everything the user can.
+        #[arg(long = "permission", value_name = "PERMISSION")]
+        permissions: Vec<String>,
+        /// Days until the key expires; never by default
+        #[arg(long)]
+        expires_days: Option<u32>,
+    },
+    /// List a user's API keys
+    ApiKeys { user: String },
+    /// Revoke one of a user's API keys, by its id from `api-keys`
+    RevokeApiKey { user: String, id: i64 },
     /// Regenerate thumbnails and samples, e.g. after changing media settings
     RegenerateMedia {
         /// Every post
@@ -288,6 +308,52 @@ pub async fn run(
             };
             println!("{}", invites::create(db, invite).await?);
         }
+        AdminCommand::CreateApiKey {
+            user,
+            name,
+            permissions,
+            expires_days,
+        } => {
+            println!(
+                "{}",
+                create_api_key(db, &user, &name, &permissions, expires_days).await?
+            );
+        }
+        AdminCommand::ApiKeys { user } => {
+            let user = find_user(db, &user).await?;
+            let keys = api_keys::list(db, user.id).await?;
+            if keys.is_empty() {
+                println!("{} has no API keys", user.name);
+            }
+            let day = |t: time::OffsetDateTime| t.date().to_string();
+            for key in keys {
+                let access = if key.permissions == Permissions::ALL {
+                    "everything".to_owned()
+                } else {
+                    key.permissions
+                        .iter()
+                        .map(Permission::key)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                println!(
+                    "{}\t{}\t{}…\t{access}\tcreated {}\tlast used {}\texpires {}",
+                    key.id,
+                    key.name,
+                    key.prefix,
+                    day(key.created_at),
+                    key.last_used_at.map_or_else(|| "never".into(), day),
+                    key.expires_at.map_or_else(|| "never".into(), day),
+                );
+            }
+        }
+        AdminCommand::RevokeApiKey { user, id } => {
+            let user = find_user(db, &user).await?;
+            if !api_keys::revoke(db, user.id, id).await? {
+                bail!("{} has no API key {id}", user.name);
+            }
+            println!("revoked key {id} of {}", user.name);
+        }
         AdminCommand::RegenerateMedia { all, posts } => {
             let queued = regenerate_media(db, (!all).then_some(posts.as_slice())).await?;
             println!("queued {queued} file(s) for processing");
@@ -437,6 +503,55 @@ pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Rol
     Ok(role)
 }
 
+/// Makes an API key for `user`, limited to `permissions` (by key) unless
+/// that's empty, and returns it.
+pub async fn create_api_key(
+    db: &PgPool,
+    user: &str,
+    name: &str,
+    permissions: &[String],
+    expires_days: Option<u32>,
+) -> anyhow::Result<String> {
+    let user = find_user(db, user).await?;
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > api_keys::NAME_MAX_LEN {
+        bail!(
+            "give the key a name of at most {} characters",
+            api_keys::NAME_MAX_LEN
+        );
+    }
+    let permissions = if permissions.is_empty() {
+        Permissions::ALL
+    } else {
+        let role = roles::list(db)
+            .await?
+            .into_iter()
+            .find(|r| r.id == user.role_id)
+            .context("the user's role is missing")?;
+        let mut chosen = Vec::new();
+        for key in permissions {
+            let Some(permission) = Permission::ALL.into_iter().find(|p| p.key() == key) else {
+                let known: Vec<&str> = Permission::ALL.iter().map(|p| p.key()).collect();
+                bail!("no permission {key} (permissions: {})", known.join(", "));
+            };
+            if !role.can(permission) {
+                bail!(
+                    "{} ({}) can't {key}, so the key couldn't either",
+                    user.name,
+                    role.name
+                );
+            }
+            chosen.push(permission);
+        }
+        Permissions::of(&chosen)
+    };
+    let expires_at =
+        expires_days.map(|d| time::OffsetDateTime::now_utc() + time::Duration::days(i64::from(d)));
+    let key = api_keys::create_with_permissions(db, user.id, name, expires_at, permissions).await?;
+    tracing::info!(user = %user.name, key = name, "API key created from the shell");
+    Ok(key)
+}
+
 /// Lifts the network bans in force that cover `text` (an address or a
 /// range) or lie within it, and logs each; returns their networks.
 pub async fn lift_network_bans(db: &PgPool, text: &str) -> anyhow::Result<Vec<String>> {
@@ -480,6 +595,12 @@ pub async fn regenerate_media(db: &PgPool, posts: Option<&[i64]>) -> anyhow::Res
         tx.commit().await?;
     }
     Ok(asset_ids.len())
+}
+
+async fn find_user(db: &PgPool, name: &str) -> anyhow::Result<User> {
+    users::by_name(db, name)
+        .await?
+        .with_context(|| format!("no user named {name}"))
 }
 
 /// By display name, then by built-in key, so `admin` works even if the
@@ -621,6 +742,49 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(logged["via"], json!("cli"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn creates_api_keys_from_the_shell(pool: PgPool) {
+        let bot = create_user(&pool, "uploader", "member", None, "correct horse")
+            .await
+            .unwrap();
+        let all = create_api_key(&pool, "Uploader", "everything", &[], None)
+            .await
+            .unwrap();
+        let found = api_keys::lookup(&pool, &all).await.unwrap().unwrap();
+        assert_eq!(found.user.id, bot.id);
+        assert_eq!(found.permissions, Permissions::ALL);
+
+        let some = ["view_posts".to_owned(), "upload".to_owned()];
+        let key = create_api_key(&pool, "uploader", "posts", &some, Some(30))
+            .await
+            .unwrap();
+        let found = api_keys::lookup(&pool, &key).await.unwrap().unwrap();
+        assert_eq!(
+            found.permissions,
+            Permissions::of(&[Permission::ViewPosts, Permission::Upload])
+        );
+        let listed = api_keys::list(&pool, bot.id).await.unwrap();
+        assert!(listed[1].expires_at.is_some());
+
+        for (user, name, permissions, error) in [
+            ("nobody", "x", vec![], "no user named nobody"),
+            ("uploader", " ", vec![], "give the key a name"),
+            ("uploader", "x", vec!["fly".to_owned()], "no permission fly"),
+            (
+                "uploader",
+                "x",
+                vec!["ban_users".to_owned()],
+                "uploader (Member) can't ban_users",
+            ),
+        ] {
+            let err = create_api_key(&pool, user, name, &permissions, None)
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains(error), "{err}");
+        }
+        assert_eq!(api_keys::list(&pool, bot.id).await.unwrap().len(), 2);
     }
 
     #[test]

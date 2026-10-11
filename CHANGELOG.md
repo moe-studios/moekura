@@ -7,6 +7,45 @@ releases list what they deprecate. Before 1.0, a minor release (0.2) could
 change configuration or behaviour, and said so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
+## [0.7.0] - 2026-10-11
+
+A redesigned frontend, logging in with passkeys, and sites' own favicons
+as their icons.
+
+### Features
+
+- The frontend is redesigned, and the settings, admin and moderation
+  pages are laid out again: the settings pages share a side menu, and the
+  admin settings are split into sections with a jump list and a save
+  button that stays in view.
+- Log in with passkeys (WebAuthn). Add, rename and remove them on the
+  account page; a passkey logs in without a password, from the login
+  page, or stands in for the two-factor code after it. The relying party
+  is the host in `server.public_url`, so there's no new setting; a site
+  served at an IP address has passkeys off.
+- The default theme is a neutral blue, with Danbooru-style blue links in
+  both modes, and there's a new wisteria theme.
+- Source sites show their own favicons as icons instead of Simple Icons
+  glyphs and initials.
+
+### Fixes
+
+- The search syntax link points at docs.moekura.net.
+- A post's file facts no longer have an extra rule under their heading.
+
+### Upgrading
+
+- The binaries now need OpenSSL 3 (`libssl.so.3`), which checks passkeys'
+  signatures; it's in the image (see [Bare
+  metal](docs/src/install/bare-metal.md)).
+- A site that ran an edge build with uploads sent in pieces (migration
+  0096, since removed) must drop it before starting this version:
+
+  ```sql
+  DROP TABLE file_transfers;
+  DELETE FROM _sqlx_migrations WHERE version = 96;
+  ```
+
 ## [0.6.1] - 2026-10-06
 
 ### Fixes

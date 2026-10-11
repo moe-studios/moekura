@@ -8,7 +8,6 @@ use axum::response::Response;
 use axum::routing::get;
 use minijinja::context;
 use moekura_core::permissions::Permission;
-use moekura_db::transfers::Purpose;
 use moekura_db::{media, posts};
 use serde::Deserialize;
 
@@ -16,7 +15,7 @@ use crate::AppState;
 use crate::auth::{CurrentUser, RequestInfo};
 use crate::error::AppError;
 use crate::pages::Page;
-use crate::upload::{LINK_FIELD_MAX, TOKEN_FIELD_MAX, TempUpload, UploadError, text_field};
+use crate::upload::{LINK_FIELD_MAX, TempUpload, UploadError, text_field};
 
 /// The most bits two hashes may differ by and still be listed (out of
 /// 64): about 75% alike.
@@ -199,14 +198,8 @@ pub(crate) struct Asked {
 
 impl Asked {
     /// Reads `file` (or `search[file]`), `url` and `post_id` (or their
-    /// `search[…]` forms) from `current`'s multipart body. Instead of
-    /// `file`, `transfer` names a file `current` sent earlier in pieces
-    /// (see [`crate::transfers`]).
-    pub async fn from_multipart(
-        state: &AppState,
-        current: &CurrentUser,
-        mut form: Multipart,
-    ) -> Result<Self, AppError> {
+    /// `search[…]` forms) from a multipart body.
+    pub async fn from_multipart(state: &AppState, mut form: Multipart) -> Result<Self, AppError> {
         let mut asked = Self::default();
         while let Some(field) = form
             .next_field()
@@ -220,15 +213,6 @@ impl Asked {
                     }
                     asked.file = Some(
                         crate::upload::save_to_temp(state, field)
-                            .await
-                            .map_err(upload_error)?,
-                    );
-                }
-                "transfer" | "search[transfer]" => {
-                    let token = text_field(field, TOKEN_FIELD_MAX).await?;
-                    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
-                    asked.file = Some(
-                        crate::transfers::take(state, user.id, &token, Purpose::Search)
                             .await
                             .map_err(upload_error)?,
                     );
@@ -340,7 +324,7 @@ async fn search_upload(
     form: Multipart,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ViewPosts)?;
-    let asked = Asked::from_multipart(page.state(), &page.current, form).await?;
+    let asked = Asked::from_multipart(page.state(), form).await?;
     if asked.file.is_none() && asked.url.trim().is_empty() && asked.post_id.is_none() {
         return Ok(page.render_with_status(
             axum::http::StatusCode::UNPROCESSABLE_ENTITY,

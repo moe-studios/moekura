@@ -350,7 +350,7 @@
     {% if can_replace %}
     <details class="edit">
       <summary>{{ t("post-replace") }}</summary>
-      <form method="post" action="/posts/{{ post.id }}/replace" enctype="multipart/form-data" data-transfer-files="replace" data-transfer-piece="{{ site.upload_piece_bytes }}">
+      <form method="post" action="/posts/{{ post.id }}/replace" enctype="multipart/form-data">
         <label for="replace-file">{{ t("post-replace-file") }}</label>
         <input id="replace-file" name="file" type="file">
         <label for="replace-url">{{ t("upload-url") }}</label>
@@ -359,8 +359,6 @@
         <input id="replace-reason" name="reason" maxlength="1000" placeholder="{{ t('post-replace-placeholder') }}">
         <label class="choice"><input type="checkbox" name="rescale_notes" checked> {{ t("post-replace-notes") }}</label>
         <p class="hint">{{ t("post-replace-hint", id=post.id) }}</p>
-        <p class="hint" data-transfer-status role="status" aria-live="polite"></p>
-        <p class="form-error" data-transfer-error role="alert" hidden></p>
         <button type="submit" data-confirm="{{ t('post-replace-confirm') }}">{{ t("post-replace-button") }}</button>
       </form>
     </details>

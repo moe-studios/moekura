@@ -1166,8 +1166,8 @@ function toBase64url(bytes) {
   return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }
 function fromBase64url(text) {
-  const base642 = text.replaceAll("-", "+").replaceAll("_", "/");
-  const padded = base642 + "=".repeat((4 - base642.length % 4) % 4);
+  const base64 = text.replaceAll("-", "+").replaceAll("_", "/");
+  const padded = base64 + "=".repeat((4 - base64.length % 4) % 4);
   return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
 }
 function descriptors(list) {
@@ -1828,120 +1828,6 @@ function enableTagScript(root = document) {
   );
 }
 
-// src/transfer.ts
-var TRANSFERS = "/uploads/files";
-var TUS_VERSION = "1.0.0";
-var MB = 1024 * 1024;
-var FIRST_PIECE = 4 * MB;
-var MIN_PIECE = 256 * 1024;
-var PIECE_SECONDS = 10;
-var MAX_TRIES = 5;
-var RETRY = /* @__PURE__ */ new Set([0, 408, 409, 413, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524]);
-var TransferError = class extends Error {
-};
-function pieceSize(previous, bytesPerSecond, max) {
-  const floor = Math.min(MIN_PIECE, max);
-  if (previous === null || bytesPerSecond === null) return Math.max(floor, Math.min(FIRST_PIECE, max));
-  const wanted = Math.min(bytesPerSecond * PIECE_SECONDS, previous * 4, max);
-  return Math.max(floor, Math.floor(wanted));
-}
-function smaller(size) {
-  return size <= MIN_PIECE ? size : Math.max(MIN_PIECE, Math.floor(size / 2));
-}
-function base64(text) {
-  let binary = "";
-  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-function metadata(name, purpose) {
-  const pairs = [`filename ${base64(name)}`];
-  if (purpose) pairs.push(`purpose ${base64(purpose)}`);
-  return pairs.join(",");
-}
-function tokenOf(url) {
-  return new URL(url, "http://x").pathname.split("/").pop() ?? "";
-}
-var pause = (ms) => new Promise((done) => setTimeout(done, ms));
-async function sendFile(file, name, options) {
-  const transport = options.transport ?? browser;
-  const wait = options.wait ?? pause;
-  const now = options.now ?? (() => performance.now());
-  const tus = { "Tus-Resumable": TUS_VERSION };
-  const created = await transport.request("POST", new URL(TRANSFERS, options.base).href, {
-    ...tus,
-    "Upload-Length": String(file.size),
-    "Upload-Metadata": metadata(name, options.purpose)
-  });
-  const location2 = created.header("Location");
-  if (created.status !== 201 || !location2) throw refusal(created);
-  const url = new URL(location2, options.base).href;
-  try {
-    let offset = 0;
-    let size = null;
-    let speed = null;
-    let tries = 0;
-    while (offset < file.size) {
-      size = tries ? size : pieceSize(size, speed, options.maxPiece);
-      const end = Math.min(file.size, offset + size);
-      const started = now();
-      const from = offset;
-      const answer = await transport.piece(
-        url,
-        file.slice(from, end),
-        { ...tus, "Upload-Offset": String(from), "Content-Type": "application/offset+octet-stream" },
-        (sent) => options.progress?.(from + sent)
-      );
-      const got = Number(answer.header("Upload-Offset"));
-      if (answer.status === 204 && got === end) {
-        speed = (end - from) / Math.max(1e-3, (now() - started) / 1e3);
-        offset = end;
-        tries = 0;
-        options.progress?.(offset);
-        continue;
-      }
-      if (!RETRY.has(answer.status) || ++tries >= MAX_TRIES) throw refusal(answer);
-      options.retrying?.();
-      size = smaller(size);
-      speed = null;
-      await wait(1e3 * 2 ** (tries - 1));
-      const where = await transport.request("HEAD", url, tus).catch(() => null);
-      if (where?.status === 200) offset = Number(where.header("Upload-Offset")) || 0;
-      else if (where && !RETRY.has(where.status)) throw refusal(where);
-      options.progress?.(offset);
-    }
-    return tokenOf(url);
-  } catch (error) {
-    void transport.request("DELETE", url, tus).catch(() => void 0);
-    throw error instanceof TransferError ? error : new TransferError("");
-  }
-}
-function refusal(answer) {
-  const text = answer.text.trim();
-  const plain = text && text.length < 500 && !text.startsWith("<");
-  return new TransferError(plain ? text : "");
-}
-var browser = {
-  async request(method, url, headers) {
-    const response = await fetch(url, { method, headers, credentials: "same-origin" });
-    return { status: response.status, header: (name) => response.headers.get(name), text: method === "HEAD" ? "" : await response.text() };
-  },
-  piece(url, body, headers, sent) {
-    return new Promise((done) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PATCH", url);
-      xhr.withCredentials = true;
-      for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
-      xhr.upload.addEventListener("progress", (event) => sent(event.loaded));
-      const answer = () => done({ status: xhr.status, header: (name) => xhr.getResponseHeader(name), text: xhr.responseText ?? "" });
-      xhr.addEventListener("load", answer);
-      xhr.addEventListener("error", answer);
-      xhr.addEventListener("timeout", answer);
-      xhr.addEventListener("abort", answer);
-      xhr.send(body);
-    });
-  }
-};
-
 // src/upload.ts
 var UPLOADS = "/uploads";
 var UPLOAD_PAGE = "/uploads/new";
@@ -1997,62 +1883,20 @@ function enableUpload(root = document) {
     zone.classList.toggle("sending", on);
     for (const button of form.querySelectorAll("button[type=submit]")) button.disabled = on;
   };
-  const piece = Number(attribute("data-upload-piece")) || 50 * 1024 * 1024;
   const send2 = (files) => {
     if (sending || files.length === 0) return;
     if (files.length > max) {
       status.textContent = t("upload-too-many", "Choose at most {$max} files at once.", { max });
       return;
     }
-    void sendInPieces(Array.from(files));
-  };
-  const sendInPieces = async (files) => {
-    const error = form.querySelector("[data-upload-error]");
-    if (error) error.hidden = true;
+    if (files !== input.files) {
+      const transfer = new DataTransfer();
+      for (const file of files) transfer.items.add(file);
+      input.files = transfer.files;
+    }
+    status.textContent = files.length === 1 ? t("upload-sending-one", "Uploading {$name}\u2026", { name: files[0].name }) : t("upload-sending-many", "Uploading {$count} files\u2026", { count: files.length });
     busy2(true);
-    const total = files.reduce((sum, file) => sum + file.size, 0) || 1;
-    let before = 0;
-    const show2 = (sent) => {
-      const percent = Math.min(100, Math.floor((before + sent) * 100 / total));
-      status.textContent = files.length === 1 ? t("upload-progress-one", "Uploading {$name}\u2026 {$percent}%", { name: files[0].name, percent }) : t("upload-progress-many", "Uploading {$count} files\u2026 {$percent}%", { count: files.length, percent });
-    };
-    const tokens = [];
-    try {
-      for (const file of files) {
-        show2(0);
-        const retrying = () => {
-          status.textContent = t("upload-retrying", "The connection faltered; trying again\u2026");
-        };
-        tokens.push(await sendFile(file, file.name, { maxPiece: piece, base: here, progress: show2, retrying }));
-        before += file.size;
-      }
-    } catch (failure) {
-      for (const token of tokens) {
-        const url = new URL(`${TRANSFERS}/${token}`, here);
-        void fetch(url, { method: "DELETE", headers: { "Tus-Resumable": "1.0.0" }, credentials: "same-origin" }).catch(() => void 0);
-      }
-      if (error) {
-        error.textContent = failure instanceof TransferError && failure.message || t("upload-failed", "The upload failed. Please try again.");
-        error.hidden = false;
-      }
-      status.textContent = "";
-      busy2(false);
-      return;
-    }
-    input.value = "";
-    forgetTransfers();
-    for (const token of tokens) {
-      const field = root.createElement("input");
-      field.type = "hidden";
-      field.name = "transfer";
-      field.value = token;
-      field.setAttribute("data-upload-transfer", "");
-      form.append(field);
-    }
     form.requestSubmit();
-  };
-  const forgetTransfers = () => {
-    for (const field of form.querySelectorAll("input[data-upload-transfer]")) field.remove();
   };
   const sendInPlace = async () => {
     const error = form.querySelector("[data-upload-error]");
@@ -2087,10 +1931,7 @@ function enableUpload(root = document) {
     if (input.files) send2(input.files);
   });
   form.addEventListener("submit", () => busy2(true));
-  root.defaultView?.addEventListener("pageshow", () => {
-    forgetTransfers();
-    busy2(false);
-  });
+  root.defaultView?.addEventListener("pageshow", () => busy2(false));
   root.addEventListener("paste", (event) => {
     const files = event.clipboardData?.files;
     if (files?.length && typeof DataTransfer !== "undefined") {
@@ -2145,84 +1986,6 @@ function enableUpload(root = document) {
     link.value = url;
     busy2(true);
     form.requestSubmit();
-  });
-}
-
-// src/transfer-forms.ts
-var PURPOSES = ["upload", "replace", "search"];
-function enableTransferForms(root = document) {
-  for (const form of root.querySelectorAll("form[data-transfer-files]")) enable(root, form);
-}
-function enable(root, form) {
-  const attribute = (name) => Element.prototype.getAttribute.call(form, name);
-  const purpose = attribute("data-transfer-files") ?? "";
-  const input = form.querySelector('input[type="file"][name="file"]');
-  if (!PURPOSES.includes(purpose) || !input) return;
-  const piece = Number(attribute("data-transfer-piece")) || 50 * 1024 * 1024;
-  const status = form.querySelector("[data-transfer-status]");
-  const error = form.querySelector("[data-transfer-error]");
-  const here = root.location?.href ?? "";
-  let sending = false;
-  const busy2 = (on) => {
-    sending = on;
-    for (const button of form.querySelectorAll("button[type=submit], button:not([type])")) button.disabled = on;
-  };
-  const forget = () => {
-    for (const field of form.querySelectorAll("input[data-transfer-token]")) field.remove();
-  };
-  const send2 = async (files) => {
-    busy2(true);
-    if (error) error.hidden = true;
-    const total = files.reduce((sum, file) => sum + file.size, 0) || 1;
-    let before = 0;
-    const show2 = (sent) => {
-      const percent = Math.min(100, Math.floor((before + sent) * 100 / total));
-      if (status) status.textContent = t("transfer-progress", "Sending {$name}\u2026 {$percent}%", { name: files[0].name, percent });
-    };
-    const retrying = () => {
-      if (status) status.textContent = t("upload-retrying", "The connection faltered; trying again\u2026");
-    };
-    const tokens = [];
-    try {
-      for (const file of files) {
-        show2(0);
-        tokens.push(await sendFile(file, file.name, { maxPiece: piece, base: here, purpose, progress: show2, retrying }));
-        before += file.size;
-      }
-    } catch (failure) {
-      for (const token of tokens) {
-        const url = new URL(`${TRANSFERS}/${token}`, here);
-        void fetch(url, { method: "DELETE", headers: { "Tus-Resumable": "1.0.0" }, credentials: "same-origin" }).catch(() => void 0);
-      }
-      if (error) {
-        error.textContent = failure instanceof TransferError && failure.message || t("transfer-failed", "Sending the file failed. Please try again.");
-        error.hidden = false;
-      }
-      if (status) status.textContent = "";
-      busy2(false);
-      return;
-    }
-    input.value = "";
-    forget();
-    for (const token of tokens) {
-      const field = root.createElement("input");
-      field.type = "hidden";
-      field.name = "transfer";
-      field.value = token;
-      field.setAttribute("data-transfer-token", "");
-      form.append(field);
-    }
-    HTMLFormElement.prototype.submit.call(form);
-  };
-  form.addEventListener("submit", (event) => {
-    const files = Array.from(input.files ?? []);
-    if (files.length === 0 || event.defaultPrevented) return;
-    event.preventDefault();
-    if (!sending) void send2(files);
-  });
-  root.defaultView?.addEventListener("pageshow", () => {
-    forget();
-    busy2(false);
   });
 }
 
@@ -2401,7 +2164,6 @@ enableRelatedTags();
 enableSelectAll();
 enableUpload();
 enableUploadForm();
-enableTransferForms();
 enableUploadProgress();
 enableArtistFinder();
 enableClipboard();

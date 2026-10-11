@@ -25,7 +25,6 @@ use moekura_core::permissions::Permission;
 use moekura_core::posts::{Rating, SOURCE_MAX_LEN};
 use moekura_db::posts;
 use moekura_db::staged_uploads::{self, Slot, Staged, Status, Upload};
-use moekura_db::transfers::Purpose;
 use moekura_db::users::User;
 use serde::Deserialize;
 use sha2::Sha256;
@@ -346,12 +345,9 @@ impl SentLink {
     }
 }
 
-/// The files and the link sent to `/uploads` by `uploader_id`. Files sent
-/// earlier in pieces are named by their transfers' tokens, in `transfer`
-/// fields (see [`crate::transfers`]).
+/// The files and the link sent to `/uploads`.
 async fn receive(
     state: &AppState,
-    uploader_id: i64,
     mut multipart: Multipart,
 ) -> (SentLink, Result<Vec<TempUpload>, UploadError>) {
     let mut link = SentLink::default();
@@ -362,26 +358,14 @@ async fn receive(
             Ok(None) => break,
             Err(error) => return (link, Err(upload::multipart_error(state, &error))),
         };
-        let name = field.name().unwrap_or_default();
-        // Browsers send an empty part when no file was chosen.
-        let is_file = name == "file" && field.file_name().is_some_and(|name| !name.is_empty());
-        if (is_file || name == "transfer") && files.len() == MAX_FILES {
-            let error = format!("Upload at most {MAX_FILES} files at once.");
-            return (link, Err(UploadError::Invalid(error)));
-        }
-        match name {
-            "file" if is_file => match upload::save_to_temp(state, field).await {
-                Ok(file) => files.push(file),
-                Err(error) => return (link, Err(error)),
-            },
-            "transfer" => {
-                let taken = match upload::upload_text(state, field, upload::TOKEN_FIELD_MAX).await {
-                    Ok(token) => {
-                        crate::transfers::take(state, uploader_id, &token, Purpose::Upload).await
-                    }
-                    Err(error) => Err(error),
-                };
-                match taken {
+        match field.name().unwrap_or_default() {
+            // Browsers send an empty part when no file was chosen.
+            "file" if field.file_name().is_some_and(|name| !name.is_empty()) => {
+                if files.len() == MAX_FILES {
+                    let error = format!("Upload at most {MAX_FILES} files at once.");
+                    return (link, Err(UploadError::Invalid(error)));
+                }
+                match upload::save_to_temp(state, field).await {
                     Ok(file) => files.push(file),
                     Err(error) => return (link, Err(error)),
                 }
@@ -420,7 +404,7 @@ async fn create(
         Ok(room) => room,
         Err(error) => return Ok(refuse(Link::default(), error)),
     };
-    let (mut sent, files) = match receive(&state, user.id, multipart).await {
+    let (mut sent, files) = match receive(&state, multipart).await {
         (sent, Ok(files)) => (sent, files),
         (sent, Err(error)) => return Ok(refuse(sent.link(), error)),
     };

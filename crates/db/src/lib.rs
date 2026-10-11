@@ -53,7 +53,6 @@ pub mod tag_relations;
 pub mod tag_suggestions;
 pub mod tag_versions;
 pub mod tags;
-pub mod transfers;
 pub mod two_factor;
 pub mod user_feedbacks;
 pub mod user_ips;

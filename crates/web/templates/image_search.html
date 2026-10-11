@@ -3,14 +3,12 @@
 {% block content %}
 <h1>{{ t("image-search-title") }}</h1>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
-<form method="post" action="/iqdb_queries" enctype="multipart/form-data" class="card medium"{% if me %} data-transfer-files="search" data-transfer-piece="{{ site.upload_piece_bytes }}"{% endif %}>
+<form method="post" action="/iqdb_queries" enctype="multipart/form-data" class="card medium">
   <label for="iqdb-file">{{ t("image-search-file") }}</label>
   <input id="iqdb-file" name="file" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/avif,video/mp4,video/webm">
   <label for="iqdb-url">{{ t("image-search-url") }}</label>
   <input id="iqdb-url" name="url" type="url" value="{{ url or '' }}" placeholder="https://">
   <p class="hint">{{ t("image-search-hint") }}</p>
-  <p class="hint" data-transfer-status role="status" aria-live="polite"></p>
-  <p class="form-error" data-transfer-error role="alert" hidden></p>
   <button type="submit">{{ t("search") }}</button>
 </form>
 {% if results is not none %}

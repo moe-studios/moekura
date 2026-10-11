@@ -5,8 +5,6 @@ import { expect, test, type Page } from "@playwright/test";
 const template = readFileSync(new URL("../../crates/web/templates/upload.html", import.meta.url), "utf8");
 const form = template.slice(template.indexOf("  <form"), template.indexOf("</form>") + 7)
   .replace("{{ max_files }}", "3")
-  // Files go in pieces of at most 4 bytes.
-  .replace("{{ site.upload_piece_bytes }}", "4")
   .replace(/{%[\s\S]*?%}/g, "").replace(/{{\s*t\("([\w-]+)"[\s\S]*?}}/g, "$1").replace(/{{[\s\S]*?}}/g, "");
 const script = readFileSync(new URL("../../crates/web/static/js/main.js", import.meta.url), "utf8");
 
@@ -14,10 +12,6 @@ const script = readFileSync(new URL("../../crates/web/static/js/main.js", import
 let sent: string[][] = [];
 /** The links the form sent. */
 let links: string[] = [];
-/** Files sent in pieces, by transfer token: their names, what came, and each piece's size. */
-let transfers: Map<string, { name: string; length: number; bytes: string; pieces: number[] }>;
-/** Statuses to answer the next pieces with, instead of taking them. */
-let failPieces: number[] = [];
 
 async function transfer(page: Page, kind: "paste" | "drop", names = ["picture.png"]): Promise<boolean> {
   return page.evaluate(({ kind, names }) => {
@@ -34,38 +28,11 @@ async function transfer(page: Page, kind: "paste" | "drop", names = ["picture.pn
 test.beforeEach(async ({ page }) => {
   sent = [];
   links = [];
-  transfers = new Map();
-  failPieces = [];
   await page.route("**/uploads/new", (route) => route.fulfill({ contentType: "text/html", body: form }));
-  // The server's side of the tus protocol, as far as the form uses it.
-  await page.route("**/uploads/files", (route) => {
-    const headers = route.request().headers();
-    const name = Buffer.from((headers["upload-metadata"] ?? "").replace(/^filename /, ""), "base64").toString();
-    const token = `t${transfers.size + 1}`;
-    transfers.set(token, { name, length: Number(headers["upload-length"]), bytes: "", pieces: [] });
-    return route.fulfill({ status: 201, headers: { "Tus-Resumable": "1.0.0", Location: `/uploads/files/${token}` } });
-  });
-  await page.route("**/uploads/files/*", (route) => {
-    const request = route.request();
-    const transfer = transfers.get(new URL(request.url()).pathname.split("/").pop()!)!;
-    const offset = { "Tus-Resumable": "1.0.0", "Upload-Offset": String(transfer.bytes.length) };
-    if (request.method() === "HEAD") return route.fulfill({ status: 200, headers: offset });
-    if (request.method() === "DELETE") return route.fulfill({ status: 204 });
-    const failure = failPieces.shift();
-    if (failure) return route.fulfill({ status: failure, body: failure === 422 ? "Not this file." : "" });
-    const piece = request.postDataBuffer()?.toString("latin1") ?? "";
-    if (Number(request.headers()["upload-offset"]) !== transfer.bytes.length) return route.fulfill({ status: 409, headers: offset });
-    transfer.bytes += piece;
-    transfer.pieces.push(piece.length);
-    return route.fulfill({ status: 204, headers: { "Tus-Resumable": "1.0.0", "Upload-Offset": String(transfer.bytes.length) } });
-  });
   await page.route("**/uploads", (route) => {
     const body = route.request().postDataBuffer()?.toString("latin1") ?? "";
     // Without a file chosen, browsers send an empty one, which the server skips.
-    const files = [...body.matchAll(/name="file"; filename="([^"]*)"/g)].map((match) => match[1]!).filter(Boolean);
-    const named = [...body.matchAll(/name="transfer"\r\n\r\n([^\r]+)/g)].map((match) => transfers.get(match[1]!));
-    // A file named is all there.
-    sent.push([...files, ...named.map((t) => (t && t.bytes.length === t.length ? t.name : "incomplete"))]);
+    sent.push([...body.matchAll(/name="file"; filename="([^"]*)"/g)].map((match) => match[1]!).filter(Boolean));
     links.push(...[...body.matchAll(/name="url"\r\n\r\n([^\r]+)/g)].map((match) => match[1]!));
     return route.fulfill({ contentType: "text/html", body: "<p>sent</p>" });
   });
@@ -93,35 +60,6 @@ test("choosing files in the picker sends them", async ({ page }) => {
   await page.locator("#file").setInputFiles({ name: "picked.webm", mimeType: "video/webm", buffer: Buffer.from("video") });
   await expect(page.getByText("sent")).toBeVisible();
   expect(sent).toEqual([["picked.webm"]]);
-});
-
-test("files go in pieces, each in its own request, and the form names them", async ({ page }) => {
-  expect(await transfer(page, "drop", ["one.png", "two.png"])).toBe(true);
-  await expect(page.getByText("sent")).toBeVisible();
-  expect(sent).toEqual([["one.png", "two.png"]]);
-  // "image bytes", at most 4 bytes at a time.
-  expect([...transfers.values()].map((t) => [t.bytes, t.pieces])).toEqual([
-    ["image bytes", [4, 4, 3]],
-    ["image bytes", [4, 4, 3]],
-  ]);
-});
-
-test("a piece that fails is sent again from where the server says", async ({ page }) => {
-  // A proxy refusing the piece, then a server error.
-  failPieces = [413, 502];
-  expect(await transfer(page, "drop")).toBe(true);
-  await expect(page.getByText("sent", { exact: true })).toBeVisible({ timeout: 10_000 });
-  expect(sent).toEqual([["picture.png"]]);
-  expect([...transfers.values()][0]!.bytes).toBe("image bytes");
-});
-
-test("a refused file says why, and the form stays", async ({ page }) => {
-  failPieces = [422];
-  expect(await transfer(page, "drop")).toBe(true);
-  await expect(page.locator("[data-upload-error]")).toHaveText("Not this file.");
-  await expect(page).toHaveURL(/\/uploads\/new$/);
-  expect(sent).toEqual([]);
-  await expect(page.locator("form button[type=submit]")).toBeEnabled();
 });
 
 test("a pasted link is sent right away; other text stays in its field", async ({ page }) => {

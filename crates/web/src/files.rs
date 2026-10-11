@@ -86,9 +86,7 @@ pub async fn serve(
     if !state.storage.served_by_app() {
         return Err(AppError::NotFound);
     }
-    let key = Key::parse(&raw_key)
-        .filter(|key| !key.is_transfer_part())
-        .ok_or(AppError::NotFound)?;
+    let key = Key::parse(&raw_key).ok_or(AppError::NotFound)?;
     let private = state.is_private();
     if private {
         let now = time::OffsetDateTime::now_utc().unix_timestamp();

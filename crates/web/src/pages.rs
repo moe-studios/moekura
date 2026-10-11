@@ -188,8 +188,6 @@ pub(crate) fn render(
                 external => !link.url.starts_with('/'),
             }).collect::<Vec<_>>(),
             registration_open => settings.registration_mode != RegistrationMode::Closed,
-            // The largest piece forms send a file in (see crate::transfers).
-            upload_piece_bytes => state.media.config().upload_chunk_mb.saturating_mul(1024 * 1024),
         },
         // Preset reasons for deleting, rejecting and flagging posts.
         reasons => context! {

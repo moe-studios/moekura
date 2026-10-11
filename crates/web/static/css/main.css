@@ -698,7 +698,7 @@ button.fave[aria-pressed="true"] { background: var(--danger); border-color: var(
 }
 
 /* Facts about the file, ruled like the boxes on a cut sheet. */
-.post-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); margin: 0 0 8px; border-top: 1px solid var(--rule); }
+.post-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); margin: 0 0 8px; }
 .post-facts dt, .post-facts dd { margin: 0; padding: 7px 0; border-bottom: 1px solid var(--rule); }
 .post-facts dt { padding-right: 14px; color: var(--muted); font-size: var(--text-xs); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; align-self: stretch; display: flex; align-items: center; }
 .post-facts dd { font-size: var(--text-sm); font-variant-numeric: tabular-nums; }

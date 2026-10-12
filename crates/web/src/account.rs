@@ -785,6 +785,25 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn bots_cant_log_in(pool: PgPool) {
+        let app = app(&pool).await;
+        let (bot, session) = crate::test_support::member(&pool, "botty", "b@example.com").await;
+        users::set_bot(&pool, bot.id, true).await.unwrap();
+        // A session from before it became one no longer counts.
+        assert!(
+            app.get("/", Some(&session))
+                .await
+                .body
+                .contains("href=\"/login\"")
+        );
+        let right = form(&[("name", "botty"), ("password", "correct horse")]);
+        let response = app.post_form("/login", None, &[], &right).await;
+        assert_eq!(response.status, StatusCode::FORBIDDEN);
+        assert!(response.body.contains("bot account"), "{}", response.body);
+        assert!(response.session_cookie().is_none());
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn login_page_keeps_next_for_registering(pool: PgPool) {
         let app = app(&pool).await;
         let response = app.get("/login?next=%2Fupload%3Fa%3D1", None).await;

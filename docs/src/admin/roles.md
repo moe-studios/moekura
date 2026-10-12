@@ -92,10 +92,10 @@ deleted in the last 30 days and at most the set number of negative
 [feedback](../using/account.md#feedback) records. Defaults: 50 uploads,
 no edits needed, 30 days, no recent deletions, no negative feedback.
 
-Banned members aren't promoted. Staff who manage users can keep someone
-from automatic promotion with **Never promote automatically** on their
-profile. Promotions are in the moderation log, and profiles say when
-someone was promoted.
+Banned members and [bots](bots.md) aren't promoted. Staff who manage
+users can keep someone from automatic promotion with **Never promote
+automatically** on their profile. Promotions are in the moderation log,
+and profiles say when someone was promoted.
 
 ## Rank
 

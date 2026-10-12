@@ -760,6 +760,7 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
                 editable => editable,
                 two_factor => two_factor.contains(&user.id),
                 banned => banned.contains(&user.id),
+                is_bot => user.is_bot,
                 email => user.email,
             }
         })

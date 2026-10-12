@@ -127,7 +127,7 @@ account-sso-link-intro = Link your account to log in with <em>{ $provider }</em>
 account-link = Link
 account-tfa-intro = Ask for a code from an authenticator app too when logging in. <a href="/settings/two-factor">Two-factor login settings</a>
 api-keys-title = API keys
-api-keys-intro = Scripts and apps use API keys to act as you through the <a href="{ $url }">API</a>. Send one as <code>Authorization: Bearer &lt;key&gt;</code>. A key can do everything you can, so keep it secret, and revoke it if it leaks.
+api-keys-intro = Scripts and apps use API keys to act as you through the <a href="{ $url }">API</a>. Send one as <code>Authorization: Bearer &lt;key&gt;</code>. A key can do everything you can unless you limit it, so keep it secret, and revoke it if it leaks.
 api-keys-created = Your new key <strong>{ $name }</strong>. Copy it now: it won't be shown again.
 api-keys-table = API keys table
 api-key = Key
@@ -143,6 +143,11 @@ api-keys-expiry-30 = In 30 days
 api-keys-expiry-90 = In 90 days
 api-keys-expiry-365 = In a year
 api-keys-create = Create key
+api-keys-access = Access
+api-keys-access-everything = Everything
+api-keys-access-all = Everything you can do
+api-keys-access-some = Only what's ticked below
+api-keys-access-hint = A key never gets more than your account has, and a limited key doesn't gain permissions your account is given later.
 
 settings-per-page = Posts per page
 settings-site-default = Site default ({ $value })

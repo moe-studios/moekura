@@ -20,6 +20,19 @@ banned only what visitors can. It's shown once, when created; revoke it
 from the same page if it leaks. Keys start with `mka_` so that secret
 scanners can spot them. Without a key, requests are made as a visitor.
 
+A key can do everything you can, or only the permissions you tick when
+making it (say, **View posts** and **Upload** for an uploader script), so
+a leaked key gives away less. Ticking never adds anything your role
+lacks, and a limited key doesn't gain permissions your role is given
+later. Without **View posts**, even searching is refused. Your own
+account's things that need no permission, such as your saved searches,
+stay reachable with any key. `GET /api/v1/me` lists what the key in use
+may do.
+
+Site admins can also make keys from the shell, with
+[`moekura admin create-api-key`](admin/commands.md), for
+[bots](admin/bots.md) or scripts set up alongside the site.
+
 Making a key asks for your password. Accounts made through single
 sign-on have none to give, so for them it works only within 10 minutes
 of logging in. A key can't manage keys or the feed token,

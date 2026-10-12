@@ -122,6 +122,13 @@ impl CurrentUser {
         }
     }
 
+    /// Narrows what they may do to `permissions`, for an API key that may
+    /// do only some of what its user can.
+    fn limit_to(&mut self, permissions: Permissions, site: &SiteSnapshot) {
+        self.role.permissions = self.role.permissions.and(permissions);
+        self.hidden_tags = hidden_tags(site, &self.role);
+    }
+
     pub fn is_logged_in(&self) -> bool {
         self.user.is_some()
     }
@@ -205,7 +212,9 @@ async fn key_user(state: &AppState, token: &str) -> sqlx::Result<Option<CurrentU
     {
         tracing::warn!(%error, "could not record API key use");
     }
-    let mut current = CurrentUser::for_user(key.user, key.ban, &state.site.get());
+    let site = state.site.get();
+    let mut current = CurrentUser::for_user(key.user, key.ban, &site);
+    current.limit_to(key.permissions, &site);
     current.with_api_key = true;
     Ok(Some(current))
 }
@@ -463,6 +472,13 @@ pub async fn log_in(
     parts: &RequestInfo,
     user: &User,
 ) -> Result<CookieJar, AppError> {
+    // Whichever way in they got this far (a password, single sign-on, a
+    // passkey), bots use API keys only.
+    if user.is_bot {
+        return Err(AppError::Blocked(
+            "This is a bot account: it can't log in on the site, only use API keys.".into(),
+        ));
+    }
     let session = NewSession {
         user_id: user.id,
         user_agent: parts.user_agent.as_deref(),

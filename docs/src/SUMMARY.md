@@ -23,6 +23,7 @@
 - [Tag categories](admin/tag-categories.md)
 - [Site news](admin/news.md)
 - [Webhooks](admin/webhooks.md)
+- [Bots](admin/bots.md)
 - [Themes](admin/themes.md)
 - [Translations](admin/translations.md)
 - [Backups](admin/backups.md)

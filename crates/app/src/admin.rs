@@ -9,11 +9,11 @@ use anyhow::{Context, bail};
 use clap::Subcommand;
 use moekura_core::jobs::ProcessMedia;
 use moekura_core::moderation::ActionKind;
-use moekura_core::permissions::{Role, SystemRole};
+use moekura_core::permissions::{Permission, Permissions, Role, SystemRole};
 use moekura_db::accounts::{self, NewAccount};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, User, UserStatus};
-use moekura_db::{bans, invites, roles, settings};
+use moekura_db::{api_keys, bans, invites, roles, settings};
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -26,11 +26,22 @@ pub enum AdminCommand {
         /// Role name or built-in key (anonymous, member, …, admin)
         #[arg(long, default_value = "member")]
         role: String,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "bot")]
         email: Option<String>,
+        /// A bot account, with no password: it uses API keys made with
+        /// `create-api-key` and can't log in on the site
+        #[arg(long)]
+        bot: bool,
     },
     /// Change a user's role
     SetRole { name: String, role: String },
+    /// Make an account a bot, which can't log in on the site and uses API
+    /// keys only, or (with --off) a person's again
+    SetBot {
+        name: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Lift the network bans covering an address, or overlapping a range,
     /// e.g. when staff are locked out of the site
     LiftNetworkBan {
@@ -47,6 +58,26 @@ pub enum AdminCommand {
         #[arg(long)]
         expires_days: Option<u32>,
     },
+    /// Create an API key for a user, such as a bot. The key is printed
+    /// once.
+    CreateApiKey {
+        /// The user the key acts as
+        user: String,
+        /// What will use it
+        #[arg(long)]
+        name: String,
+        /// A permission the key may use (view_posts, upload, …); repeat
+        /// for more. Without any, the key can do everything the user can.
+        #[arg(long = "permission", value_name = "PERMISSION")]
+        permissions: Vec<String>,
+        /// Days until the key expires; never by default
+        #[arg(long)]
+        expires_days: Option<u32>,
+    },
+    /// List a user's API keys
+    ApiKeys { user: String },
+    /// Revoke one of a user's API keys, by its id from `api-keys`
+    RevokeApiKey { user: String, id: i64 },
     /// Regenerate thumbnails and samples, e.g. after changing media settings
     RegenerateMedia {
         /// Every post
@@ -261,10 +292,35 @@ pub async fn run(
     command: AdminCommand,
 ) -> anyhow::Result<()> {
     match command {
-        AdminCommand::CreateUser { name, role, email } => {
+        AdminCommand::CreateUser {
+            name,
+            role,
+            bot: true,
+            ..
+        } => {
+            let user = create_bot(db, &name, &role).await?;
+            println!("created the bot {} (id {})", user.name, user.id);
+        }
+        AdminCommand::CreateUser {
+            name,
+            role,
+            email,
+            bot: false,
+        } => {
             let password = read_password()?;
             let user = create_user(db, &name, &role, email.as_deref(), &password).await?;
             println!("created {} (id {})", user.name, user.id);
+        }
+        AdminCommand::SetBot { name, off } => {
+            let user = set_bot(db, &name, !off).await?;
+            if off {
+                println!("{} is no longer a bot", user.name);
+            } else {
+                println!(
+                    "{} is now a bot; their sessions have ended and their feed token is revoked",
+                    user.name
+                );
+            }
         }
         AdminCommand::SetRole { name, role } => {
             let role = set_role(db, &name, &role).await?;
@@ -287,6 +343,52 @@ pub async fn run(
                 note: String::new(),
             };
             println!("{}", invites::create(db, invite).await?);
+        }
+        AdminCommand::CreateApiKey {
+            user,
+            name,
+            permissions,
+            expires_days,
+        } => {
+            println!(
+                "{}",
+                create_api_key(db, &user, &name, &permissions, expires_days).await?
+            );
+        }
+        AdminCommand::ApiKeys { user } => {
+            let user = find_user(db, &user).await?;
+            let keys = api_keys::list(db, user.id).await?;
+            if keys.is_empty() {
+                println!("{} has no API keys", user.name);
+            }
+            let day = |t: time::OffsetDateTime| t.date().to_string();
+            for key in keys {
+                let access = if key.permissions == Permissions::ALL {
+                    "everything".to_owned()
+                } else {
+                    key.permissions
+                        .iter()
+                        .map(Permission::key)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                };
+                println!(
+                    "{}\t{}\t{}…\t{access}\tcreated {}\tlast used {}\texpires {}",
+                    key.id,
+                    key.name,
+                    key.prefix,
+                    day(key.created_at),
+                    key.last_used_at.map_or_else(|| "never".into(), day),
+                    key.expires_at.map_or_else(|| "never".into(), day),
+                );
+            }
+        }
+        AdminCommand::RevokeApiKey { user, id } => {
+            let user = find_user(db, &user).await?;
+            if !api_keys::revoke(db, user.id, id).await? {
+                bail!("{} has no API key {id}", user.name);
+            }
+            println!("revoked key {id} of {}", user.name);
         }
         AdminCommand::RegenerateMedia { all, posts } => {
             let queued = regenerate_media(db, (!all).then_some(posts.as_slice())).await?;
@@ -414,6 +516,26 @@ pub async fn create_user(
     Ok(accounts::create(db, account).await?)
 }
 
+pub async fn create_bot(db: &PgPool, name: &str, role: &str) -> anyhow::Result<User> {
+    let role = find_role(db, role).await?;
+    Ok(accounts::create_bot(db, name, role.id).await?)
+}
+
+/// Marks `name` as a bot or not. Becoming one ends their sessions and
+/// revokes their feed token, which a bot couldn't revoke itself; their API
+/// keys keep working.
+pub async fn set_bot(db: &PgPool, name: &str, is_bot: bool) -> anyhow::Result<User> {
+    let user = find_user(db, name).await?;
+    let mut tx = db.begin().await?;
+    users::set_bot(&mut *tx, user.id, is_bot).await?;
+    if is_bot {
+        moekura_db::sessions::delete_all_for_user(&mut *tx, user.id).await?;
+        moekura_db::feeds::set_token(&mut *tx, user.id, None).await?;
+    }
+    tx.commit().await?;
+    Ok(user)
+}
+
 pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Role> {
     let role = find_role(db, role).await?;
     let Some(user) = users::by_name(db, name).await? else {
@@ -435,6 +557,55 @@ pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Rol
     .await?;
     tx.commit().await?;
     Ok(role)
+}
+
+/// Makes an API key for `user`, limited to `permissions` (by key) unless
+/// that's empty, and returns it.
+pub async fn create_api_key(
+    db: &PgPool,
+    user: &str,
+    name: &str,
+    permissions: &[String],
+    expires_days: Option<u32>,
+) -> anyhow::Result<String> {
+    let user = find_user(db, user).await?;
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > api_keys::NAME_MAX_LEN {
+        bail!(
+            "give the key a name of at most {} characters",
+            api_keys::NAME_MAX_LEN
+        );
+    }
+    let permissions = if permissions.is_empty() {
+        Permissions::ALL
+    } else {
+        let role = roles::list(db)
+            .await?
+            .into_iter()
+            .find(|r| r.id == user.role_id)
+            .context("the user's role is missing")?;
+        let mut chosen = Vec::new();
+        for key in permissions {
+            let Some(permission) = Permission::ALL.into_iter().find(|p| p.key() == key) else {
+                let known: Vec<&str> = Permission::ALL.iter().map(|p| p.key()).collect();
+                bail!("no permission {key} (permissions: {})", known.join(", "));
+            };
+            if !role.can(permission) {
+                bail!(
+                    "{} ({}) can't {key}, so the key couldn't either",
+                    user.name,
+                    role.name
+                );
+            }
+            chosen.push(permission);
+        }
+        Permissions::of(&chosen)
+    };
+    let expires_at =
+        expires_days.map(|d| time::OffsetDateTime::now_utc() + time::Duration::days(i64::from(d)));
+    let key = api_keys::create_with_permissions(db, user.id, name, expires_at, permissions).await?;
+    tracing::info!(user = %user.name, key = name, "API key created from the shell");
+    Ok(key)
 }
 
 /// Lifts the network bans in force that cover `text` (an address or a
@@ -480,6 +651,12 @@ pub async fn regenerate_media(db: &PgPool, posts: Option<&[i64]>) -> anyhow::Res
         tx.commit().await?;
     }
     Ok(asset_ids.len())
+}
+
+async fn find_user(db: &PgPool, name: &str) -> anyhow::Result<User> {
+    users::by_name(db, name)
+        .await?
+        .with_context(|| format!("no user named {name}"))
 }
 
 /// By display name, then by built-in key, so `admin` works even if the
@@ -621,6 +798,110 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(logged["via"], json!("cli"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn creates_api_keys_from_the_shell(pool: PgPool) {
+        let bot = create_user(&pool, "uploader", "member", None, "correct horse")
+            .await
+            .unwrap();
+        let all = create_api_key(&pool, "Uploader", "everything", &[], None)
+            .await
+            .unwrap();
+        let found = api_keys::lookup(&pool, &all).await.unwrap().unwrap();
+        assert_eq!(found.user.id, bot.id);
+        assert_eq!(found.permissions, Permissions::ALL);
+
+        let some = ["view_posts".to_owned(), "upload".to_owned()];
+        let key = create_api_key(&pool, "uploader", "posts", &some, Some(30))
+            .await
+            .unwrap();
+        let found = api_keys::lookup(&pool, &key).await.unwrap().unwrap();
+        assert_eq!(
+            found.permissions,
+            Permissions::of(&[Permission::ViewPosts, Permission::Upload])
+        );
+        let listed = api_keys::list(&pool, bot.id).await.unwrap();
+        assert!(listed[1].expires_at.is_some());
+
+        for (user, name, permissions, error) in [
+            ("nobody", "x", vec![], "no user named nobody"),
+            ("uploader", " ", vec![], "give the key a name"),
+            ("uploader", "x", vec!["fly".to_owned()], "no permission fly"),
+            (
+                "uploader",
+                "x",
+                vec!["ban_users".to_owned()],
+                "uploader (Member) can't ban_users",
+            ),
+        ] {
+            let err = create_api_key(&pool, user, name, &permissions, None)
+                .await
+                .unwrap_err();
+            assert!(err.to_string().contains(error), "{err}");
+        }
+        assert_eq!(api_keys::list(&pool, bot.id).await.unwrap().len(), 2);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn makes_bots(pool: PgPool) {
+        let bot = create_bot(&pool, "tagbot", "contributor").await.unwrap();
+        assert!(bot.is_bot);
+        assert!(!users::has_password(&pool, bot.id).await.unwrap());
+        assert!(
+            users::by_name(&pool, "tagbot")
+                .await
+                .unwrap()
+                .unwrap()
+                .is_bot
+        );
+        assert!(create_bot(&pool, "x", "member").await.is_err());
+
+        let person = create_user(&pool, "catherine", "member", None, "correct horse")
+            .await
+            .unwrap();
+        moekura_db::sessions::create(
+            &pool,
+            moekura_db::sessions::NewSession {
+                user_id: person.id,
+                user_agent: None,
+                ip: None,
+            },
+            moekura_db::sessions::Lifetime {
+                idle: Duration::from_secs(3600),
+                max: Duration::from_secs(3600),
+            },
+        )
+        .await
+        .unwrap();
+        let key = create_api_key(&pool, "catherine", "script", &[], None)
+            .await
+            .unwrap();
+        let feed = moekura_core::tokens::NewToken::generate();
+        moekura_db::feeds::set_token(&pool, person.id, Some(&feed.hash))
+            .await
+            .unwrap();
+        set_bot(&pool, "Catherine", true).await.unwrap();
+        assert!(
+            !moekura_db::feeds::has_token(&pool, person.id)
+                .await
+                .unwrap()
+        );
+        let sessions: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sessions, 0);
+        let found = api_keys::lookup(&pool, &key).await.unwrap().unwrap();
+        assert!(found.user.is_bot);
+        set_bot(&pool, "catherine", false).await.unwrap();
+        assert!(
+            !users::by_id(&pool, person.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_bot
+        );
     }
 
     #[test]

@@ -315,6 +315,7 @@ async fn forgot(
     if !email.is_empty()
         && let Some(user) = users::by_email(db, email).await?
         && user.status != UserStatus::Deactivated
+        && !user.is_bot
         && let Some(address) = user.email.clone()
     {
         let mut tx = db.begin().await?;

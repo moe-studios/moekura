@@ -29,7 +29,8 @@ pub async fn has_token(db: impl PgExecutor<'_>, user_id: i64) -> sqlx::Result<bo
         .await
 }
 
-/// The active user a feed token belongs to, and their ban if any.
+/// The active user a feed token belongs to, and their ban if any. Bots
+/// use API keys only.
 pub async fn user(
     db: impl PgExecutor<'_>,
     token: &str,
@@ -44,7 +45,7 @@ pub async fn user(
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status,
-                u.created_at, u.last_seen_at, u.settings,
+                u.created_at, u.last_seen_at, u.settings, u.is_bot,
                 b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
          FROM users u
          LEFT JOIN LATERAL (
@@ -52,7 +53,7 @@ pub async fn user(
              WHERE user_id = u.id AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
              ORDER BY expires_at DESC NULLS FIRST LIMIT 1
          ) b ON true
-         WHERE u.feed_token_hash = $1 AND u.status = 'active'",
+         WHERE u.feed_token_hash = $1 AND u.status = 'active' AND NOT u.is_bot",
     )
     .bind(&hash_token(token)[..])
     .fetch_optional(db)
@@ -88,6 +89,9 @@ mod tests {
         let (found, ban) = user(&pool, &token.token).await.unwrap().unwrap();
         assert_eq!((found.name.as_str(), ban), ("alice", None));
         assert!(user(&pool, "nope").await.unwrap().is_none());
+        crate::users::set_bot(&pool, id, true).await.unwrap();
+        assert!(user(&pool, &token.token).await.unwrap().is_none());
+        crate::users::set_bot(&pool, id, false).await.unwrap();
         set_token(&pool, id, None).await.unwrap();
         assert!(user(&pool, &token.token).await.unwrap().is_none());
     }

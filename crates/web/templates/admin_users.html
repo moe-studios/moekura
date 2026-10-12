@@ -43,7 +43,7 @@
   <tbody>
     {% for u in users %}
     <tr>
-      <td><a href="/users/{{ u.name }}">{{ u.name }}</a>{% if u.banned %} <span class="status status-open">{{ t("banned-word") }}</span>{% endif %}{% if u.email %}<br><span class="hint">{{ u.email }}</span>{% endif %}</td>
+      <td><a href="/users/{{ u.name }}">{{ u.name }}</a>{% if u.is_bot %} <span class="status">{{ t("profile-bot") }}</span>{% endif %}{% if u.banned %} <span class="status status-open">{{ t("banned-word") }}</span>{% endif %}{% if u.email %}<br><span class="hint">{{ u.email }}</span>{% endif %}</td>
       <td>{{ u.joined }}</td>
       <td>
         {% if u.editable %}

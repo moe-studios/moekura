@@ -1417,8 +1417,10 @@ fieldset.permissions { border: 0; padding: 0; margin: 12px 0 0; display: grid; g
 fieldset.permissions legend { font-weight: 600; margin-bottom: 4px; padding: 0; }
 fieldset.permissions > .hint { grid-column: 1 / -1; margin: 0 0 4px; }
 .card > form + .actions { margin-top: 16px; }
-/* Keys and dates keep to one line; the name takes what's left. */
-.api-keys td:not(:first-child), .passkeys td:nth-child(2), .passkeys td:nth-child(3) { white-space: nowrap; }
+/* Keys and dates keep to one line; the name and access take what's left,
+   breaking names only between words when they can. */
+.api-keys td:not(:first-child, :nth-child(3)), .passkeys td:nth-child(2), .passkeys td:nth-child(3) { white-space: nowrap; }
+.api-keys td:first-child { overflow-wrap: break-word; }
 .automatic-tags th[scope="row"] { text-align: start; font-weight: normal; }
 .automatic-tags th[scope="row"] label { font-weight: normal; margin: 0; }
 .automatic-tags td input { width: 100%; }

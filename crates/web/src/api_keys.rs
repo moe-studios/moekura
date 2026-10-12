@@ -8,6 +8,7 @@ use axum::routing::{get, post};
 use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
+use moekura_core::permissions::{Permission, Permissions};
 use moekura_db::api_keys::{self, CreateError, NAME_MAX_LEN};
 use serde::Deserialize;
 use time::OffsetDateTime;
@@ -40,6 +41,19 @@ struct CreateForm {
     /// A key is a way in, so making one takes the password.
     #[serde(default)]
     password: String,
+    /// `all` for everything the account can do, `some` for the ticked
+    /// permissions only.
+    #[serde(default)]
+    access: String,
+    /// The ticked permissions, by key.
+    #[serde(flatten)]
+    rest: std::collections::HashMap<String, String>,
+}
+
+impl CreateForm {
+    fn ticked(&self, permission: Permission) -> bool {
+        self.rest.contains_key(permission.key())
+    }
 }
 
 /// The page. `created` is a key just made, shown this once; `failed` a
@@ -53,6 +67,7 @@ async fn render(
     let db = page.state().db.primary();
     let now = OffsetDateTime::now_utc();
     let has_password = moekura_db::users::has_password(db, user.id).await?;
+    let mine = page.current.role.permissions;
     let keys: Vec<Value> = api_keys::list(db, user.id)
         .await?
         .into_iter()
@@ -65,6 +80,9 @@ async fn render(
                 last_used => k.last_used_at.map(crate::dates::day),
                 expires => k.expires_at.map(crate::dates::day),
                 expired => k.expires_at.is_some_and(|t| t <= now),
+                permissions => (k.permissions != Permissions::ALL).then(|| {
+                    k.permissions.iter().map(Permission::key).collect::<Vec<_>>()
+                }),
             }
         })
         .collect();
@@ -86,6 +104,14 @@ async fn render(
             error => error,
             name => form.map(|f| f.name.clone()).unwrap_or_default(),
             expires => form.map_or("never", |f| f.expires.as_str()),
+            limited => form.is_some_and(|f| f.access == "some"),
+            permissions => mine
+                .iter()
+                .map(|p| context! {
+                    key => p.key(),
+                    ticked => form.is_some_and(|f| f.ticked(p)),
+                })
+                .collect::<Vec<_>>(),
             expiries => EXPIRIES
                 .iter()
                 .map(|(value, label, _)| context! { value => value, label => label })
@@ -131,7 +157,27 @@ async fn create(page: Page, Form(form): Form<CreateForm>) -> Result<Response, Ap
         return Err(AppError::BadRequest("Unknown expiry".into()));
     };
     let expires_at = days.map(|d| OffsetDateTime::now_utc() + time::Duration::days(d));
-    match api_keys::create(page.state().db.primary(), user.id, name, expires_at).await {
+    // Only permissions the account has can be ticked; a key can't gain
+    // what its user lacks anyway.
+    let permissions = match form.access.as_str() {
+        "" | "all" => Permissions::ALL,
+        "some" => {
+            let ticked: Vec<Permission> = page
+                .current
+                .role
+                .permissions
+                .iter()
+                .filter(|p| form.ticked(*p))
+                .collect();
+            if ticked.is_empty() {
+                return invalid("Tick what the key may do, or let it do everything you can.").await;
+            }
+            Permissions::of(&ticked)
+        }
+        _ => return Err(AppError::BadRequest("Unknown access".into())),
+    };
+    let db = page.state().db.primary();
+    match api_keys::create_with_permissions(db, user.id, name, expires_at, permissions).await {
         Ok(key) => {
             tracing::info!(user = %user.name, key = name, "API key created");
             render(&page, Some((name, &key)), None).await
@@ -220,6 +266,65 @@ mod tests {
             .await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
         assert!(refused.body.contains("invalid, revoked or expired"));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn keys_can_be_limited(pool: PgPool) {
+        let app = app(&pool).await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let page = app.get("/settings/api-keys", Some(&alice)).await;
+        // Only what she has herself is offered.
+        assert!(page.body.contains("name=\"upload\""), "{}", page.body);
+        assert!(!page.body.contains("name=\"ban_users\""), "{}", page.body);
+
+        let nothing = app
+            .post_form(
+                "/settings/api-keys",
+                Some(&alice),
+                &[],
+                "name=reader&expires=never&access=some",
+            )
+            .await;
+        assert_eq!(nothing.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(
+            nothing.body.contains("Tick what the key may do"),
+            "{}",
+            nothing.body
+        );
+
+        // A permission she lacks is ignored.
+        let made = app
+            .post_form(
+                "/settings/api-keys",
+                Some(&alice),
+                &[],
+                "name=reader&expires=never&access=some&upload=on&ban_users=on",
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::OK, "{}", made.body);
+        let key = shown_key(&made.body);
+        let bearer = format!("Bearer {key}");
+        let auth = [("authorization", bearer.as_str())];
+        let me = app.get_with_headers("/api/v1/me", &auth).await;
+        let me: serde_json::Value = serde_json::from_str(&me.body).unwrap();
+        assert_eq!(me["permissions"], serde_json::json!(["upload"]));
+        // Not even reading posts, which wasn't ticked.
+        assert_eq!(
+            app.get_with_headers("/api/v1/posts", &auth).await.status,
+            StatusCode::FORBIDDEN
+        );
+        let page = app.get("/settings/api-keys", Some(&alice)).await;
+        assert!(page.body.contains("<td>Upload</td>"), "{}", page.body);
+
+        let unknown = app
+            .post_form(
+                "/settings/api-keys",
+                Some(&alice),
+                &[],
+                "name=x&expires=never&access=root",
+            )
+            .await;
+        assert_eq!(unknown.status, StatusCode::BAD_REQUEST);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

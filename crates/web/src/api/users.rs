@@ -35,6 +35,8 @@ pub struct ApiUser {
     pub avatar_url: Option<String>,
     /// Their banner: 3:1, at most 1500×500 pixels.
     pub banner_url: Option<String>,
+    /// A program using the site through the API, not a person.
+    pub is_bot: bool,
 }
 
 /// Get a user.
@@ -81,6 +83,7 @@ pub(crate) async fn show(
         role_key,
         status: user.status.as_str().to_owned(),
         created_at: user.created_at,
+        is_bot: user.is_bot,
     }))
 }
 
@@ -96,6 +99,8 @@ pub struct ApiMe {
     /// What this account may do now (`upload`, `edit_posts`, …). While
     /// banned, only what visitors may.
     pub permissions: Vec<String>,
+    /// A bot account, which uses the site only through API keys.
+    pub is_bot: bool,
     pub settings: ApiSettings,
     /// Set while banned.
     pub ban: Option<ApiActiveBan>,
@@ -164,6 +169,7 @@ pub(crate) async fn me(
             .iter()
             .map(|p| p.key().to_owned())
             .collect(),
+        is_bot: user.is_bot,
         settings: ApiSettings {
             per_page: settings.per_page,
             mode: settings.mode.as_str().to_owned(),

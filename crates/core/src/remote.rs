@@ -88,6 +88,21 @@ fn encode(text: &str) -> String {
     url::form_urlencoded::byte_serialize(text.as_bytes()).collect()
 }
 
+/// Where `base`'s API answers: Rule34's own host is behind Cloudflare and
+/// answers scripts with a captcha, but api.rule34.xxx doesn't.
+fn api_base(base: &str) -> String {
+    let base = base.trim_end_matches('/');
+    let Ok(mut url) = url::Url::parse(base) else {
+        return base.to_owned();
+    };
+    if matches!(url.host_str(), Some("rule34.xxx" | "www.rule34.xxx"))
+        && url.set_host(Some("api.rule34.xxx")).is_ok()
+    {
+        return url.as_str().trim_end_matches('/').to_owned();
+    }
+    base.to_owned()
+}
+
 /// The URL of a page of posts matching `tags`.
 pub fn page_url(
     kind: Kind,
@@ -96,7 +111,7 @@ pub fn page_url(
     cursor: Cursor,
     credentials: &Credentials,
 ) -> String {
-    let base = base.trim_end_matches('/');
+    let base = api_base(base);
     let tags = encode(tags);
     let mut url = match (kind, cursor) {
         (Kind::Danbooru | Kind::E621, Cursor::Before(id)) => {
@@ -156,7 +171,7 @@ pub enum PostRef<'a> {
 
 /// The URL of one post's JSON (see [`parse_post`]).
 pub fn post_url(kind: Kind, base: &str, post: PostRef) -> String {
-    let base = base.trim_end_matches('/');
+    let base = api_base(base);
     let search = match post {
         PostRef::Id(id) => format!("id:{id}"),
         PostRef::Md5(md5) => format!("md5:{md5}"),
@@ -484,6 +499,20 @@ mod tests {
                 &none
             ),
             "https://m.example/post.json?tags=&limit=100&page=1"
+        );
+        assert_eq!(
+            page_url(
+                Kind::Gelbooru,
+                "https://rule34.xxx/",
+                "cat",
+                Cursor::Start,
+                &none
+            ),
+            "https://api.rule34.xxx/index.php?page=dapi&s=post&q=index&json=1&tags=cat&limit=100&pid=0"
+        );
+        assert_eq!(
+            post_url(Kind::Gelbooru, "https://www.rule34.xxx", PostRef::Id(4)),
+            "https://api.rule34.xxx/index.php?page=dapi&s=post&q=index&json=1&tags=id%3A4"
         );
         assert_eq!(Kind::guess("www.e621.net"), Some(Kind::E621));
         assert_eq!(Kind::guess("example.com"), None);

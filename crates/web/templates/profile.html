@@ -21,6 +21,7 @@
     <div class="profile-intro">
       <h1>{{ user.name }}
         {% if user.role %}<span class="role-badge">{{ user.role }}</span>{% endif %}
+        {% if user.is_bot %}<span class="role-badge" title="{{ t('profile-bot-hint') }}">{{ t("profile-bot") }}</span>{% endif %}
         {% if user.status != "active" %}<span class="role-badge is-{{ user.status }}">{{ t("status-" ~ user.status) }}</span>{% endif %}
       </h1>
       <p class="profile-meta">

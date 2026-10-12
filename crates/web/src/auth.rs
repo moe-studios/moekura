@@ -472,6 +472,13 @@ pub async fn log_in(
     parts: &RequestInfo,
     user: &User,
 ) -> Result<CookieJar, AppError> {
+    // Whichever way in they got this far (a password, single sign-on, a
+    // passkey), bots use API keys only.
+    if user.is_bot {
+        return Err(AppError::Blocked(
+            "This is a bot account: it can't log in on the site, only use API keys.".into(),
+        ));
+    }
     let session = NewSession {
         user_id: user.id,
         user_agent: parts.user_agent.as_deref(),

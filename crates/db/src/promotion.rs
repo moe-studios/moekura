@@ -32,7 +32,7 @@ pub async fn candidates(db: &PgPool, rules: &Rules) -> sqlx::Result<Vec<Candidat
                 (SELECT count(*) FROM user_feedbacks f
                  WHERE f.user_id = u.id AND f.category = 'negative' AND NOT f.is_deleted)
          FROM users u JOIN roles r ON r.id = u.role_id
-         WHERE r.system_key = 'member' AND u.status = 'active' AND NOT u.auto_promotion_blocked
+         WHERE r.system_key = 'member' AND u.status = 'active' AND NOT u.auto_promotion_blocked AND NOT u.is_bot
            AND u.created_at <= now() - make_interval(days => $1)
            AND NOT EXISTS (SELECT 1 FROM bans b WHERE b.user_id = u.id AND b.lifted_at IS NULL
                            AND (b.expires_at IS NULL OR b.expires_at > now()))",
@@ -166,6 +166,8 @@ mod tests {
         let young = user(&pool, "young", "member", 1).await;
         let few = user(&pool, "few", "member", 10).await;
         let blocked = user(&pool, "blocked", "member", 10).await;
+        let bot = user(&pool, "bot", "member", 10).await;
+        crate::users::set_bot(&pool, bot, true).await.unwrap();
         let janitor = user(&pool, "jan", "janitor", 10).await;
         let scolded = user(&pool, "scolded", "member", 10).await;
         sqlx::query(
@@ -177,7 +179,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        for u in [good, young, blocked, janitor, scolded] {
+        for u in [good, young, blocked, bot, janitor, scolded] {
             uploads(&pool, u, 3, "active").await;
         }
         uploads(&pool, few, 2, "active").await;

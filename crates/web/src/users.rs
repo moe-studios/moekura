@@ -85,7 +85,8 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let me = page.current.user.as_ref().map(|u| u.id);
     let messages = match me.filter(|&me| me != user.id) {
         Some(me) => Some(context! {
-            can_send => page.current.can(Permission::SendMessages),
+            // Nobody reads a bot's messages.
+            can_send => page.current.can(Permission::SendMessages) && !user.is_bot,
             blocked => moekura_db::dmails::is_blocked(db, me, user.id).await?,
         }),
         None => None,
@@ -202,6 +203,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
                 role => role,
                 joined => crate::dates::day(user.created_at),
                 status => format!("{:?}", user.status).to_lowercase(),
+                is_bot => user.is_bot,
             },
             uploads => uploads,
             uploads_url => Value::from_safe_string(search_url(&format!("user:{}", user.name))),
@@ -573,6 +575,44 @@ mod tests {
     use sqlx::PgPool;
 
     use crate::test_support::{TestApp, session_for, test_state};
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn bots_are_marked_and_take_no_messages(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes()
+                .merge(crate::dmails::routes())
+                .merge(crate::api::routes(1024)),
+        );
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let role = moekura_db::roles::by_system(&pool, SystemRole::Member)
+            .await
+            .unwrap();
+        moekura_db::accounts::create_bot(&pool, "tagbot", role.id)
+            .await
+            .unwrap();
+
+        let profile = app.get("/users/tagbot", Some(&alice)).await;
+        assert!(profile.body.contains(">Bot</span>"), "{}", profile.body);
+        assert!(!profile.body.contains("/dmails/new?to=tagbot"));
+        let person = app.get("/users/alice", None).await;
+        assert!(!person.body.contains(">Bot</span>"));
+
+        let sent = app
+            .post_form(
+                "/dmails",
+                Some(&alice),
+                &[],
+                "to=tagbot&title=Hi&body=Hello",
+            )
+            .await;
+        assert_eq!(sent.status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert!(sent.body.contains("is a bot"), "{}", sent.body);
+
+        let api = app.get("/api/v1/users/tagbot", Some(&alice)).await;
+        let api: serde_json::Value = serde_json::from_str(&api.body).unwrap();
+        assert_eq!(api["is_bot"], true);
+    }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn profiles_count_what_users_did(pool: PgPool) {

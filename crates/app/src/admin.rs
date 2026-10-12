@@ -26,11 +26,22 @@ pub enum AdminCommand {
         /// Role name or built-in key (anonymous, member, …, admin)
         #[arg(long, default_value = "member")]
         role: String,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "bot")]
         email: Option<String>,
+        /// A bot account, with no password: it uses API keys made with
+        /// `create-api-key` and can't log in on the site
+        #[arg(long)]
+        bot: bool,
     },
     /// Change a user's role
     SetRole { name: String, role: String },
+    /// Make an account a bot, which can't log in on the site and uses API
+    /// keys only, or (with --off) a person's again
+    SetBot {
+        name: String,
+        #[arg(long)]
+        off: bool,
+    },
     /// Lift the network bans covering an address, or overlapping a range,
     /// e.g. when staff are locked out of the site
     LiftNetworkBan {
@@ -281,10 +292,35 @@ pub async fn run(
     command: AdminCommand,
 ) -> anyhow::Result<()> {
     match command {
-        AdminCommand::CreateUser { name, role, email } => {
+        AdminCommand::CreateUser {
+            name,
+            role,
+            bot: true,
+            ..
+        } => {
+            let user = create_bot(db, &name, &role).await?;
+            println!("created the bot {} (id {})", user.name, user.id);
+        }
+        AdminCommand::CreateUser {
+            name,
+            role,
+            email,
+            bot: false,
+        } => {
             let password = read_password()?;
             let user = create_user(db, &name, &role, email.as_deref(), &password).await?;
             println!("created {} (id {})", user.name, user.id);
+        }
+        AdminCommand::SetBot { name, off } => {
+            let user = set_bot(db, &name, !off).await?;
+            if off {
+                println!("{} is no longer a bot", user.name);
+            } else {
+                println!(
+                    "{} is now a bot; their sessions have ended and their feed token is revoked",
+                    user.name
+                );
+            }
         }
         AdminCommand::SetRole { name, role } => {
             let role = set_role(db, &name, &role).await?;
@@ -478,6 +514,26 @@ pub async fn create_user(
         status: UserStatus::Active,
     };
     Ok(accounts::create(db, account).await?)
+}
+
+pub async fn create_bot(db: &PgPool, name: &str, role: &str) -> anyhow::Result<User> {
+    let role = find_role(db, role).await?;
+    Ok(accounts::create_bot(db, name, role.id).await?)
+}
+
+/// Marks `name` as a bot or not. Becoming one ends their sessions and
+/// revokes their feed token, which a bot couldn't revoke itself; their API
+/// keys keep working.
+pub async fn set_bot(db: &PgPool, name: &str, is_bot: bool) -> anyhow::Result<User> {
+    let user = find_user(db, name).await?;
+    let mut tx = db.begin().await?;
+    users::set_bot(&mut *tx, user.id, is_bot).await?;
+    if is_bot {
+        moekura_db::sessions::delete_all_for_user(&mut *tx, user.id).await?;
+        moekura_db::feeds::set_token(&mut *tx, user.id, None).await?;
+    }
+    tx.commit().await?;
+    Ok(user)
 }
 
 pub async fn set_role(db: &PgPool, name: &str, role: &str) -> anyhow::Result<Role> {
@@ -785,6 +841,67 @@ mod tests {
             assert!(err.to_string().contains(error), "{err}");
         }
         assert_eq!(api_keys::list(&pool, bot.id).await.unwrap().len(), 2);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn makes_bots(pool: PgPool) {
+        let bot = create_bot(&pool, "tagbot", "contributor").await.unwrap();
+        assert!(bot.is_bot);
+        assert!(!users::has_password(&pool, bot.id).await.unwrap());
+        assert!(
+            users::by_name(&pool, "tagbot")
+                .await
+                .unwrap()
+                .unwrap()
+                .is_bot
+        );
+        assert!(create_bot(&pool, "x", "member").await.is_err());
+
+        let person = create_user(&pool, "catherine", "member", None, "correct horse")
+            .await
+            .unwrap();
+        moekura_db::sessions::create(
+            &pool,
+            moekura_db::sessions::NewSession {
+                user_id: person.id,
+                user_agent: None,
+                ip: None,
+            },
+            moekura_db::sessions::Lifetime {
+                idle: Duration::from_secs(3600),
+                max: Duration::from_secs(3600),
+            },
+        )
+        .await
+        .unwrap();
+        let key = create_api_key(&pool, "catherine", "script", &[], None)
+            .await
+            .unwrap();
+        let feed = moekura_core::tokens::NewToken::generate();
+        moekura_db::feeds::set_token(&pool, person.id, Some(&feed.hash))
+            .await
+            .unwrap();
+        set_bot(&pool, "Catherine", true).await.unwrap();
+        assert!(
+            !moekura_db::feeds::has_token(&pool, person.id)
+                .await
+                .unwrap()
+        );
+        let sessions: i64 = sqlx::query_scalar("SELECT count(*) FROM sessions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(sessions, 0);
+        let found = api_keys::lookup(&pool, &key).await.unwrap().unwrap();
+        assert!(found.user.is_bot);
+        set_bot(&pool, "catherine", false).await.unwrap();
+        assert!(
+            !users::by_id(&pool, person.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .is_bot
+        );
     }
 
     #[test]

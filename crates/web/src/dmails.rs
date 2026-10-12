@@ -110,6 +110,12 @@ pub(crate) async fn send(
         .ok_or_else(|| {
             AppError::Unprocessable(format!("There's no user called “{}”.", to.trim()))
         })?;
+    if recipient.is_bot {
+        return Err(AppError::Unprocessable(format!(
+            "{} is a bot: nobody would read the message.",
+            recipient.name
+        )));
+    }
     state.rate_limits.check_dmail(from).await?;
     let held = crate::held::check(state, current, &body).await?;
     let sent = dmails::send(db, from, recipient.id, &title, &body, held.as_deref())

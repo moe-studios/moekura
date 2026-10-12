@@ -31,7 +31,7 @@ may do.
 
 Site admins can also make keys from the shell, with
 [`moekura admin create-api-key`](admin/commands.md), for
-bots or scripts set up alongside the site.
+[bots](admin/bots.md) or scripts set up alongside the site.
 
 Making a key asks for your password. Accounts made through single
 sign-on have none to give, so for them it works only within 10 minutes

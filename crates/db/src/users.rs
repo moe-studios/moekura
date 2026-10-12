@@ -50,6 +50,8 @@ pub struct User {
     pub last_seen_at: Option<OffsetDateTime>,
     /// Preferences as stored; read with `moekura_core::user_settings`.
     pub settings: serde_json::Value,
+    /// Run by a program through API keys: it can't log in on the site.
+    pub is_bot: bool,
 }
 
 pub struct NewUser<'a> {
@@ -74,7 +76,7 @@ pub enum InsertError {
 macro_rules! select_users {
     ($rest:literal) => {
         concat!(
-            "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings FROM users ",
+            "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot FROM users ",
             $rest
         )
     };
@@ -84,7 +86,7 @@ pub async fn insert(db: impl PgExecutor<'_>, user: NewUser<'_>) -> Result<User, 
     sqlx::query_as(
         "INSERT INTO users (name, email, password_hash, role_id, status)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings",
+         RETURNING id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot",
     )
     .bind(user.name)
     .bind(user.email)
@@ -274,7 +276,7 @@ pub async fn credentials_by_name(
         password_hash: Option<String>,
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, password_hash
+        "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot, password_hash
          FROM users WHERE name = $1::citext",
     )
     .bind(name)
@@ -405,6 +407,17 @@ pub async fn set_status(db: impl PgExecutor<'_>, id: i64, status: UserStatus) ->
     sqlx::query("UPDATE users SET status = $2 WHERE id = $1")
         .bind(id)
         .bind(status)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Marks the user as a bot or not. Turning a bot back into a person
+/// leaves them to log in through a password reset or single sign-on.
+pub async fn set_bot(db: impl PgExecutor<'_>, id: i64, is_bot: bool) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET is_bot = $2 WHERE id = $1")
+        .bind(id)
+        .bind(is_bot)
         .execute(db)
         .await?;
     Ok(())

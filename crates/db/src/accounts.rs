@@ -61,6 +61,31 @@ pub async fn create(db: impl PgExecutor<'_>, account: NewAccount<'_>) -> Result<
     })
 }
 
+/// Creates a bot account: no password or address, so it can't log in,
+/// only use API keys made for it.
+pub async fn create_bot(db: &PgPool, name: &str, role_id: i32) -> Result<User, CreateError> {
+    let name = UserName::parse(name).map_err(CreateError::InvalidName)?;
+    let mut tx = db.begin().await?;
+    let new_user = NewUser {
+        name: name.as_str(),
+        email: None,
+        password_hash: None,
+        role_id,
+        status: UserStatus::Active,
+    };
+    let mut user = users::insert(&mut *tx, new_user)
+        .await
+        .map_err(|e| match e {
+            InsertError::NameTaken => CreateError::NameTaken,
+            InsertError::EmailTaken => CreateError::EmailTaken,
+            InsertError::Db(e) => CreateError::Db(e),
+        })?;
+    users::set_bot(&mut *tx, user.id, true).await?;
+    tx.commit().await?;
+    user.is_bot = true;
+    Ok(user)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
     /// Unknown name or wrong password; deliberately indistinguishable.

@@ -380,6 +380,17 @@ async fn create(
         .into_response())
 }
 
+/// The most of a delivery's response body the log shows, in characters.
+const RESPONSE_PREVIEW: usize = 200;
+
+/// `text` cut to its first `max` characters, with an ellipsis if anything was cut.
+fn shorten(text: &str, max: usize) -> String {
+    match text.char_indices().nth(max) {
+        Some((at, _)) => format!("{}…", &text[..at]),
+        None => text.to_owned(),
+    }
+}
+
 async fn render_show(
     page: &Page,
     hook: &Webhook,
@@ -395,7 +406,7 @@ async fn render_show(
                 status => d.status,
                 attempts => d.attempts,
                 response_status => d.response_status,
-                response => d.response,
+                response => d.response.as_deref().map(|r| shorten(r, RESPONSE_PREVIEW)),
                 when => d.created_at.format(&Rfc3339).unwrap_or_default(),
             }
         })

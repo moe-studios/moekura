@@ -45,7 +45,7 @@
       <td><code>{{ d.event }}</code> <span class="hint">#{{ d.id }}</span></td>
       <td><span class="status status-{{ 'dismissed' if d.status == 'failed' else ('upheld' if d.status == 'delivered' else 'open') }}">{{ t("status-" ~ d.status) }}</span>
         {% if d.response_status %}{{ d.response_status }}{% endif %}{% if d.attempts > 1 %} <span class="hint">{{ t("webhook-tries", count=d.attempts) }}</span>{% endif %}
-        {% if d.response %}<div class="hint">{{ d.response|truncate(200) }}</div>{% endif %}</td>
+        {% if d.response %}<div class="hint">{{ d.response }}</div>{% endif %}</td>
       <td><time datetime="{{ d.when }}">{{ d.when[:16]|replace("T", " ") }}</time></td>
     </tr>
     {% endfor %}

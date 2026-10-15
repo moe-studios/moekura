@@ -54,7 +54,7 @@ opentelemetry-otlp = { version = "0.33.0", default-features = false, features = 
 opentelemetry-http = { version = "0.33.0", default-features = false }
 tracing-opentelemetry = { version = "0.34.0", default-features = false }
 # Pixiv ugoira: zips of frames.
-zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Reading XMP metadata from uploaded files.
 quick-xml = "0.42.0"
 # ONNX Runtime for the tagger, loaded at run time (libonnxruntime.so), so

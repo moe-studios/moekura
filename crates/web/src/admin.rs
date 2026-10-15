@@ -160,6 +160,8 @@ fn render_settings(
                 hide_header_icon => current.hide_header_icon,
                 hide_header_name => current.hide_header_name,
                 rules => current.rules,
+                terms_of_service => current.terms_of_service,
+                privacy_policy => current.privacy_policy,
                 footer_links => moekura_core::settings::FooterLink::to_list(&current.footer_links),
                 registration_mode => mode_name(current.registration_mode),
                 invite_quota => current.invite_quota,
@@ -297,6 +299,10 @@ struct SettingsForm {
     site_description: Option<String>,
     /// Markup.
     rules: Option<String>,
+    /// Markup.
+    terms_of_service: Option<String>,
+    /// Markup.
+    privacy_policy: Option<String>,
     /// One per line: the text, then the address.
     footer_links: Option<String>,
     /// Present when ticked.
@@ -486,6 +492,22 @@ async fn save_settings(
             ),
         ),
         (
+            "terms_of_service",
+            json!(
+                form.terms_of_service
+                    .as_deref()
+                    .map_or_else(|| before.terms_of_service.clone(), multiline)
+            ),
+        ),
+        (
+            "privacy_policy",
+            json!(
+                form.privacy_policy
+                    .as_deref()
+                    .map_or_else(|| before.privacy_policy.clone(), multiline)
+            ),
+        ),
+        (
             "footer_links",
             form.footer_links.as_deref().map_or_else(
                 || json!(before.footer_links),
@@ -656,6 +678,12 @@ async fn save_settings(
                 }
                 if let Some(text) = &form.rules {
                     shown.rules = text.clone();
+                }
+                if let Some(text) = &form.terms_of_service {
+                    shown.terms_of_service = text.clone();
+                }
+                if let Some(text) = &form.privacy_policy {
+                    shown.privacy_policy = text.clone();
                 }
                 shown.default_blacklist = form.default_blacklist.clone();
                 return Ok(render_settings(

@@ -1,5 +1,5 @@
-//! The site's own pages and identity: the rules page, the site map, and
-//! the logos and favicon.
+//! The site's own pages and identity: the rules, terms of service and
+//! privacy policy pages, the site map, and the logos and favicon.
 
 use axum::Router;
 use axum::extract::{DefaultBodyLimit, Multipart};
@@ -76,6 +76,8 @@ pub fn routes() -> Router<AppState> {
     let limit = || DefaultBodyLimit::max(IMAGE_MAX_BYTES + 16 * 1024);
     Router::new()
         .route("/rules", get(rules))
+        .route("/terms", get(|page: Page| policy(page, Policy::Terms)))
+        .route("/privacy", get(|page: Page| policy(page, Policy::Privacy)))
         .route(
             "/admin/settings/logo",
             post(|page: Page, jar: CookieJar, form: Multipart| {
@@ -139,6 +141,47 @@ async fn rules(page: Page) -> Result<Response, AppError> {
         "rules.html",
         context! {
             html => Value::from_safe_string(markup::render(&rules)),
+            can_edit => page.current.can(Permission::ManageSettings),
+        },
+    ))
+}
+
+/// The site's policies, each a page of its own.
+#[derive(Clone, Copy)]
+enum Policy {
+    Terms,
+    Privacy,
+}
+
+impl Policy {
+    /// The setting holding its text, which is also the form field.
+    fn key(self) -> &'static str {
+        match self {
+            Self::Terms => "terms_of_service",
+            Self::Privacy => "privacy_policy",
+        }
+    }
+
+    fn text(self, settings: &moekura_core::settings::SiteSettings) -> &str {
+        match self {
+            Self::Terms => &settings.terms_of_service,
+            Self::Privacy => &settings.privacy_policy,
+        }
+    }
+}
+
+/// The terms of service or privacy policy. Anyone may read them, on
+/// private sites too, since sign-up links to them.
+async fn policy(page: Page, policy: Policy) -> Result<Response, AppError> {
+    let text = policy.text(&page.state().site.get().settings).to_owned();
+    if text.trim().is_empty() {
+        return Err(AppError::NotFound);
+    }
+    Ok(page.render(
+        "policy.html",
+        context! {
+            key => policy.key(),
+            html => Value::from_safe_string(markup::render(&text)),
             can_edit => page.current.can(Permission::ManageSettings),
         },
     ))
@@ -283,6 +326,54 @@ mod tests {
             .post_form("/admin/settings", Some(&admin), &[], bad)
             .await;
         assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn policy_pages(pool: PgPool) {
+        let app = app(&pool).await;
+        // A new site has the default texts.
+        let terms = app.get("/terms", None).await;
+        assert_eq!(terms.status, StatusCode::OK);
+        assert!(
+            terms.body.contains("<h1>Terms of service</h1>"),
+            "{}",
+            terms.body
+        );
+        assert!(
+            terms.body.contains("<h2>Your account</h2>"),
+            "{}",
+            terms.body
+        );
+        let privacy = app.get("/privacy", None).await;
+        assert_eq!(privacy.status, StatusCode::OK);
+        assert!(
+            privacy.body.contains("<h2>Cookies</h2>"),
+            "{}",
+            privacy.body
+        );
+        let home = app.get("/", None).await.body;
+        assert!(home.contains("<a href=\"/terms\">Terms</a>"), "{home}");
+        assert!(home.contains("<a href=\"/privacy\">Privacy</a>"), "{home}");
+
+        // Admins edit them, or empty them to drop the page.
+        let admin = session_for(&pool, "boss", SystemRole::Admin).await;
+        let form = "site_name=Moekura&registration_mode=open&promotion_uploads=50\
+                    &promotion_edits=0&promotion_account_days=30&promotion_max_recent_deletions=0\
+                    &terms_of_service=Be+nice+to+%5B%5Bcats%5D%5D.&privacy_policy=";
+        let saved = app
+            .post_form("/admin/settings", Some(&admin), &[], form)
+            .await;
+        assert_eq!(saved.status, StatusCode::SEE_OTHER, "{}", saved.body);
+        let terms = app.get("/terms", None).await;
+        assert!(terms.body.contains("href=\"/wiki/cats\""), "{}", terms.body);
+        assert!(!terms.body.contains("Your account"), "{}", terms.body);
+        assert_eq!(
+            app.get("/privacy", None).await.status,
+            StatusCode::NOT_FOUND
+        );
+        let home = app.get("/", None).await.body;
+        assert!(home.contains("<a href=\"/terms\">Terms</a>"), "{home}");
+        assert!(!home.contains("href=\"/privacy\""), "{home}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

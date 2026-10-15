@@ -49,6 +49,11 @@ error-internal = Something went wrong on our side
 rules-title = Rules
 rules-edit = Edit the rules
 
+terms-title = Terms of service
+terms-edit = Edit the terms of service
+privacy-title = Privacy policy
+privacy-edit = Edit the privacy policy
+
 stats-counted = Counted hourly; last on { $day }.
 stats-not-yet = The site's figures aren't counted yet; they will be within the hour.
 stats-reports = <a href="/reports">Reports</a> chart what's happened over time.

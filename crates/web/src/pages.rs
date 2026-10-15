@@ -182,6 +182,8 @@ pub(crate) fn render(
             hide_icon => settings.hide_header_icon,
             hide_name => settings.hide_header_name,
             has_rules => !settings.rules.trim().is_empty(),
+            has_terms => !settings.terms_of_service.trim().is_empty(),
+            has_privacy => !settings.privacy_policy.trim().is_empty(),
             footer_links => settings.footer_links.iter().map(|link| context! {
                 label => link.label,
                 url => link.url,

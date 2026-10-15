@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ t("terms-title") if key == "terms_of_service" else t("privacy-title") }} · {{ site.name }}{% endblock %}
+{% block content %}
+<article class="card medium">
+  <h1>{{ t("terms-title") if key == "terms_of_service" else t("privacy-title") }}</h1>
+  <div class="markup">{{ html }}</div>
+  {% if can_edit %}<p class="hint"><a href="/admin/settings#{{ key }}">{{ t("terms-edit") if key == "terms_of_service" else t("privacy-edit") }}</a></p>{% endif %}
+</article>
+{% endblock %}

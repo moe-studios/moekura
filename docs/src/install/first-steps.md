@@ -13,7 +13,7 @@ docker compose -f deploy/compose.tiny.yml exec app moekura admin create-user you
 
 Log in, then open **Admin** in the menu.
 
-## Name, logo and rules
+## Name, logo, rules and policies
 
 Under **Admin → Settings**:
 
@@ -33,6 +33,12 @@ Under **Admin → Settings**:
   [markup](../using/wiki.md) as the wiki. They're shown at `/rules`, which
   anyone can read (on private sites too), and linked from the footer, the
   sign-up form and the upload page. Leave them empty for no rules page.
+- **Terms of service** and **Privacy policy**: shown at `/terms` and
+  `/privacy`, which anyone can read, and linked from the footer and the
+  sign-up form. A new site starts with general templates for both; they
+  aren't legal advice, so check them against how you run your site and
+  the laws that apply to you, and edit them to fit. Leave either empty to
+  drop its page.
 - **Footer links**: one per line, the link's text then its address, like
   `Discord https://discord.gg/abc` or `Help /wiki/help`.
 

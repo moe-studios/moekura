@@ -46,8 +46,12 @@ pub struct ImportRemoteArgs {
     pools: bool,
     /// Start from the newest posts again instead of where the last run of
     /// this site and search stopped
-    #[arg(long)]
+    #[arg(long, conflicts_with = "retry_failed")]
     restart: bool,
+    /// Instead of searching, try again the posts from this site that
+    /// couldn't be imported before (see `admin import-remote-failures`)
+    #[arg(long)]
+    retry_failed: bool,
     /// Allow a site on a private network (another Moekura on your LAN)
     #[arg(long)]
     allow_private_addresses: bool,
@@ -92,6 +96,7 @@ pub async fn run(config: Config, db: &Db, args: ImportRemoteArgs) -> anyhow::Res
         notes: args.notes,
         pools: args.pools,
         restart: args.restart,
+        retry_failed: args.retry_failed,
         allow_private: args.allow_private_addresses,
     };
     let progress = import(&state, &uploader, &options, |outcome| match outcome {

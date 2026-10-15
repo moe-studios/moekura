@@ -3,6 +3,7 @@
 
 use moekura_core::remote::Cursor;
 use sqlx::{PgExecutor, PgPool};
+use time::OffsetDateTime;
 
 /// An import's progress.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -119,6 +120,11 @@ pub async fn record(
     .bind(remote_parent_id)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM remote_import_failures WHERE site = $1 AND remote_id = $2")
+        .bind(site)
+        .bind(remote_id)
+        .execute(&mut *tx)
+        .await?;
     crate::post_versions::attribute(&mut tx, updater_id, None).await?;
     // Its parent, if already here.
     sqlx::query(
@@ -145,6 +151,53 @@ pub async fn record(
     .execute(&mut *tx)
     .await?;
     tx.commit().await
+}
+
+/// A remote post that couldn't be imported.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Failure {
+    pub site: String,
+    pub remote_id: i64,
+    /// The search that last tried it.
+    pub query: String,
+    pub reason: String,
+    pub failed_at: OffsetDateTime,
+}
+
+/// Remembers that remote post `remote_id` couldn't be imported by the
+/// search `query`, and why. [`record`] forgets it again.
+pub async fn record_failure(
+    db: impl PgExecutor<'_>,
+    site: &str,
+    query: &str,
+    remote_id: i64,
+    reason: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO remote_import_failures (site, remote_id, query, reason) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (site, remote_id) DO UPDATE
+         SET query = EXCLUDED.query, reason = EXCLUDED.reason, failed_at = now()",
+    )
+    .bind(site)
+    .bind(remote_id)
+    .bind(query)
+    .bind(reason)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// The posts from `site` (or every site) that couldn't be imported,
+/// newest first.
+pub async fn failures(db: impl PgExecutor<'_>, site: Option<&str>) -> sqlx::Result<Vec<Failure>> {
+    sqlx::query_as(
+        "SELECT site, remote_id, query, reason, failed_at FROM remote_import_failures
+         WHERE $1::text IS NULL OR site = $1
+         ORDER BY site, remote_id DESC",
+    )
+    .bind(site)
+    .fetch_all(db)
+    .await
 }
 
 #[cfg(test)]
@@ -196,5 +249,53 @@ mod tests {
         assert_eq!(parent_of(&pool, later).await, Some(parent));
         assert_eq!(local_post(&pool, site, 10).await.unwrap(), Some(parent));
         assert_eq!(local_post(&pool, "other", 10).await.unwrap(), None);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn failures_until_imported(pool: PgPool) {
+        let site = "https://d.example";
+        record_failure(&pool, site, "cat", 20, "timed out")
+            .await
+            .unwrap();
+        record_failure(&pool, site, "cat", 21, "too large")
+            .await
+            .unwrap();
+        // Failing again keeps one row, with the latest reason.
+        record_failure(&pool, site, "dog", 20, "answered 503")
+            .await
+            .unwrap();
+        let failed = |site: Option<&str>| {
+            let pool = pool.clone();
+            let site = site.map(str::to_owned);
+            async move {
+                failures(&pool, site.as_deref())
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|f| (f.site, f.remote_id, f.query, f.reason))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let row = |remote_id: i64, query: &str, reason: &str| {
+            (
+                site.to_owned(),
+                remote_id,
+                query.to_owned(),
+                reason.to_owned(),
+            )
+        };
+        assert_eq!(
+            failed(Some(site)).await,
+            [row(21, "cat", "too large"), row(20, "dog", "answered 503")]
+        );
+        assert!(failed(Some("other")).await.is_empty());
+        record_failure(&pool, "https://e.example", "", 5, "gone")
+            .await
+            .unwrap();
+        assert_eq!(failed(None).await.len(), 3);
+
+        let local = post(&pool).await;
+        record(&pool, site, 20, local, None, None).await.unwrap();
+        assert_eq!(failed(Some(site)).await, [row(21, "cat", "too large")]);
     }
 }

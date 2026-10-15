@@ -13,7 +13,7 @@ use moekura_core::permissions::{Permission, Permissions, Role, SystemRole};
 use moekura_db::accounts::{self, NewAccount};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, User, UserStatus};
-use moekura_db::{api_keys, bans, invites, roles, settings};
+use moekura_db::{api_keys, bans, invites, remote_imports, roles, settings};
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -113,6 +113,12 @@ pub enum AdminCommand {
     /// other Moekura sites), e621, Gelbooru or Moebooru. Progress is kept,
     /// so running it again carries on where it stopped.
     ImportRemote(crate::import_remote::ImportRemoteArgs),
+    /// List the posts `import-remote` couldn't import, and why. Run it
+    /// with --retry-failed to try them again.
+    ImportRemoteFailures {
+        /// Only this site, like https://danbooru.donmai.us
+        site: Option<String>,
+    },
     /// Time a fixed suite of searches against this database (seed one
     /// first), and report the pages each touched
     Bench {
@@ -393,6 +399,23 @@ pub async fn run(
         AdminCommand::RegenerateMedia { all, posts } => {
             let queued = regenerate_media(db, (!all).then_some(posts.as_slice())).await?;
             println!("queued {queued} file(s) for processing");
+        }
+        AdminCommand::ImportRemoteFailures { site } => {
+            let site = site.as_deref().map(|s| s.trim_end_matches('/'));
+            let failures = remote_imports::failures(db, site).await?;
+            if failures.is_empty() {
+                println!("no failed posts");
+            }
+            for failure in failures {
+                println!(
+                    "{}\t{}\t{}\t{:?}\t{}",
+                    failure.site,
+                    failure.remote_id,
+                    failure.failed_at.date(),
+                    failure.query,
+                    failure.reason,
+                );
+            }
         }
         AdminCommand::Export(_) | AdminCommand::Import(_) | AdminCommand::ImportRemote(_) => {
             unreachable!("imports need the whole app; main runs them")

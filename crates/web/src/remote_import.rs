@@ -33,6 +33,9 @@ pub struct Options {
     /// Start from the newest posts again, rather than where the last run
     /// stopped.
     pub restart: bool,
+    /// Instead of searching, try again the posts from the site that
+    /// couldn't be imported before.
+    pub retry_failed: bool,
     /// Allow the site to be on a private network (another Moekura on the
     /// LAN).
     pub allow_private: bool,
@@ -69,7 +72,19 @@ struct Remote<'a> {
     fetcher: Fetcher,
 }
 
-impl Remote<'_> {
+impl<'a> Remote<'a> {
+    fn new(options: &'a Options) -> Self {
+        Remote {
+            options,
+            client: moekura_net::client(
+                Duration::from_secs(60),
+                options.allow_private,
+                crate::fetch::redirect_policy(options.allow_private),
+            ),
+            fetcher: Fetcher::new(Duration::from_secs(300), options.allow_private),
+        }
+    }
+
     /// Reads one of the site's API pages. Like file downloads, it and
     /// every redirect must be on the public internet (unless
     /// `allow_private`).
@@ -110,6 +125,9 @@ pub async fn run(
 ) -> Result<State, String> {
     let db = state.db.primary();
     let site = options.base.trim_end_matches('/').to_owned();
+    if options.retry_failed {
+        return retry_failed(state, uploader, options, &site, report).await;
+    }
     let saved = remote_imports::state(db, &site, &options.tags)
         .await
         .map_err(|e| e.to_string())?;
@@ -120,15 +138,7 @@ pub async fn run(
     if progress.finished && !options.restart {
         return Ok(progress);
     }
-    let remote = Remote {
-        options,
-        client: moekura_net::client(
-            Duration::from_secs(60),
-            options.allow_private,
-            crate::fetch::redirect_policy(options.allow_private),
-        ),
-        fetcher: Fetcher::new(Duration::from_secs(300), options.allow_private),
-    };
+    let remote = Remote::new(options);
     let current = CurrentUser::for_user(uploader.clone(), None, &state.site.get());
     let mut cursor = progress.cursor.unwrap_or(Cursor::Start);
     let mut imported_now = 0;
@@ -144,13 +154,8 @@ pub async fn run(
         let posts = remote::parse_page(options.kind, &site, &body)?;
         for post in &posts {
             let outcome = import_one(state, &remote, &current, &site, post).await;
-            match &outcome {
-                Outcome::Imported { .. } => {
-                    progress.imported += 1;
-                    imported_now += 1;
-                }
-                Outcome::Duplicate { .. } => progress.duplicates += 1,
-                Outcome::NoFile { .. } | Outcome::Failed { .. } => progress.failed += 1,
+            if tally(db, &site, &options.tags, &outcome, &mut progress).await {
+                imported_now += 1;
             }
             report(&outcome);
             if options.limit.is_some_and(|limit| imported_now >= limit) {
@@ -174,6 +179,89 @@ pub async fn run(
             return Ok(progress);
         }
     }
+}
+
+/// Tries again the posts from `site` that couldn't be imported before,
+/// looking each up by ID. Search progress is left alone.
+async fn retry_failed(
+    state: &AppState,
+    uploader: &User,
+    options: &Options,
+    site: &str,
+    mut report: impl FnMut(&Outcome),
+) -> Result<State, String> {
+    let db = state.db.primary();
+    let failures = remote_imports::failures(db, Some(site))
+        .await
+        .map_err(|e| e.to_string())?;
+    let remote = Remote::new(options);
+    let current = CurrentUser::for_user(uploader.clone(), None, &state.site.get());
+    let mut progress = State {
+        finished: true,
+        ..State::default()
+    };
+    let mut imported_now = 0;
+    for failure in failures {
+        if options.limit.is_some_and(|limit| imported_now >= limit) {
+            progress.finished = false;
+            break;
+        }
+        let id = failure.remote_id;
+        // The same search a page uses, so credentials go along too.
+        let url = remote::page_url(
+            options.kind,
+            site,
+            &format!("id:{id}"),
+            Cursor::Start,
+            &options.credentials,
+        );
+        let found = match remote.get(&url).await {
+            Ok(body) => remote::parse_page(options.kind, site, &body)
+                .map(|posts| posts.into_iter().find(|post| post.id == id)),
+            Err(e) => Err(e),
+        };
+        let outcome = match found {
+            Ok(Some(post)) => import_one(state, &remote, &current, site, &post).await,
+            Ok(None) => Outcome::Failed {
+                remote: id,
+                reason: "the site no longer has it".into(),
+            },
+            Err(reason) => Outcome::Failed { remote: id, reason },
+        };
+        if tally(db, site, &failure.query, &outcome, &mut progress).await {
+            imported_now += 1;
+        }
+        report(&outcome);
+    }
+    Ok(progress)
+}
+
+/// Counts `outcome` in `progress`, remembering a failure; true if the
+/// post was imported.
+async fn tally(
+    db: &sqlx::PgPool,
+    site: &str,
+    query: &str,
+    outcome: &Outcome,
+    progress: &mut State,
+) -> bool {
+    let (remote, reason) = match outcome {
+        Outcome::Imported { .. } => {
+            progress.imported += 1;
+            return true;
+        }
+        Outcome::Duplicate { .. } => {
+            progress.duplicates += 1;
+            return false;
+        }
+        Outcome::NoFile { remote } => (*remote, "the site doesn't show its file"),
+        Outcome::Failed { remote, reason } => (*remote, reason.as_str()),
+    };
+    progress.failed += 1;
+    if let Err(error) = remote_imports::record_failure(db, site, query, remote, reason).await {
+        tracing::warn!(%error, remote, "could not record a failed post");
+    }
+    false
 }
 
 async fn import_one(
@@ -494,6 +582,7 @@ mod tests {
             notes: true,
             pools: true,
             restart: false,
+            retry_failed: false,
             allow_private: true,
         };
         let mut seen = Vec::new();
@@ -572,6 +661,144 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn remembers_and_retries_failures(pool: PgPool) {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Post 2's file is broken until `fixed`; post 1 is gone by then.
+        let fixed = Arc::new(AtomicBool::new(false));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let file_fixed = fixed.clone();
+        let app = Router::new()
+            .route(
+                "/posts.json",
+                get({
+                    let fixed = fixed.clone();
+                    move |Query(q): Query<std::collections::HashMap<String, String>>| {
+                        let (base, fixed) = (base.clone(), fixed.load(Ordering::SeqCst));
+                        async move {
+                            let post = |id: i64| {
+                                json!({
+                                    "id": id,
+                                    "file_url": format!("{base}/files/{id}.png"),
+                                    "rating": "g",
+                                    "tag_string_general": "cat",
+                                    "source": "",
+                                })
+                            };
+                            let all = if fixed {
+                                vec![post(2)]
+                            } else {
+                                vec![post(2), post(1)]
+                            };
+                            let page: Vec<Value> =
+                                match q.get("tags").and_then(|t| t.strip_prefix("id:")) {
+                                    Some(id) => all
+                                        .into_iter()
+                                        .filter(|p| {
+                                            p["id"].as_i64().is_some_and(|i| i.to_string() == id)
+                                        })
+                                        .collect(),
+                                    None if q.contains_key("page") => vec![],
+                                    None => all,
+                                };
+                            axum::Json(page)
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/files/{name}",
+                get(
+                    move |axum::extract::Path(name): axum::extract::Path<String>| {
+                        let fixed = file_fixed.clone();
+                        async move {
+                            if name == "2.png" && !fixed.load(Ordering::SeqCst) {
+                                return Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+                            }
+                            Ok(fixture::png(if name == "2.png" { 30 } else { 40 }, 20))
+                        }
+                    },
+                ),
+            );
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let state = test_state(&pool).await;
+        session_for(&pool, "importer", SystemRole::Admin).await;
+        let uploader = moekura_db::users::by_name(&pool, "importer")
+            .await
+            .unwrap()
+            .unwrap();
+        let options = Options {
+            kind: Kind::Danbooru,
+            base: format!("http://{addr}"),
+            tags: "cat".into(),
+            credentials: Credentials::default(),
+            delay: Duration::ZERO,
+            limit: None,
+            notes: false,
+            pools: false,
+            restart: false,
+            retry_failed: false,
+            allow_private: true,
+        };
+        let site = format!("http://{addr}");
+        let failed = || {
+            let (pool, site) = (pool.clone(), site.clone());
+            async move {
+                moekura_db::remote_imports::failures(&pool, Some(&site))
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .map(|f| (f.remote_id, f.query))
+                    .collect::<Vec<_>>()
+            }
+        };
+
+        let done = run(&state, &uploader, &options, |_| {}).await.unwrap();
+        assert_eq!((done.imported, done.failed), (1, 1));
+        assert_eq!(failed().await, [(2, "cat".to_owned())]);
+
+        // Fixed: post 2 comes in, and the search's progress is untouched.
+        fixed.store(true, Ordering::SeqCst);
+        let retry = Options {
+            tags: String::new(),
+            retry_failed: true,
+            ..options.clone()
+        };
+        let mut seen = Vec::new();
+        let retried = run(&state, &uploader, &retry, |o| seen.push(o.clone()))
+            .await
+            .unwrap();
+        assert_eq!((retried.imported, retried.failed), (1, 0));
+        assert!(matches!(seen[..], [Outcome::Imported { remote: 2, .. }]));
+        assert!(failed().await.is_empty());
+        let saved = moekura_db::remote_imports::state(&pool, &site, "cat")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((saved.imported, saved.failed), (1, 1));
+
+        // A post the site no longer has stays failed, with why.
+        moekura_db::remote_imports::record_failure(&pool, &site, "cat", 1, "timed out")
+            .await
+            .unwrap();
+        let mut seen = Vec::new();
+        run(&state, &uploader, &retry, |o| seen.push(o.clone()))
+            .await
+            .unwrap();
+        assert_eq!(
+            seen,
+            [Outcome::Failed {
+                remote: 1,
+                reason: "the site no longer has it".into()
+            }]
+        );
+        assert_eq!(failed().await, [(1, "cat".to_owned())]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn checks_pages_like_downloads(pool: PgPool) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -607,6 +834,7 @@ mod tests {
             notes: false,
             pools: false,
             restart: true,
+            retry_failed: false,
             allow_private,
         };
 

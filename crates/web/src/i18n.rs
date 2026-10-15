@@ -16,7 +16,11 @@ use std::path::{Path, PathBuf};
 
 use fluent_bundle::concurrent::FluentBundle;
 use fluent_bundle::{FluentArgs, FluentResource, FluentValue};
-use fluent_langneg::{NegotiationStrategy, negotiate_languages};
+// fluent-langneg identifies languages with icu_locid, fluent-bundle with
+// unic_langid; bundles keep the latter, and negotiation converts by tag.
+use fluent_langneg::{
+    LanguageIdentifier as NegotiatedId, NegotiationStrategy, negotiate_languages,
+};
 use rust_embed::RustEmbed;
 use unic_langid::LanguageIdentifier;
 
@@ -148,20 +152,18 @@ impl Locales {
         if let Some(tag) = chosen.filter(|tag| self.has(tag)) {
             return tag.to_owned();
         }
-        let requested: Vec<LanguageIdentifier> = accept_language
+        let requested: Vec<NegotiatedId> = accept_language
             .map(parse_accept_language)
             .unwrap_or_default();
-        let available: Vec<LanguageIdentifier> =
-            self.languages.iter().map(|l| l.id.clone()).collect();
-        let default = &self.languages[0].id;
-        negotiate_languages(
-            &requested,
-            &available,
-            Some(default),
-            NegotiationStrategy::Lookup,
-        )
-        .first()
-        .map_or_else(|| DEFAULT.to_owned(), ToString::to_string)
+        let available: Vec<NegotiatedId> = self
+            .languages
+            .iter()
+            .filter_map(|l| l.id.to_string().parse().ok())
+            .collect();
+        let default = available.first();
+        negotiate_languages(&requested, &available, default, NegotiationStrategy::Lookup)
+            .first()
+            .map_or_else(|| DEFAULT.to_owned(), ToString::to_string)
     }
 
     /// Message `key` in language `tag`, falling back to [`DEFAULT`], then
@@ -263,8 +265,8 @@ fn override_files(dir: &Path) -> Result<Vec<(String, PathBuf)>, LocaleError> {
 }
 
 /// The languages in an `Accept-Language` header, most wanted first.
-fn parse_accept_language(header: &str) -> Vec<LanguageIdentifier> {
-    let mut weighted: Vec<(f32, usize, LanguageIdentifier)> = header
+fn parse_accept_language(header: &str) -> Vec<NegotiatedId> {
+    let mut weighted: Vec<(f32, usize, NegotiatedId)> = header
         .split(',')
         .enumerate()
         .filter_map(|(i, part)| {

@@ -2140,7 +2140,7 @@ dependencies = [
 name = "moekura-media"
 version = "0.7.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "md-5",
  "moekura-core",
  "quick-xml 0.42.0",
@@ -2206,7 +2206,7 @@ version = "0.7.0"
 dependencies = [
  "axum",
  "axum-extra",
- "base64 0.22.1",
+ "base64 0.23.1",
  "encoding_rs",
  "fluent-bundle",
  "fluent-langneg",

@@ -12,7 +12,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -46,7 +46,7 @@ jobs:
       # Rate limit and cache tests also run against a real Valkey.
       TEST_VALKEY_URL: redis://valkey:6379
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Install media tools
         run: |
           apt-get update
@@ -73,7 +73,7 @@ jobs:
     # containers can't be given a command, so it's started by hand.)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Start SeaweedFS
         run: |
           docker run -d --name s3 -p 8333:8333 chrislusf/seaweedfs:4.47 \
@@ -95,8 +95,8 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -112,8 +112,8 @@ jobs:
   msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@1.94
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.120
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace --all-targets --locked
 
@@ -123,7 +123,7 @@ jobs:
       E2E_ADMIN_NAME: boss
       E2E_ADMIN_PASSWORD: e2e admin password
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Version embedded in the binary
         run: echo "MOEKURA_BUILD_VERSION=git-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
       - uses: docker/setup-buildx-action@v4
@@ -177,7 +177,7 @@ jobs:
             echo "::error::moekura serve uses $rss MB right after start, over 64 MB"
             exit 1
           fi
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -229,7 +229,7 @@ jobs:
       - name: Server logs
         if: failure()
         run: docker compose -f deploy/compose.tiny.yml logs app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report

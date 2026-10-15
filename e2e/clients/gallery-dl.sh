@@ -37,8 +37,16 @@ def chunk(kind, data):
 sys.stdout.buffer.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 16, 16, 8, 2, 0, 0, 0))
     + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 PY
-  curl -fsS -b jar -H "$origin" -o /dev/null -F "file=@img$i.png" -F rating=g \
-    -F "tags=$tag n$i artist:gdl_painter" "$base/upload"
+  # Plain squares can look alike to a perceptual hash (to each other, or to
+  # other tests' posts): once that post is processed, the upload would wait
+  # for confirmation rather than post. Anything but a post fails here.
+  posted=$(curl -fsS -b jar -H "$origin" -o /dev/null -w '%{redirect_url}' \
+    -F "file=@img$i.png" -F rating=g -F allow_similar=1 \
+    -F "tags=$tag n$i artist:gdl_painter" "$base/upload")
+  case $posted in
+    */posts/*) ;;
+    *) echo "upload $i wasn't posted (redirected to '$posted')" >&2; exit 1 ;;
+  esac
 done
 
 key=$(curl -fsS -b jar -H "$origin" -d "name=gallery-dl $run&expires=never" \

@@ -5,6 +5,7 @@
 //!
 //! Blocking: run these off the async threads.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -73,11 +74,14 @@ pub fn is_zip(head: &[u8]) -> bool {
 /// them.
 pub fn is_ugoira(path: &Path) -> Result<bool, ArchiveError> {
     let archive = open(path)?;
-    let names: Vec<&str> = archive.file_names().collect();
-    if names.contains(&FRAME_DATA) {
+    let names: Vec<Cow<'_, str>> = archive
+        .file_names()
+        .collect::<Result<_, _>>()
+        .map_err(corrupt)?;
+    if names.iter().any(|name| name == FRAME_DATA) {
         return Ok(true);
     }
-    let pixiv_frame = |name: &&str| {
+    let pixiv_frame = |name: &Cow<'_, str>| {
         name.split_once('.').is_some_and(|(stem, ext)| {
             stem.len() == 6
                 && stem.bytes().all(|b| b.is_ascii_digit())
@@ -106,7 +110,7 @@ pub fn unpack(path: &Path, dir: &Path, limits: Limits) -> Result<Vec<Unpacked>, 
     let mut total = 0u64;
     for index in 0..archive.len() {
         let entry = archive.by_index_raw(index).map_err(corrupt)?;
-        let name = entry.name().to_owned();
+        let name = entry.name().map_err(corrupt)?.into_owned();
         if name.starts_with('/') || name.starts_with('\\') {
             return Err(ArchiveError::Absolute(name));
         }

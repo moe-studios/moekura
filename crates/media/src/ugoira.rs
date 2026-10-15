@@ -79,7 +79,7 @@ pub fn frames(path: &Path) -> Result<Vec<Frame>, MediaError> {
         if entry.is_dir() {
             continue;
         }
-        let name = entry.name().to_owned();
+        let name = entry.name().map_err(corrupt)?.into_owned();
         // No paths outside the zip, or hidden in folders.
         if entry.enclosed_name().is_none() || name.contains('/') {
             return Err(corrupt(format!("unexpected entry `{name}`")));

@@ -259,7 +259,7 @@ See [File storage](admin/storage.md).
 | `max_link_upload_mb` | `max_upload_mb` | largest file downloaded from a pasted link or a remote booru import |
 | `max_pixels` | `200000000` | larger images are refused before decoding |
 | `max_duration_secs` | `600` | longest video |
-| `allowed_types` | `["jpeg", "png", "gif", "webp", "avif", "mp4", "webm", "ugoira"]` | `ugoira` is Pixiv's zip of animation frames; add `"jxl"` for JPEG XL (off by default: libvips doesn't consider its decoder hardened against malicious files) |
+| `allowed_types` | `["jpeg", "png", "gif", "webp", "avif", "mp4", "webm", "ugoira"]` | `ugoira` is Pixiv's zip of animation frames; add `"jxl"` for JPEG XL (off by default: libvips doesn't consider its decoder hardened against malicious files). MP4 may hold H.264, HEVC, VP9 or AV1 video with AAC, MP3 or Opus audio; WebM, VP8, VP9 or AV1 with Opus or Vorbis. QuickTime and other Matroska files are refused |
 | `thumbnail_sizes` | `[250, 500]` | thumbnail boxes, 1x and 2x for high-density screens |
 | `sample_size` | `1600` | larger images also get a resized copy for the post page |
 | `variant_format` | `"webp"` | `"webp"` or `"avif"` (smaller, slower) for thumbnails and samples |

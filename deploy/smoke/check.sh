@@ -31,7 +31,7 @@ vipsthumbnail still.jxl --size '250x250>' -o "$out/thumb.webp[Q=80,keep=none]"
 echo "ok  still.jxl"
 
 # Videos: probing, and a poster frame that thumbnails like an image.
-for file in h264.mp4 vp8.webm vp9.webm av1.mp4; do
+for file in h264.mp4 hevc.mp4 vp8.webm vp9.webm av1.mp4; do
     ffprobe -v error -print_format json -show_streams -show_format "$file" > "$out/probe.json"
     grep -q '"codec_type": "video"' "$out/probe.json"
     ffmpeg -hide_banner -loglevel error -y -ss 1.000 -i "$file" -frames:v 1 -an "$out/poster.png"

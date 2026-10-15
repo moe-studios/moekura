@@ -22,7 +22,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked --features moekura/tagger -- -D warnings
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     # The same Debian release as the container image, so media tests run
     # against the vips and ffmpeg that ship.
     container: rust:1.98-trixie
@@ -110,7 +110,7 @@ jobs:
         run: git diff --exit-code -- ../crates/web/static/js
 
   msrv:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@1.94
@@ -118,7 +118,7 @@ jobs:
       - run: cargo check --workspace --all-targets --locked
 
   docker:
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     env:
       E2E_ADMIN_NAME: boss
       E2E_ADMIN_PASSWORD: e2e admin password
@@ -126,17 +126,16 @@ jobs:
       - uses: actions/checkout@v5
       - name: Version embedded in the binary
         run: echo "MOEKURA_BUILD_VERSION=git-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
-      - uses: docker/setup-buildx-action@v4
+      - name: Setup Blacksmith Builder
+        uses: useblacksmith/setup-docker-builder@v1
       # Layers cached between runs: the media tools rarely change, and the
       # Rust dependencies only with Cargo.lock.
-      - uses: docker/build-push-action@v7
+      - uses: useblacksmith/build-push-action@v2
         with:
           context: .
           load: true
           tags: moekura:ci
           build-args: MOEKURA_BUILD_VERSION=${{ env.MOEKURA_BUILD_VERSION }}
-          cache-from: type=gha,scope=ci
-          cache-to: type=gha,mode=max,scope=ci
       - name: The tagger image loads ONNX Runtime
         # Its layers are the app's plus the library.
         run: |

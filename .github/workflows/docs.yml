@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: taiki-e/install-action@v2
@@ -39,7 +39,7 @@ jobs:
   deploy:
     needs: build
     if: github.event_name != 'pull_request' && !github.event.repository.private
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     permissions:
       pages: write
       id-token: write

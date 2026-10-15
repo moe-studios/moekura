@@ -276,6 +276,11 @@ fn max_bytes(state: &AppState) -> u64 {
     state.media.config().max_upload_mb * 1024 * 1024
 }
 
+/// The largest file downloaded from a link.
+pub(crate) fn max_link_bytes(state: &AppState) -> u64 {
+    state.media.config().link_upload_mb() * 1024 * 1024
+}
+
 /// The upload form again, with what went wrong.
 fn render_form(
     page: &Page,
@@ -393,7 +398,7 @@ pub(crate) async fn download(
     file_url: &str,
     info: Option<&SourceInfo>,
 ) -> Result<TempUpload, UploadError> {
-    download_within(state, file_url, info, max_bytes(state), None).await
+    download_within(state, file_url, info, max_link_bytes(state), None).await
 }
 
 /// [`download`], adding the bytes received to `received` as they arrive,
@@ -404,7 +409,7 @@ pub(crate) async fn download_counted(
     info: Option<&SourceInfo>,
     received: Option<&Arc<AtomicU64>>,
 ) -> Result<TempUpload, UploadError> {
-    download_within(state, file_url, info, max_bytes(state), received).await
+    download_within(state, file_url, info, max_link_bytes(state), received).await
 }
 
 /// [`download`], refusing files over `limit` bytes, and adding the bytes

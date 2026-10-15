@@ -141,7 +141,7 @@ upload-similar-title = { $count ->
 upload-similar-hint = Check it isn't one of these. If it isn't (a different version, an edit, another page), post it anyway; consider making it a child or parent of the post it resembles.
 upload-drop-hint = Choose files, drop them onto this form, or paste them from your clipboard: up to { $max } at once. Choosing them uploads them.
 upload-url = …or a link
-upload-url-hint = Images or videos up to { $mb } MB. A work's page on Pixiv, X, Bluesky, DeviantArt, another booru or the many other sites Danbooru supports works too: its files are downloaded, and the page becomes the source. With files, the link is their source. Pasting a link anywhere on this page uploads it.
+upload-url-hint = Images or videos up to { $mb } MB, or { $link_mb } MB from a link. A work's page on Pixiv, X, Bluesky, DeviantArt, another booru or the many other sites Danbooru supports works too: its files are downloaded, and the page becomes the source. With files, the link is their source. Pasting a link anywhere on this page uploads it.
 upload-supported-sites = See here for a list of supported sites.
 upload-all-files = Download all { $count } files (at most { $max })
 upload-bookmarklet-hint = The <a href="/uploads/bookmarklet">bookmarklet</a> uploads the page you're on in one click.

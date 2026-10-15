@@ -256,6 +256,7 @@ See [File storage](admin/storage.md).
 | Key | Default | Meaning |
 |---|---|---|
 | `max_upload_mb` | `100` | largest upload |
+| `max_link_upload_mb` | `max_upload_mb` | largest file downloaded from a pasted link or a remote booru import |
 | `max_pixels` | `200000000` | larger images are refused before decoding |
 | `max_duration_secs` | `600` | longest video |
 | `allowed_types` | `["jpeg", "png", "gif", "webp", "avif", "mp4", "webm", "ugoira"]` | `ugoira` is Pixiv's zip of animation frames; add `"jxl"` for JPEG XL (off by default: libvips doesn't consider its decoder hardened against malicious files) |

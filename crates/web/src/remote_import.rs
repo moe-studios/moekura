@@ -226,7 +226,7 @@ async fn import_one(
         Ok(writer) => writer,
         Err(e) => return failed(e.to_string()),
     };
-    let limit = state.media.config().max_upload_mb * 1024 * 1024;
+    let limit = crate::upload::max_link_bytes(state);
     let file = match remote.fetcher.fetch(&url, writer, limit).await {
         Ok(file) => file,
         Err(e) => return failed(e.to_string()),

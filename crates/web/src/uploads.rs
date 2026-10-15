@@ -315,6 +315,7 @@ fn form_page(
             many_files => notes.many_files,
             max_link_files => MAX_LINK_FILES,
             max_mb => page.state().media.config().max_upload_mb,
+            max_link_mb => page.state().media.config().link_upload_mb(),
             max_files => MAX_FILES,
             allowance => notes.allowance.map(|a| context! {
                 refusal => a.refusal,
@@ -751,8 +752,7 @@ async fn stage_link(
     }
     tx.commit().await?;
     // Together they may come to as much as files sent at once.
-    let budget =
-        (state.media.config().max_upload_mb * 1024 * 1024).saturating_mul(MAX_FILES as u64);
+    let budget = upload::max_link_bytes(state).saturating_mul(MAX_FILES as u64);
     let (first, first_done) = tokio::sync::oneshot::channel();
     let downloads = download_pending(
         state.clone(),
@@ -3554,7 +3554,7 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, origin).await });
 
         let mut config = crate::test_support::test_config();
-        config.media.max_upload_mb = 1;
+        config.media.max_link_upload_mb = Some(1);
         let mut state = crate::test_support::test_state_with(&pool, config).await;
         state.fetcher = crate::fetch::Fetcher::new(Duration::from_secs(10), true);
         let alice = session_for(&pool, "alice", SystemRole::Member).await;

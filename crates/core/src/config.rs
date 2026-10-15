@@ -719,6 +719,9 @@ impl Default for S3Config {
 #[serde(default, deny_unknown_fields)]
 pub struct MediaConfig {
     pub max_upload_mb: u64,
+    /// Largest file downloaded from a pasted link or imported from a
+    /// remote booru, in MB. Defaults to `max_upload_mb`.
+    pub max_link_upload_mb: Option<u64>,
     /// Larger images are refused before they are decoded (decompression
     /// bombs).
     pub max_pixels: u64,
@@ -776,6 +779,11 @@ pub const MIN_FFMPEG_MEMORY_MB: u64 = 512;
 pub const MIN_VIPS_MEMORY_MB: u64 = 512;
 
 impl MediaConfig {
+    /// `max_link_upload_mb`, or `max_upload_mb` when it isn't set.
+    pub fn link_upload_mb(&self) -> u64 {
+        self.max_link_upload_mb.unwrap_or(self.max_upload_mb)
+    }
+
     /// `work_dir`, or a directory under the system temp dir.
     pub fn work_dir_or_default(&self) -> PathBuf {
         self.work_dir
@@ -788,6 +796,7 @@ impl Default for MediaConfig {
     fn default() -> Self {
         Self {
             max_upload_mb: 100,
+            max_link_upload_mb: None,
             max_pixels: 200_000_000,
             max_duration_secs: 600,
             allowed_types: [
@@ -1138,6 +1147,12 @@ impl Config {
         if self.media.max_upload_mb == 0 {
             problems.push(ConfigProblem {
                 key: "media.max_upload_mb",
+                message: "must be at least 1".into(),
+            });
+        }
+        if self.media.max_link_upload_mb == Some(0) {
+            problems.push(ConfigProblem {
+                key: "media.max_link_upload_mb",
                 message: "must be at least 1".into(),
             });
         }
@@ -1549,6 +1564,19 @@ mod tests {
                 "telemetry.metrics_bind"
             ]
         );
+    }
+
+    #[test]
+    fn link_uploads_default_to_the_upload_limit() {
+        let unset: Config = toml::from_str("[media]\nmax_upload_mb = 50\n").unwrap();
+        assert_eq!(unset.media.link_upload_mb(), 50);
+        let set: Config =
+            toml::from_str("[media]\nmax_upload_mb = 50\nmax_link_upload_mb = 20\n").unwrap();
+        assert_eq!(set.media.link_upload_mb(), 20);
+        let mut config = valid();
+        config.media.max_link_upload_mb = Some(0);
+        let problems = config.validate().unwrap_err();
+        assert_eq!(problems[0].key, "media.max_link_upload_mb");
     }
 
     #[test]

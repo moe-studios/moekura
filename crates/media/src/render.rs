@@ -72,6 +72,9 @@ impl Media {
             at.into(),
             "-i".into(),
             video.into(),
+            // The first video stream that isn't a cover picture.
+            "-map".into(),
+            "0:V:0".into(),
             "-frames:v".into(),
             "1".into(),
             "-an".into(),
@@ -262,6 +265,21 @@ mod tests {
             .unwrap();
         let thumb = media()
             .fit_within(&poster, MediaType::Webm, 80, &dir.join("t.webp"))
+            .await
+            .unwrap();
+        assert_eq!((thumb.width, thumb.height), (80, 60));
+    }
+
+    #[tokio::test]
+    async fn posters_come_from_the_video_not_its_cover() {
+        let dir = fixtures::dir("render-video-cover");
+        let video = fixtures::video_with_cover(&dir, "v.mp4", 400);
+        let poster = media()
+            .video_poster(&video, Some(2000), &dir)
+            .await
+            .unwrap();
+        let thumb = media()
+            .fit_within(&poster, MediaType::Mp4, 80, &dir.join("t.webp"))
             .await
             .unwrap();
         assert_eq!((thumb.width, thumb.height), (80, 60));

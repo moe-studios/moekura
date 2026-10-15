@@ -316,6 +316,46 @@ pub(crate) mod fixtures {
         args.extend_from_slice(codecs);
         make(dir, file, &args)
     }
+
+    /// An H.264 MP4 with an attached `size`×`size` PNG cover.
+    pub fn video_with_cover(dir: &Path, file: &str, size: u32) -> PathBuf {
+        let cover = image(dir, "cover.png", size, size);
+        let cover = cover.to_str().unwrap();
+        make(
+            dir,
+            file,
+            &[
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc2=size=160x120:rate=10:duration=2",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=duration=2",
+                "-i",
+                cover,
+                "-map",
+                "0",
+                "-map",
+                "1",
+                "-map",
+                "2",
+                "-c:v:0",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v:1",
+                "png",
+                "-disposition:v:1",
+                "attached_pic",
+                "-c:a",
+                "aac",
+                "-t",
+                "2",
+            ],
+        )
+    }
 }
 
 #[cfg(test)]
@@ -657,6 +697,14 @@ pub(crate) mod tests {
             assert!(matches!(err, MediaError::Unsupported(_)), "{file}: {err}");
             assert!(err.to_string().contains(refused), "{file}: {err}");
         }
+    }
+
+    #[tokio::test]
+    async fn ignores_cover_art() {
+        let dir = fixtures::dir("probe-cover");
+        let path = fixtures::video_with_cover(&dir, "v.mp4", 32);
+        let probe = media().probe(&path, MediaType::Mp4).await.unwrap();
+        assert_eq!((probe.width, probe.height), (160, 120));
     }
 
     #[tokio::test]

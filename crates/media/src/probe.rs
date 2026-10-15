@@ -150,10 +150,10 @@ impl Media {
         let video = report
             .streams
             .iter()
-            .find(|s| s.codec_type == "video")
+            .find(|s| s.codec_type == "video" && !s.is_cover_art())
             .ok_or_else(|| MediaError::Corrupt("no video stream".into()))?;
         let (video_codecs, audio_codecs) = playable_codecs(media_type);
-        for stream in &report.streams {
+        for stream in report.streams.iter().filter(|s| !s.is_cover_art()) {
             let allowed = match stream.codec_type.as_str() {
                 "video" => video_codecs,
                 "audio" => audio_codecs,
@@ -292,6 +292,22 @@ struct FfprobeStream {
     height: Option<u32>,
     duration: Option<String>,
     nb_frames: Option<String>,
+    #[serde(default)]
+    disposition: FfprobeDisposition,
+}
+
+impl FfprobeStream {
+    /// A still picture attached to the file (an album cover), which
+    /// browsers don't play and so may be in any codec.
+    fn is_cover_art(&self) -> bool {
+        self.disposition.attached_pic == 1
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct FfprobeDisposition {
+    #[serde(default)]
+    attached_pic: u8,
 }
 
 #[derive(Deserialize)]

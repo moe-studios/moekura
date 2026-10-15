@@ -7,6 +7,57 @@ releases list what they deprecate. Before 1.0, a minor release (0.2) could
 change configuration or behaviour, and said so here. See
 [Upgrading](docs/src/upgrading.md) for how to move between versions.
 
+## [0.8.0] - 2026-10-15
+
+Bot accounts and API keys limited to chosen permissions, terms of
+service and privacy policy pages, and videos checked for codecs that
+browsers play.
+
+### Features
+
+- An account can be a bot: it can't log in on the site, isn't promoted
+  automatically, can't be messaged, gets no password resets, and is
+  marked on its profile, in the admin user list and in the API. `moekura
+  admin create-user NAME --bot` makes one, and `moekura admin set-bot
+  NAME [--off]` flips an existing account. See [Bot
+  accounts](docs/src/admin/bots.md).
+- An API key can be limited to some of its account's permissions.
+  Existing keys keep everything the account can do.
+- `moekura admin create-api-key`, `api-keys` and `revoke-api-key` manage
+  API keys from the shell, without logging in on the site.
+- Terms of service and privacy policy pages at `/terms` and `/privacy`,
+  linked from the footer, the site map and sign-up. They start as
+  general boilerplate for admins to edit under Admin → Settings;
+  emptying one drops its page.
+- `media.max_link_upload_mb` limits files downloaded from a pasted link
+  or a remote booru import, separately from `max_upload_mb` (its
+  default).
+- `import-remote` remembers the posts it couldn't import and why; `admin
+  import-remote-failures [SITE]` lists them, and `import-remote
+  --retry-failed` tries them again.
+- A Grafana dashboard for the Prometheus metrics, in
+  `deploy/grafana/moekura.json` (see
+  [Configuration](docs/src/configuration.md#grafana-dashboard)).
+- MP4s may hold HEVC video, and the image's ffmpeg makes their poster
+  frames.
+
+### Fixes
+
+- rule34.xxx imports use api.rule34.xxx, as rule34.xxx answers scripts
+  with a captcha.
+- An admin's webhook page no longer fails with a 500 when a delivery has
+  a response body.
+- rustls is updated for RUSTSEC-2026-0346 to 0349.
+
+### Upgrading
+
+- Videos are refused unless every stream has a codec their container
+  may hold: MP4, H.264, HEVC, VP9 or AV1 video with AAC, MP3 or Opus
+  audio; WebM, VP8, VP9 or AV1 with Opus or Vorbis. QuickTime files that
+  passed as MP4 are refused too. Posts already uploaded are kept.
+- On bare metal, HEVC poster frames need ffmpeg's HEVC decoder, which
+  Fedora's `ffmpeg-free` may lack.
+
 ## [0.7.0] - 2026-10-11
 
 A redesigned frontend, logging in with passkeys, and sites' own favicons

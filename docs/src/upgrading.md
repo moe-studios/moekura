@@ -77,7 +77,7 @@ Point the `app` service at a release instead of building it:
 ```yaml
 services:
   app:
-    image: ghcr.io/moe-studios/moekura:0.7
+    image: ghcr.io/moe-studios/moekura:0.8
 ```
 
 ```sh

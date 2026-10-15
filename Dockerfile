@@ -43,7 +43,7 @@ RUN apt-get update \
         libglib2.0-dev libexpat1-dev libjpeg62-turbo-dev libpng-dev libwebp-dev \
         libjxl-dev libexif-dev liblcms2-dev libhwy-dev
 WORKDIR /build
-# ffmpeg: reading MP4 and WebM (H.264, VP8, VP9, AV1) for probing,
+# ffmpeg: reading MP4 and WebM (H.264, HEVC, VP8, VP9, AV1) for probing,
 # writing a PNG poster frame, and playing Pixiv ugoira (their frames,
 # which libvips re-encodes as PNG, each for its own time) into a VP9 WebM.
 RUN curl -fsSLo ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
@@ -56,8 +56,8 @@ RUN curl -fsSLo ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSI
         --enable-zlib --enable-libdav1d --enable-libvpx \
         --enable-protocol=file,pipe \
         --enable-demuxer=mov,matroska,concat,image2,image_png_pipe \
-        --enable-parser=h264,vp8,vp9,av1,png \
-        --enable-decoder=h264,vp8,vp9,libdav1d,png \
+        --enable-parser=h264,hevc,vp8,vp9,av1,png \
+        --enable-decoder=h264,hevc,vp8,vp9,libdav1d,png \
         --enable-encoder=png,libvpx_vp9 --enable-muxer=image2,webm \
         --enable-bsf=vp9_superframe \
         --enable-filter=scale \

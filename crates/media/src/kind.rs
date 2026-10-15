@@ -59,6 +59,12 @@ impl MediaType {
             if brands.iter().any(|b| matches!(b, b"avif" | b"avis")) {
                 return Some(Self::Avif);
             }
+            // QuickTime shares MP4's boxes, and ffprobe names both
+            // `mov,mp4,…`; ffmpeg reads a file as QuickTime when its major
+            // brand is `qt  `, whatever else it claims to be compatible with.
+            if &brands[0] == b"qt  " {
+                return None;
+            }
             const VIDEO: [&[u8; 4]; 7] = [
                 b"isom", b"iso2", b"mp41", b"mp42", b"avc1", b"M4V ", b"dash",
             ];
@@ -195,6 +201,8 @@ mod tests {
             b"<!doctype html>".to_vec(),
             b"%PDF-1.7".to_vec(),
             ftyp(b"heic", &[b"mif1"]).to_vec(),
+            ftyp(b"qt  ", &[b"qt  "]).to_vec(),
+            ftyp(b"qt  ", &[b"qt  ", b"isom", b"mp42"]).to_vec(),
             b"\x1a\x45\xdf\xa3\x9f\x42\x86\x81\x01\x42\x82\x88matroska".to_vec(),
             Vec::new(),
         ];

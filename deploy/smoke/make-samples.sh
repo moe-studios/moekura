@@ -22,6 +22,7 @@ vips copy still.png still.jxl
 make testsrc2=size=160x120:duration=0.5:rate=6 -loop 0 anim.gif
 video=testsrc2=size=320x240:duration=2
 make "$video" -c:v libx264 -pix_fmt yuv420p h264.mp4
+make "$video" -c:v libx265 -pix_fmt yuv420p -tag:v hvc1 hevc.mp4
 make "$video" -c:v libvpx vp8.webm
 make "$video" -c:v libvpx-vp9 vp9.webm
 make "$video" -c:v libaom-av1 -cpu-used 8 av1.mp4

@@ -22,8 +22,14 @@ pub struct Probe {
     pub has_audio: bool,
 }
 
-/// Video codecs browsers play natively.
-const PLAYABLE_VIDEO: [&str; 4] = ["h264", "vp8", "vp9", "av1"];
+/// The video and audio codecs each container may hold, as ffprobe names
+/// them.
+fn playable_codecs(media_type: MediaType) -> (&'static [&'static str], &'static [&'static str]) {
+    match media_type {
+        MediaType::Mp4 => (&["h264", "hevc", "vp9", "av1"], &["aac", "mp3", "opus"]),
+        _ => (&["vp8", "vp9", "av1"], &["opus", "vorbis"]),
+    }
+}
 
 impl Media {
     /// Probes `path`, already sniffed as `media_type`, and checks it against
@@ -144,14 +150,26 @@ impl Media {
         let video = report
             .streams
             .iter()
-            .find(|s| s.codec_type == "video")
+            .find(|s| s.codec_type == "video" && !s.is_cover_art())
             .ok_or_else(|| MediaError::Corrupt("no video stream".into()))?;
-        if !PLAYABLE_VIDEO.contains(&video.codec_name.as_str()) {
-            return Err(MediaError::Unsupported(format!(
-                "video codec {} (browsers play {})",
-                video.codec_name,
-                PLAYABLE_VIDEO.join(", ")
-            )));
+        let (video_codecs, audio_codecs) = playable_codecs(media_type);
+        for stream in report.streams.iter().filter(|s| !s.is_cover_art()) {
+            let allowed = match stream.codec_type.as_str() {
+                "video" => video_codecs,
+                "audio" => audio_codecs,
+                _ => continue,
+            };
+            if !allowed.contains(&stream.codec_name.as_str()) {
+                let codec = match stream.codec_name.as_str() {
+                    "" => "unknown",
+                    name => name,
+                };
+                return Err(MediaError::Unsupported(format!(
+                    "{} codec {codec} in {media_type} (it may hold {})",
+                    stream.codec_type,
+                    allowed.join(", ")
+                )));
+            }
         }
         let (Some(width), Some(height)) = (
             video.width.filter(|&w| w > 0),
@@ -274,6 +292,22 @@ struct FfprobeStream {
     height: Option<u32>,
     duration: Option<String>,
     nb_frames: Option<String>,
+    #[serde(default)]
+    disposition: FfprobeDisposition,
+}
+
+impl FfprobeStream {
+    /// A still picture attached to the file (an album cover), which
+    /// browsers don't play and so may be in any codec.
+    fn is_cover_art(&self) -> bool {
+        self.disposition.attached_pic == 1
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct FfprobeDisposition {
+    #[serde(default)]
+    attached_pic: u8,
 }
 
 #[derive(Deserialize)]

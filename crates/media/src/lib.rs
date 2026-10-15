@@ -295,6 +295,32 @@ pub(crate) mod fixtures {
 
     /// A short video with an audio track.
     pub fn video(dir: &Path, file: &str, codec: &str) -> PathBuf {
+        video_with(dir, file, &["-c:v", codec])
+    }
+
+    /// A short video with an audio track, encoded as `codecs` say.
+    pub fn video_with(dir: &Path, file: &str, codecs: &[&str]) -> PathBuf {
+        let mut args = vec![
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=160x120:rate=10:duration=2",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=duration=2",
+            "-pix_fmt",
+            "yuv420p",
+            "-shortest",
+        ];
+        args.extend_from_slice(codecs);
+        make(dir, file, &args)
+    }
+
+    /// An H.264 MP4 with an attached `size`×`size` PNG cover.
+    pub fn video_with_cover(dir: &Path, file: &str, size: u32) -> PathBuf {
+        let cover = image(dir, "cover.png", size, size);
+        let cover = cover.to_str().unwrap();
         make(
             dir,
             file,
@@ -307,11 +333,26 @@ pub(crate) mod fixtures {
                 "lavfi",
                 "-i",
                 "sine=duration=2",
-                "-c:v",
-                codec,
+                "-i",
+                cover,
+                "-map",
+                "0",
+                "-map",
+                "1",
+                "-map",
+                "2",
+                "-c:v:0",
+                "libx264",
                 "-pix_fmt",
                 "yuv420p",
-                "-shortest",
+                "-c:v:1",
+                "png",
+                "-disposition:v:1",
+                "attached_pic",
+                "-c:a",
+                "aac",
+                "-t",
+                "2",
             ],
         )
     }
@@ -560,17 +601,118 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn probes_videos() {
         let dir = fixtures::dir("probe-video");
-        for (file, codec, media_type) in [
-            ("v.mp4", "libx264", MediaType::Mp4),
-            ("v.webm", "libvpx-vp9", MediaType::Webm),
+        let av1 = ["-c:v", "libaom-av1", "-cpu-used", "8"];
+        for (file, codecs, media_type) in [
+            (
+                "h264.mp4",
+                &["-c:v", "libx264", "-c:a", "aac"][..],
+                MediaType::Mp4,
+            ),
+            (
+                "hevc.mp4",
+                &["-c:v", "libx265", "-c:a", "libmp3lame"],
+                MediaType::Mp4,
+            ),
+            (
+                "vp9.mp4",
+                &["-c:v", "libvpx-vp9", "-c:a", "libopus"],
+                MediaType::Mp4,
+            ),
+            (
+                "av1.mp4",
+                &[&av1[..], &["-c:a", "aac"]].concat(),
+                MediaType::Mp4,
+            ),
+            (
+                "vp8.webm",
+                &["-c:v", "libvpx", "-c:a", "libvorbis"],
+                MediaType::Webm,
+            ),
+            (
+                "vp9.webm",
+                &["-c:v", "libvpx-vp9", "-c:a", "libopus"],
+                MediaType::Webm,
+            ),
+            (
+                "av1.webm",
+                &[&av1[..], &["-c:a", "libopus"]].concat(),
+                MediaType::Webm,
+            ),
         ] {
-            let path = fixtures::video(&dir, file, codec);
+            let path = fixtures::video_with(&dir, file, codecs);
+            assert_eq!(media().identify(&path).await.unwrap(), media_type, "{file}");
             let probe = media().probe(&path, media_type).await.unwrap();
             assert_eq!((probe.width, probe.height), (160, 120), "{file}");
             assert!(probe.has_audio, "{file}");
             let ms = probe.duration_ms.unwrap();
             assert!((1900..=2100).contains(&ms), "{file}: {ms}ms");
         }
+    }
+
+    #[tokio::test]
+    async fn refuses_codecs_a_container_may_not_hold() {
+        let dir = fixtures::dir("probe-codecs");
+        // Matroska passes ffprobe's container check for WebM, so it can
+        // carry codecs WebM can't.
+        for (file, codecs, media_type, refused) in [
+            (
+                "mpeg4.mp4",
+                &["-c:v", "mpeg4", "-c:a", "aac"],
+                MediaType::Mp4,
+                "video codec mpeg4",
+            ),
+            (
+                "ac3.mp4",
+                &["-c:v", "libx264", "-c:a", "ac3"],
+                MediaType::Mp4,
+                "audio codec ac3",
+            ),
+            (
+                "h264.mkv",
+                &["-c:v", "libx264", "-c:a", "libopus"],
+                MediaType::Webm,
+                "video codec h264",
+            ),
+            (
+                "hevc.mkv",
+                &["-c:v", "libx265", "-c:a", "libopus"],
+                MediaType::Webm,
+                "video codec hevc",
+            ),
+            (
+                "aac.mkv",
+                &["-c:v", "libvpx-vp9", "-c:a", "aac"],
+                MediaType::Webm,
+                "audio codec aac",
+            ),
+            (
+                "flac.mkv",
+                &["-c:v", "libvpx-vp9", "-c:a", "flac"],
+                MediaType::Webm,
+                "audio codec flac",
+            ),
+        ] {
+            let path = fixtures::video_with(&dir, file, codecs);
+            let err = media().probe(&path, media_type).await.unwrap_err();
+            assert!(matches!(err, MediaError::Unsupported(_)), "{file}: {err}");
+            assert!(err.to_string().contains(refused), "{file}: {err}");
+        }
+    }
+
+    #[tokio::test]
+    async fn ignores_cover_art() {
+        let dir = fixtures::dir("probe-cover");
+        let path = fixtures::video_with_cover(&dir, "v.mp4", 32);
+        let probe = media().probe(&path, MediaType::Mp4).await.unwrap();
+        assert_eq!((probe.width, probe.height), (160, 120));
+    }
+
+    #[tokio::test]
+    async fn refuses_quicktime() {
+        let dir = fixtures::dir("probe-mov");
+        let path = fixtures::video_with(&dir, "v.mov", &["-c:v", "libx264", "-c:a", "aac"]);
+        let err = media().identify(&path).await.unwrap_err();
+        assert!(matches!(err, MediaError::UnknownType(_)), "{err}");
     }
 
     #[tokio::test]

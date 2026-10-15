@@ -9,6 +9,13 @@ pub const SITE_NAME_MAX_LEN: usize = 64;
 pub const DESCRIPTION_MAX_LEN: usize = 300;
 /// The longest [`SiteSettings::rules`], in characters.
 pub const RULES_MAX_LEN: usize = 20_000;
+/// The longest [`SiteSettings::terms_of_service`] or
+/// [`SiteSettings::privacy_policy`], in characters.
+pub const POLICY_MAX_LEN: usize = 50_000;
+/// The terms of service a new site starts with.
+pub const DEFAULT_TERMS_OF_SERVICE: &str = include_str!("policies/terms_of_service.txt");
+/// The privacy policy a new site starts with.
+pub const DEFAULT_PRIVACY_POLICY: &str = include_str!("policies/privacy_policy.txt");
 /// The most [`SiteSettings::footer_links`].
 pub const MAX_FOOTER_LINKS: usize = 12;
 /// The longest footer link text, in characters.
@@ -37,6 +44,14 @@ pub struct SiteSettings {
     /// The site's content rules, in markup, shown at `/rules` and linked
     /// from the footer, sign-up and uploads. Empty: no rules page.
     pub rules: String,
+    /// The terms of service, in markup, shown at `/terms` and linked from
+    /// the footer and sign-up. Starts as [`DEFAULT_TERMS_OF_SERVICE`];
+    /// empty: no terms page.
+    pub terms_of_service: String,
+    /// The privacy policy, in markup, shown at `/privacy` and linked from
+    /// the footer and sign-up. Starts as [`DEFAULT_PRIVACY_POLICY`];
+    /// empty: no privacy page.
+    pub privacy_policy: String,
     /// Extra links in the footer (a Discord server, a donation page, …).
     pub footer_links: Vec<FooterLink>,
     pub registration_mode: RegistrationMode,
@@ -195,6 +210,8 @@ impl Default for SiteSettings {
             hide_header_icon: false,
             hide_header_name: false,
             rules: String::new(),
+            terms_of_service: DEFAULT_TERMS_OF_SERVICE.trim().to_owned(),
+            privacy_policy: DEFAULT_PRIVACY_POLICY.trim().to_owned(),
             footer_links: Vec::new(),
             registration_mode: RegistrationMode::Open,
             invite_quota: 5,
@@ -377,6 +394,16 @@ impl SiteSettings {
                 "the rules must be at most {RULES_MAX_LEN} characters"
             ));
         }
+        for (name, text) in [
+            ("terms of service", &self.terms_of_service),
+            ("privacy policy", &self.privacy_policy),
+        ] {
+            if text.chars().count() > POLICY_MAX_LEN {
+                return Err(format!(
+                    "the {name} must be at most {POLICY_MAX_LEN} characters"
+                ));
+            }
+        }
         // Storage keys; the web layer checks they name real files.
         for key in [&self.logo, &self.full_logo, &self.favicon] {
             if !key
@@ -448,6 +475,7 @@ mod tests {
                 "pagination",
                 "post_reasons",
                 "preview_all_ratings",
+                "privacy_policy",
                 "promotion_rules",
                 "registration_mode",
                 "request_tags",
@@ -457,6 +485,7 @@ mod tests {
                 "site_name",
                 "spam_filter",
                 "tagger",
+                "terms_of_service",
                 "upload_approval",
                 "upload_limit_scaling",
                 "visitor_ratings"
@@ -587,6 +616,26 @@ mod tests {
                 "{key}"
             );
         }
+    }
+
+    #[test]
+    fn policies_start_as_the_defaults() {
+        let defaults = SiteSettings::default();
+        for text in [&defaults.terms_of_service, &defaults.privacy_policy] {
+            assert!(!text.is_empty());
+            // As the settings form saves it, so saving it unchanged
+            // doesn't store a copy.
+            assert_eq!(text.trim(), text.as_str());
+            assert!(!text.contains('\r'));
+        }
+        let cleared = defaults.with_value("privacy_policy", json!("")).unwrap();
+        assert!(cleared.privacy_policy.is_empty());
+        let long = "a".repeat(POLICY_MAX_LEN + 1);
+        assert!(
+            defaults
+                .with_value("terms_of_service", json!(long))
+                .is_err()
+        );
     }
 
     #[test]

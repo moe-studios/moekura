@@ -32,6 +32,9 @@
     {{ field_error(errors.captcha) }}
     {% endif %}
     {% if site.has_rules %}<p class="hint">{{ t("register-rules") }}</p>{% endif %}
+    {% if site.has_terms and site.has_privacy %}<p class="hint">{{ t("register-terms-privacy") }}</p>
+    {% elif site.has_terms %}<p class="hint">{{ t("register-terms") }}</p>
+    {% elif site.has_privacy %}<p class="hint">{{ t("register-privacy") }}</p>{% endif %}
     <button type="submit">{{ t("nav-register") }}</button>
   </form>
   <p class="aside">{{ t("register-have-account") }} <a href="/login">{{ t("nav-log-in") }}</a></p>

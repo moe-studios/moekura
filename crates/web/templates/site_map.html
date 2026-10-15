@@ -99,6 +99,8 @@
   {% endif %}
   {{ links(t("footer-site"), [
     ["/rules", t("footer-rules")] if site.has_rules,
+    ["/terms", t("footer-terms")] if site.has_terms,
+    ["/privacy", t("footer-privacy")] if site.has_privacy,
     ["/stats", t("footer-stats")],
     ["/api/docs", t("sm-api-docs")],
   ]) }}

@@ -1,0 +1,43 @@
+These terms apply to everyone who uses this site, with or without an account. By using the site you agree to them. If you don't agree, please don't use it.
+
+[i]This is the default text that comes with Moekura. The site's staff should replace it with terms that fit their site and the laws that apply to them.[/i]
+
+h1. Who runs the site
+
+The site is run by its staff, who are not the authors of Moekura, the software it runs on. Where these terms say "we", they mean the site's staff.
+
+h1. Your account
+
+* You must be old enough to use the site under the law where you live, and old enough to view any content you choose to see.
+* Keep your password and API keys to yourself. You're responsible for what's done with your account.
+* One person, one account, unless the staff allow otherwise. Don't make new accounts to get around a ban.
+* We may refuse, suspend or close accounts that break these terms or the site's rules.
+
+h1. What you post
+
+* You keep the rights to what you upload and write. By posting it, you let the site store, copy, resize, display and share it as part of running the site, including through its feeds and API.
+* Only post what you have the right to share, and only what's legal where the site is hosted and where you are.
+* Never post sexual content involving minors, content made without the consent of the people shown, or anything that breaks the law.
+* Follow the site's rules on what may be posted and how to tag it.
+* Staff may edit, hide or delete anything posted, and may keep records of what was removed and why.
+
+h1. Behaviour
+
+* Treat others with respect. No harassment, threats, spam or impersonation.
+* Don't try to break, overload or get around the site's limits, security or bans, and don't scrape it in a way that harms it. Use the API within its rate limits.
+
+h1. Copyright
+
+If something on the site infringes your copyright, contact the staff with the post's address and proof that you own the work, and we'll look into it. Accounts that repeatedly post infringing work will be closed.
+
+h1. No warranty
+
+The site is provided as it is, without any warranty. It may be unavailable, lose data or change at any time. As far as the law allows, we aren't liable for any loss arising from your use of the site or from what other people post on it.
+
+h1. Changes
+
+We may change these terms. The current version is always on this page, and using the site after a change means you accept it.
+
+h1. Contact
+
+Questions about these terms go to the site's staff.

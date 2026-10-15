@@ -43,6 +43,9 @@ register-email-confirm-hint = We'll send you a link to confirm it; it becomes yo
 register-repeat = Repeat password
 register-invite = Invite code
 register-rules = By registering, you agree to follow the site's <a href="/rules">rules</a>.
+register-terms-privacy = By registering, you agree to the <a href="/terms">terms of service</a> and the <a href="/privacy">privacy policy</a>.
+register-terms = By registering, you agree to the <a href="/terms">terms of service</a>.
+register-privacy = By registering, you agree to the <a href="/privacy">privacy policy</a>.
 register-have-account = Already registered?
 
 account-email-password = Email and password

@@ -210,6 +210,8 @@ as-hide-header-name = Hide the site's name in the header
 as-hide-header-hint = The name stays in page titles. A full logo takes the place of both.
 as-description-hint = A sentence or two about the site, shown in the footer and to search engines.
 as-rules-hint = What may be posted, and how to behave, in the same markup as the wiki. Shown at <a href="/rules">/rules</a> and linked from the footer, sign-up and uploads. Leave it empty for no rules page.
+as-terms-hint = The terms people agree to by using the site, in the same markup as the wiki. Shown at <a href="/terms">/terms</a> and linked from the footer and sign-up. It starts as a general template: check it and make it fit your site. Leave it empty for no terms page.
+as-privacy-hint = What the site collects about people and what it does with it, in the same markup as the wiki. Shown at <a href="/privacy">/privacy</a> and linked from the footer and sign-up. It starts as a general template: check it and make it fit your site. Leave it empty for no privacy page.
 as-footer-links = Footer links
 as-footer-links-hint = One per line: the link's text, then its address (<code>https://…</code> or a path on this site, like <code>/wiki/help</code>).
 as-registration = Registration

@@ -35,6 +35,8 @@ news-dismiss = Dismiss
 
 footer-site = Site
 footer-rules = Rules
+footer-terms = Terms
+footer-privacy = Privacy
 footer-stats = Stats
 footer-powered = Powered by <a href="https://github.com/moe-studios/moekura">Moekura</a> { $version }
 footer-api = API

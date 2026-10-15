@@ -1,0 +1,38 @@
+This page explains what this site collects about you, why, and what you can do about it.
+
+[i]This is the default text that comes with Moekura. The site's staff should check it against how they run their site, and the laws that apply to them, and change it to fit.[/i]
+
+h1. Who is responsible
+
+The site's staff run the site and decide what happens to your data. Where this policy says "we", it means them.
+
+h1. What we collect
+
+* [b]Your account:[/b] your user name, email address if you gave one, your password (stored only as a salted hash), and your settings. Two-factor secrets and passkeys are stored to let you log in with them.
+* [b]What you post:[/b] uploads, tags, comments, notes, wiki and forum posts, messages, favourites and votes, with their history and the times they were made. Identifying metadata (such as camera details and location) may be removed from uploaded files.
+* [b]How you connect:[/b] the IP addresses you use the site from, and the browser that logged in to each session. Staff use these to fight spam, abuse and ban evasion, and they are deleted after a period set by the staff.
+* [b]Server logs:[/b] like most websites, the site may log requests for a short while to keep it running and find faults.
+
+h1. Cookies
+
+The site uses cookies to keep you logged in, to protect forms against forgery, and to remember short messages and notices you dismissed. It doesn't use cookies for advertising or tracking you across other sites.
+
+h1. Who can see it
+
+* Your profile, posts, comments, favourites and edit history may be public, as the site shows them.
+* Messages are private between you and the people you write to, but staff can read messages reported to them.
+* Staff can see your email address and IP addresses to moderate the site.
+* We don't sell your data. We only share it when the law requires it, or with services the site needs to run (such as hosting and sending email).
+
+h1. Your choices
+
+* You can change your settings and email address from your account at any time.
+* You can ask the staff for a copy of the data held about you, or for your account and data to be deleted. Some records, such as moderation records, may be kept where needed to protect the site.
+
+h1. Changes
+
+We may update this policy. The current version is always on this page.
+
+h1. Contact
+
+Questions about your data go to the site's staff.

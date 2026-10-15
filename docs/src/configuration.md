@@ -380,6 +380,16 @@ A growing `moekura_jobs_oldest_ready_seconds` means the workers are
 behind; a climbing `dead` count, that jobs are failing for good (see
 [Background jobs](admin/jobs.md)).
 
+#### Grafana dashboard
+
+[`deploy/grafana/moekura.json`](https://github.com/moe-studios/moekura/blob/main/deploy/grafana/moekura.json)
+is a Grafana dashboard for these metrics: requests by route and status,
+latency, the job queue and how jobs end, and the database pools. Import
+it in Grafana (Dashboards → New → Import) and pick your Prometheus data
+source; it needs Grafana 10.4 or later. Its *Job* and *Instance*
+selectors choose which scraped processes it shows, and *Route* and *Job
+kind* narrow the HTTP and job panels.
+
 ### Traces
 
 With `otlp_endpoint` set, each request and job is a trace, with the

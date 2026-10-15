@@ -33,6 +33,9 @@ updates:
       interval: weekly
     commit-message:
       prefix: ci(deps)
+    ignore:
+      # Tags on this action are Rust versions; the msrv job pins it to rust-version.
+      - dependency-name: dtolnay/rust-toolchain
     groups:
       actions:
         patterns: ["*"]

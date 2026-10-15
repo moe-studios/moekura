@@ -24,7 +24,7 @@ jobs:
   upgrade:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # The release tags, to find the previous release.
           fetch-depth: 0
@@ -37,7 +37,7 @@ jobs:
       - name: Version embedded in the binary
         run: echo "MOEKURA_BUILD_VERSION=git-${GITHUB_SHA:0:7}" >> "$GITHUB_ENV"
       - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@v1
+        uses: useblacksmith/setup-docker-builder@v2
       - uses: useblacksmith/build-push-action@v2
         with:
           context: .
@@ -73,7 +73,7 @@ jobs:
         env:
           PSQL: ${{ env.COMPOSE }} exec -T db psql -U moekura -d moekura
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -111,7 +111,7 @@ jobs:
       - name: Server logs
         if: failure()
         run: $COMPOSE logs app
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: upgrade-playwright-report
@@ -127,9 +127,9 @@ jobs:
     env:
       COMPOSE: docker compose -f deploy/compose.tiny.yml -f e2e/upgrade/compose.s3.yml
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
       - name: Setup Blacksmith Builder
-        uses: useblacksmith/setup-docker-builder@v1
+        uses: useblacksmith/setup-docker-builder@v2
       - uses: useblacksmith/build-push-action@v2
         with:
           context: .

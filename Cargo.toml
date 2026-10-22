@@ -59,7 +59,7 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 quick-xml = "0.42.0"
 # ONNX Runtime for the tagger, loaded at run time (libonnxruntime.so), so
 # building needs no download and other builds don't carry it.
-ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "load-dynamic", "tracing"] }
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "tracing"] }
 # Two-factor enrolment QR codes, as inline SVG.
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 mime_guess = "2.0.5"

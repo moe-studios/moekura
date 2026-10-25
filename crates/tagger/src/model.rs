@@ -5,11 +5,16 @@ use std::sync::Mutex;
 
 use moekura_core::tagger::{Label, Prediction, interpret, parse_labels};
 use moekura_media::RgbImage;
+use ort::environment::Environment;
 use ort::session::Session;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::value::{Tensor, ValueType};
 
 use crate::TaggerError;
+
+/// The process's one ONNX Runtime environment, which sessions are built
+/// in. Set by [`load_runtime`]; ort only keeps a weak reference to it.
+static ENVIRONMENT: Mutex<Option<Environment>> = Mutex::new(None);
 
 /// Loads ONNX Runtime from `library`, or else from `ORT_DYLIB_PATH` or
 /// the system's library path, and returns where it looked. Only the first
@@ -26,7 +31,14 @@ pub fn load_runtime(library: Option<&Path>) -> Result<PathBuf, TaggerError> {
              and point tagger.runtime or ORT_DYLIB_PATH at libonnxruntime.so"
         ))
     })?;
-    environment.with_name("moekura").commit();
+    let mut current = ENVIRONMENT.lock().unwrap_or_else(|e| e.into_inner());
+    if current.is_none() {
+        let built = environment
+            .with_name("moekura")
+            .build()
+            .map_err(|e| TaggerError::Runtime(e.to_string()))?;
+        *current = Some(built);
+    }
     Ok(path)
 }
 
@@ -67,7 +79,12 @@ impl Model {
         let labels = parse_labels(&csv)
             .map_err(|e| TaggerError::Model(format!("{}: {e}", tags.display())))?;
         let ort_error = |e: ort::Error| invalid(e.to_string());
-        let session = Session::builder()
+        let environment = ENVIRONMENT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .ok_or_else(|| TaggerError::Runtime("ONNX Runtime is not loaded".into()))?;
+        let session = Session::builder(&environment)
             .map_err(ort_error)?
             .with_optimization_level(GraphOptimizationLevel::Level3)
             .map_err(|e| invalid(e.to_string()))?

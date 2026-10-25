@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use zip::ZipArchive;
+use zip::read::{ArchiveOffset, Config};
 
 /// The most of a zip read while opening it: room for about 20,000
 /// entries, ten times what an ugoira or an archive upload may hold.
@@ -47,7 +48,12 @@ fn open_within(path: &Path, budget: u64) -> Result<Zip, OpenError> {
         inner: BufReader::new(File::open(path).map_err(OpenError::Io)?),
         left: left.clone(),
     };
-    match ZipArchive::new(reader) {
+    // Uploads start at the archive. Left to detect where, the zip crate
+    // scans every byte before the directory looking for it.
+    let config = Config {
+        archive_offset: ArchiveOffset::Known(0),
+    };
+    match ZipArchive::with_config(config, reader) {
         Ok(archive) => {
             left.store(u64::MAX, Ordering::Relaxed);
             Ok(archive)

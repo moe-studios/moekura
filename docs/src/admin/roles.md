@@ -90,10 +90,13 @@ enough. Every hour, members are promoted who have at least the set
 number of approved uploads and post edits, have been registered for the
 set number of days, and have had at most the set number of uploads
 deleted in the last 30 days and at most the set number of negative
-[feedback](../using/account.md#feedback) records. Defaults: 50 uploads,
-no edits needed, 30 days, no recent deletions, no negative feedback.
+[feedback](../using/account.md#feedback) records from staff (ranked
+above contributors: one contributor's word alone doesn't hold someone
+back). Defaults: 50 uploads, no edits needed, 30 days, no recent
+deletions, no negative feedback.
 
-Banned members and [bots](bots.md) aren't promoted. Staff who manage
+Banned members and [bots](bots.md) aren't promoted, including those
+banned or kept from promotion while the hourly check runs. Staff who manage
 users can keep someone from automatic promotion with **Never promote
 automatically** on their profile. Promotions are in the moderation log,
 and profiles say when someone was promoted.

@@ -111,6 +111,59 @@ impl DisapprovalReason {
 /// The longest timed ban, in days; longer ones are until lifted.
 pub const MAX_BAN_DAYS: i64 = 3650;
 
+/// What a log entry is about besides a post or a user, by kind; stored by
+/// name with the thing's id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SubjectKind {
+    Comment,
+    ForumPost,
+    ForumTopic,
+    Dmail,
+    UserNote,
+    UserFeedback,
+    Pool,
+    Artist,
+    News,
+    WikiPage,
+    Note,
+}
+
+impl SubjectKind {
+    pub const ALL: [SubjectKind; 11] = [
+        SubjectKind::Comment,
+        SubjectKind::ForumPost,
+        SubjectKind::ForumTopic,
+        SubjectKind::Dmail,
+        SubjectKind::UserNote,
+        SubjectKind::UserFeedback,
+        SubjectKind::Pool,
+        SubjectKind::Artist,
+        SubjectKind::News,
+        SubjectKind::WikiPage,
+        SubjectKind::Note,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SubjectKind::Comment => "comment",
+            SubjectKind::ForumPost => "forum_post",
+            SubjectKind::ForumTopic => "forum_topic",
+            SubjectKind::Dmail => "dmail",
+            SubjectKind::UserNote => "user_note",
+            SubjectKind::UserFeedback => "user_feedback",
+            SubjectKind::Pool => "pool",
+            SubjectKind::Artist => "artist",
+            SubjectKind::News => "news",
+            SubjectKind::WikiPage => "wiki_page",
+            SubjectKind::Note => "note",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
+
 /// What an audit log entry records. Stored by name; renaming one would
 /// orphan old entries' labels, so only add.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -178,10 +231,15 @@ pub enum ActionKind {
     UserNoteDelete,
     ForumPostEdit,
     ForumTopicEdit,
+    FlagCreate,
+    AppealCreate,
+    PostDisapprove,
+    FeedbackCreate,
+    FeedbackUpdate,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 63] = [
+    pub const ALL: [ActionKind; 68] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -245,6 +303,11 @@ impl ActionKind {
         ActionKind::UserNoteDelete,
         ActionKind::ForumPostEdit,
         ActionKind::ForumTopicEdit,
+        ActionKind::FlagCreate,
+        ActionKind::AppealCreate,
+        ActionKind::PostDisapprove,
+        ActionKind::FeedbackCreate,
+        ActionKind::FeedbackUpdate,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -312,6 +375,11 @@ impl ActionKind {
             ActionKind::UserNoteDelete => "user_note.delete",
             ActionKind::ForumPostEdit => "forum_post.edit",
             ActionKind::ForumTopicEdit => "forum_topic.edit",
+            ActionKind::FlagCreate => "flag.create",
+            ActionKind::AppealCreate => "appeal.create",
+            ActionKind::PostDisapprove => "post.disapprove",
+            ActionKind::FeedbackCreate => "user_feedback.create",
+            ActionKind::FeedbackUpdate => "user_feedback.update",
         }
     }
 
@@ -381,6 +449,11 @@ impl ActionKind {
             ActionKind::UserNoteDelete => "deleted a staff note about",
             ActionKind::ForumPostEdit => "changed a forum post by",
             ActionKind::ForumTopicEdit => "renamed or moved a forum topic by",
+            ActionKind::FlagCreate => "flagged post",
+            ActionKind::AppealCreate => "appealed post",
+            ActionKind::PostDisapprove => "passed on post",
+            ActionKind::FeedbackCreate => "left feedback on",
+            ActionKind::FeedbackUpdate => "changed feedback on",
         }
     }
 

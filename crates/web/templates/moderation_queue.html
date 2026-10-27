@@ -49,7 +49,7 @@
       <div class="actions">
         <form method="post" action="/posts/{{ p.id }}/approve"><button type="submit">{{ t("approve") }}</button></form>
         <form class="reject" method="post" action="/posts/{{ p.id }}/reject">
-          {{ reason_fields("reject-" ~ p.id, reasons.deletion, t("reason-reject-post", id=p.id), required=false, compact=true) }}
+          {{ reason_fields("reject-" ~ p.id, reasons.deletion, t("reason-reject-post", id=p.id), compact=true) }}
           <button type="submit" class="secondary">{{ t("reject") }}</button>
         </form>
         <form class="reject" method="post" action="/posts/{{ p.id }}/disapprove">

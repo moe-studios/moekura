@@ -11,7 +11,7 @@ use axum_extra::extract::CookieJar;
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::news::{self, NewsUpdate};
@@ -223,6 +223,7 @@ async fn create(
     mod_actions::record(
         &mut *tx,
         NewAction::new(actor(&page), ActionKind::NewsPost)
+            .subject(SubjectKind::News, id)
             .details(serde_json::json!({ "news_id": id, "body": body })),
     )
     .await?;
@@ -282,6 +283,7 @@ async fn update(
     mod_actions::record(
         &mut *tx,
         NewAction::new(actor(&page), ActionKind::NewsPost)
+            .subject(SubjectKind::News, id)
             .details(serde_json::json!({ "news_id": id, "body": body })),
     )
     .await?;
@@ -315,6 +317,7 @@ async fn set_deleted(
                     ActionKind::NewsPost
                 },
             )
+            .subject(SubjectKind::News, id)
             .details(serde_json::json!({ "news_id": id, "body": news.body })),
         )
         .await?;

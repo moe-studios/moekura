@@ -114,13 +114,22 @@ pub async fn status(
 }
 
 /// Keeps a user from (or allows) automatic promotion.
-pub async fn set_blocked(db: &PgPool, user_id: i64, blocked: bool) -> sqlx::Result<()> {
-    sqlx::query("UPDATE users SET auto_promotion_blocked = $2 WHERE id = $1")
-        .bind(user_id)
-        .bind(blocked)
-        .execute(db)
-        .await?;
-    Ok(())
+/// Keeps a user from automatic promotion or allows it again; false if
+/// that was so already.
+pub async fn set_blocked(
+    db: impl sqlx::PgExecutor<'_>,
+    user_id: i64,
+    blocked: bool,
+) -> sqlx::Result<bool> {
+    let done = sqlx::query(
+        "UPDATE users SET auto_promotion_blocked = $2
+         WHERE id = $1 AND auto_promotion_blocked <> $2",
+    )
+    .bind(user_id)
+    .bind(blocked)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 #[cfg(test)]

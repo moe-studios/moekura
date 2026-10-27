@@ -45,6 +45,18 @@ pub async fn rename(
     changer_id: Option<i64>,
 ) -> Result<(), RenameError> {
     let mut tx = db.begin().await?;
+    rename_in(&mut tx, user_id, new_name, changer_id).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// [`rename`] in the caller's transaction, to log it there too.
+pub async fn rename_in(
+    tx: &mut sqlx::PgConnection,
+    user_id: i64,
+    new_name: &str,
+    changer_id: Option<i64>,
+) -> Result<(), RenameError> {
     let old: String = sqlx::query_scalar("SELECT name::text FROM users WHERE id = $1 FOR UPDATE")
         .bind(user_id)
         .fetch_optional(&mut *tx)
@@ -69,7 +81,6 @@ pub async fn rename(
     .bind(changer_id)
     .execute(&mut *tx)
     .await?;
-    tx.commit().await?;
     Ok(())
 }
 

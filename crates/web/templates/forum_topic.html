@@ -27,7 +27,7 @@
       {% endif %}
       {% if p.can_edit %}<a class="button secondary" href="/forum_posts/{{ p.id }}/edit">{{ t("edit") }}</a>{% endif %}
       {% if can_moderate and not p.held %}
-      <form method="post" action="/forum_posts/{{ p.id }}/{{ 'unhide' if p.hidden else 'hide' }}"><button type="submit" class="secondary">{{ t("unhide") if p.hidden else t("hide") }}</button></form>
+      <form class="inline" method="post" action="/forum_posts/{{ p.id }}/{{ 'unhide' if p.hidden else 'hide' }}"><input name="reason" maxlength="2000" placeholder="{{ t('reason') }}" aria-label="{{ t('reason') }}"><button type="submit" class="secondary">{{ t("unhide") if p.hidden else t("hide") }}</button></form>
       {% endif %}
     </div>
   </li>
@@ -64,11 +64,15 @@
 {% if can_moderate %}
 <details class="edit moderate">
   <summary>{{ t("moderate") }}</summary>
-  <div class="actions">
-    {% for action in ["unsticky" if topic.sticky else "sticky", "unlock" if topic.locked else "lock", "undelete" if topic.deleted else "delete"] %}
-    <form method="post" action="/forum_topics/{{ topic.id }}/moderate"><input type="hidden" name="action" value="{{ action }}"><button type="submit" class="secondary">{{ t("forum-moderate-" ~ action) }}</button></form>
-    {% endfor %}
-  </div>
+  <form method="post" action="/forum_topics/{{ topic.id }}/moderate">
+    <label for="moderate-reason">{{ t("reason") }} <span class="optional">{{ t("reason-details-optional") }}</span></label>
+    <input id="moderate-reason" name="reason" maxlength="2000">
+    <div class="actions">
+      {% for action in ["unsticky" if topic.sticky else "sticky", "unlock" if topic.locked else "lock", "undelete" if topic.deleted else "delete"] %}
+      <button type="submit" name="action" value="{{ action }}" class="secondary">{{ t("forum-moderate-" ~ action) }}</button>
+      {% endfor %}
+    </div>
+  </form>
   <form method="post" action="/forum_topics/{{ topic.id }}/merge">
     <label for="merge-into">{{ t("forum-merge-into") }}</label>
     <input id="merge-into" name="into" inputmode="numeric" required>

@@ -1,6 +1,6 @@
 //! The moderation audit log.
 
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use serde_json::Value;
 use sqlx::PgExecutor;
 use time::OffsetDateTime;
@@ -13,6 +13,8 @@ pub struct NewAction<'a> {
     pub kind: ActionKind,
     pub post_id: Option<i64>,
     pub user_id: Option<i64>,
+    /// What else it's about: a comment, a forum post, ….
+    pub subject: Option<(SubjectKind, i64)>,
     pub reason: &'a str,
     pub details: Value,
 }
@@ -24,6 +26,7 @@ impl<'a> NewAction<'a> {
             kind,
             post_id: None,
             user_id: None,
+            subject: None,
             reason: "",
             details: Value::Object(Default::default()),
         }
@@ -36,6 +39,11 @@ impl<'a> NewAction<'a> {
 
     pub fn user(mut self, user_id: i64) -> Self {
         self.user_id = Some(user_id);
+        self
+    }
+
+    pub fn subject(mut self, kind: SubjectKind, id: i64) -> Self {
+        self.subject = Some((kind, id));
         self
     }
 
@@ -53,13 +61,16 @@ impl<'a> NewAction<'a> {
 /// Records an action; call it in the transaction making the change.
 pub async fn record(db: impl PgExecutor<'_>, action: NewAction<'_>) -> sqlx::Result<()> {
     sqlx::query(
-        "INSERT INTO mod_actions (actor_id, action, post_id, user_id, reason, details)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+        "INSERT INTO mod_actions (actor_id, action, post_id, user_id, subject_kind, subject_id,
+                                  reason, details)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
     )
     .bind(action.actor_id)
     .bind(action.kind.as_str())
     .bind(action.post_id)
     .bind(action.user_id)
+    .bind(action.subject.map(|(kind, _)| kind.as_str()))
+    .bind(action.subject.map(|(_, id)| id))
     .bind(action.reason)
     .bind(&action.details)
     .execute(db)
@@ -75,6 +86,8 @@ pub struct Entry {
     pub post_id: Option<i64>,
     pub user_id: Option<i64>,
     pub user_name: Option<String>,
+    pub subject_kind: Option<String>,
+    pub subject_id: Option<i64>,
     pub reason: String,
     pub details: Value,
     pub created_at: OffsetDateTime,
@@ -87,6 +100,7 @@ pub struct Filter {
     pub actor_id: Option<i64>,
     pub post_id: Option<i64>,
     pub user_id: Option<i64>,
+    pub subject: Option<(SubjectKind, i64)>,
     /// Entries older than this id (keyset pagination).
     pub before: Option<i64>,
     /// Entries at or after this time.
@@ -103,7 +117,8 @@ pub async fn list(
 ) -> sqlx::Result<Vec<Entry>> {
     sqlx::query_as(
         "SELECT m.id, a.name::text AS actor_name, m.action, m.post_id, m.user_id,
-                u.name::text AS user_name, m.reason, m.details, m.created_at
+                u.name::text AS user_name, m.subject_kind, m.subject_id, m.reason, m.details,
+                m.created_at
          FROM mod_actions m
          LEFT JOIN users a ON a.id = m.actor_id
          LEFT JOIN users u ON u.id = m.user_id
@@ -114,6 +129,7 @@ pub async fn list(
            AND ($5::bigint IS NULL OR m.id < $5)
            AND ($6::timestamptz IS NULL OR m.created_at >= $6)
            AND ($7::timestamptz IS NULL OR m.created_at < $7)
+           AND ($9::text IS NULL OR (m.subject_kind = $9 AND m.subject_id = $10))
          ORDER BY m.id DESC LIMIT $8",
     )
     .bind(filter.action.map(ActionKind::as_str))
@@ -124,6 +140,8 @@ pub async fn list(
     .bind(filter.since)
     .bind(filter.until)
     .bind(limit)
+    .bind(filter.subject.map(|(kind, _)| kind.as_str()))
+    .bind(filter.subject.map(|(_, id)| id))
     .fetch_all(db)
     .await
 }
@@ -158,6 +176,33 @@ mod tests {
         )
         .await
         .unwrap();
+        record(
+            &pool,
+            NewAction::new(Some(moderator), ActionKind::CommentHide)
+                .post(7)
+                .subject(SubjectKind::Comment, 12),
+        )
+        .await
+        .unwrap();
+        let about = |kind, id| Filter {
+            subject: Some((kind, id)),
+            ..Filter::default()
+        };
+        let found = list(&pool, &about(SubjectKind::Comment, 12), 10)
+            .await
+            .unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].subject_kind.as_deref(), Some("comment"));
+        assert!(
+            list(&pool, &about(SubjectKind::ForumPost, 12), 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        sqlx::query("DELETE FROM mod_actions WHERE action = 'comment.hide'")
+            .execute(&pool)
+            .await
+            .unwrap();
 
         let all = list(&pool, &Filter::default(), 10).await.unwrap();
         assert_eq!(all.len(), 2);

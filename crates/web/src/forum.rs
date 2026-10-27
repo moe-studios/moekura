@@ -9,7 +9,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::forum::{self, Flags, PostFilter, Topic, TopicFilter};
 use moekura_db::mod_actions::{self, NewAction};
@@ -578,8 +578,9 @@ async fn update_topic(
     forum::update_topic(&mut *tx, id, &title, form.category).await?;
     // Staff changing someone else's topic is logged.
     if !own && (title != topic.title || form.category != topic.category_id) {
-        let mut action =
-            NewAction::new(Some(me), ActionKind::ForumTopicEdit).details(serde_json::json!({
+        let mut action = NewAction::new(Some(me), ActionKind::ForumTopicEdit)
+            .subject(SubjectKind::ForumTopic, id)
+            .details(serde_json::json!({
                 "topic_id": id,
                 "from": { "title": topic.title, "category": topic.category_name },
                 "title": title,
@@ -598,6 +599,8 @@ async fn update_topic(
 struct ModerateForm {
     /// `sticky`, `unsticky`, `lock`, `unlock`, `delete` or `undelete`.
     action: String,
+    #[serde(default)]
+    reason: String,
 }
 
 async fn moderate(
@@ -607,6 +610,7 @@ async fn moderate(
     Form(form): Form<ModerateForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
+    let reason = crate::moderation::check_reason(&form.reason)?;
     let topic = visible_topic(page.state(), &page.current, id).await?;
     let flags = match form.action.as_str() {
         "sticky" => Flags {
@@ -659,6 +663,8 @@ async fn moderate(
                 page.current.user.as_ref().map(|u| u.id),
                 ActionKind::ForumTopicModerate,
             )
+            .subject(SubjectKind::ForumTopic, id)
+            .reason(reason)
             .details(serde_json::json!({ "topic_id": id, "action": form.action })),
         )
         .await?;
@@ -711,6 +717,7 @@ async fn merge(
             page.current.user.as_ref().map(|u| u.id),
             ActionKind::ForumTopicMerge,
         )
+        .subject(SubjectKind::ForumTopic, id)
         .details(serde_json::json!({ "from": id, "into": into })),
     )
     .await?;
@@ -886,6 +893,7 @@ async fn save_edit(
     // kept either way.
     if p.creator_id != Some(me) && body != p.body {
         let mut action = NewAction::new(Some(me), ActionKind::ForumPostEdit)
+            .subject(SubjectKind::ForumPost, p.id)
             .details(serde_json::json!({ "forum_post_id": p.id, "topic_id": p.topic_id }));
         if let Some(creator) = p.creator_id {
             action = action.user(creator);
@@ -928,13 +936,21 @@ async fn vote(
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ReasonForm {
+    #[serde(default)]
+    reason: String,
+}
+
 async fn set_hidden(
     page: Page,
     jar: CookieJar,
     id: i64,
     hidden: bool,
+    reason: &str,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
+    let reason = crate::moderation::check_reason(reason)?;
     let state = page.state();
     let db = state.db.primary();
     let p = forum::post(db, id).await?.ok_or(AppError::NotFound)?;
@@ -958,6 +974,8 @@ async fn set_hidden(
         ActionKind::ForumPostUnhide
     };
     let mut action = NewAction::new(page.current.user.as_ref().map(|u| u.id), kind)
+        .subject(SubjectKind::ForumPost, id)
+        .reason(reason)
         .details(serde_json::json!({ "forum_post_id": id, "topic_id": p.topic_id }));
     if let Some(creator) = p.creator_id {
         action = action.user(creator);
@@ -968,8 +986,13 @@ async fn set_hidden(
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
 }
 
-async fn hide(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    set_hidden(page, jar, id, true).await
+async fn hide(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    set_hidden(page, jar, id, true, &form.reason).await
 }
 
 /// A post's earlier texts, for staff.
@@ -1002,8 +1025,13 @@ async fn versions(page: Page, Path(id): Path<i64>) -> Result<Response, AppError>
     ))
 }
 
-async fn unhide(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    set_hidden(page, jar, id, false).await
+async fn unhide(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    set_hidden(page, jar, id, false, &form.reason).await
 }
 
 #[derive(Debug, Default, Deserialize)]

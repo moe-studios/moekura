@@ -9,7 +9,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::dmails::{self, Dmail, Folder, SendError};
 use moekura_db::mod_actions::{self, NewAction};
@@ -405,18 +405,21 @@ async fn settle(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Respo
     page.current.require(Permission::ModerateComments)?;
     let db = page.state().db.primary();
     let d = dmails::by_id_any(db, id).await?.ok_or(AppError::NotFound)?;
-    if !dmails::settle_report(db, id).await? {
+    let mut tx = db.begin().await?;
+    if !dmails::settle_report(&mut *tx, id).await? {
         return Err(AppError::NotFound);
     }
     let mut action = NewAction::new(
         page.current.user.as_ref().map(|u| u.id),
         ActionKind::DmailReportSettle,
     )
+    .subject(SubjectKind::Dmail, id)
     .details(serde_json::json!({ "dmail_id": id }));
     if let Some(from) = d.from_id {
         action = action.user(from);
     }
-    mod_actions::record(db, action).await?;
+    mod_actions::record(&mut *tx, action).await?;
+    tx.commit().await?;
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to("/moderation/dmails"),

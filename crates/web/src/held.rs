@@ -9,7 +9,7 @@ use axum::routing::{get, post};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::held::{self, Held, Kind};
 use moekura_db::mod_actions::{self, NewAction};
@@ -105,12 +105,20 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
     ))
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct DecideForm {
+    #[serde(default)]
+    reason: String,
+}
+
 async fn decide(
     page: Page,
     jar: CookieJar,
     Path((kind, id, action)): Path<(String, i64, String)>,
+    axum::Form(form): axum::Form<DecideForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
+    let reason = crate::moderation::check_reason(&form.reason)?;
     let kind = Kind::parse(&kind).ok_or(AppError::NotFound)?;
     let approve = match action.as_str() {
         "approve" => true,
@@ -148,7 +156,16 @@ async fn decide(
             ActionKind::HeldReject
         },
     )
-    .details(serde_json::json!({ "kind": kind.as_str(), "id": id, "reason": item.reason }));
+    .subject(
+        match kind {
+            Kind::Comment => SubjectKind::Comment,
+            Kind::ForumPost => SubjectKind::ForumPost,
+            Kind::Dmail => SubjectKind::Dmail,
+        },
+        id,
+    )
+    .reason(reason)
+    .details(serde_json::json!({ "kind": kind.as_str(), "id": id, "held_for": item.reason }));
     if let Some(creator) = item.creator_id {
         action = action.user(creator);
     }

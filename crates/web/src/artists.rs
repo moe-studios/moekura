@@ -11,7 +11,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::artists::{ArtistUrl, GROUP_MAX_LEN};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_core::tags::TagName;
 use moekura_db::artists::{self, Artist, Contents, SaveError, VersionFilter};
@@ -247,7 +247,13 @@ async fn record_ban_moved(
         _ => return Ok(()),
     };
     let actor = current.user.as_ref().map(|u| u.id);
-    mod_actions::record(db, NewAction::new(actor, kind).details(details)).await?;
+    mod_actions::record(
+        db,
+        NewAction::new(actor, kind)
+            .subject(SubjectKind::Artist, i64::from(id))
+            .details(details),
+    )
+    .await?;
     Ok(())
 }
 
@@ -759,6 +765,7 @@ pub(crate) async fn set_status(
         mod_actions::record(
             db,
             NewAction::new(actor, kind)
+                .subject(SubjectKind::Artist, i64::from(id))
                 .details(serde_json::json!({ "artist_id": id, "name": contents.name })),
         )
         .await?;

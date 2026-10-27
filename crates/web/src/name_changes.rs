@@ -37,11 +37,15 @@ pub(crate) fn may_rename(state: &AppState, current: &CurrentUser, user: &User) -
 }
 
 /// Renames `user` to `wanted`, by `changer`; the message says what's wrong.
+/// Renames `user` to `wanted`, by `changer`; with `logged`, a reason, it's
+/// logged in the same transaction as staff's rename. The message says
+/// what's wrong.
 async fn rename(
     state: &AppState,
     user: &User,
     wanted: &str,
     changer: Option<i64>,
+    logged: Option<&str>,
 ) -> Result<String, AppError> {
     let name = UserName::parse(wanted.trim())
         .map_err(|e| AppError::Unprocessable(format!("The name {e}.")))?;
@@ -53,12 +57,27 @@ async fn rename(
     {
         return Err(AppError::Unprocessable(format!("“{name}” is taken.")));
     }
-    match name_changes::rename(state.db.primary(), user.id, name.as_str(), changer).await {
-        Ok(()) => Ok(name.as_str().to_owned()),
-        Err(RenameError::Taken) => Err(AppError::Unprocessable(format!("“{name}” is taken."))),
-        Err(RenameError::NoUser) => Err(AppError::NotFound),
-        Err(RenameError::Db(e)) => Err(e.into()),
+    let mut tx = state.db.primary().begin().await?;
+    match name_changes::rename_in(&mut tx, user.id, name.as_str(), changer).await {
+        Ok(()) => {}
+        Err(RenameError::Taken) => {
+            return Err(AppError::Unprocessable(format!("“{name}” is taken.")));
+        }
+        Err(RenameError::NoUser) => return Err(AppError::NotFound),
+        Err(RenameError::Db(e)) => return Err(e.into()),
     }
+    if let Some(reason) = logged {
+        mod_actions::record(
+            &mut *tx,
+            NewAction::new(changer, ActionKind::UserRename)
+                .user(user.id)
+                .reason(reason)
+                .details(serde_json::json!({ "from": user.name, "to": name.as_str() })),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(name.as_str().to_owned())
 }
 
 /// When `user` may next change their own name, if not yet.
@@ -137,7 +156,7 @@ async fn change_own(
             Some(message),
         ));
     }
-    match rename(state, &user, &form.name, Some(user.id)).await {
+    match rename(state, &user, &form.name, Some(user.id), None).await {
         Ok(name) => {
             tracing::info!(user = user.id, from = %user.name, to = %name, "name changed");
             Ok((
@@ -174,20 +193,12 @@ async fn rename_user(
         )));
     }
     let actor = page.current.user.as_ref().map(|u| u.id);
-    let new = rename(state, &user, &form.name, actor)
+    let new = rename(state, &user, &form.name, actor, Some(reason))
         .await
         .map_err(|e| match e {
             AppError::Unprocessable(message) => AppError::BadRequest(message),
             other => other,
         })?;
-    mod_actions::record(
-        state.db.primary(),
-        NewAction::new(actor, ActionKind::UserRename)
-            .user(user.id)
-            .reason(reason)
-            .details(serde_json::json!({ "from": user.name, "to": new })),
-    )
-    .await?;
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to(&format!("/users/{new}")),

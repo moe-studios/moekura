@@ -13,7 +13,7 @@ use axum::{Form, Json, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
+use moekura_core::moderation::{ActionKind, REASON_MAX_LEN, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
 use moekura_db::comments::{self, Comment, Filter, ReportError, Status};
@@ -631,6 +631,7 @@ fn comment_action(
 ) -> NewAction<'static> {
     let action = NewAction::new(actor, kind)
         .post(comment.post_id)
+        .subject(SubjectKind::Comment, comment.id)
         .details(serde_json::json!({ "comment_id": comment.id, "reports": reports }));
     match comment.creator_id {
         Some(author) => action.user(author),

@@ -299,17 +299,20 @@ async fn set_auto_promotion(
         return Err(AppError::Forbidden);
     }
     let blocked = form.blocked.is_some();
-    moekura_db::promotion::set_blocked(db, user.id, blocked).await?;
-    moekura_db::mod_actions::record(
-        db,
-        moekura_db::mod_actions::NewAction::new(
-            page.current.user.as_ref().map(|u| u.id),
-            moekura_core::moderation::ActionKind::UserStatus,
+    let mut tx = db.begin().await?;
+    if moekura_db::promotion::set_blocked(&mut *tx, user.id, blocked).await? {
+        moekura_db::mod_actions::record(
+            &mut *tx,
+            moekura_db::mod_actions::NewAction::new(
+                page.current.user.as_ref().map(|u| u.id),
+                moekura_core::moderation::ActionKind::UserStatus,
+            )
+            .user(user.id)
+            .details(serde_json::json!({ "auto_promotion_blocked": blocked })),
         )
-        .user(user.id)
-        .details(serde_json::json!({ "auto_promotion_blocked": blocked })),
-    )
-    .await?;
+        .await?;
+    }
+    tx.commit().await?;
     let back = format!(
         "/users/{}",
         url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>()

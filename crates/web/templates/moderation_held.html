@@ -12,8 +12,11 @@
       {% set what = t("held-what-comment", id=h.post_id) if h.kind == "comment" else (t("held-what-forum-post", title=h.title) if h.kind == "forum_post" else t("held-what-dmail", user=h.recipient or t("gone"), title=h.title)) %}
       <strong>{% if h.url %}<a href="{{ h.url }}">{{ what }}</a>{% else %}{{ what }}{% endif %}</strong>
       <span class="hint">{% if h.creator %}{{ t("by-link", url="/moderation/users/" ~ h.creator|urlencode, user=h.creator) }}{% else %}{{ t("by-user", user=t("gone")) }}{% endif %} · {{ h.date }} {{ h.time }}</span>
-      <form method="post" action="/moderation/held/{{ h.kind }}/{{ h.id }}/approve"><button type="submit">{{ t("approve") }}</button></form>
-      <form method="post" action="/moderation/held/{{ h.kind }}/{{ h.id }}/reject"><button type="submit" class="secondary">{{ t("reject") }}</button></form>
+      <form class="inline" method="post" action="/moderation/held/{{ h.kind }}/{{ h.id }}/approve">
+        <input name="reason" maxlength="2000" placeholder="{{ t('reason') }}" aria-label="{{ t('reason') }}">
+        <button type="submit">{{ t("approve") }}</button>
+        <button type="submit" class="secondary" formaction="/moderation/held/{{ h.kind }}/{{ h.id }}/reject">{{ t("reject") }}</button>
+      </form>
     </div>
     <p>{{ t("mod-held-reason", reason=h.reason) }}</p>
     <div class="markup">{{ h.html }}</div>

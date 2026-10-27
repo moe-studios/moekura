@@ -4,7 +4,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Entry, Filter};
 use moekura_db::post_batches::{self, PostBatch};
@@ -831,6 +831,11 @@ pub struct LogParams {
     post_id: Option<i64>,
     /// Only actions on this user.
     user: Option<String>,
+    /// Only actions about this kind of thing (`comment`, `forum_post`,
+    /// `forum_topic`, `dmail`, …), with `subject_id`.
+    subject: Option<String>,
+    /// The comment's, forum post's, … number, with `subject`.
+    subject_id: Option<i64>,
     /// Entries older than this id: a previous page's `next_before`.
     before: Option<i64>,
     /// Entries from this day on (`YYYY-MM-DD`, UTC).
@@ -849,6 +854,10 @@ pub struct LogEntry {
     pub post_id: Option<i64>,
     /// The user acted on.
     pub user: Option<String>,
+    /// What else it was about (`comment`, `forum_post`, …), with
+    /// `subject_id`.
+    pub subject: Option<String>,
+    pub subject_id: Option<i64>,
     pub reason: String,
     /// Anything else recorded, depending on the action.
     #[schema(value_type = Object)]
@@ -879,7 +888,7 @@ const LOG_PAGE: i64 = 50;
     params(LogParams),
     responses(
         (status = 200, body = LogPage),
-        (status = 400, body = ErrorBody, description = "Unknown action"),
+        (status = 400, body = ErrorBody, description = "Unknown action or subject"),
         (status = 422, body = ErrorBody, description = "A date isn't `YYYY-MM-DD`"),
     ),
 )]
@@ -911,11 +920,25 @@ pub(crate) async fn log(
         })
     };
     let (since, until) = crate::moderation::day_span(day(&params.since)?, day(&params.until)?);
+    let subject = match (params.subject.as_deref(), params.subject_id) {
+        (None, None) => None,
+        (Some(kind), Some(id)) => Some((
+            SubjectKind::parse(kind)
+                .ok_or_else(|| AppError::BadRequest(format!("Unknown subject `{kind}`")))?,
+            id,
+        )),
+        _ => {
+            return Err(AppError::BadRequest(
+                "Give `subject` and `subject_id` together".into(),
+            ));
+        }
+    };
     let filter = Filter {
         action,
         actor_id: user_id(params.actor.as_deref()).await?,
         post_id: params.post_id,
         user_id: user_id(params.user.as_deref()).await?,
+        subject,
         before: params.before,
         since,
         until,
@@ -933,6 +956,8 @@ pub(crate) async fn log(
                 action: e.action,
                 post_id: e.post_id,
                 user: e.user_name,
+                subject: e.subject_kind,
+                subject_id: e.subject_id,
                 reason: e.reason,
                 details: e.details,
                 created_at: e.created_at,

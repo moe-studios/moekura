@@ -360,7 +360,19 @@ time, the past year), so the pages cost nothing to view. Days are UTC.
 ## The moderation log
 
 **Moderation → Log** lists every staff action: approvals, deletions,
-purges, flag decisions, bans, tag and relation changes, role and setting
-changes (including those made from the shell). Filter it by action,
-moderator, post, the user acted on, or a range of days. Role, status and
-setting changes show what they changed from.
+purges, flag and appeal decisions, bans, hidden comments and forum posts,
+staff edits to forum posts and topics, held writing let through or
+turned away, deleted staff notes, tag and relation changes, role and
+setting changes (including those made from the shell). It also records
+what members ask staff to act on: flags, appeals, disapprovals and
+feedback on users (with each change to feedback, as its history). Each
+entry is written in the same transaction as the change it records, so
+nothing changes without its entry, and only when something did change.
+Forum hides, topic changes, held decisions and lock changes take an
+optional reason, as deletions and bans do.
+
+Filter it by action, moderator, post, the user acted on, a range of days,
+or what else an entry is about: a comment, forum post or topic, message,
+staff note, feedback, pool, artist or news item, by number (each entry
+about one links to its own log). Role, status and setting changes show
+what they changed from.

@@ -379,7 +379,7 @@
       <p class="hint">{{ t("post-waiting") }}</p>
       <form method="post" action="/posts/{{ post.id }}/approve?from=post"><button type="submit">{{ t("approve") }}</button></form>
       <form method="post" action="/posts/{{ post.id }}/reject?from=post">
-        {{ reason_fields("reject-reason", reasons.deletion, t("reason-rejecting"), required=false) }}
+        {{ reason_fields("reject-reason", reasons.deletion, t("reason-rejecting")) }}
         <button type="submit" class="secondary">{{ t("reject") }}</button>
       </form>
       {% endif %}
@@ -389,6 +389,8 @@
           <legend>{{ t("post-locks") }}</legend>
           {% for l in moderate.locks %}<label class="choice"><input type="checkbox" name="{{ l.name }}"{% if l.on %} checked{% endif %}> {{ t("lock-" ~ l.name) }}</label>{% endfor %}
         </fieldset>
+        <label for="locks-reason">{{ t("reason") }} <span class="optional">{{ t("reason-details-optional") }}</span></label>
+        <input id="locks-reason" name="reason" maxlength="2000">
         <button type="submit" class="secondary">{{ t("post-locks-save") }}</button>
       </form>
       {% endif %}

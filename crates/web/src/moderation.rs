@@ -8,7 +8,7 @@ use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::jobs::PurgePost;
 use moekura_core::moderation::REASON_MAX_LEN;
-use moekura_core::moderation::{ActionKind, DisapprovalReason};
+use moekura_core::moderation::{ActionKind, DisapprovalReason, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::{PostLock, PostStatus};
 use moekura_core::webhooks::Event;
@@ -298,6 +298,13 @@ pub(crate) async fn flag_post(
         Err(FlagError::Db(e)) => return Err(e.into()),
         Err(e) => return Err(AppError::BadRequest(e.to_string())),
     }
+    let mut entry = NewAction::new(Some(user.id), ActionKind::FlagCreate)
+        .post(id)
+        .reason(reason);
+    if let Some(uploader) = post.uploader_id {
+        entry = entry.user(uploader);
+    }
+    mod_actions::record(&mut *tx, entry).await?;
     tx.commit().await?;
     tracing::info!(post_id = id, user = user.name, "post flagged");
     crate::webhooks::emit_post(
@@ -401,6 +408,8 @@ struct LocksForm {
     tags: Option<String>,
     notes: Option<String>,
     status: Option<String>,
+    #[serde(default)]
+    reason: String,
 }
 
 async fn set_locks_form(
@@ -418,19 +427,21 @@ async fn set_locks_form(
     .into_iter()
     .filter_map(|(ticked, lock)| ticked.then_some(lock))
     .collect();
-    set_locks(page.state(), &page.current, id, &locks).await?;
+    set_locks(page.state(), &page.current, id, &locks, &form.reason).await?;
     Ok(back_to(jar, &format!("/posts/{id}")))
 }
 
 /// Locks exactly `locks` of post `id`, recording it in the post's history
-/// and the log.
+/// and the log, with `reason`.
 pub(crate) async fn set_locks(
     state: &AppState,
     current: &CurrentUser,
     id: i64,
     locks: &[PostLock],
+    reason: &str,
 ) -> Result<(), AppError> {
     current.require(Permission::LockPosts)?;
+    let reason = check_reason(reason)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
     let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
@@ -453,6 +464,7 @@ pub(crate) async fn set_locks(
         &mut *tx,
         NewAction::new(actor, ActionKind::PostLock)
             .post(id)
+            .reason(reason)
             .details(serde_json::json!({ "from": names(&post.locks), "locks": names(locks) })),
     )
     .await?;
@@ -550,6 +562,13 @@ pub(crate) async fn appeal_post(
         Err(AppealError::Db(e)) => return Err(e.into()),
         Err(e) => return Err(AppError::BadRequest(e.to_string())),
     }
+    let mut entry = NewAction::new(Some(user.id), ActionKind::AppealCreate)
+        .post(id)
+        .reason(reason);
+    if let Some(uploader) = post.uploader_id {
+        entry = entry.user(uploader);
+    }
+    mod_actions::record(&mut *tx, entry).await?;
     tx.commit().await?;
     tracing::info!(post_id = id, user = user.name, "post appealed");
     Ok(())
@@ -1026,13 +1045,21 @@ pub(crate) async fn disapprove_post(
         .filter(|p| crate::posts::visibility(current).allows(p))
         .ok_or(AppError::NotFound)?;
     crate::ranks::check_moderate(state, current, post.uploader_id, Act::Against).await?;
-    if !moekura_db::disapprovals::disapprove(state.db.primary(), id, user.id, reason, message)
-        .await?
-    {
+    let mut tx = state.db.primary().begin().await?;
+    if !moekura_db::disapprovals::disapprove(&mut *tx, id, user.id, reason, message).await? {
         return Err(AppError::BadRequest(
             "Only pending posts can be disapproved".into(),
         ));
     }
+    let mut entry = NewAction::new(Some(user.id), ActionKind::PostDisapprove)
+        .post(id)
+        .reason(message)
+        .details(serde_json::json!({ "why": reason.as_str() }));
+    if let Some(uploader) = post.uploader_id {
+        entry = entry.user(uploader);
+    }
+    mod_actions::record(&mut *tx, entry).await?;
+    tx.commit().await?;
     tracing::info!(
         post_id = id,
         user = user.name,
@@ -1111,6 +1138,11 @@ struct LogQuery {
     /// The user acted on.
     #[serde(default)]
     user: String,
+    /// What else it's about, by kind (`comment`, …), with `subject_id`.
+    #[serde(default)]
+    subject: String,
+    #[serde(default)]
+    subject_id: String,
     /// `YYYY-MM-DD`, UTC, inclusive.
     #[serde(default)]
     since: String,
@@ -1159,8 +1191,36 @@ pub(crate) fn day_span(
     )
 }
 
+/// Where a log entry's subject is shown, if it has a page.
+fn subject_url(kind: SubjectKind, id: i64) -> Option<String> {
+    match kind {
+        SubjectKind::Comment => Some(format!("/comments/{id}")),
+        SubjectKind::ForumPost => Some(format!("/forum_posts/{id}")),
+        SubjectKind::ForumTopic => Some(format!("/forum_topics/{id}")),
+        SubjectKind::Pool => Some(format!("/pools/{id}")),
+        SubjectKind::Artist => Some(format!("/artists/{id}")),
+        _ => None,
+    }
+}
+
 pub(crate) fn entry_context(entry: &Entry) -> Value {
     let kind = ActionKind::parse(&entry.action);
+    let subject = entry
+        .subject_kind
+        .as_deref()
+        .and_then(SubjectKind::parse)
+        .zip(entry.subject_id)
+        .map(|(kind, id)| {
+            context! {
+                kind => kind.as_str(),
+                id => id,
+                url => subject_url(kind, id).map(|u| url_value(&u)),
+                log_url => url_value(&format!(
+                    "/moderation/log?subject={}&subject_id={id}",
+                    kind.as_str()
+                )),
+            }
+        });
     let details: Vec<Value> = entry
         .details
         .as_object()
@@ -1186,6 +1246,7 @@ pub(crate) fn entry_context(entry: &Entry) -> Value {
         known => kind.is_some(),
         post_id => entry.post_id,
         user => entry.user_name,
+        subject => subject,
         reason => entry.reason,
         details => details,
     }
@@ -1202,11 +1263,20 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
         }
     };
     let (since, until) = day_span(parse_day(&query.since)?, parse_day(&query.until)?);
+    let subject = SubjectKind::parse(&query.subject).zip(
+        query
+            .subject_id
+            .trim()
+            .trim_start_matches('#')
+            .parse::<i64>()
+            .ok(),
+    );
     let filter = Filter {
         action: ActionKind::parse(&query.action),
         actor_id: user_id(&query.by).await?,
         post_id: query.post.trim().trim_start_matches('#').parse().ok(),
         user_id: user_id(&query.user).await?,
+        subject,
         before: query.before,
         since,
         until,
@@ -1221,6 +1291,8 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
                 .append_pair("by", &query.by)
                 .append_pair("post", &query.post)
                 .append_pair("user", &query.user)
+                .append_pair("subject", &query.subject)
+                .append_pair("subject_id", &query.subject_id)
                 .append_pair("since", &query.since)
                 .append_pair("until", &query.until)
                 .append_pair("before", &id.to_string())
@@ -1232,11 +1304,14 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
         context! {
             entries => entries.iter().map(entry_context).collect::<Vec<_>>(),
             actions => ActionKind::ALL.iter().map(|k| context! { name => k.as_str() }).collect::<Vec<_>>(),
+            subjects => SubjectKind::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
             query => context! {
                 action => query.action,
                 by => query.by,
                 post => query.post,
                 user => query.user,
+                subject => query.subject,
+                subject_id => query.subject_id,
                 since => query.since,
                 until => query.until,
             },
@@ -1248,7 +1323,7 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
-    use moekura_core::moderation::ActionKind;
+    use moekura_core::moderation::{ActionKind, SubjectKind};
     use moekura_core::permissions::SystemRole;
     use moekura_db::mod_actions::{self, NewAction};
     use sqlx::PgPool;
@@ -1548,6 +1623,32 @@ mod tests {
                 assert_eq!(response.status, StatusCode::FORBIDDEN, "{action} {id}");
             }
         }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_log_finds_what_an_entry_is_about(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        for (kind, id) in [(SubjectKind::Comment, 5), (SubjectKind::ForumPost, 5)] {
+            mod_actions::record(
+                &pool,
+                NewAction::new(None, ActionKind::CommentHide)
+                    .subject(kind, id)
+                    .reason("rude"),
+            )
+            .await
+            .unwrap();
+        }
+        let page = app
+            .get(
+                "/moderation/log?subject=comment&subject_id=5",
+                Some(&moderator),
+            )
+            .await
+            .body;
+        assert!(page.contains("href=\"/comments/5\""), "{page}");
+        assert!(!page.contains("/forum_posts/5"), "{page}");
+        assert!(page.contains("subject=comment&amp;subject_id=5"), "{page}");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
@@ -2303,7 +2404,15 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(logged, ["post.restore", "appeal.reject"]);
+        assert_eq!(
+            logged,
+            [
+                "appeal.create",
+                "appeal.create",
+                "post.restore",
+                "appeal.reject"
+            ]
+        );
         // The history stays on the post.
         let page = app
             .get(&format!("/posts/{}", ids[1]), Some(&alice))

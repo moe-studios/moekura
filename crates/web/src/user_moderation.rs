@@ -7,7 +7,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Filter, NewAction};
 use moekura_db::user_notes::{self, UserNote};
@@ -225,6 +225,7 @@ async fn delete_note(
             &mut *tx,
             NewAction::new(actor, ActionKind::UserNoteDelete)
                 .user(user.id)
+                .subject(SubjectKind::UserNote, id)
                 .details(serde_json::json!({ "note": id })),
         )
         .await?;

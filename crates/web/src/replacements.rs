@@ -34,6 +34,10 @@ pub fn routes(max_upload_bytes: u64) -> Router<AppState> {
             post(replace).layer(crate::upload::body_limit(max_upload_bytes)),
         )
         .route("/posts/{id}/replacements", get(list))
+        .route(
+            "/posts/{id}/replacements/{replacement}/remove",
+            post(remove_old_form),
+        )
 }
 
 /// What to replace a post's file with.
@@ -44,6 +48,9 @@ pub(crate) struct Replacement<'a> {
     pub source: &'a str,
     /// Move and resize notes to fit the new size.
     pub rescale_notes: bool,
+    /// Remove the earlier file for good, rather than keep it in the
+    /// post's replacements (it showed what the new file takes out).
+    pub remove_old: bool,
 }
 
 fn refused(error: UploadError) -> AppError {
@@ -168,6 +175,9 @@ async fn record(
     .await?;
     tx.commit().await?;
     tracing::info!(post_id = post.id, "post file replaced");
+    if replacement.remove_old {
+        remove_old_file(state, current, post.id, replaced.id).await?;
+    }
 
     // The old renditions are no use now; the old original stays, for the
     // post's replacement history.
@@ -220,6 +230,7 @@ async fn replace(
     let mut fields = UploadFields::default();
     let mut reason = String::new();
     let mut rescale = false;
+    let mut remove_old = false;
     while let Some(field) = form
         .next_field()
         .await
@@ -241,6 +252,7 @@ async fn replace(
             }
             "reason" => reason = text_field(field, TEXT_FIELD_MAX).await?,
             "rescale_notes" => rescale = true,
+            "remove_old" => remove_old = true,
             _ => {}
         }
     }
@@ -264,12 +276,66 @@ async fn replace(
             reason: &reason,
             source: &fields.source,
             rescale_notes: rescale,
+            remove_old,
         },
     )
     .await?;
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to(&format!("/posts/{id}")),
+    )
+        .into_response())
+}
+
+/// Removes the earlier file of replacement `replacement` of post
+/// `post_id` for good, logged: its storage goes unless something else
+/// has the same file, and the replacements list says it was removed.
+pub(crate) async fn remove_old_file(
+    state: &AppState,
+    current: &CurrentUser,
+    post_id: i64,
+    replacement: i64,
+) -> Result<(), AppError> {
+    current.require(Permission::ReplacePosts)?;
+    let db = state.db.primary();
+    posts::by_id(db, post_id)
+        .await?
+        .filter(|p| crate::posts::visibility(current).allows(p))
+        .ok_or(AppError::NotFound)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = db.begin().await?;
+    let key = replacements::remove_old(&mut tx, post_id, replacement, actor)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor, ActionKind::PostRemoveOldFile)
+            .post(post_id)
+            .details(serde_json::json!({ "replacement": replacement })),
+    )
+    .await?;
+    // Gone from storage first: if that fails, nothing is marked.
+    if let Some(key) = key.as_deref().and_then(Key::parse) {
+        state
+            .storage
+            .delete(&key)
+            .await
+            .map_err(|e| AppError::Internal(format!("deleting {key}: {e}")))?;
+    }
+    tx.commit().await?;
+    tracing::info!(post_id, replacement, "earlier file removed");
+    Ok(())
+}
+
+async fn remove_old_form(
+    page: Page,
+    jar: CookieJar,
+    Path((id, replacement)): Path<(i64, i64)>,
+) -> Result<Response, AppError> {
+    remove_old_file(page.state(), &page.current, id, replacement).await?;
+    Ok((
+        flash::set(jar, Flash::Saved),
+        Redirect::to(&format!("/posts/{id}/replacements")),
     )
         .into_response())
 }
@@ -299,14 +365,18 @@ async fn list(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
         "post_replacements.html",
         context! {
             post_id => id,
+            can_remove => page.current.can(Permission::ReplacePosts),
             replacements => found.iter().map(|r| context! {
+                id => r.id,
+                removed => r.old_removed_at.map(crate::dates::day),
+                removed_by => r.old_remover_name,
                 date => crate::dates::day(r.created_at),
                 time => crate::dates::clock(r.created_at),
                 creator => r.creator_name,
                 reason => r.reason,
                 source => r.source,
                 old => context! {
-                    url => file(&r.old_storage_key),
+                    url => r.old_removed_at.is_none().then(|| file(&r.old_storage_key)).flatten(),
                     size => format!("{}×{}", r.old_width, r.old_height),
                     kind => r.old_media_type.to_uppercase(),
                     bytes => human(r.old_file_size),
@@ -463,5 +533,55 @@ mod tests {
             .await
             .body;
         assert!(listed.contains("\"image_width_was\":20"), "{listed}");
+
+        // The earlier file can go for good.
+        let (replacement, old_key): (i64, String) =
+            sqlx::query_as("SELECT id, old_storage_key FROM post_replacements WHERE post_id = $1")
+                .bind(post)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let old_key = moekura_storage::Key::parse(&old_key).unwrap();
+        assert!(state.storage.exists(&old_key).await.unwrap());
+        let remove = format!("/posts/{post}/replacements/{replacement}/remove");
+        assert_eq!(
+            app.post(&remove, Some(&alice), &[]).await.status,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            app.post(&remove, Some(&boss), &[]).await.status,
+            StatusCode::SEE_OTHER
+        );
+        assert!(!state.storage.exists(&old_key).await.unwrap());
+        let history = app
+            .get(&format!("/posts/{post}/replacements"), None)
+            .await
+            .body;
+        assert!(history.contains("removed"), "{history}");
+        assert!(!history.contains(old_key.as_str()), "{history}");
+        assert_eq!(
+            app.post(&remove, Some(&boss), &[]).await.status,
+            StatusCode::NOT_FOUND,
+            "once"
+        );
+        // Replacing with the old file removed straight away.
+        let newest = fixture::png(48, 48);
+        let removed = app
+            .post_multipart(
+                &url,
+                Some(&boss),
+                &[("remove_old", "1".to_owned())],
+                Some(("n.png", newest.as_slice())),
+            )
+            .await;
+        assert_eq!(removed.status, StatusCode::SEE_OTHER, "{}", removed.body);
+        let kept: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM post_replacements WHERE post_id = $1 AND old_removed_at IS NULL",
+        )
+        .bind(post)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kept, 0);
     }
 }

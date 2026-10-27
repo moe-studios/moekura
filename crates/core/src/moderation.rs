@@ -349,10 +349,11 @@ pub enum ActionKind {
     FeedbackUpdate,
     ReportCreate,
     ReportSettle,
+    PostRemoveOldFile,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 70] = [
+    pub const ALL: [ActionKind; 71] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -423,6 +424,7 @@ impl ActionKind {
         ActionKind::FeedbackUpdate,
         ActionKind::ReportCreate,
         ActionKind::ReportSettle,
+        ActionKind::PostRemoveOldFile,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -497,6 +499,7 @@ impl ActionKind {
             ActionKind::FeedbackUpdate => "user_feedback.update",
             ActionKind::ReportCreate => "report.create",
             ActionKind::ReportSettle => "report.settle",
+            ActionKind::PostRemoveOldFile => "post.remove_old_file",
         }
     }
 
@@ -573,6 +576,7 @@ impl ActionKind {
             ActionKind::FeedbackUpdate => "changed feedback on",
             ActionKind::ReportCreate => "made a report about",
             ActionKind::ReportSettle => "settled reports about",
+            ActionKind::PostRemoveOldFile => "removed an earlier file of post",
         }
     }
 

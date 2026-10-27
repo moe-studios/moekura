@@ -13,7 +13,9 @@
       {% if r.reason %}<span>: {{ r.reason }}</span>{% endif %}
     </div>
     <ul class="changes">
-      <li class="removed">−{% if r.old.url %}<a href="{{ r.old.url }}">{% endif %}{{ r.old.size }} {{ r.old.kind }}, {{ r.old.bytes }}{% if r.old.url %}</a>{% endif %} <span class="hint">md5 {{ r.old.md5 }}</span></li>
+      <li class="removed">−{% if r.old.url %}<a href="{{ r.old.url }}">{% endif %}{{ r.old.size }} {{ r.old.kind }}, {{ r.old.bytes }}{% if r.old.url %}</a>{% endif %} <span class="hint">md5 {{ r.old.md5 }}</span>
+        {% if r.removed %}<span class="hint">· {{ t("replacements-removed", day=r.removed, user=r.removed_by or t("gone")) }}</span>
+        {% elif can_remove %}<form class="inline" method="post" action="/posts/{{ post_id }}/replacements/{{ r.id }}/remove"><button type="submit" class="secondary" data-confirm="{{ t('replacements-remove-confirm') }}">{{ t("replacements-remove") }}</button></form>{% endif %}</li>
       <li class="added">+{{ r.new.size }} {{ r.new.kind }}, {{ r.new.bytes }} <span class="hint">md5 {{ r.new.md5 }}</span></li>
       {% if r.source %}<li>{{ t("replacements-from", source=r.source) }}</li>{% endif %}
     </ul>

@@ -119,6 +119,7 @@ action-user_feedback_create = left feedback on
 action-user_feedback_update = changed feedback on
 action-report_create = made a report about
 action-report_settle = settled reports about
+action-post_remove_old_file = removed an earlier file of post
 
 mod-log-title = Moderation log
 mod-log-subject = About

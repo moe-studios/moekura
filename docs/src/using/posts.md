@@ -196,6 +196,13 @@ by whom and why, and the file before (still downloadable, until the post
 is purged) and after. Replacements are recorded in the moderation log,
 and Danbooru clients can read them at `/post_replacements.json`.
 
+When the point of replacing was to take something out of the file (a
+location in its metadata, say), the earlier file shouldn't stay up: tick
+**Remove the old file for good** when replacing, or use **Remove this
+file** on the replacements list later. The file is deleted from storage
+(unless another post has the very same file), the list says who removed
+it and when, and the removal is logged.
+
 ## Thumbnails
 
 Grids show each post's whole picture, scaled to fit, as on Danbooru.

@@ -227,9 +227,13 @@ pub(crate) async fn moderate(
         posts::set_approver(&mut *tx, id, actor).await?;
     }
     // Restoring a post grants its appeal.
-    if action == PostAction::Restore {
+    let appellant = if action == PostAction::Restore {
+        let appellant = appeals::open_creator(&mut *tx, id).await?;
         appeals::resolve(&mut *tx, id, true, actor).await?;
-    }
+        appellant
+    } else {
+        None
+    };
     let mut entry = NewAction::new(actor, kind).post(id).reason(reason);
     if to == PostStatus::Pending {
         entry = entry.details(serde_json::json!({ "to": "pending" }));
@@ -237,9 +241,28 @@ pub(crate) async fn moderate(
     mod_actions::record(&mut *tx, entry).await?;
     tx.commit().await?;
     tracing::info!(post_id = id, action = kind.as_str(), "post moderated");
+    // The uploader hears of it, and whoever appealed it.
+    let url = format!("/posts/{id}");
+    let told = match action {
+        PostAction::Reject => Some(format!("Your upload, post #{id}, was rejected: “{reason}”")),
+        PostAction::Delete => Some(format!("Your post #{id} was deleted: “{reason}”")),
+        PostAction::Restore if to == PostStatus::Pending => Some(format!(
+            "Your post #{id} was restored, and waits for approval again"
+        )),
+        PostAction::Restore => Some(format!("Your post #{id} was restored")),
+        _ => None,
+    };
+    if let Some(told) = told {
+        crate::notifications::moderated(state, post.uploader_id, actor, &told, &url).await;
+    }
+    if appellant.is_some() && appellant != post.uploader_id {
+        let told = format!("Your appeal of post #{id} was granted: it's restored");
+        crate::notifications::moderated(state, appellant, actor, &told, &url).await;
+    }
     let event = match action {
         PostAction::Approve => Some(Event::PostApproved),
         PostAction::Reject | PostAction::Delete => Some(Event::PostDeleted),
+        PostAction::Restore => Some(Event::PostRestored),
         _ => None,
     };
     if let Some(event) = event {
@@ -672,6 +695,7 @@ pub(crate) async fn turn_down_appeal(
         return Err(AppError::NotFound);
     }
     crate::ranks::check_moderate(state, current, post.uploader_id, Act::Against).await?;
+    let appellant = appeals::open_creator(&mut *tx, id).await?;
     if appeals::resolve(&mut *tx, id, false, actor).await? == 0 {
         return Err(AppError::BadRequest("The post has no open appeal".into()));
     }
@@ -683,6 +707,12 @@ pub(crate) async fn turn_down_appeal(
     )
     .await?;
     tx.commit().await?;
+    let told = if reason.is_empty() {
+        format!("Your appeal of post #{id} was turned down")
+    } else {
+        format!("Your appeal of post #{id} was turned down: “{reason}”")
+    };
+    crate::notifications::moderated(state, appellant, actor, &told, &format!("/posts/{id}")).await;
     Ok(())
 }
 
@@ -1683,6 +1713,78 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(logged, ["post.disapprove", "post.undisapprove"]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn uploaders_hear_what_staff_did(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let told = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT n.subject FROM notifications n JOIN users u ON u.id = n.user_id
+                 WHERE u.name = 'alice' AND n.kind = 'moderation' ORDER BY n.id",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        let pending = post_by(&pool, "alice", "pending").await;
+        app.post_form(
+            &format!("/posts/{pending}/reject"),
+            Some(&janitor),
+            &[],
+            "reason=blurry",
+        )
+        .await;
+        let active = post_by(&pool, "alice", "active").await;
+        app.post_form(
+            &format!("/posts/{active}/delete"),
+            Some(&janitor),
+            &[],
+            "reason=dup",
+        )
+        .await;
+        app.post(&format!("/posts/{active}/restore"), Some(&janitor), &[])
+            .await;
+        assert_eq!(
+            told().await,
+            [
+                format!("Your upload, post #{pending}, was rejected: “blurry”"),
+                format!("Your post #{active} was deleted: “dup”"),
+                format!("Your post #{active} was restored"),
+            ]
+        );
+        // Whoever appealed hears how it ended.
+        let theirs = post_by(&pool, "bob", "deleted").await;
+        app.post_form(
+            &format!("/posts/{theirs}/appeal"),
+            Some(&bob),
+            &[],
+            "reason=mine",
+        )
+        .await;
+        app.post_form(
+            &format!("/posts/{theirs}/appeals/reject"),
+            Some(&janitor),
+            &[],
+            "reason=still+a+dup",
+        )
+        .await;
+        let bobs: Vec<String> = sqlx::query_scalar(
+            "SELECT n.subject FROM notifications n JOIN users u ON u.id = n.user_id
+             WHERE u.name = 'bob'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            bobs,
+            [format!(
+                "Your appeal of post #{theirs} was turned down: “still a dup”"
+            )]
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

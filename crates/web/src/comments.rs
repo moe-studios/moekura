@@ -703,6 +703,15 @@ pub(crate) async fn moderate(
     .await?;
     tx.commit().await?;
     tracing::info!(comment = id, hidden, "comment moderated");
+    let told = match (hidden, reason) {
+        (true, "") => format!("Your comment on post #{} was hidden", comment.post_id),
+        (true, why) => format!(
+            "Your comment on post #{} was hidden: “{why}”",
+            comment.post_id
+        ),
+        (false, _) => format!("Your comment on post #{} was restored", comment.post_id),
+    };
+    crate::notifications::moderated(state, comment.creator_id, actor, &told, &url(&comment)).await;
     Ok(comment)
 }
 
@@ -1385,6 +1394,17 @@ mod tests {
             )
             .await;
         assert_eq!(hidden.status, StatusCode::SEE_OTHER);
+        let told: String = sqlx::query_scalar(
+            "SELECT n.subject FROM notifications n JOIN users u ON u.id = n.user_id
+             WHERE u.name = 'alice' AND n.kind = 'moderation'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            told,
+            format!("Your comment on post #{post} was hidden: “x”")
+        );
         let deleted = comment(&alice).await;
         app.post(&format!("/comments/{deleted}/delete"), Some(&alice), &[])
             .await;

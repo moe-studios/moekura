@@ -82,6 +82,17 @@ pub async fn create(
     })
 }
 
+/// Who made post `post_id`'s open appeal, if it has one.
+pub async fn open_creator(db: impl PgExecutor<'_>, post_id: i64) -> sqlx::Result<Option<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT creator_id FROM post_appeals WHERE post_id = $1 AND status = 'open'",
+    )
+    .bind(post_id)
+    .fetch_optional(db)
+    .await?
+    .flatten())
+}
+
 /// Closes a post's open appeal as `approved` (the post was restored) or
 /// `rejected`; returns how many there were (0 or 1).
 pub async fn resolve(

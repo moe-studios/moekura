@@ -71,6 +71,7 @@ webhooks-add-button = Add webhook
 webhook-event-post_created = A post is uploaded
 webhook-event-post_approved = A post is approved
 webhook-event-post_deleted = A post is deleted
+webhook-event-post_restored = A deleted post is restored
 webhook-event-post_flagged = A post is flagged
 webhook-event-comment_created = A comment is posted
 webhook-event-user_registered = Someone registers

@@ -18,6 +18,7 @@ notification-message = { $actor } sent you a message: { $subject }
 notification-forum = { $actor } posted in { $subject }
 notification-feedback = { $actor } left { $subject }
 notification-request = { $actor } decided on { $subject }
+notification-moderation = { $subject }
 
 feedback-by = Feedback by { $user }
 feedback-user = User feedback

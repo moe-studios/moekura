@@ -136,6 +136,7 @@ fn colour(event: Event) -> u32 {
         Event::PostCreated => 0x0075f8,
         Event::PostApproved => 0x2ecc71,
         Event::PostDeleted => 0xed4245,
+        Event::PostRestored => 0x57f287,
         Event::PostFlagged => 0xf1a40f,
         Event::CommentCreated => 0x9b59b6,
         Event::UserRegistered => 0x1abc9c,
@@ -151,6 +152,7 @@ fn post_embed(event: Event, data: &Value, options: &Options) -> Map<String, Valu
     let verb = match event {
         Event::PostApproved => "approved",
         Event::PostDeleted => "deleted",
+        Event::PostRestored => "restored",
         Event::PostFlagged => "flagged",
         _ => "uploaded",
     };

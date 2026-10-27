@@ -186,6 +186,36 @@ async fn decide(
     if approve && !item.edited {
         published(state, &item, kind).await?;
     }
+    let (what, url) = match kind {
+        Kind::Comment => (
+            format!(
+                "Your comment on post #{}",
+                item.parent_id.unwrap_or_default()
+            ),
+            format!("/comments/{id}"),
+        ),
+        Kind::ForumPost => (
+            format!(
+                "Your post in “{}”",
+                item.title.as_deref().unwrap_or_default()
+            ),
+            format!("/forum_posts/{id}"),
+        ),
+        Kind::Dmail => (
+            format!(
+                "Your message to {}",
+                item.recipient_name.as_deref().unwrap_or("someone")
+            ),
+            "/dmails?folder=sent".to_owned(),
+        ),
+    };
+    let told = if approve {
+        format!("{what}, held for review, is out now")
+    } else {
+        format!("{what}, held for review, was turned away")
+    };
+    let actor = page.current.user.as_ref().map(|u| u.id);
+    crate::notifications::moderated(state, item.creator_id, actor, &told, &url).await;
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to("/moderation/held"),
@@ -411,6 +441,12 @@ mod tests {
                 .await
                 .body
                 .contains("alice mentioned you")
+        );
+        assert!(
+            app.get("/notifications", Some(&alice))
+                .await
+                .body
+                .contains("held for review, is out now")
         );
         let post_id: i64 = sqlx::query_scalar("SELECT id FROM forum_posts")
             .fetch_one(&pool)

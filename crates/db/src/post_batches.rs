@@ -306,15 +306,29 @@ pub async fn stale(
 }
 
 /// Deletes post `id` for having waited too long in status `from`, as a
-/// deletion by nobody in particular, with `reason`; false if it was
-/// dealt with meanwhile.
+/// deletion by nobody in particular, with `reason`, and tells its
+/// uploader; false if it was dealt with meanwhile.
 pub async fn expire(db: &PgPool, id: i64, from: PostStatus, reason: &str) -> sqlx::Result<bool> {
     let mut tx = db.begin().await?;
-    let still = posts::lock(&mut *tx, id)
+    let Some(post) = posts::lock(&mut *tx, id)
         .await?
-        .is_some_and(|post| post.status == from && !post.is_locked(PostLock::Status));
-    if !still || !posts::set_status(&mut *tx, id, &[from], PostStatus::Deleted).await? {
+        .filter(|post| post.status == from && !post.is_locked(PostLock::Status))
+    else {
         return Ok(false);
+    };
+    if !posts::set_status(&mut *tx, id, &[from], PostStatus::Deleted).await? {
+        return Ok(false);
+    }
+    if let Some(uploader) = post.uploader_id {
+        crate::notifications::create(
+            &mut *tx,
+            &[uploader],
+            crate::notifications::Kind::Moderation,
+            None,
+            &format!("Your post #{id} was deleted: “{reason}”"),
+            &format!("/posts/{id}"),
+        )
+        .await?;
     }
     flags::resolve(&mut *tx, id, true, None).await?;
     let kind = if from == PostStatus::Pending {

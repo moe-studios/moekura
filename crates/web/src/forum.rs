@@ -982,6 +982,20 @@ async fn set_hidden(
     }
     mod_actions::record(&mut *tx, action).await?;
     tx.commit().await?;
+    let told = match (hidden, reason) {
+        (true, "") => format!("Your post in “{}” was hidden", p.topic_title),
+        (true, why) => format!("Your post in “{}” was hidden: “{why}”", p.topic_title),
+        (false, _) => format!("Your post in “{}” was restored", p.topic_title),
+    };
+    let actor = page.current.user.as_ref().map(|u| u.id);
+    crate::notifications::moderated(
+        state,
+        p.creator_id,
+        actor,
+        &told,
+        &format!("/forum_posts/{id}"),
+    )
+    .await;
     let location = post_location(state, &page.current, id).await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
 }

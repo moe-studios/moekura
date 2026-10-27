@@ -81,9 +81,14 @@ when someone:
 - approves or rejects a request you made or voted on;
 - leaves [feedback](#feedback) on your account.
 
+You're also told when staff act on what you posted, without saying who:
+your upload is rejected, deleted or restored; your appeal is granted or
+turned down; your comment or forum post is hidden or restored; or
+writing of yours held for review is let through or turned away.
+
 Opening one marks it read and goes to what it's about; **Mark all read**
 clears the count. Nobody you've blocked from messaging you can notify
-you either. Read notifications are forgotten after 90 days.
+you either (staff's notices still reach you). Read notifications are forgotten after 90 days.
 
 ## Feedback
 

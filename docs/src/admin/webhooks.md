@@ -10,6 +10,7 @@ the URL to send to and the events it wants:
 | `post.created` | a post is uploaded (by any means) |
 | `post.approved` | a pending post is approved |
 | `post.deleted` | a post is deleted or rejected |
+| `post.restored` | a deleted post is restored (granting its appeal, if it had one) |
 | `post.flagged` | a post is flagged |
 | `comment.created` | a comment is posted |
 | `user.registered` | someone registers (with a form or single sign-on) |

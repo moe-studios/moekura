@@ -46,6 +46,7 @@ fn describe(kind: &str) -> &'static str {
         "message" => "sent you a message:",
         "forum" => "posted in",
         "feedback" => "left",
+        "moderation" => "",
         _ => "decided on",
     }
 }
@@ -93,7 +94,10 @@ pub(crate) async fn notify(
                     continue;
                 }
                 let who = actor_name.as_deref().unwrap_or("Someone");
-                let line = format!("{who} {} {subject}", describe(kind.as_str()));
+                let line = match kind {
+                    Kind::Moderation => subject.to_owned(),
+                    _ => format!("{who} {} {subject}", describe(kind.as_str())),
+                };
                 let mail = moekura_core::jobs::SendMail {
                     to: email.clone(),
                     subject: format!("{site}: {line}"),
@@ -111,6 +115,22 @@ pub(crate) async fn notify(
     if let Err(error) = done {
         tracing::warn!(%error, "could not notify");
     }
+}
+
+/// Tells `user_id` (if anyone, and not `actor` themselves) what staff
+/// did to what they posted or to their account: `subject` says it all,
+/// and who did it isn't named. Blocks don't keep these out.
+pub(crate) async fn moderated(
+    state: &AppState,
+    user_id: Option<i64>,
+    actor: Option<i64>,
+    subject: &str,
+    url: &str,
+) {
+    let Some(user) = user_id.filter(|u| Some(*u) != actor) else {
+        return;
+    };
+    notify(state, &[user], Kind::Moderation, None, subject, url).await;
 }
 
 /// Notifies those `text` mentions (`@name`) or quotes, as written by

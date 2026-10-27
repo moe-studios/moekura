@@ -120,10 +120,11 @@ async fn decide(
     let state = page.state();
     let db = state.db.primary();
     let item = held::get(db, kind, id).await?.ok_or(AppError::NotFound)?;
+    let mut tx = db.begin().await?;
     let done = if approve {
-        held::approve(db, kind, id).await?
+        held::approve(&mut tx, kind, id).await?
     } else {
-        held::reject(db, kind, id).await?
+        held::reject(&mut *tx, kind, id).await?
     };
     if !done {
         // Dealt with meanwhile.
@@ -132,10 +133,6 @@ async fn decide(
             Redirect::to("/moderation/held"),
         )
             .into_response());
-    }
-    // A change to something already out was told of when it first was.
-    if approve && !item.edited {
-        published(state, &item, kind).await?;
     }
     let mut action = NewAction::new(
         page.current.user.as_ref().map(|u| u.id),
@@ -149,7 +146,12 @@ async fn decide(
     if let Some(creator) = item.creator_id {
         action = action.user(creator);
     }
-    mod_actions::record(db, action).await?;
+    mod_actions::record(&mut *tx, action).await?;
+    tx.commit().await?;
+    // A change to something already out was told of when it first was.
+    if approve && !item.edited {
+        published(state, &item, kind).await?;
+    }
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to("/moderation/held"),
@@ -289,11 +291,78 @@ mod tests {
         assert!(queue.contains("A message to bob: “Hi”"), "{queue}");
         assert!(queue.contains("A forum post in “Deals”"), "{queue}");
 
-        // Approving lets it through, as if just posted.
+        // Restoring the usual way lets none of it out: only the queue does.
         let comment: i64 = sqlx::query_scalar("SELECT min(id) FROM comments")
             .fetch_one(&pool)
             .await
             .unwrap();
+        let restore = app
+            .post(&format!("/comments/{comment}/restore"), Some(&staff), &[])
+            .await;
+        assert_eq!(restore.status, StatusCode::BAD_REQUEST, "{}", restore.body);
+        assert!(restore.body.contains("Held for review"), "{}", restore.body);
+        let forum_post: i64 = sqlx::query_scalar("SELECT id FROM forum_posts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let unhide = app
+            .post(
+                &format!("/forum_posts/{forum_post}/unhide"),
+                Some(&staff),
+                &[],
+            )
+            .await;
+        assert_eq!(unhide.status, StatusCode::BAD_REQUEST);
+        let held_topic: i64 = sqlx::query_scalar("SELECT id FROM forum_topics")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let undelete = app
+            .post_form(
+                &format!("/forum_topics/{held_topic}/moderate"),
+                Some(&staff),
+                &[],
+                "action=undelete",
+            )
+            .await;
+        assert_eq!(undelete.status, StatusCode::BAD_REQUEST);
+        let held_dmail: i64 = sqlx::query_scalar("SELECT id FROM dmails WHERE owner_id <> from_id")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        app.post_form(
+            &format!("/dmails/{held_dmail}/restore"),
+            Some(&bob),
+            &[],
+            "",
+        )
+        .await;
+        assert!(
+            !app.get("/dmails", Some(&bob))
+                .await
+                .body
+                .contains(">Hi</a>"),
+            "the recipient can't bring it back"
+        );
+        let statuses: Vec<String> = sqlx::query_scalar(
+            "SELECT status FROM comments WHERE id = $1
+             UNION ALL SELECT status FROM forum_posts WHERE id = $2
+             UNION ALL SELECT status FROM dmails WHERE id = $3",
+        )
+        .bind(comment)
+        .bind(forum_post)
+        .bind(held_dmail)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(statuses, ["held", "held", "held"]);
+        let logged: i64 = sqlx::query_scalar("SELECT count(*) FROM mod_actions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logged, 0, "nothing changed");
+
+        // Approving lets it through, as if just posted.
         let approved = app
             .post_form(
                 &format!("/moderation/held/comment/{comment}/approve"),
@@ -327,7 +396,7 @@ mod tests {
                 .contains("Deals")
         );
 
-        // Rejected messages never arrive.
+        // Rejected messages never arrive, but are kept.
         let dmail: i64 = sqlx::query_scalar("SELECT id FROM dmails WHERE owner_id <> from_id")
             .fetch_one(&pool)
             .await
@@ -351,6 +420,12 @@ mod tests {
                 .status,
             StatusCode::NOT_FOUND
         );
+        let kept: String = sqlx::query_scalar("SELECT status FROM dmails WHERE id = $1")
+            .bind(dmail)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(kept, "rejected");
         assert!(
             app.get("/moderation/held", Some(&staff))
                 .await

@@ -226,7 +226,7 @@ async fn delete_comment(
     let id = number(&id)?;
     let (comment, _) = crate::comments::visible_comment(&state, &current, id).await?;
     crate::comments::check_author(&current, &comment)?;
-    comments::set_deleted(state.db.primary(), id, true).await?;
+    comments::delete(state.db.primary(), id).await?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

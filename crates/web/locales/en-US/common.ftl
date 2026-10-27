@@ -97,6 +97,7 @@ status-approved = approved
 status-rejected = rejected
 status-active = active
 status-deleted = deleted
+status-held = held for review
 status-processing = processing
 status-queued = queued
 status-failed = failed

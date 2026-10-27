@@ -3,6 +3,8 @@
 use sqlx::{PgExecutor, PgPool};
 use time::OffsetDateTime;
 
+pub use crate::writing::Status;
+
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Dmail {
     pub id: i64,
@@ -14,7 +16,9 @@ pub struct Dmail {
     pub title: String,
     pub body: String,
     pub is_read: bool,
+    /// Not active: deleted, held or rejected (see `status`).
     pub is_deleted: bool,
+    pub status: Status,
     pub reported_at: Option<OffsetDateTime>,
     pub report_reason: String,
     pub created_at: OffsetDateTime,
@@ -25,7 +29,7 @@ macro_rules! select_dmails {
     ($rest:literal) => {
         concat!(
             "SELECT d.id, d.owner_id, d.from_id, f.name::text AS from_name, d.to_id,
-                    t.name::text AS to_name, d.title, d.body, d.is_read, d.is_deleted,
+                    t.name::text AS to_name, d.title, d.body, d.is_read, d.is_deleted, d.status,
                     d.reported_at, d.report_reason, d.created_at
              FROM dmails d
              LEFT JOIN users f ON f.id = d.from_id
@@ -79,9 +83,9 @@ pub async fn send(
     let received = if from_id == to_id {
         sent
     } else {
-        // A held copy stays deleted until the staff approve it.
+        // A held copy stays out of the inbox until the staff approve it.
         sqlx::query_scalar(
-            "INSERT INTO dmails (owner_id, from_id, to_id, title, body, is_read, is_deleted, held_reason)
+            "INSERT INTO dmails (owner_id, from_id, to_id, title, body, is_read, status, held_reason)
              VALUES ($1, $2, $3, $4, $5, false, $6, $7) RETURNING id",
         )
         .bind(to_id)
@@ -89,7 +93,11 @@ pub async fn send(
         .bind(to_id)
         .bind(title)
         .bind(body)
-        .bind(held.is_some())
+        .bind(if held.is_some() {
+            Status::Held
+        } else {
+            Status::Active
+        })
         .bind(held)
         .fetch_one(&mut *tx)
         .await?
@@ -144,10 +152,10 @@ pub async fn list(
 }
 
 /// Message `id`, if it's `owner_id`'s copy (deleted ones included, but
-/// not those held for review).
+/// not those held for review or rejected).
 pub async fn by_id(db: impl PgExecutor<'_>, owner_id: i64, id: i64) -> sqlx::Result<Option<Dmail>> {
     sqlx::query_as(select_dmails!(
-        "WHERE d.id = $1 AND d.owner_id = $2 AND d.held_reason IS NULL"
+        "WHERE d.id = $1 AND d.owner_id = $2 AND d.status IN ('active', 'deleted')"
     ))
     .bind(id)
     .bind(owner_id)
@@ -179,12 +187,15 @@ pub async fn set_read(
     id: i64,
     read: bool,
 ) -> sqlx::Result<bool> {
-    let done = sqlx::query("UPDATE dmails SET is_read = $3 WHERE id = $1 AND owner_id = $2")
-        .bind(id)
-        .bind(owner_id)
-        .bind(read)
-        .execute(db)
-        .await?;
+    let done = sqlx::query(
+        "UPDATE dmails SET is_read = $3
+         WHERE id = $1 AND owner_id = $2 AND status IN ('active', 'deleted')",
+    )
+    .bind(id)
+    .bind(owner_id)
+    .bind(read)
+    .execute(db)
+    .await?;
     Ok(done.rows_affected() > 0)
 }
 
@@ -198,7 +209,8 @@ pub async fn mark_all_read(db: impl PgExecutor<'_>, owner_id: i64) -> sqlx::Resu
     .rows_affected())
 }
 
-/// Deletes (or restores) `owner_id`'s copy of message `id`.
+/// Deletes (or restores) `owner_id`'s copy of message `id`. Copies held
+/// for review or rejected aren't the owner's to restore: false.
 pub async fn set_deleted(
     db: impl PgExecutor<'_>,
     owner_id: i64,
@@ -206,7 +218,9 @@ pub async fn set_deleted(
     deleted: bool,
 ) -> sqlx::Result<bool> {
     let done = sqlx::query(
-        "UPDATE dmails SET is_deleted = $3, is_read = is_read OR $3 WHERE id = $1 AND owner_id = $2",
+        "UPDATE dmails SET status = CASE WHEN $3 THEN 'deleted' ELSE 'active' END,
+                           is_read = is_read OR $3
+         WHERE id = $1 AND owner_id = $2 AND status IN ('active', 'deleted')",
     )
     .bind(id)
     .bind(owner_id)
@@ -226,7 +240,8 @@ pub async fn report(
 ) -> sqlx::Result<bool> {
     let done = sqlx::query(
         "UPDATE dmails SET reported_at = now(), report_reason = $3, report_settled = false
-         WHERE id = $1 AND owner_id = $2 AND from_id IS DISTINCT FROM owner_id",
+         WHERE id = $1 AND owner_id = $2 AND from_id IS DISTINCT FROM owner_id
+           AND status IN ('active', 'deleted')",
     )
     .bind(id)
     .bind(owner_id)

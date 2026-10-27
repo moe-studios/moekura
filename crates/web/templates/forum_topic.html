@@ -16,7 +16,7 @@
   <li id="forum-post-{{ p.id }}" class="forum-post{% if p.hidden %} is-hidden{% endif %}">
     <div class="history-head">
       {% if p.creator %}<a href="/users/{{ p.creator }}">{{ p.creator }}</a>{% else %}{{ t("gone") }}{% endif %}
-      <span class="hint"><a href="/forum_posts/{{ p.id }}">{{ p.date }} {{ p.time }}</a>{% if p.updater %} · {{ t("edited-by", user=p.updater) }}{% endif %}{% if p.hidden %} · {{ t("hidden") }}{% endif %}</span>
+      <span class="hint"><a href="/forum_posts/{{ p.id }}">{{ p.date }} {{ p.time }}</a>{% if p.updater %} · {{ t("edited-by", user=p.updater) }}{% endif %}{% if p.held %} · {{ t("status-held") }}{% elif p.hidden %} · {{ t("hidden") }}{% endif %}</span>
       <span class="score" title="{{ t('votes') }}">{{ "%+d"|format(p.score) if p.score else "0" }}</span>
     </div>
     <div class="markup">{{ p.html }}</div>
@@ -26,7 +26,7 @@
       <form method="post" action="/forum_posts/{{ p.id }}/vote"><input type="hidden" name="score" value="{{ '0' if p.vote == -1 else '-1' }}"><button type="submit" class="secondary" aria-pressed="{{ 'true' if p.vote == -1 else 'false' }}" aria-label="{{ t('vote-down') }}">▼</button></form>
       {% endif %}
       {% if p.can_edit %}<a class="button secondary" href="/forum_posts/{{ p.id }}/edit">{{ t("edit") }}</a>{% endif %}
-      {% if can_moderate %}
+      {% if can_moderate and not p.held %}
       <form method="post" action="/forum_posts/{{ p.id }}/{{ 'unhide' if p.hidden else 'hide' }}"><button type="submit" class="secondary">{{ t("unhide") if p.hidden else t("hide") }}</button></form>
       {% endif %}
     </div>

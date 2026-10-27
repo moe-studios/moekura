@@ -499,6 +499,7 @@ async fn show(
                 updater => p.updater_name.as_ref().filter(|_| p.updated_at > p.created_at),
                 html => Value::from_safe_string(markup::render(&p.body)),
                 hidden => p.is_hidden,
+                held => p.status == forum::Status::Held,
                 score => p.score,
                 vote => votes.iter().find(|(post, _)| *post == p.id).map(|(_, s)| *s),
                 date => crate::dates::day(p.created_at),
@@ -583,7 +584,7 @@ async fn moderate(
     Form(form): Form<ModerateForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
-    visible_topic(page.state(), &page.current, id).await?;
+    let topic = visible_topic(page.state(), &page.current, id).await?;
     let flags = match form.action.as_str() {
         "sticky" => Flags {
             sticky: Some(true),
@@ -611,17 +612,26 @@ async fn moderate(
         },
         _ => return Err(AppError::BadRequest("Unknown action.".into())),
     };
+    if flags.deleted == Some(false) && topic.is_held {
+        return Err(AppError::BadRequest(
+            "The topic's opening post is held as likely spam: approve it under Moderation → Held for review".into(),
+        ));
+    }
     let db = page.state().db.primary();
-    forum::set_flags(db, id, flags).await?;
-    mod_actions::record(
-        db,
-        NewAction::new(
-            page.current.user.as_ref().map(|u| u.id),
-            ActionKind::ForumTopicModerate,
+    let mut tx = db.begin().await?;
+    // Logged only when it changed something.
+    if forum::set_flags(&mut *tx, id, flags).await? {
+        mod_actions::record(
+            &mut *tx,
+            NewAction::new(
+                page.current.user.as_ref().map(|u| u.id),
+                ActionKind::ForumTopicModerate,
+            )
+            .details(serde_json::json!({ "topic_id": id, "action": form.action })),
         )
-        .details(serde_json::json!({ "topic_id": id, "action": form.action })),
-    )
-    .await?;
+        .await?;
+    }
+    tx.commit().await?;
     let back = if form.action == "delete" {
         "/forum_topics".to_owned()
     } else {
@@ -660,10 +670,10 @@ async fn merge(
             "Merge into another topic that isn't deleted.".into(),
         ));
     }
-    let db = state.db.primary();
-    forum::merge(db, id, into).await?;
+    let mut tx = state.db.primary().begin().await?;
+    forum::merge(&mut tx, id, into).await?;
     mod_actions::record(
-        db,
+        &mut *tx,
         NewAction::new(
             page.current.user.as_ref().map(|u| u.id),
             ActionKind::ForumTopicMerge,
@@ -671,6 +681,7 @@ async fn merge(
         .details(serde_json::json!({ "from": id, "into": into })),
     )
     .await?;
+    tx.commit().await?;
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to(&topic_url(into)),
@@ -877,7 +888,18 @@ async fn set_hidden(
     let state = page.state();
     let db = state.db.primary();
     let p = forum::post(db, id).await?.ok_or(AppError::NotFound)?;
-    forum::set_post_hidden(db, id, hidden).await?;
+    visible_topic(state, &page.current, p.topic_id).await?;
+    let mut tx = db.begin().await?;
+    if !forum::set_post_hidden(&mut *tx, id, hidden).await? {
+        // Held writing is the spam queue's to settle.
+        return Err(AppError::BadRequest(match (p.status, hidden) {
+            (forum::Status::Held, _) => {
+                "The post is held as likely spam: approve or reject it under Moderation → Held for review".into()
+            }
+            (_, true) => "The post is already hidden".into(),
+            (_, false) => "The post isn't hidden".into(),
+        }));
+    }
     let kind = if hidden {
         ActionKind::ForumPostHide
     } else {
@@ -888,7 +910,8 @@ async fn set_hidden(
     if let Some(creator) = p.creator_id {
         action = action.user(creator);
     }
-    mod_actions::record(db, action).await?;
+    mod_actions::record(&mut *tx, action).await?;
+    tx.commit().await?;
     let location = post_location(state, &page.current, id).await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
 }

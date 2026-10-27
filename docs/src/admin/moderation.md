@@ -42,9 +42,11 @@ then once a minute.
 Members report comments, with a reason; reported comments appear under
 **Moderation → Reported comments**. Staff with *Hide comments* can hide
 any comment (which upholds its reports) and restore it later, or dismiss
-the reports. Hidden comments, and those their authors deleted, stay
-visible to staff, marked *deleted*. Comments voted down to −5 or lower
-are collapsed for everyone.
+the reports. Hidden comments, those their authors deleted and those held
+as likely spam stay visible to staff, marked *hidden*, *deleted* or
+*held for review*. Restoring brings back only what staff hid: not what
+its writer deleted, nor what the [spam filter](#spam-filter) holds.
+Comments voted down to −5 or lower are collapsed for everyone.
 
 ## Reasons
 
@@ -282,9 +284,11 @@ and handle reports about them* are never held, and review what is under
 **Approve** lets it through as if just posted (mentions, replies and
 messages notify then, and webhooks fire; an approved change just
 reappears, as changes notify nobody); **Reject** keeps it hidden for
-good, and a rejected message never reaches its recipient. Both go in the
-moderation log. Hiding or restoring a held comment or forum post the
-usual way also settles it.
+good, and a rejected message never reaches its recipient (it's kept, for
+the record). Both go in the moderation log. Held writing is settled only
+here: restoring a held comment or forum post the usual way is refused, as
+is undeleting a topic held for its opening post, and the recipient of a
+held message can't bring it back from their deleted messages.
 
 ## Tag aliases and implications
 

@@ -16,7 +16,7 @@ use moekura_core::markup;
 use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
-use moekura_db::comments::{self, Comment, Filter, ReportError};
+use moekura_db::comments::{self, Comment, Filter, ReportError, Status};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::posts::{self, Post};
 use moekura_db::users;
@@ -279,6 +279,8 @@ fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value
         created_iso => comment.created_at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         edited => comment.edited_at.is_some(),
         deleted => comment.is_deleted,
+        // `deleted` by its writer, `hidden` by staff or `held` as spam.
+        status => comment.status.as_str(),
         score => comment.score,
         vote => vote,
         collapsed => comment.score <= COLLAPSE_AT,
@@ -289,7 +291,7 @@ fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value
         sticky => comment.is_sticky,
         can_stick => moderate && !comment.is_deleted,
         can_hide => moderate && !comment.is_deleted,
-        can_restore => moderate && comment.is_deleted,
+        can_restore => moderate && comment.status == Status::Hidden,
     }
 }
 
@@ -495,7 +497,7 @@ async fn edit(
 async fn delete(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
     let (comment, _) = visible_comment(page.state(), &page.current, id).await?;
     check_author(&page.current, &comment)?;
-    comments::set_deleted(page.state().db.primary(), id, true).await?;
+    comments::delete(page.state().db.primary(), id).await?;
     tracing::info!(comment = id, "comment deleted by its author");
     Ok(Redirect::to(&format!("/posts/{}#comments", comment.post_id)).into_response())
 }
@@ -654,11 +656,19 @@ pub(crate) async fn moderate(
     }
     let (comment, _) = visible_comment(state, current, id).await?;
     let mut tx = state.db.primary().begin().await?;
-    if !comments::set_deleted(&mut *tx, id, hidden).await? {
-        return Err(AppError::BadRequest(if hidden {
-            "The comment is already hidden".into()
-        } else {
-            "The comment isn't hidden".into()
+    if !comments::set_hidden(&mut *tx, id, hidden).await? {
+        // Held writing is the spam queue's to settle, and what its writer
+        // deleted stays theirs.
+        let status = comments::by_id(&mut *tx, id)
+            .await?
+            .map_or(comment.status, |c| c.status);
+        return Err(AppError::BadRequest(match (status, hidden) {
+            (Status::Held, _) => {
+                "The comment is held as likely spam: approve or reject it under Moderation → Held for review".into()
+            }
+            (Status::Deleted, _) => "Its writer deleted the comment".into(),
+            (_, true) => "The comment is already hidden".into(),
+            (_, false) => "The comment isn't hidden".into(),
         }));
     }
     let reports = if hidden {

@@ -61,6 +61,7 @@ pub mod user_record;
 pub mod users;
 pub mod webhooks;
 pub mod wiki;
+pub mod writing;
 
 #[cfg(test)]
 mod schema_tests;

@@ -142,7 +142,7 @@ pub struct HiddenComment {
     pub reports: i64,
 }
 
-/// The user's hidden comments, newest first.
+/// The user's comments staff hid, newest first.
 pub async fn hidden_comments(
     db: impl PgExecutor<'_>,
     user_id: i64,
@@ -151,7 +151,7 @@ pub async fn hidden_comments(
     sqlx::query_as(
         "SELECT c.id, c.post_id, c.body, c.created_at,
                 (SELECT count(*) FROM comment_reports r WHERE r.comment_id = c.id) AS reports
-         FROM comments c WHERE c.creator_id = $1 AND c.is_deleted
+         FROM comments c WHERE c.creator_id = $1 AND c.status = 'hidden'
          ORDER BY c.id DESC LIMIT $2",
     )
     .bind(user_id)
@@ -233,8 +233,8 @@ mod tests {
         .await
         .unwrap();
         let comment: i64 = sqlx::query_scalar(
-            "INSERT INTO comments (post_id, creator_id, body, is_deleted)
-             VALUES ($1, $2, 'rude', true) RETURNING id",
+            "INSERT INTO comments (post_id, creator_id, body, status)
+             VALUES ($1, $2, 'rude', 'hidden') RETURNING id",
         )
         .bind(kept)
         .bind(alice)

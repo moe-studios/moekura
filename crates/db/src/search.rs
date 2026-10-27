@@ -2446,7 +2446,7 @@ mod tests {
         let hidden = crate::comments::create(&pool, ids[1], bob, "nice try", true)
             .await
             .unwrap();
-        crate::comments::set_deleted(&pool, hidden, true)
+        crate::comments::set_hidden(&pool, hidden, true)
             .await
             .unwrap();
         let note_box = moekura_core::notes::NoteBox {

@@ -287,24 +287,43 @@ pub enum ReportError {
     Db(#[from] sqlx::Error),
 }
 
-/// Reports a comment to the moderators.
+/// Reports a comment to the moderators, keeping its text as it is now.
 pub async fn report(
     db: impl PgExecutor<'_>,
     comment_id: i64,
     creator_id: i64,
     reason: &str,
 ) -> Result<(), ReportError> {
-    sqlx::query("INSERT INTO comment_reports (comment_id, creator_id, reason) VALUES ($1, $2, $3)")
-        .bind(comment_id)
-        .bind(creator_id)
-        .bind(reason)
-        .execute(db)
-        .await
-        .map_err(|e| match &e {
-            sqlx::Error::Database(db) if db.is_unique_violation() => ReportError::AlreadyReported,
-            _ => ReportError::Db(e),
-        })?;
+    sqlx::query(
+        "INSERT INTO comment_reports (comment_id, creator_id, reason, snapshot)
+         SELECT $1, $2, $3, left(body, 50000) FROM comments WHERE id = $1",
+    )
+    .bind(comment_id)
+    .bind(creator_id)
+    .bind(reason)
+    .execute(db)
+    .await
+    .map_err(|e| match &e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => ReportError::AlreadyReported,
+        _ => ReportError::Db(e),
+    })?;
     Ok(())
+}
+
+/// Whether `creator_id` has an open report about a comment.
+pub async fn has_open_report(
+    db: impl PgExecutor<'_>,
+    comment_id: i64,
+    creator_id: i64,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM comment_reports
+                        WHERE comment_id = $1 AND creator_id = $2 AND status = 'open')",
+    )
+    .bind(comment_id)
+    .bind(creator_id)
+    .fetch_one(db)
+    .await
 }
 
 /// Closes a comment's open reports as `dismissed` or `upheld`; returns how
@@ -333,6 +352,8 @@ pub struct Report {
     pub comment_id: i64,
     pub creator_name: Option<String>,
     pub reason: String,
+    /// The comment's text when it was reported.
+    pub snapshot: String,
     pub created_at: OffsetDateTime,
 }
 
@@ -348,7 +369,8 @@ pub async fn open_reports(
         "WITH queued AS (
              SELECT comment_id, min(id) AS first FROM comment_reports WHERE status = 'open'
              GROUP BY comment_id HAVING min(id) > $1 ORDER BY first LIMIT $2)
-         SELECT r.id, r.comment_id, u.name::text AS creator_name, r.reason, r.created_at
+         SELECT r.id, r.comment_id, u.name::text AS creator_name, r.reason, r.snapshot,
+                r.created_at
          FROM queued q
          JOIN comment_reports r ON r.comment_id = q.comment_id AND r.status = 'open'
          LEFT JOIN users u ON u.id = r.creator_id

@@ -48,8 +48,9 @@ pub struct Held {
     pub edited: bool,
 }
 
-/// Everything held, as one list: `$1` limits it, `$2` offsets it, and
-/// `$3`, if not null, picks one `kind` and `$4` one id.
+/// Everything held, as one list: `$1` limits it, `$2` offsets it, `$3`,
+/// if not null, picks one `kind` and `$4` one id, and `$5` leaves out
+/// messages unless true.
 const HELD: &str = "
     SELECT * FROM (
         SELECT 'comment' AS kind, c.id, c.creator_id, u.name::text AS creator_name, c.body,
@@ -70,17 +71,23 @@ const HELD: &str = "
         FROM dmails d LEFT JOIN users u ON u.id = d.from_id LEFT JOIN users r ON r.id = d.to_id
         WHERE d.status = 'held'
     ) held
-    WHERE $3::text IS NULL OR (kind = $3 AND id = $4)
+    WHERE ($3::text IS NULL OR (kind = $3 AND id = $4)) AND ($5 OR kind <> 'dmail')
     ORDER BY created_at, id
     LIMIT $1 OFFSET $2";
 
-/// What's held, oldest first.
-pub async fn list(db: impl PgExecutor<'_>, offset: i64, limit: i64) -> sqlx::Result<Vec<Held>> {
+/// What's held, oldest first; messages only `with_dmails`.
+pub async fn list(
+    db: impl PgExecutor<'_>,
+    offset: i64,
+    limit: i64,
+    with_dmails: bool,
+) -> sqlx::Result<Vec<Held>> {
     sqlx::query_as(HELD)
         .bind(limit)
         .bind(offset)
         .bind(None::<&str>)
         .bind(0_i64)
+        .bind(with_dmails)
         .fetch_all(db)
         .await
 }
@@ -92,6 +99,7 @@ pub async fn get(db: impl PgExecutor<'_>, kind: Kind, id: i64) -> sqlx::Result<O
         .bind(0_i64)
         .bind(kind.as_str())
         .bind(id)
+        .bind(true)
         .fetch_optional(db)
         .await
 }

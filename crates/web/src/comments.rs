@@ -599,6 +599,17 @@ pub(crate) async fn report_comment(
     if comment.is_deleted {
         return Err(AppError::NotFound);
     }
+    if comment.creator_id == Some(user.id) {
+        return Err(AppError::BadRequest(
+            "You can't report your own comment".into(),
+        ));
+    }
+    // Before the rate limit, so a refused repeat doesn't use it up.
+    if comments::has_open_report(state.db.primary(), id, user.id).await? {
+        return Err(AppError::BadRequest(
+            ReportError::AlreadyReported.to_string(),
+        ));
+    }
     state.rate_limits.check_report(user.id).await?;
     match comments::report(state.db.primary(), id, user.id, reason).await {
         Ok(()) => {}
@@ -810,7 +821,15 @@ async fn report_queue(
             let reasons: Vec<Value> = reports
                 .iter()
                 .filter(|r| r.comment_id == c.id)
-                .map(|r| context! { by => r.creator_name, reason => r.reason })
+                .map(|r| {
+                    context! {
+                        by => r.creator_name,
+                        reason => r.reason,
+                        // What the comment said then, if it was changed since.
+                        then => (!r.snapshot.is_empty() && r.snapshot != c.body)
+                            .then(|| Value::from_safe_string(markup::render(&r.snapshot))),
+                    }
+                })
                 .collect();
             context! { comment => comment, reports => reasons }
         })

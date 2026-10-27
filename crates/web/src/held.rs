@@ -85,10 +85,12 @@ struct IndexQuery {
 async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
     let number = query.page.unwrap_or(1).clamp(1, 1000);
+    // Messages only for those who read them.
     let mut found = held::list(
         page.state().db.primary(),
         (number - 1) * PAGE_SIZE,
         PAGE_SIZE + 1,
+        page.current.can(Permission::ModerateMessages),
     )
     .await?;
     let more = found.len() > PAGE_SIZE as usize;
@@ -120,6 +122,9 @@ async fn decide(
     page.current.require(Permission::ModerateComments)?;
     let reason = crate::moderation::check_reason(&form.reason)?;
     let kind = Kind::parse(&kind).ok_or(AppError::NotFound)?;
+    if kind == Kind::Dmail {
+        page.current.require(Permission::ModerateMessages)?;
+    }
     let approve = match action.as_str() {
         "approve" => true,
         "reject" => false,

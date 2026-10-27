@@ -17,10 +17,13 @@ user's messages from then on; the list of people you blocked is at the
 bottom of your messages, each with **Unblock**.
 
 **Report to the staff**, on a message you received, sends it to the
-moderation queue (**Moderation → Reported messages**) with your reason.
-Staff with *Hide comments and handle reports about them* see reported
-messages there, and no other messages anyone sends; they mark each
-**Settled** once dealt with, which goes in the moderation log.
+staff's reports (**Moderation → Reports**) with your reason, which is
+required. Staff with *Read reported and held private messages*
+(moderators, by default) see reported messages there, as they were when
+reported, and no other messages anyone sends; they uphold or dismiss each
+report, saying how it ended, which goes in the moderation log. You can
+report a message once; after a report is settled, reporting it again
+waits a week.
 
 ## Limits
 

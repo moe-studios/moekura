@@ -19,8 +19,6 @@ pub struct Dmail {
     /// Not active: deleted, held or rejected (see `status`).
     pub is_deleted: bool,
     pub status: Status,
-    pub reported_at: Option<OffsetDateTime>,
-    pub report_reason: String,
     pub created_at: OffsetDateTime,
 }
 
@@ -30,7 +28,7 @@ macro_rules! select_dmails {
         concat!(
             "SELECT d.id, d.owner_id, d.from_id, f.name::text AS from_name, d.to_id,
                     t.name::text AS to_name, d.title, d.body, d.is_read, d.is_deleted, d.status,
-                    d.reported_at, d.report_reason, d.created_at
+                    d.created_at
              FROM dmails d
              LEFT JOIN users f ON f.id = d.from_id
              LEFT JOIN users t ON t.id = d.to_id ",
@@ -230,55 +228,6 @@ pub async fn set_deleted(
     Ok(done.rows_affected() > 0)
 }
 
-/// Reports `owner_id`'s received message `id` to staff. False if it
-/// isn't theirs or they sent it.
-pub async fn report(
-    db: impl PgExecutor<'_>,
-    owner_id: i64,
-    id: i64,
-    reason: &str,
-) -> sqlx::Result<bool> {
-    let done = sqlx::query(
-        "UPDATE dmails SET reported_at = now(), report_reason = $3, report_settled = false
-         WHERE id = $1 AND owner_id = $2 AND from_id IS DISTINCT FROM owner_id
-           AND status IN ('active', 'deleted')",
-    )
-    .bind(id)
-    .bind(owner_id)
-    .bind(reason)
-    .execute(db)
-    .await?;
-    Ok(done.rows_affected() > 0)
-}
-
-/// Reported messages not settled yet, the latest first.
-pub async fn reported(
-    db: impl PgExecutor<'_>,
-    offset: i64,
-    limit: i64,
-) -> sqlx::Result<Vec<Dmail>> {
-    sqlx::query_as(select_dmails!(
-        "WHERE d.reported_at IS NOT NULL AND NOT d.report_settled
-         ORDER BY d.reported_at DESC OFFSET $1 LIMIT $2"
-    ))
-    .bind(offset)
-    .bind(limit)
-    .fetch_all(db)
-    .await
-}
-
-/// Settles the report about message `id`.
-pub async fn settle_report(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
-    let done = sqlx::query(
-        "UPDATE dmails SET report_settled = true
-         WHERE id = $1 AND reported_at IS NOT NULL AND NOT report_settled",
-    )
-    .bind(id)
-    .execute(db)
-    .await?;
-    Ok(done.rows_affected() > 0)
-}
-
 /// Whether `user_id` blocked `other_id`.
 pub async fn is_blocked(
     db: impl PgExecutor<'_>,
@@ -386,10 +335,6 @@ mod tests {
 
         assert!(set_read(&pool, bob, id, true).await.unwrap());
         assert_eq!(unread_count(&pool, bob).await.unwrap(), 0);
-        assert!(report(&pool, bob, id, "spam").await.unwrap());
-        assert_eq!(reported(&pool, 0, 10).await.unwrap().len(), 1);
-        assert!(settle_report(&pool, id).await.unwrap());
-        assert!(reported(&pool, 0, 10).await.unwrap().is_empty());
 
         set_blocked(&pool, bob, alice, true).await.unwrap();
         assert!(matches!(

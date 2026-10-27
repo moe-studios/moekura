@@ -203,6 +203,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             recent_uploads => recent_uploads,
             recent_favorites => recent_favorites,
             user => context! {
+                id => user.id,
                 name => user.name,
                 role => role,
                 joined => crate::dates::day(user.created_at),

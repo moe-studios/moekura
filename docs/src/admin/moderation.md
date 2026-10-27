@@ -53,6 +53,34 @@ as likely spam stay visible to staff, marked *hidden*, *deleted* or
 its writer deleted, nor what the [spam filter](#spam-filter) holds.
 Comments voted down to −5 or lower are collapsed for everyone.
 
+A report keeps the comment as it was then, so the queue shows what was
+reported even if its writer changed it afterwards. Nobody can report
+their own comment, and a repeat report is refused before it counts
+against the limit.
+
+## Reports
+
+Besides flagging posts and reporting comments, members report messages
+they received, forum posts, users, wiki pages, pools, notes, artists and
+feedback, with **Report to the staff** on each, giving a reason. Each
+report keeps the reported text as it was then, and its reason; several
+people's reports about the same thing are listed together, and a report
+never overwrites another. Nobody reports their own work, each person
+reports a thing once while their report is open and then waits a week
+after it's settled, and reports count against the same limit as flags.
+
+**Moderation → Reports** lists what was reported, the longest waiting
+first, a page at a time, filtered by kind. Each kind goes to the staff
+who handle it: messages to those who *Read reported and held private
+messages* (moderators, by default; janitors don't read private messages),
+users and feedback to those who *Ban users*, and the rest to those who
+*Hide comments and forum posts*. **Uphold** or **Dismiss** settles every
+open report about the thing, with an optional note on how it ended,
+which the reporters' records and the log keep; nobody settles reports
+about their own work, or that of someone ranked at or above them. A
+user's moderation record lists the reports about them and what they
+wrote.
+
 ## Reasons
 
 Deleting, rejecting and flagging a post offer the site's preset reasons
@@ -293,7 +321,9 @@ good, and a rejected message never reaches its recipient (it's kept, for
 the record). Both go in the moderation log. Held writing is settled only
 here: restoring a held comment or forum post the usual way is refused, as
 is undeleting a topic held for its opening post, and the recipient of a
-held message can't bring it back from their deleted messages.
+held message can't bring it back from their deleted messages. Held
+messages are only for staff who *Read reported and held private
+messages*: others reviewing held writing don't see them.
 
 ## Tag aliases and implications
 

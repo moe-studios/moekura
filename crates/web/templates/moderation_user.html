@@ -162,6 +162,19 @@
   {% endif %}
 </section>
 
+{% if other_reports %}
+<section class="card">
+  <h2>{{ t("mod-nav-reports") }}</h2>
+  <ul class="plain">
+    {% for r in other_reports %}
+    <li><span class="status status-{{ 'open' if r.status == 'open' else 'dismissed' }}">{{ t("status-" ~ r.status) }}</span>
+      {{ t("report-kind-" ~ r.kind|replace("_", "-")) }} #{{ r.id }} <span class="hint">{{ r.when }}{% if r.by %} · {{ t("by-user", user=r.by) }}{% endif %}</span>
+      <div class="reason">“{{ r.reason }}”{% if r.outcome %} → {{ r.outcome }}{% endif %}</div></li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 {% if read_log %}
 <section class="card">
   <h2>{{ t("mod-nav-log") }}</h2>

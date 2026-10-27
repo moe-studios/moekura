@@ -5,7 +5,7 @@ mod-nav-flags = Flags
 mod-nav-appeals = Appeals
 mod-nav-comments = Reported comments
 mod-nav-held = Held for review
-mod-nav-dmails = Reported messages
+mod-nav-reports = Reports
 mod-nav-deleted = Deleted posts
 mod-nav-purge = Purge
 mod-nav-changes = Post changes
@@ -13,11 +13,20 @@ mod-nav-mass-edit = Mass edit
 mod-nav-bans = Bans
 mod-nav-log = Log
 
-mod-dmails-hint = Messages their recipients reported. Staff see these, and no others.
-mod-dmails-from-to = from { $sender } to { $recipient }
-mod-dmails-settled = Settled
-mod-dmails-reported = Reported: { $reason }
-mod-dmails-none = No reported messages.
+mod-reports-hint = Messages, forum posts, users, wiki pages, pools, notes, artists and feedback that members reported, the longest waiting first, with the text as each report found it. Staff see a message only once its recipient reports it. Settling closes every open report about the thing: say how it ended.
+mod-reports-kinds = What was reported
+mod-reports-none = No open reports.
+report-kind-dmail = Message
+report-kind-forum-post = Forum post
+report-kind-user = User
+report-kind-wiki-page = Wiki page
+report-kind-pool = Pool
+report-kind-note = Note
+report-kind-artist = Artist
+report-kind-user-feedback = Feedback
+report-text-when = As reported on { $day }:
+report-outcome = How it ended
+report-uphold = Uphold
 
 mod-appeals-hint = Deleted posts someone asked to bring back (<a href="{ $url }">status:appealed</a>), oldest appeal first. Restoring a post grants its appeal.
 mod-appeals-why = Why it stays deleted
@@ -108,6 +117,8 @@ action-appeal_create = appealed post
 action-post_disapprove = passed on post
 action-user_feedback_create = left feedback on
 action-user_feedback_update = changed feedback on
+action-report_create = made a report about
+action-report_settle = settled reports about
 
 mod-log-title = Moderation log
 mod-log-subject = About

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{% if user %}{{ t("feedback-on", user=user) }}{% else %}{{ t("feedback-user") }}{% endif %} · {{ site.name }}{% endblock %}
 {% block content %}
+{% from "report_form.html" import report_form %}
 {% if user %}<p class="back"><a href="/users/{{ user|urlencode }}">« {{ user }}</a></p>{% endif %}
 <h1>{% if user %}{{ t("feedback-on", user=user) }}{% elif creator %}{{ t("feedback-by", user=creator) }}{% else %}{{ t("feedback-user") }}{% endif %}</h1>
 <nav class="subnav" aria-label="{{ t('categories') }}">
@@ -19,6 +20,7 @@
       {% if f.can_delete %}<form method="post" action="/user_feedbacks/{{ f.id }}/{{ 'restore' if f.deleted else 'delete' }}"><button type="submit" class="secondary">{{ t("restore") if f.deleted else t("delete") }}</button></form>{% endif %}
     </div>
     <div class="markup">{{ f.html }}</div>
+    {% if can_report and not f.deleted and f.creator and not (me and me.name == f.creator) %}{{ report_form("user_feedback", f.id) }}{% endif %}
   </li>
   {% endfor %}
 </ol>

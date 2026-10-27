@@ -28,10 +28,12 @@ pub enum Flash {
     Held,
     /// An upload was already this post.
     Duplicate,
+    /// A report went to the staff.
+    Reported,
 }
 
 impl Flash {
-    const ALL: [Flash; 13] = [
+    const ALL: [Flash; 14] = [
         Flash::LoggedIn,
         Flash::LoggedOut,
         Flash::Registered,
@@ -45,6 +47,7 @@ impl Flash {
         Flash::Queued,
         Flash::Held,
         Flash::Duplicate,
+        Flash::Reported,
     ];
 
     /// As in the cookie; the message is `flash-<key>`.
@@ -63,6 +66,7 @@ impl Flash {
             Flash::Queued => "queued",
             Flash::Held => "held",
             Flash::Duplicate => "duplicate",
+            Flash::Reported => "reported",
         }
     }
 

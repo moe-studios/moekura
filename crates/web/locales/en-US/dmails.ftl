@@ -8,7 +8,6 @@ dmail-send = Send
 
 dmail-to-user = To { $user }
 dmail-from-user = From { $user }
-dmail-reported = reported to the staff
 dmail-mark-unread = Mark unread
 dmail-report-hint = The staff can then read this message, and only this one.
 

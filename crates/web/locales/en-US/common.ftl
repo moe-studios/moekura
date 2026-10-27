@@ -18,6 +18,7 @@ flash-some_skipped = Done. Some had been dealt with meanwhile, and were skipped.
 flash-queued = Started; it runs in the background.
 flash-held = Thanks! It looked like it might be spam, so the staff will check it before anyone sees it.
 flash-duplicate = Duplicate: that file was already uploaded as this post.
+flash-reported = Thanks for the report. The staff will look at it.
 
 optional = (optional)
 back-to-settings = Back to settings
@@ -175,6 +176,7 @@ report = Report
 report-to-staff = Report to the staff
 report-whats-wrong = What's wrong with it?
 report-placeholder = Spam, harassment, …
+report-text-then = What it said when reported
 block-user = Block { $user }
 unblock-user = Unblock { $user }
 banned-word = banned

@@ -238,6 +238,8 @@ pub(crate) fn render(
             until => ban.expires_at.map(crate::dates::day),
         }),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
+        // Reporting things to staff (messages are reported from their page).
+        can_report => current.is_some_and(|c| c.is_logged_in() && c.can(Permission::Flag)),
         can_purge => current.is_some_and(|c| c.can(Permission::PurgePosts)),
         can_admin => current.is_some_and(|c| {
             c.can(Permission::ManageSettings) || c.can(Permission::ManageUsers)

@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ user.name }} · {{ site.name }}{% endblock %}
 {% block content %}
+{% from "report_form.html" import report_form %}
 <article class="profile">
   <header class="profile-header">
     <div class="profile-banner">{% if profile.banner %}<img src="{{ profile.banner }}" alt="" decoding="async">{% endif %}</div>
@@ -13,6 +14,7 @@
         {% if can_edit_profile %}<a class="button secondary" href="/settings/profile">{{ t("profile-edit") }}</a>{% endif %}
         {% if messages and messages.can_send and not messages.blocked %}<a class="button" href="/dmails/new?to={{ user.name|urlencode }}">{{ t("profile-send-message") }}</a>{% endif %}
         {% if feedback.can_give %}<a class="button secondary" href="/user_feedbacks/new?user={{ user.name|urlencode }}">{{ t("feedback-leave") }}</a>{% endif %}
+        {% if can_report and not (me and me.name == user.name) %}{{ report_form("user", user.id) }}{% endif %}
         {% if messages %}
         <form method="post" action="/users/{{ user.name }}/block"><input type="hidden" name="blocked" value="{{ '0' if messages.blocked else '1' }}"><button type="submit" class="secondary">{% if messages.blocked %}{{ t("unblock") }}{% else %}{{ t("profile-block") }}{% endif %}</button></form>
         {% endif %}

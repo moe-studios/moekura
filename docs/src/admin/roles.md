@@ -37,8 +37,9 @@ roles can't be deleted and keep their ranks.
 | Purge posts | removing deleted posts and their files for good |
 | Manage tags, aliases and implications | moving tags between categories, deprecating tags, deciding alias and implication requests; banning artists, and renaming, deleting or restoring a banned artist's entry |
 | See deleted posts | deleted posts and comments |
-| Hide comments and handle reports about them | hiding and restoring anyone's comments, and the reported comments queue |
-| Ban users and networks | |
+| Hide comments and forum posts, and handle reports about them | hiding and restoring anyone's comments and forum posts, the reported comments queue, writing held as spam, and reports about forum posts, wiki pages, pools, notes and artists |
+| Read reported and held private messages | private messages their recipients reported or the spam filter held, and settling them |
+| Ban users and networks | also reports about users and feedback |
 | Manage users | changing other users' roles and account status; any number and kind of invites |
 | Manage site settings and roles | also the admin pages for tag categories, news and webhooks |
 | Read the moderation log | |
@@ -51,7 +52,7 @@ The built-in roles and what they start with:
 | Member | 10 | Anonymous, plus Upload, Edit posts and tags, Comment, Favorite, Vote, Flag posts, Edit the wiki and artists, Create and edit pools, Edit notes, Send private messages |
 | Contributor | 20 | Member, plus Upload without approval, Leave feedback |
 | Janitor | 30 | Contributor, plus Approve posts, Delete and restore posts, Manage tags, See deleted posts, Hide comments |
-| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits, Replace posts' files, Invite people |
+| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits, Replace posts' files, Invite people, Read reported and held private messages |
 | Admin | 50 | everything |
 
 ## Upload limits

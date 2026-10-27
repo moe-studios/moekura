@@ -61,10 +61,13 @@ pub enum Permission {
     GiveFeedback = 26,
     /// Make invite codes, up to the site's quota.
     InviteUsers = 27,
+    /// Read private messages their recipients reported or the spam filter
+    /// held, and settle them.
+    ModerateMessages = 28,
 }
 
 impl Permission {
-    pub const ALL: [Permission; 28] = [
+    pub const ALL: [Permission; 29] = [
         Permission::ViewPosts,
         Permission::Upload,
         Permission::EditPosts,
@@ -93,6 +96,7 @@ impl Permission {
         Permission::SendMessages,
         Permission::GiveFeedback,
         Permission::InviteUsers,
+        Permission::ModerateMessages,
     ];
 
     const fn bit(self) -> u64 {
@@ -130,6 +134,7 @@ impl Permission {
             Permission::SendMessages => "send_messages",
             Permission::GiveFeedback => "give_feedback",
             Permission::InviteUsers => "invite_users",
+            Permission::ModerateMessages => "moderate_messages",
         }
     }
 
@@ -154,7 +159,9 @@ impl Permission {
             Permission::ManageSettings => "Manage site settings and roles",
             Permission::ViewAuditLog => "Read the moderation log",
             Permission::UploadWithoutApproval => "Upload without approval",
-            Permission::ModerateComments => "Hide comments and handle reports about them",
+            Permission::ModerateComments => {
+                "Hide comments and forum posts, and handle reports about them"
+            }
             Permission::EditPools => "Create and edit pools",
             Permission::EditNotes => "Edit notes",
             Permission::MassEditTags => "Mass edit tags",
@@ -164,6 +171,7 @@ impl Permission {
             Permission::SendMessages => "Send private messages",
             Permission::GiveFeedback => "Leave feedback on users of lower rank",
             Permission::InviteUsers => "Invite people",
+            Permission::ModerateMessages => "Read reported and held private messages",
         }
     }
 }
@@ -332,6 +340,7 @@ impl SystemRole {
             UndoEdits,
             ReplacePosts,
             InviteUsers,
+            ModerateMessages,
         ]));
         match self {
             SystemRole::Anonymous => ANONYMOUS,

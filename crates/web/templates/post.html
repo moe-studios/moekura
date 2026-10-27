@@ -389,7 +389,7 @@
           <legend>{{ t("post-locks") }}</legend>
           {% for l in moderate.locks %}<label class="choice"><input type="checkbox" name="{{ l.name }}"{% if l.on %} checked{% endif %}> {{ t("lock-" ~ l.name) }}</label>{% endfor %}
         </fieldset>
-        <label for="locks-reason">{{ t("reason") }} <span class="optional">{{ t("reason-details-optional") }}</span></label>
+        <label for="locks-reason">{{ t("reason") }} <span class="optional">{{ t("optional") }}</span></label>
         <input id="locks-reason" name="reason" maxlength="2000">
         <button type="submit" class="secondary">{{ t("post-locks-save") }}</button>
       </form>

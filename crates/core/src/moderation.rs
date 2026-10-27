@@ -164,6 +164,83 @@ impl SubjectKind {
     }
 }
 
+/// What members can report to staff, besides posts (flags) and comments
+/// (comment reports).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReportKind {
+    /// A private message, by its recipient.
+    Dmail,
+    ForumPost,
+    User,
+    WikiPage,
+    Pool,
+    Note,
+    Artist,
+    /// Feedback someone left on a user.
+    UserFeedback,
+}
+
+impl ReportKind {
+    pub const ALL: [ReportKind; 8] = [
+        ReportKind::Dmail,
+        ReportKind::ForumPost,
+        ReportKind::User,
+        ReportKind::WikiPage,
+        ReportKind::Pool,
+        ReportKind::Note,
+        ReportKind::Artist,
+        ReportKind::UserFeedback,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReportKind::Dmail => "dmail",
+            ReportKind::ForumPost => "forum_post",
+            ReportKind::User => "user",
+            ReportKind::WikiPage => "wiki_page",
+            ReportKind::Pool => "pool",
+            ReportKind::Note => "note",
+            ReportKind::Artist => "artist",
+            ReportKind::UserFeedback => "user_feedback",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+
+    /// Who handles reports of this kind.
+    pub fn handled_by(self) -> crate::permissions::Permission {
+        use crate::permissions::Permission;
+        match self {
+            ReportKind::Dmail => Permission::ModerateMessages,
+            ReportKind::User | ReportKind::UserFeedback => Permission::BanUsers,
+            _ => Permission::ModerateComments,
+        }
+    }
+
+    /// How the log knows it, when it isn't a user (the log's user column).
+    pub fn subject(self) -> Option<SubjectKind> {
+        match self {
+            ReportKind::Dmail => Some(SubjectKind::Dmail),
+            ReportKind::ForumPost => Some(SubjectKind::ForumPost),
+            ReportKind::User => None,
+            ReportKind::WikiPage => Some(SubjectKind::WikiPage),
+            ReportKind::Pool => Some(SubjectKind::Pool),
+            ReportKind::Note => Some(SubjectKind::Note),
+            ReportKind::Artist => Some(SubjectKind::Artist),
+            ReportKind::UserFeedback => Some(SubjectKind::UserFeedback),
+        }
+    }
+}
+
+/// Most characters of a reported thing's text kept with a report.
+pub const SNAPSHOT_MAX_LEN: usize = 50_000;
+
+/// Days before someone may report the same thing again once their report
+/// was settled, and appeal or flag again once turned down.
+pub const REPORT_COOLDOWN_DAYS: i64 = 7;
+
 /// What an audit log entry records. Stored by name; renaming one would
 /// orphan old entries' labels, so only add.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -236,10 +313,12 @@ pub enum ActionKind {
     PostDisapprove,
     FeedbackCreate,
     FeedbackUpdate,
+    ReportCreate,
+    ReportSettle,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 68] = [
+    pub const ALL: [ActionKind; 70] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -308,6 +387,8 @@ impl ActionKind {
         ActionKind::PostDisapprove,
         ActionKind::FeedbackCreate,
         ActionKind::FeedbackUpdate,
+        ActionKind::ReportCreate,
+        ActionKind::ReportSettle,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -380,6 +461,8 @@ impl ActionKind {
             ActionKind::PostDisapprove => "post.disapprove",
             ActionKind::FeedbackCreate => "user_feedback.create",
             ActionKind::FeedbackUpdate => "user_feedback.update",
+            ActionKind::ReportCreate => "report.create",
+            ActionKind::ReportSettle => "report.settle",
         }
     }
 
@@ -454,6 +537,8 @@ impl ActionKind {
             ActionKind::PostDisapprove => "passed on post",
             ActionKind::FeedbackCreate => "left feedback on",
             ActionKind::FeedbackUpdate => "changed feedback on",
+            ActionKind::ReportCreate => "made a report about",
+            ActionKind::ReportSettle => "settled reports about",
         }
     }
 

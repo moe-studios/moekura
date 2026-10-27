@@ -45,6 +45,7 @@ mod invites;
 mod mass_edit;
 mod metatags;
 mod moderation;
+mod moderation_reports;
 mod name_changes;
 mod news;
 mod notes;
@@ -338,6 +339,7 @@ pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
         .merge(commentary::routes())
         .merge(comments::routes())
         .merge(dmails::routes())
+        .merge(moderation_reports::routes())
         .merge(edit::routes())
         .merge(email::routes())
         .merge(explore::routes())

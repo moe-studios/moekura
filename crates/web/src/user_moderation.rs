@@ -292,6 +292,17 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     let flags_filed = user_record::flags_filed(db, user.id).await?;
     let reports = user_record::reports_received(db, user.id).await?;
     let hidden = user_record::hidden_comments(db, user.id, RECENT).await?;
+    // Reports about them or what they wrote, of the kinds the viewer
+    // handles (messages only for those who read them).
+    let kinds = crate::moderation_reports::handled_kinds(&page.current);
+    let other_reports: Vec<_> = moekura_db::moderation_reports::about_owner(db, user.id, RECENT)
+        .await?
+        .into_iter()
+        .filter(|r| {
+            moekura_core::moderation::ReportKind::parse(&r.subject_kind)
+                .is_some_and(|k| kinds.contains(&k))
+        })
+        .collect();
     let disapprovals = Tally(moekura_db::disapprovals::counts_by(db, user.id).await?);
     let flag_statuses = ["open", "upheld", "dismissed"];
     let notes = notes(state, &page.current, &user).await?;
@@ -383,6 +394,15 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 body => c.body,
                 reports => c.reports,
                 when => crate::dates::day(c.created_at),
+            }).collect::<Vec<_>>(),
+            other_reports => other_reports.iter().map(|r| context! {
+                kind => r.subject_kind,
+                id => r.subject_id,
+                by => r.creator_name,
+                reason => r.reason,
+                status => r.status,
+                outcome => r.outcome,
+                when => crate::dates::day(r.created_at),
             }).collect::<Vec<_>>(),
         },
     ))

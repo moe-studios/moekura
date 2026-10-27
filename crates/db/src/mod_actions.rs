@@ -93,6 +93,30 @@ pub struct Entry {
     pub created_at: OffsetDateTime,
 }
 
+/// The latest entry about post `post_id` of one of `kinds`, however many
+/// others came after it.
+pub async fn latest_for_post(
+    db: impl PgExecutor<'_>,
+    post_id: i64,
+    kinds: &[ActionKind],
+) -> sqlx::Result<Option<Entry>> {
+    let kinds: Vec<&str> = kinds.iter().map(|k| k.as_str()).collect();
+    sqlx::query_as(
+        "SELECT m.id, a.name::text AS actor_name, m.action, m.post_id, m.user_id,
+                u.name::text AS user_name, m.subject_kind, m.subject_id, m.reason, m.details,
+                m.created_at
+         FROM mod_actions m
+         LEFT JOIN users a ON a.id = m.actor_id
+         LEFT JOIN users u ON u.id = m.user_id
+         WHERE m.post_id = $1 AND m.action = ANY($2)
+         ORDER BY m.id DESC LIMIT 1",
+    )
+    .bind(post_id)
+    .bind(kinds)
+    .fetch_optional(db)
+    .await
+}
+
 /// What to show of the log.
 #[derive(Debug, Clone, Default)]
 pub struct Filter {
@@ -204,6 +228,21 @@ mod tests {
             .await
             .unwrap();
 
+        // Found however much came after it.
+        for _ in 0..60 {
+            record(&pool, NewAction::new(None, ActionKind::PostLock).post(7))
+                .await
+                .unwrap();
+        }
+        let deleted = latest_for_post(&pool, 7, &[ActionKind::PostDelete, ActionKind::PostReject])
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(deleted.reason, "duplicate");
+        sqlx::query("DELETE FROM mod_actions WHERE action = 'post.lock'")
+            .execute(&pool)
+            .await
+            .unwrap();
         let all = list(&pool, &Filter::default(), 10).await.unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].action, "setting.update");

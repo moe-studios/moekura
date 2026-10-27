@@ -1126,16 +1126,11 @@ async fn reject(
     Ok(back_to(jar, &from.url(id)))
 }
 
-/// The latest deletion or rejection of a post, for its page.
+/// The latest deletion or rejection of a post, for its page, however
+/// much was logged about it since.
 pub(crate) async fn deletion(db: &sqlx::PgPool, post_id: i64) -> Result<Option<Entry>, AppError> {
-    let filter = Filter {
-        post_id: Some(post_id),
-        ..Filter::default()
-    };
-    Ok(mod_actions::list(db, &filter, 50)
-        .await?
-        .into_iter()
-        .find(|e| e.action == "post.delete" || e.action == "post.reject"))
+    let kinds = [ActionKind::PostDelete, ActionKind::PostReject];
+    Ok(mod_actions::latest_for_post(db, post_id, &kinds).await?)
 }
 
 #[derive(Debug, Default, Deserialize)]

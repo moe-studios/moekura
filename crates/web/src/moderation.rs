@@ -34,6 +34,7 @@ const LOG_PAGE: i64 = 50;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
+        .route("/moderation", get(overview))
         .route("/moderation/log", get(log))
         .route("/moderation/queue", get(queue))
         .route("/moderation/queue/bulk", post(bulk_review))
@@ -1326,8 +1327,117 @@ pub(crate) fn entry_context(entry: &Entry) -> Value {
     }
 }
 
+/// Whether `current` is staff who have a moderation page to go to.
+pub(crate) fn is_staff(current: &CurrentUser) -> bool {
+    [
+        Permission::ApprovePosts,
+        Permission::DeletePosts,
+        Permission::ModerateComments,
+        Permission::ModerateMessages,
+        Permission::ManageTags,
+        Permission::BanUsers,
+        Permission::ViewAuditLog,
+    ]
+    .into_iter()
+    .any(|p| current.can(p))
+}
+
+/// What waits in each queue `current` works through, in one place.
+async fn overview(page: Page) -> Result<Response, AppError> {
+    if !is_staff(&page.current) {
+        page.current.require(Permission::ApprovePosts)?;
+    }
+    let current = &page.current;
+    let db = page.state().db.primary();
+    let waiting = mod_actions::waiting(db).await?;
+    let held = if current.can(Permission::ModerateComments) {
+        Some(moekura_db::held::count(db, current.can(Permission::ModerateMessages)).await?)
+    } else {
+        None
+    };
+    let kinds = crate::moderation_reports::handled_kinds(current);
+    let reports = if kinds.is_empty() {
+        None
+    } else {
+        Some(moekura_db::moderation_reports::count_open(db, &kinds).await?)
+    };
+    let queue = |permission: Permission, name: &str, url: &str, count: i64| {
+        current.can(permission).then(|| {
+            context! { name => name, url => url_value(url), count => count }
+        })
+    };
+    let queues: Vec<Value> = [
+        queue(
+            Permission::ApprovePosts,
+            "queue",
+            "/moderation/queue",
+            waiting.pending,
+        ),
+        queue(
+            Permission::ApprovePosts,
+            "flags",
+            "/moderation/flags",
+            waiting.flagged,
+        ),
+        queue(
+            Permission::DeletePosts,
+            "appeals",
+            "/moderation/appeals",
+            waiting.appealed,
+        ),
+        queue(
+            Permission::ModerateComments,
+            "comments",
+            "/moderation/comments",
+            waiting.reported_comments,
+        ),
+        held.map(|count| {
+            context! { name => "held", url => url_value("/moderation/held"), count => count }
+        }),
+        reports.map(|count| {
+            context! { name => "reports", url => url_value("/moderation/reports"), count => count }
+        }),
+        queue(
+            Permission::BanUsers,
+            "ban-appeals",
+            "/moderation/bans",
+            waiting.ban_appeals,
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    Ok(page.render(
+        "moderation_overview.html",
+        context! {
+            queues => queues,
+            can_log => log_access(current).is_ok(),
+            can_ban => current.can(Permission::BanUsers),
+        },
+    ))
+}
+
+/// Whether `current` reads the whole log (true) or, as staff who act on
+/// what people post without `view_audit_log`, only the entries about that
+/// (false; see [`ActionKind::is_content`]).
+pub(crate) fn log_access(current: &CurrentUser) -> Result<bool, AppError> {
+    let content_staff = [
+        Permission::ApprovePosts,
+        Permission::DeletePosts,
+        Permission::ModerateComments,
+        Permission::ManageTags,
+    ];
+    if current.can(Permission::ViewAuditLog) {
+        Ok(true)
+    } else if content_staff.into_iter().any(|p| current.can(p)) {
+        Ok(false)
+    } else {
+        current.require(Permission::ViewAuditLog).map(|()| true)
+    }
+}
+
 async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppError> {
-    page.current.require(Permission::ViewAuditLog)?;
+    let whole = log_access(&page.current)?;
     let db = page.state().reader(&page.current);
     // Nobody by that name: match nothing.
     let user_id = async |name: &str| -> Result<Option<i64>, AppError> {
@@ -1351,6 +1461,7 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
         post_id: query.post.trim().trim_start_matches('#').parse().ok(),
         user_id: user_id(&query.user).await?,
         subject,
+        content_only: !whole,
         before: query.before,
         since,
         until,
@@ -1379,6 +1490,7 @@ async fn log(page: Page, Query(query): Query<LogQuery>) -> Result<Response, AppE
             entries => entries.iter().map(entry_context).collect::<Vec<_>>(),
             actions => ActionKind::ALL.iter().map(|k| context! { name => k.as_str() }).collect::<Vec<_>>(),
             subjects => SubjectKind::ALL.iter().map(|k| k.as_str()).collect::<Vec<_>>(),
+            whole => whole,
             query => context! {
                 action => query.action,
                 by => query.by,
@@ -1895,6 +2007,80 @@ mod tests {
         assert!(page.contains("href=\"/comments/5\""), "{page}");
         assert!(!page.contains("/forum_posts/5"), "{page}");
         assert!(page.contains("subject=comment&amp;subject_id=5"), "{page}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn the_overview_counts_every_queue(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let member = session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        post_by(&pool, "alice", "pending").await;
+        post_by(&pool, "alice", "pending").await;
+        assert_eq!(
+            app.get("/moderation", Some(&member)).await.status,
+            StatusCode::FORBIDDEN
+        );
+        let page = app.get("/moderation", Some(&janitor)).await.body;
+        assert!(
+            page.contains(
+                "href=\"/moderation/queue\">Pending posts</a> <span class=\"count-badge\">2</span>"
+            ),
+            "{page}"
+        );
+        assert!(page.contains("Reported comments"), "{page}");
+        assert!(!page.contains("Ban appeals"), "janitors don't ban");
+        assert!(
+            app.get("/moderation", Some(&moderator))
+                .await
+                .body
+                .contains("Ban appeals")
+        );
+        // The menu leads there.
+        assert!(page.contains("href=\"/moderation\""), "{page}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn janitors_read_what_was_done_to_content(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        for (kind, reason, subject) in [
+            (ActionKind::PostDelete, "off-topic", None),
+            (ActionKind::UserBan, "spammer", None),
+            (
+                ActionKind::HeldReject,
+                "private words",
+                Some((SubjectKind::Dmail, 3)),
+            ),
+            (
+                ActionKind::HeldReject,
+                "spam comment",
+                Some((SubjectKind::Comment, 4)),
+            ),
+            (ActionKind::ReportSettle, "rude user", None),
+            (
+                ActionKind::ReportSettle,
+                "rude post",
+                Some((SubjectKind::ForumPost, 5)),
+            ),
+        ] {
+            let mut entry = NewAction::new(None, kind).reason(reason);
+            if let Some((kind, id)) = subject {
+                entry = entry.subject(kind, id);
+            }
+            mod_actions::record(&pool, entry).await.unwrap();
+        }
+        let page = app.get("/moderation/log", Some(&janitor)).await;
+        assert_eq!(page.status, StatusCode::OK);
+        for shown in ["off-topic", "spam comment", "rude post"] {
+            assert!(page.body.contains(shown), "{shown}: {}", page.body);
+        }
+        for hidden in ["spammer", "private words", "rude user"] {
+            assert!(!page.body.contains(hidden), "{hidden}");
+        }
+        let whole = app.get("/moderation/log", Some(&moderator)).await.body;
+        assert!(whole.contains("spammer") && whole.contains("private words"));
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

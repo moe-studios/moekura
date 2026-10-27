@@ -922,7 +922,9 @@ const LOG_PAGE: i64 = 50;
 
 /// Read the moderation log.
 ///
-/// Needs `view_audit_log`.
+/// Needs `view_audit_log`; staff who approve, delete or moderate what
+/// people post (or manage tags) without it read only the entries about
+/// that: not those about accounts, roles, settings or private messages.
 #[utoipa::path(
     get,
     path = "/moderation/log",
@@ -940,7 +942,7 @@ pub(crate) async fn log(
     current: CurrentUser,
     Query(params): Query<LogParams>,
 ) -> Result<Json<LogPage>, AppError> {
-    current.require(Permission::ViewAuditLog)?;
+    let whole = crate::moderation::log_access(&current)?;
     let db = state.reader(&current);
     let user_id = async |name: Option<&str>| -> Result<Option<i64>, AppError> {
         match name {
@@ -982,6 +984,7 @@ pub(crate) async fn log(
         post_id: params.post_id,
         user_id: user_id(params.user.as_deref()).await?,
         subject,
+        content_only: !whole,
         before: params.before,
         since,
         until,

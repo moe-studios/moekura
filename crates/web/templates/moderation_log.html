@@ -3,6 +3,7 @@
 {% block content %}
 {% include "moderation_nav.html" %}
 <h1>{{ t("mod-log-title") }}</h1>
+{% if not whole %}<p class="hint">{{ t("mod-log-content-only") }}</p>{% endif %}
 <form class="filters" method="get" action="/moderation/log">
   <div class="filter-field">
     <label for="log-action">{{ t("mod-log-action") }}</label>

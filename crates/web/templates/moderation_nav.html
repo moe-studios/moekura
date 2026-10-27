@@ -1,8 +1,9 @@
-{# Twelve places, grouped by the job: queues to work through, posts as a
+{# Thirteen places, grouped by the job: queues to work through, posts as a
    whole, and people. #}
 <nav class="subnav staff" aria-label="{{ t('nav-moderation') }}">
   <div class="group" role="group" aria-labelledby="mod-group-queues">
     <span class="group-label" id="mod-group-queues">{{ t("mod-group-queues") }}</span>
+    <a href="/moderation"{% if path == "/moderation" %} aria-current="page"{% endif %}>{{ t("mod-nav-overview") }}</a>
     <a href="/moderation/queue"{% if path == "/moderation/queue" or path is startingwith("/moderation/queue/") %} aria-current="page"{% endif %}>{{ t("mod-nav-queue") }}</a>
     <a href="/moderation/flags"{% if path == "/moderation/flags" or path is startingwith("/moderation/flags/") %} aria-current="page"{% endif %}>{{ t("mod-nav-flags") }}</a>
     <a href="/moderation/appeals"{% if path == "/moderation/appeals" or path is startingwith("/moderation/appeals/") %} aria-current="page"{% endif %}>{{ t("mod-nav-appeals") }}</a>

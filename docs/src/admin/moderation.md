@@ -2,7 +2,9 @@
 
 Everything here is under **Moderation** in the menu, for people whose role
 allows it, and every action is recorded in the moderation log with who did
-it and why.
+it and why. **Moderation** opens on an overview counting what waits in
+each queue you work through: pending, flagged and appealed posts,
+reported comments, writing held for review, reports, and ban appeals.
 
 ## The approval queue
 
@@ -453,6 +455,12 @@ entry is written in the same transaction as the change it records, so
 nothing changes without its entry, and only when something did change.
 Forum hides, topic changes, held decisions and lock changes take an
 optional reason, as deletions and bans do.
+
+Staff who approve, delete or moderate what people post (janitors, by
+default) without *Read the moderation log* see the part of it about
+that: posts, comments, the forum, tags, pools, artists, held writing and
+reports about them; not what was done to accounts, roles, settings or
+private messages.
 
 Filter it by action, moderator, post, the user acted on, a range of days,
 or what else an entry is about: a comment, forum post or topic, message,

@@ -245,15 +245,9 @@ pub(crate) fn render(
         can_admin => current.is_some_and(|c| {
             c.can(Permission::ManageSettings) || c.can(Permission::ManageUsers)
         }),
-        moderation_url => current.and_then(|c| {
-            if c.can(Permission::ApprovePosts) {
-                Some("/moderation/queue")
-            } else if c.can(Permission::ViewAuditLog) {
-                Some("/moderation/log")
-            } else {
-                None
-            }
-        }),
+        moderation_url => current
+            .filter(|c| crate::moderation::is_staff(c))
+            .map(|_| "/moderation"),
     };
     match crate::i18n::rendering_in(&notices.lang, || {
         state

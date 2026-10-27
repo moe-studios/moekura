@@ -603,6 +603,33 @@ impl ActionKind {
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
     }
+
+    /// Whether it's about what people posted (posts, comments, the forum,
+    /// tags, pools, artists, held writing and reports about them), not
+    /// about accounts, roles, settings or private messages: what staff
+    /// without the whole log may read.
+    pub fn is_content(self) -> bool {
+        let name = self.as_str();
+        [
+            "post.",
+            "flag.",
+            "appeal.",
+            "comment.",
+            "comment_report.",
+            "forum_topic.",
+            "forum_post.",
+            "held.",
+            "tag.",
+            "tag_relation.",
+            "tag_category.",
+            "bulk_update.",
+            "pool.",
+            "artist.",
+            "report.",
+        ]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+    }
 }
 
 #[cfg(test)]

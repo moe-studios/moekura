@@ -104,12 +104,14 @@ pub async fn get(db: impl PgExecutor<'_>, kind: Kind, id: i64) -> sqlx::Result<O
         .await
 }
 
-pub async fn count(db: impl PgExecutor<'_>) -> sqlx::Result<i64> {
+/// How much is held; messages only `with_dmails`.
+pub async fn count(db: impl PgExecutor<'_>, with_dmails: bool) -> sqlx::Result<i64> {
     sqlx::query_scalar(
         "SELECT (SELECT count(*) FROM comments WHERE status = 'held')
               + (SELECT count(*) FROM forum_posts WHERE status = 'held')
-              + (SELECT count(*) FROM dmails WHERE status = 'held')",
+              + CASE WHEN $1 THEN (SELECT count(*) FROM dmails WHERE status = 'held') ELSE 0 END",
     )
+    .bind(with_dmails)
     .fetch_one(db)
     .await
 }

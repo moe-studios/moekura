@@ -93,6 +93,30 @@ pub struct Entry {
     pub created_at: OffsetDateTime,
 }
 
+/// What waits in each moderation queue: pending posts, posts with open
+/// flags, open appeals, comments with open reports, open ban appeals.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, sqlx::FromRow)]
+pub struct Waiting {
+    pub pending: i64,
+    pub flagged: i64,
+    pub appealed: i64,
+    pub reported_comments: i64,
+    pub ban_appeals: i64,
+}
+
+pub async fn waiting(db: impl PgExecutor<'_>) -> sqlx::Result<Waiting> {
+    sqlx::query_as(
+        "SELECT (SELECT count(*) FROM posts WHERE status = 'pending') AS pending,
+                (SELECT count(DISTINCT post_id) FROM post_flags WHERE status = 'open') AS flagged,
+                (SELECT count(*) FROM post_appeals WHERE status = 'open') AS appealed,
+                (SELECT count(DISTINCT comment_id) FROM comment_reports WHERE status = 'open')
+                    AS reported_comments,
+                (SELECT count(*) FROM ban_appeals WHERE status = 'open') AS ban_appeals",
+    )
+    .fetch_one(db)
+    .await
+}
+
 /// The latest entry about post `post_id` of one of `kinds`, however many
 /// others came after it.
 pub async fn latest_for_post(
@@ -125,6 +149,10 @@ pub struct Filter {
     pub post_id: Option<i64>,
     pub user_id: Option<i64>,
     pub subject: Option<(SubjectKind, i64)>,
+    /// Only entries about what people posted (see
+    /// [`ActionKind::is_content`]), and none about private messages,
+    /// users or feedback.
+    pub content_only: bool,
     /// Entries older than this id (keyset pagination).
     pub before: Option<i64>,
     /// Entries at or after this time.
@@ -154,6 +182,11 @@ pub async fn list(
            AND ($6::timestamptz IS NULL OR m.created_at >= $6)
            AND ($7::timestamptz IS NULL OR m.created_at < $7)
            AND ($9::text IS NULL OR (m.subject_kind = $9 AND m.subject_id = $10))
+           AND (NOT $11 OR (m.action = ANY($12)
+                            AND m.subject_kind IS DISTINCT FROM 'dmail'
+                            AND (m.action NOT LIKE 'report.%'
+                                 OR m.subject_kind IN ('forum_post', 'wiki_page', 'pool', 'note',
+                                                       'artist'))))
          ORDER BY m.id DESC LIMIT $8",
     )
     .bind(filter.action.map(ActionKind::as_str))
@@ -166,6 +199,14 @@ pub async fn list(
     .bind(limit)
     .bind(filter.subject.map(|(kind, _)| kind.as_str()))
     .bind(filter.subject.map(|(_, id)| id))
+    .bind(filter.content_only)
+    .bind(
+        ActionKind::ALL
+            .iter()
+            .filter(|k| k.is_content())
+            .map(|k| k.as_str())
+            .collect::<Vec<_>>(),
+    )
     .fetch_all(db)
     .await
 }

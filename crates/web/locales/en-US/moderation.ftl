@@ -1,6 +1,15 @@
 ## Moderation pages
 
+mod-nav-overview = Overview
 mod-nav-queue = Approval queue
+mod-overview-hint = What waits for you, in every queue you work through.
+mod-overview-queue = Pending posts
+mod-overview-flags = Flagged posts
+mod-overview-appeals = Appeals of deleted posts
+mod-overview-comments = Reported comments
+mod-overview-held = Held for review
+mod-overview-reports = Reports
+mod-overview-ban-appeals = Ban appeals
 mod-nav-flags = Flags
 mod-nav-appeals = Appeals
 mod-nav-comments = Reported comments
@@ -127,6 +136,7 @@ action-ban_appeal_deny = turned down the ban appeal of
 action-user_warn = warned
 
 mod-log-title = Moderation log
+mod-log-content-only = You see what was done to posts, comments, the forum, tags, pools and artists; the rest of the log (accounts, roles, settings, messages) is for those who read the whole log.
 mod-log-subject = About
 mod-log-subject-id = Number
 mod-log-subject-log = its log

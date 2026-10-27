@@ -79,7 +79,8 @@ invites lasting up to 30 days, up to **Invites each person may make
 every 30 days** in **Admin → Settings** (5 to start with), and revoke
 their own. Those who can manage users have no limit, choose how many
 times an invite can be used and how long it lasts (or that it never
-expires), and see and revoke everyone's.
+expires), and see and revoke everyone's. An invite stops working while
+whoever made it is banned or their account isn't active.
 
 ## Search engines
 

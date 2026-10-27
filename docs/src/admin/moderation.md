@@ -128,8 +128,9 @@ uploader.
 
 Ban a user from their profile, for a set time or until lifted, with a
 reason. Banned users can still log in and look around as visitors do, see
-why they're banned, and can't change anything; their API keys are limited
-the same way. Banning someone who's already banned replaces their ban
+why they're banned, and can't change anything, even what the site lets
+visitors do (if visitors may comment or vote, banned users still can't);
+their API keys are limited the same way. Banning someone who's already banned replaces their ban
 with the new reason and length. Timed bans last up to 3650 days. Only
 whoever set a ban, or someone ranked above them, can lift it or replace
 it, so a moderator can't undo or shorten a ban an admin set.

@@ -530,6 +530,33 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn banned_users_get_nothing_visitors_were_given(pool: PgPool) {
+        use moekura_core::permissions::{Permission, Permissions};
+        // Visitors may comment and vote here.
+        let visitors =
+            Permissions::of(&[Permission::ViewPosts, Permission::Comment, Permission::Vote]);
+        sqlx::query("UPDATE roles SET permissions = $1 WHERE system_key = 'anonymous'")
+            .bind(visitors.to_db())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let state = test_state(&pool).await;
+        let current = crate::test_support::current_user(&state, &alice).await;
+        let banner = crate::test_support::current_user(&state, &moderator).await;
+        super::ban(&state, &banner, "alice", "spam", None)
+            .await
+            .unwrap();
+        assert!(current.can(Permission::Comment), "before the ban");
+        let banned = crate::test_support::current_user(&state, &alice).await;
+        assert!(banned.can(Permission::ViewPosts));
+        for permission in [Permission::Comment, Permission::Vote, Permission::Upload] {
+            assert!(!banned.can(permission), "{permission:?}");
+        }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
     async fn bans_from_above_stay(pool: PgPool) {
         let state = test_state(&pool).await;
         let app = TestApp::new(state, super::routes().merge(crate::users::routes()));

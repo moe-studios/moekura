@@ -35,6 +35,7 @@ pub mod post_batches;
 pub mod post_versions;
 pub mod posts;
 pub mod promotion;
+pub mod rate_limits;
 pub mod remote_imports;
 pub mod replacements;
 pub mod reports;

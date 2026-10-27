@@ -234,10 +234,12 @@ impl AppState {
             .clone()
             .map(|c| Arc::new(captcha::Captcha::new(c)));
         let passkeys = passkeys::Passkeys::new(&config.server.public_url).map(Arc::new);
-        let rate_limits = RateLimits::new(valkey).with_api_limit(
-            config.server.api_requests_per_minute,
-            config.server.api_burst,
-        );
+        let rate_limits = RateLimits::new(valkey)
+            .with_shared_db(db.primary().clone())
+            .with_api_limit(
+                config.server.api_requests_per_minute,
+                config.server.api_burst,
+            );
         let sources = Arc::new(sources::Sources::new(false, config.sources.clone()));
         Ok(Self {
             config: Arc::new(config),

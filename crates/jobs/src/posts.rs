@@ -8,7 +8,7 @@ use moekura_db::search::{PageRef, Plan};
 use moekura_storage::Storage;
 use sqlx::PgPool;
 
-use crate::media::purge_post;
+use crate::media::{Purge, purge_post};
 use crate::tags::{search_error, search_plan};
 use crate::{JobError, Registry};
 
@@ -93,13 +93,19 @@ impl PostJobs {
     }
 
     /// Purges the deleted posts the batch names, each as a single purge
-    /// would; posts restored or purged meanwhile are skipped, and those
-    /// whose files can't be removed are counted as failed and left.
+    /// would; posts restored or purged meanwhile, appealed, or whose status
+    /// is locked (unless the batch may override locks) are skipped, and
+    /// those whose files can't be removed are counted as failed and left.
     async fn purge(&self, batch: &post_batches::PostBatch) -> Result<Progress, JobError> {
         let targets = match (&batch.post_ids, &batch.query) {
             (Some(ids), _) => Targets::Ticked(ids.clone()),
             (None, Some(query)) => Targets::Search(Box::new(search_plan(&self.db, query).await?)),
             (None, None) => return Err(JobError::permanent("a purge without posts or a search")),
+        };
+        let purge = Purge {
+            actor_id: batch.creator_id,
+            override_locks: batch.override_locks,
+            log: Some(serde_json::json!({ "batch": batch.id })),
         };
         let mut total = Progress::default();
         let mut failures = 0;
@@ -119,7 +125,7 @@ impl PostJobs {
             };
             let Some(&last) = ids.last() else { break };
             for id in ids {
-                let progress = match purge_post(&self.db, &self.storage, id).await {
+                let progress = match purge_post(&self.db, &self.storage, id, &purge).await {
                     Ok(purged) => {
                         failures = 0;
                         Progress {
@@ -316,6 +322,7 @@ mod tests {
             Some(admin),
             Some("user:spammer status:deleted"),
             None,
+            false,
             3,
         )
         .await
@@ -346,7 +353,23 @@ mod tests {
         let restored = post(&pool, uploader, "deleted", &[]).await;
         let second = post(&pool, uploader, "deleted", &[]).await;
         let left = post(&pool, uploader, "deleted", &[]).await;
-        let id = post_batches::create_purge(&pool, None, None, Some(&[first, restored, second]), 3)
+        let locked = post(&pool, uploader, "deleted", &[]).await;
+        sqlx::query("UPDATE posts SET locks = '{status}' WHERE id = $1")
+            .bind(locked)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let appealed = post(&pool, uploader, "deleted", &[]).await;
+        sqlx::query(
+            "INSERT INTO post_appeals (post_id, creator_id, reason) VALUES ($1, $2, 'mine')",
+        )
+        .bind(appealed)
+        .bind(uploader)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let ticked = [first, restored, second, locked, appealed];
+        let id = post_batches::create_purge(&pool, None, None, Some(&ticked), false, 5)
             .await
             .unwrap();
         // Restored after the purge was asked for.
@@ -360,13 +383,15 @@ mod tests {
             progress,
             Progress {
                 done: 2,
-                skipped: 1,
+                skipped: 3,
                 failed: 0
             }
         );
         assert!(!exists(&pool, first).await && !exists(&pool, second).await);
         assert!(exists(&pool, restored).await, "restored meanwhile");
         assert!(exists(&pool, left).await, "not ticked");
+        assert!(exists(&pool, locked).await, "its status is locked");
+        assert!(exists(&pool, appealed).await, "the appeal comes first");
         // A retry has nothing left to do.
         sqlx::query("UPDATE post_batches SET status = 'running' WHERE id = $1")
             .bind(id)
@@ -375,6 +400,6 @@ mod tests {
             .unwrap();
         assert_eq!(jobs(&pool).run(id).await.unwrap(), Progress::default());
         let batch = post_batches::by_id(&pool, id).await.unwrap().unwrap();
-        assert_eq!((batch.done, batch.skipped), (2, 1));
+        assert_eq!((batch.done, batch.skipped), (2, 3));
     }
 }

@@ -64,6 +64,16 @@ impl Job for ApplyTagRelation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PurgePost {
     pub post_id: i64,
+    /// Who asked for it, for the log entry made once the post is gone.
+    #[serde(default)]
+    pub actor_id: Option<i64>,
+    /// Purge it even if its status is locked.
+    #[serde(default)]
+    pub override_locks: bool,
+    /// Log the purge when done. Purges queued by older versions were
+    /// logged when they were asked for.
+    #[serde(default)]
+    pub log: bool,
 }
 
 impl Job for PurgePost {

@@ -189,12 +189,23 @@ pub(crate) async fn moderate(
                     "Only deleted posts can be purged".into(),
                 ));
             }
-            mod_actions::record(
-                &mut *tx,
-                NewAction::new(actor, ActionKind::PostPurge).post(id),
-            )
-            .await?;
-            jobs::enqueue(&mut tx, &PurgePost { post_id: id }).await?;
+            if moekura_db::appeals::for_post(&mut *tx, id)
+                .await?
+                .iter()
+                .any(|a| a.status == "open")
+            {
+                return Err(AppError::BadRequest(
+                    "The post's uploader asked for it back; decide the appeal first".into(),
+                ));
+            }
+            // The job logs the purge once the post is gone.
+            let job = PurgePost {
+                post_id: id,
+                actor_id: actor,
+                override_locks: current.can(Permission::LockPosts),
+                log: true,
+            };
+            jobs::enqueue(&mut tx, &job).await?;
             tx.commit().await?;
             return Ok(());
         }
@@ -1313,21 +1324,50 @@ mod tests {
             .post(&format!("/posts/{id}/purge"), Some(&admin), &[])
             .await;
         assert_eq!(response.status, StatusCode::SEE_OTHER);
-        let job: String = sqlx::query_scalar("SELECT kind FROM jobs WHERE kind = 'posts.purge'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(job, "posts.purge");
+        let job: serde_json::Value =
+            sqlx::query_scalar("SELECT payload FROM jobs WHERE kind = 'posts.purge'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(job["post_id"], id);
+        assert_eq!(job["log"], true);
+        // The job logs the purge once the post is gone.
         let logged: Vec<String> =
             sqlx::query_scalar("SELECT action FROM mod_actions WHERE post_id = $1 ORDER BY id")
                 .bind(id)
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(
-            logged,
-            ["post.delete", "post.restore", "post.delete", "post.purge"]
-        );
+        assert_eq!(logged, ["post.delete", "post.restore", "post.delete"]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn appealed_posts_are_not_purged(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let app = TestApp::new(state, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let id: i64 = sqlx::query_scalar(
+            "INSERT INTO posts (rating, status, uploader_id)
+             SELECT 'g', 'deleted', id FROM users WHERE name = 'alice' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let appealed = app
+            .post_form(
+                &format!("/posts/{id}/appeal"),
+                Some(&alice),
+                &[],
+                "reason=mine",
+            )
+            .await;
+        assert_eq!(appealed.status, StatusCode::SEE_OTHER);
+        let refused = app
+            .post(&format!("/posts/{id}/purge"), Some(&admin), &[])
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+        assert!(refused.body.contains("appeal"), "{}", refused.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

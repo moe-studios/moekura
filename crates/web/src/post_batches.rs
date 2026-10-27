@@ -228,8 +228,15 @@ pub(crate) async fn purge(
         return Err(AppError::BadRequest("No deleted posts to purge".into()));
     }
     let mut tx = db.begin().await?;
-    let id = post_batches::create_purge(&mut *tx, actor, query.as_deref(), ids.as_deref(), total)
-        .await?;
+    let id = post_batches::create_purge(
+        &mut *tx,
+        actor,
+        query.as_deref(),
+        ids.as_deref(),
+        current.can(Permission::LockPosts),
+        total,
+    )
+    .await?;
     moekura_db::jobs::enqueue(&mut tx, &PostBatchJob { id }).await?;
     let scope = match (&query, &ids) {
         (Some(query), _) => serde_json::json!({ "batch": id, "query": query, "posts": total }),

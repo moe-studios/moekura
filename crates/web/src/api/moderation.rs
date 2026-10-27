@@ -202,7 +202,8 @@ pub(crate) async fn restore(
 /// Purge a deleted post.
 ///
 /// Needs `purge_posts`. The post, its files and its history are removed
-/// for good by a background job shortly after.
+/// for good by a background job shortly after, which logs the purge once
+/// the post is gone. A post with an open appeal can't be purged.
 #[utoipa::path(
     post,
     path = "/posts/{id}/purge",
@@ -329,8 +330,9 @@ pub struct PurgeRequest {
 ///
 /// Needs `purge_posts`. Give either `query` or `post_ids`. The posts,
 /// their files and their history are removed for good by a background
-/// job, each as `purge_post` would; posts restored before it gets to them
-/// are skipped. Follow the progress with `get_post_batch`.
+/// job, each as `purge_post` would; posts restored or appealed before it
+/// gets to them, and those whose status is locked unless you have
+/// `lock_posts`, are skipped. Follow the progress with `get_post_batch`.
 #[utoipa::path(
     post,
     path = "/moderation/purge",

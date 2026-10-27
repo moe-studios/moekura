@@ -32,7 +32,8 @@ pub async fn create(
     reason: &str,
 ) -> Result<i64, AppealError> {
     let status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM posts WHERE id = $1 FOR UPDATE")
+        // A post being purged is as good as gone.
+        sqlx::query_scalar("SELECT status FROM posts WHERE id = $1 AND NOT purging FOR UPDATE")
             .bind(post_id)
             .fetch_optional(&mut *conn)
             .await?;

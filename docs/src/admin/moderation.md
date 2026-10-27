@@ -61,7 +61,11 @@ API and Danbooru clients send free text as before.
 Deleting a post (with a reason, which is required and shown on the post) hides it from everyone
 without *See deleted posts*, except its uploader, who still sees the post
 and why it went, but can't change it. It can be restored. Purging a deleted post
-removes it, its files and its history for good, in the background.
+removes it, its files and its history for good, in the background, and is
+logged once the post is gone. A post with an open appeal can't be purged
+until the appeal is decided, and one whose status is locked only by staff
+who can lock posts. Once the job starts removing the files, the post can no
+longer be restored or appealed.
 
 ### Purging in bulk
 
@@ -78,7 +82,8 @@ and their history go for good.
 A background job then purges the posts one by one, just as purging each
 would, logging each purge as yours; starting the purge is logged too,
 with its search or the posts ticked. Posts are checked again as the job
-gets to them, so one restored meanwhile is skipped. A post whose files
+gets to them, so one restored or appealed meanwhile is skipped, as is one
+whose status is locked unless you have *Lock posts*. A post whose files
 can't be removed is counted as failed and left deleted (purge it again
 later); if several in a row fail, the job stops and is retried later,
 carrying on where it stopped rather than starting over. The page lists

@@ -354,7 +354,8 @@ pub async fn set_status(
 ) -> sqlx::Result<bool> {
     let from: Vec<&str> = from.iter().map(|s| s.as_str()).collect();
     let result = sqlx::query(
-        "UPDATE posts SET status = $3, updated_at = now() WHERE id = $1 AND status = ANY($2)",
+        "UPDATE posts SET status = $3, updated_at = now()
+         WHERE id = $1 AND status = ANY($2) AND NOT purging",
     )
     .bind(id)
     .bind(from)
@@ -382,6 +383,65 @@ pub async fn set_approver(
 /// versions, favorites, votes). Files are the caller's business.
 pub async fn delete(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
     let result = sqlx::query("DELETE FROM posts WHERE id = $1")
+        .bind(id)
+        .execute(db)
+        .await?;
+    Ok(result.rows_affected() == 1)
+}
+
+/// Why [`start_purge`] left a post alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unpurgeable {
+    /// It's gone, or isn't deleted (any more).
+    NotDeleted,
+    /// Its status is locked, and the purge may not change locked posts.
+    Locked,
+    /// Its uploader asked for it back; staff decide that first.
+    Appealed,
+}
+
+/// Marks deleted post `id` as being purged, after which it can't be
+/// restored or appealed, so its files can go: see [`finish_purge`]. A
+/// post marked already (a purge being retried) stays marked.
+pub async fn start_purge(
+    conn: &mut sqlx::PgConnection,
+    id: i64,
+    override_locks: bool,
+) -> sqlx::Result<Result<(), Unpurgeable>> {
+    let row: Option<(String, Vec<String>, bool, bool)> = sqlx::query_as(
+        "SELECT status, locks, purging,
+                EXISTS (SELECT 1 FROM post_appeals a WHERE a.post_id = p.id AND a.status = 'open')
+         FROM posts p WHERE id = $1 FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((status, locks, purging, appealed)) = row else {
+        return Ok(Err(Unpurgeable::NotDeleted));
+    };
+    if status != PostStatus::Deleted.as_str() {
+        return Ok(Err(Unpurgeable::NotDeleted));
+    }
+    if purging {
+        return Ok(Ok(()));
+    }
+    if !override_locks && locks.iter().any(|l| l == PostLock::Status.as_str()) {
+        return Ok(Err(Unpurgeable::Locked));
+    }
+    if appealed {
+        return Ok(Err(Unpurgeable::Appealed));
+    }
+    sqlx::query("UPDATE posts SET purging = true WHERE id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(Ok(()))
+}
+
+/// Deletes post `id` (see [`delete`]) if [`start_purge`] marked it and it's
+/// still deleted; returns whether it did.
+pub async fn finish_purge(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    let result = sqlx::query("DELETE FROM posts WHERE id = $1 AND status = 'deleted' AND purging")
         .bind(id)
         .execute(db)
         .await?;
@@ -644,6 +704,44 @@ mod tests {
         assert_eq!(found[0].thumb.as_deref(), Some("thumb-key"));
         assert_eq!(found[0].thumb_2x, None);
         assert_eq!(found[1].thumb, None);
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn a_post_being_purged_stays_deleted(pool: PgPool) {
+        let uploader: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'alice', id FROM roles WHERE system_key = 'member' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let active = post_with_file(&pool, PostStatus::Active, Some(uploader), 1).await;
+        let deleted = post_with_file(&pool, PostStatus::Deleted, Some(uploader), 2).await;
+        let mut tx = pool.begin().await.unwrap();
+        assert_eq!(
+            start_purge(&mut tx, active, false).await.unwrap(),
+            Err(Unpurgeable::NotDeleted)
+        );
+        assert_eq!(start_purge(&mut tx, deleted, false).await.unwrap(), Ok(()));
+        tx.commit().await.unwrap();
+
+        // Its files are going: it can't come back now.
+        let restore = [PostStatus::Deleted];
+        assert!(
+            !set_status(&pool, deleted, &restore, PostStatus::Active)
+                .await
+                .unwrap()
+        );
+        let mut tx = pool.begin().await.unwrap();
+        assert!(matches!(
+            crate::appeals::create(&mut tx, deleted, uploader, "mine").await,
+            Err(crate::appeals::AppealError::NotDeleted)
+        ));
+        // A retried purge carries on.
+        assert_eq!(start_purge(&mut tx, deleted, false).await.unwrap(), Ok(()));
+        tx.commit().await.unwrap();
+        assert!(!finish_purge(&pool, active).await.unwrap(), "never marked");
+        assert!(finish_purge(&pool, deleted).await.unwrap());
+        assert!(by_id(&pool, deleted).await.unwrap().is_none());
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]

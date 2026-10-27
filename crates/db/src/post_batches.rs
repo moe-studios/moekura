@@ -87,12 +87,14 @@ pub async fn create_deletion(
 }
 
 /// Records a purge of the deleted posts search `query` finds, or of
-/// posts `post_ids`, `total` of them; returns its id.
+/// posts `post_ids`, `total` of them; returns its id. Unless
+/// `override_locks`, posts whose status is locked are skipped.
 pub async fn create_purge(
     db: impl PgExecutor<'_>,
     creator_id: Option<i64>,
     query: Option<&str>,
     post_ids: Option<&[i64]>,
+    override_locks: bool,
     total: i64,
 ) -> sqlx::Result<i64> {
     let post_ids = post_ids.map(|ids| {
@@ -102,12 +104,13 @@ pub async fn create_purge(
         ids
     });
     sqlx::query_scalar(
-        "INSERT INTO post_batches (kind, creator_id, query, post_ids, total)
-         VALUES ('purge', $1, $2, $3, $4) RETURNING id",
+        "INSERT INTO post_batches (kind, creator_id, query, post_ids, override_locks, total)
+         VALUES ('purge', $1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(creator_id)
     .bind(query)
     .bind(post_ids)
+    .bind(override_locks)
     .bind(i32::try_from(total).unwrap_or(i32::MAX))
     .fetch_one(db)
     .await
@@ -253,26 +256,15 @@ pub async fn deleted_among(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result
     .await
 }
 
-/// Records how purging post `post_id` for purge `batch` went, and logs it
-/// as the batch creator's when it was purged.
+/// Records how purging post `post_id` for purge `batch` went.
 pub async fn record_purge(
     db: &PgPool,
     batch: &PostBatch,
     post_id: i64,
     progress: Progress,
 ) -> sqlx::Result<()> {
-    let mut tx = db.begin().await?;
-    if progress.done > 0 {
-        mod_actions::record(
-            &mut *tx,
-            NewAction::new(batch.creator_id, ActionKind::PostPurge)
-                .post(post_id)
-                .details(serde_json::json!({ "batch": batch.id })),
-        )
-        .await?;
-    }
-    advance(&mut *tx, batch.id, progress, post_id).await?;
-    tx.commit().await
+    // The purge itself logged the post.
+    advance(db, batch.id, progress, post_id).await
 }
 
 /// Deletes posts `ids` (newest first) for deletion `batch`, as a single

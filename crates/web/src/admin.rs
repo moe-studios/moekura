@@ -220,6 +220,7 @@ fn render_settings(
                 spam_filter => context! {
                     mode => current.spam_filter.mode,
                     link_account_days => current.spam_filter.link_account_days,
+                    link_min_posts => current.spam_filter.link_min_posts,
                     max_repeats => current.spam_filter.max_repeats,
                     words => current.spam_filter.words.join("\n"),
                 },
@@ -362,6 +363,7 @@ struct SettingsForm {
     /// `auto`, `on` or `off`.
     spam_filter_mode: Option<String>,
     spam_link_account_days: Option<String>,
+    spam_link_min_posts: Option<String>,
     spam_max_repeats: Option<String>,
     /// One per line.
     spam_words: Option<String>,
@@ -397,7 +399,7 @@ fn number(text: &str) -> serde_json::Value {
         .map_or_else(|_| json!(text.trim()), |n| json!(n))
 }
 
-/// A number of days as JSON, blank for 0 (never).
+/// A number (of days, say) as JSON, blank for 0 (never).
 fn days_or_never(text: &str) -> serde_json::Value {
     if text.trim().is_empty() {
         json!(0)
@@ -661,6 +663,10 @@ async fn save_settings(
                 "link_account_days": form.spam_link_account_days.as_deref().map_or_else(
                     || json!(before.spam_filter.link_account_days),
                     number,
+                ),
+                "link_min_posts": form.spam_link_min_posts.as_deref().map_or_else(
+                    || json!(before.spam_filter.link_min_posts),
+                    days_or_never,
                 ),
                 "max_repeats": form.spam_max_repeats.as_deref().map_or_else(
                     || json!(before.spam_filter.max_repeats),

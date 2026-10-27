@@ -156,21 +156,48 @@ pub async fn reject(db: impl PgExecutor<'_>, kind: Kind, id: i64) -> sqlx::Resul
     Ok(done.rows_affected() == 1)
 }
 
-/// How many times `user_id` posted exactly `body` (comments, forum posts
-/// and messages sent) in the past day, or changed one to it.
+/// How many times `user_id` posted `body` (comments, forum posts and
+/// messages sent) in the past day, or changed one to it, counting texts
+/// the same when their letters and digits are, whatever the case, the
+/// spacing, the punctuation or the look-alike letters used.
 pub async fn repeats(db: impl PgExecutor<'_>, user_id: i64, body: &str) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM comments
-                 WHERE creator_id = $1 AND body = $2
-                   AND coalesce(edited_at, created_at) > now() - interval '1 day')
-              + (SELECT count(*) FROM forum_posts
-                 WHERE creator_id = $1 AND body = $2 AND updated_at > now() - interval '1 day')
-              + (SELECT count(*) FROM dmails
-                 WHERE owner_id = $1 AND from_id = $1 AND body = $2
-                   AND created_at > now() - interval '1 day')",
+        "WITH wanted AS (
+             SELECT regexp_replace(lower(normalize($2, NFKC)), '[^[:alnum:]]+', '', 'g') AS text)
+         SELECT (SELECT count(*) FROM comments, wanted
+                 WHERE creator_id = $1
+                   AND coalesce(edited_at, created_at) > now() - interval '1 day'
+                   AND regexp_replace(lower(normalize(body, NFKC)), '[^[:alnum:]]+', '', 'g')
+                       = wanted.text)
+              + (SELECT count(*) FROM forum_posts, wanted
+                 WHERE creator_id = $1 AND updated_at > now() - interval '1 day'
+                   AND regexp_replace(lower(normalize(body, NFKC)), '[^[:alnum:]]+', '', 'g')
+                       = wanted.text)
+              + (SELECT count(*) FROM dmails, wanted
+                 WHERE owner_id = $1 AND from_id = $1 AND created_at > now() - interval '1 day'
+                   AND regexp_replace(lower(normalize(body, NFKC)), '[^[:alnum:]]+', '', 'g')
+                       = wanted.text)",
     )
     .bind(user_id)
     .bind(body)
+    .fetch_one(db)
+    .await
+}
+
+/// How many comments, forum posts and uploads `user_id` has out, up to
+/// `cap`.
+pub async fn posts_out(db: impl PgExecutor<'_>, user_id: i64, cap: i64) -> sqlx::Result<i64> {
+    sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM (SELECT 1 FROM comments
+                                       WHERE creator_id = $1 AND status = 'active' LIMIT $2) c)
+              + (SELECT count(*) FROM (SELECT 1 FROM forum_posts
+                                       WHERE creator_id = $1 AND status = 'active' LIMIT $2) f)
+              + (SELECT count(*) FROM (SELECT 1 FROM posts
+                                       WHERE uploader_id = $1 AND status IN ('active', 'flagged')
+                                       LIMIT $2) p)",
+    )
+    .bind(user_id)
+    .bind(cap)
     .fetch_one(db)
     .await
 }
@@ -227,6 +254,14 @@ mod tests {
                 .edited
         );
         assert_eq!(repeats(&pool, alice, "Spam").await.unwrap(), 2);
+        // The same, written a little differently.
+        assert_eq!(repeats(&pool, alice, "  SPAM!!").await.unwrap(), 2);
+        assert_eq!(repeats(&pool, alice, "Ｓｐａｍ").await.unwrap(), 2);
+        assert_eq!(posts_out(&pool, alice, 5).await.unwrap(), 0, "all held");
+        comments::create(&pool, post, alice, "Fine", true)
+            .await
+            .unwrap();
+        assert_eq!(posts_out(&pool, alice, 5).await.unwrap(), 1);
 
         let category: i16 = sqlx::query_scalar("SELECT min(id) FROM forum_categories")
             .fetch_one(&pool)

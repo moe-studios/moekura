@@ -109,6 +109,10 @@ pub struct SpamFilter {
     /// Links from accounts younger than this many days are held; 0 for
     /// never.
     pub link_account_days: u32,
+    /// Links from accounts that have fewer than this many comments, forum
+    /// posts and uploads out are held too, however old the account: a
+    /// sleeper account's first link waits like a new one's. 0 for never.
+    pub link_min_posts: u32,
     /// Text its writer already posted this many times in the past day is
     /// held; 0 for never.
     pub max_repeats: u32,
@@ -121,6 +125,7 @@ impl Default for SpamFilter {
         Self {
             mode: FilterMode::Auto,
             link_account_days: 3,
+            link_min_posts: 1,
             max_repeats: 3,
             words: Vec::new(),
         }
@@ -151,7 +156,7 @@ pub enum Hold {
 impl std::fmt::Display for Hold {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Hold::Links => f.write_str("links from a new account"),
+            Hold::Links => f.write_str("links from a new account, or one that hasn't posted yet"),
             Hold::Repeated(times) => write!(f, "posted {times} times already today"),
             Hold::Word(word) => write!(f, "contains “{word}”"),
         }
@@ -168,11 +173,12 @@ impl SpamFilter {
         }
     }
 
-    /// Words from text, one per line, lowercased, sorted and deduplicated.
+    /// Words from text, one per line, folded as text is when checked
+    /// (see [`fold`]), sorted and deduplicated.
     pub fn parse_words(text: &str) -> Vec<String> {
         let mut words: Vec<String> = text
             .lines()
-            .map(|w| w.trim().to_lowercase())
+            .map(|w| fold(w).trim().to_owned())
             .filter(|w| !w.is_empty())
             .collect();
         words.sort();
@@ -190,11 +196,18 @@ impl SpamFilter {
         Ok(())
     }
 
-    /// Whether to hold `text`, by an account `account_days` old that
-    /// already posted the same text `repeats` times in the past day.
-    pub fn check(&self, text: &str, account_days: i64, repeats: i64) -> Option<Hold> {
-        let lower = text.to_lowercase();
-        if let Some(word) = self.words.iter().find(|w| lower.contains(w.as_str())) {
+    /// Whether to hold `text`, by an account `account_days` old with
+    /// `posts` comments, forum posts and uploads out, that already posted
+    /// the same text (as [`fold`]ed, letters and digits only) `repeats`
+    /// times in the past day.
+    pub fn check(&self, text: &str, account_days: i64, posts: i64, repeats: i64) -> Option<Hold> {
+        let folded = fold(text);
+        let tokens = tokens(&folded);
+        if let Some(word) = self
+            .words
+            .iter()
+            .find(|w| contains_word(&folded, &tokens, w))
+        {
             return Some(Hold::Word(word.clone()));
         }
         if self.max_repeats > 0 && repeats >= i64::from(self.max_repeats) {
@@ -202,12 +215,93 @@ impl SpamFilter {
         }
         let has_link = ["http://", "https://", "www."]
             .iter()
-            .any(|start| lower.contains(start));
-        if has_link && account_days < i64::from(self.link_account_days) {
+            .any(|start| folded.contains(start));
+        let untried = account_days < i64::from(self.link_account_days)
+            || posts < i64::from(self.link_min_posts);
+        if has_link && untried {
             return Some(Hold::Links);
         }
         None
     }
+}
+
+/// Text as the spam filter compares it: look-alike letters folded
+/// together (compatibility forms such as full-width or styled letters,
+/// accents dropped), invisible characters removed, lowercased.
+pub fn fold(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    use unicode_normalization::char::is_combining_mark;
+    let invisible = |c: char| {
+        matches!(c,
+            '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{17B4}'
+            | '\u{17B5}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FE00}'..='\u{FE0F}' | '\u{FEFF}'
+            | '\u{FFA0}')
+    };
+    text.nfkd()
+        .filter(|c| !is_combining_mark(*c) && !invisible(*c))
+        .collect::<String>()
+        .nfkc()
+        .collect::<String>()
+        .to_lowercase()
+}
+
+/// The words of folded text, with runs of single letters spaced or
+/// dotted apart (`c a s i n o`, `c.a.s.i.n.o`) joined back into one.
+fn tokens(folded: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    let mut letters = String::new();
+    for word in folded
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+    {
+        if word.chars().count() == 1 {
+            letters.push_str(word);
+            continue;
+        }
+        if !letters.is_empty() {
+            words.push(std::mem::take(&mut letters));
+        }
+        words.push(word.to_owned());
+    }
+    if !letters.is_empty() {
+        words.push(letters);
+    }
+    words
+}
+
+/// Whether a script writes words without spaces between them, so that
+/// spam words in it can't be told apart by word boundaries.
+fn unspaced(c: char) -> bool {
+    matches!(c,
+        '\u{0E00}'..='\u{0EFF}'   // Thai, Lao
+        | '\u{1000}'..='\u{109F}' // Myanmar
+        | '\u{1780}'..='\u{17FF}' // Khmer
+        | '\u{3040}'..='\u{30FF}' // Hiragana, Katakana
+        | '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' // Han
+    )
+}
+
+/// Whether folded text (with its [`tokens`]) has spam word `word` in it:
+/// as whole words, so `ass` doesn't hold "class", or anywhere for words in
+/// scripts without spaces.
+fn contains_word(folded: &str, tokens: &[String], word: &str) -> bool {
+    if word.chars().any(unspaced) {
+        return folded.contains(word);
+    }
+    let wanted: Vec<&str> = word
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if wanted.is_empty() {
+        return false;
+    }
+    // Spelled out letter by letter, a word is one token.
+    let squashed: String = wanted.concat();
+    tokens
+        .windows(wanted.len())
+        .any(|w| w.iter().map(String::as_str).eq(wanted.iter().copied()))
+        || tokens.contains(&squashed)
 }
 
 #[cfg(test)]
@@ -222,16 +316,21 @@ mod tests {
         };
         assert_eq!(filter.words, ["casino", "cheap pills"]);
         assert!(filter.validate().is_ok());
-        assert_eq!(filter.check("hello", 0, 0), None);
+        assert_eq!(filter.check("hello", 0, 0, 0), None);
         assert_eq!(
-            filter.check("see https://spam.example", 1, 0),
+            filter.check("see https://spam.example", 1, 5, 0),
             Some(Hold::Links)
         );
-        assert_eq!(filter.check("see https://art.example", 30, 0), None);
-        assert_eq!(filter.check("hello", 30, 3), Some(Hold::Repeated(3)));
-        assert_eq!(filter.check("hello", 30, 2), None);
+        assert_eq!(filter.check("see https://art.example", 30, 5, 0), None);
+        // An old account that never posted is held like a new one.
         assert_eq!(
-            filter.check("Buy CHEAP PILLS now", 900, 0),
+            filter.check("see https://art.example", 300, 0, 0),
+            Some(Hold::Links)
+        );
+        assert_eq!(filter.check("hello", 30, 5, 3), Some(Hold::Repeated(3)));
+        assert_eq!(filter.check("hello", 30, 5, 2), None);
+        assert_eq!(
+            filter.check("Buy CHEAP PILLS now", 900, 5, 0),
             Some(Hold::Word("cheap pills".into()))
         );
         assert_eq!(Hold::Word("casino".into()).to_string(), "contains “casino”");
@@ -246,11 +345,45 @@ mod tests {
         let off = SpamFilter {
             mode: FilterMode::Off,
             link_account_days: 0,
+            link_min_posts: 0,
             max_repeats: 0,
             words: Vec::new(),
         };
         assert!(!off.is_on(false));
-        assert_eq!(off.check("https://x.example", 0, 99), None);
+        assert_eq!(off.check("https://x.example", 0, 0, 99), None);
+    }
+
+    #[test]
+    fn spam_words_see_through_disguises_but_not_into_other_words() {
+        let filter = SpamFilter {
+            words: SpamFilter::parse_words("casino\ncheap pills\nass\n賭博"),
+            ..SpamFilter::default()
+        };
+        let held = |text: &str| filter.check(text, 900, 5, 0).is_some();
+        // Look-alike letters, accents, hidden characters, spacing.
+        for text in [
+            "ＣＡＳＩＮＯ night",
+            "𝐜𝐚𝐬𝐢𝐧𝐨",
+            "cásínò",
+            "cas\u{200B}ino",
+            "c a s i n o",
+            "c.a.s.i.n.o!",
+            "cheap-pills",
+            "CHEAP\npills",
+            "best 賭博サイト",
+        ] {
+            assert!(held(text), "{text}");
+        }
+        // Whole words only.
+        for text in [
+            "a class act",
+            "assess it",
+            "casinos? no",
+            "cheap, but no pills",
+        ] {
+            assert!(!held(text), "{text}");
+        }
+        assert_eq!(fold("Ｃáfé\u{FEFF}"), "cafe");
     }
 
     #[test]

@@ -46,9 +46,15 @@ pub(crate) async fn check(
     let Some(user) = current.user.as_ref() else {
         return Ok(None);
     };
+    let db = state.db.primary();
     let days = (OffsetDateTime::now_utc() - user.created_at).whole_days();
-    let repeats = held::repeats(state.db.primary(), user.id, text).await?;
-    let hold = filter.check(text, days, repeats);
+    let repeats = held::repeats(db, user.id, text).await?;
+    let posts = if filter.link_min_posts > 0 {
+        held::posts_out(db, user.id, i64::from(filter.link_min_posts)).await?
+    } else {
+        0
+    };
+    let hold = filter.check(text, days, posts, repeats);
     if let Some(hold) = &hold {
         tracing::info!(user = user.id, %hold, "held as likely spam");
     }

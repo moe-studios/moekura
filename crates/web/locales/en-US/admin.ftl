@@ -288,6 +288,7 @@ as-spam-on = Always
 as-spam-off = Never
 as-spam-hint = Held writing waits under <a href="/moderation/held">Moderation → Held for review</a>. Staff who can hide comments are never held.
 as-spam-links = Hold links from accounts younger than this many days (0 for never)
+as-spam-link-posts = Also hold links from accounts, however old, with fewer than this many comments, forum posts and uploads out (0 for never)
 as-spam-repeats = Hold text its writer already posted this many times today (0 for never)
 as-spam-words = Spam words
 as-spam-words-hint = One word or phrase per line; writing that contains any is held, whatever the case.

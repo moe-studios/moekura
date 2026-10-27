@@ -209,6 +209,8 @@
       <p class="hint">{{ t("as-spam-hint") }}</p>
       <label for="spam_link_account_days">{{ t("as-spam-links") }}</label>
       <input id="spam_link_account_days" name="spam_link_account_days" type="number" min="0" value="{{ settings.spam_filter.link_account_days }}">
+      <label for="spam_link_min_posts">{{ t("as-spam-link-posts") }}</label>
+      <input id="spam_link_min_posts" name="spam_link_min_posts" type="number" min="0" value="{{ settings.spam_filter.link_min_posts }}">
       <label for="spam_max_repeats">{{ t("as-spam-repeats") }}</label>
       <input id="spam_max_repeats" name="spam_max_repeats" type="number" min="0" value="{{ settings.spam_filter.max_repeats }}">
       <label for="spam_words">{{ t("as-spam-words") }}</label>

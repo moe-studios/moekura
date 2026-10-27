@@ -320,11 +320,18 @@ Settings → Spam** can turn it on or off for good, and choose what it
 holds:
 
 - links (`http://`, `https://`, `www.`) from accounts younger than 3
-  days;
+  days, or, however old, from accounts with no comment, forum post or
+  upload out yet (so an account left to age before spamming is held just
+  the same);
 - text its writer already posted (or changed something to) 3 times in
-  the past day, anywhere;
+  the past day, anywhere, counting texts the same when their letters and
+  digits are, whatever their case, spacing or punctuation;
 - anything containing one of the **spam words**, one word or phrase per
-  line, whatever the case.
+  line, as whole words (`ass` doesn't hold "class"), whatever the case,
+  and seen through disguises: look-alike letters (full-width or styled
+  ones), accents, invisible characters, and letters spaced or dotted
+  apart (`c a s i n o`). Words in scripts written without spaces, such as
+  Chinese or Japanese, match anywhere in the text.
 
 Set a number to 0 to stop holding for it. Changing a comment or forum
 post is checked the same way: a change that would be held as a new text

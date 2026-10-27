@@ -16,7 +16,7 @@
   <li id="forum-post-{{ p.id }}" class="forum-post{% if p.hidden %} is-hidden{% endif %}">
     <div class="history-head">
       {% if p.creator %}<a href="/users/{{ p.creator }}">{{ p.creator }}</a>{% else %}{{ t("gone") }}{% endif %}
-      <span class="hint"><a href="/forum_posts/{{ p.id }}">{{ p.date }} {{ p.time }}</a>{% if p.updater %} · {{ t("edited-by", user=p.updater) }}{% endif %}{% if p.held %} · {{ t("status-held") }}{% elif p.hidden %} · {{ t("hidden") }}{% endif %}</span>
+      <span class="hint"><a href="/forum_posts/{{ p.id }}">{{ p.date }} {{ p.time }}</a>{% if p.updater %} · {{ t("edited-by", user=p.updater) }}{% if can_moderate %} (<a href="/forum_posts/{{ p.id }}/versions">{{ t("forum-post-history") }}</a>){% endif %}{% endif %}{% if p.held %} · {{ t("status-held") }}{% elif p.hidden %} · {{ t("hidden") }}{% endif %}</span>
       <span class="score" title="{{ t('votes') }}">{{ "%+d"|format(p.score) if p.score else "0" }}</span>
     </div>
     <div class="markup">{{ p.html }}</div>

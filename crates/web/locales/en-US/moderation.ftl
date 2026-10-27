@@ -101,6 +101,8 @@ action-tag_category_move = reordered the tag categories
 action-tag_category_delete = deleted a tag category
 action-user_owner = handed the site's ownership to
 action-user_note_delete = deleted a staff note about
+action-forum_post_edit = changed a forum post by
+action-forum_topic_edit = renamed or moved a forum topic by
 
 mod-log-title = Moderation log
 mod-log-action = Action

@@ -29,7 +29,10 @@ topic's **Moderate** section, stick it to the top, lock it (only staff
 can post in a locked topic), delete or restore it, and merge it into
 another topic: its posts move there, it's deleted, and links to it lead
 to the other. They can also hide posts (hidden posts stay visible to
-staff, marked) and edit anyone's. All of this goes in the moderation log.
+staff, marked) and edit or rename the posts and topics of people ranked
+below them. All of this goes in the moderation log, and each change to a
+post keeps the text it replaced, which staff see from the post's
+**history** link.
 
 Danbooru clients can read topics, posts and their own votes, and post, at
 `/forum_topics.json`, `/forum_posts.json` and `/forum_post_votes.json`.

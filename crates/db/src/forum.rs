@@ -306,6 +306,31 @@ pub async fn update_post(
     Ok(done.rows_affected() > 0)
 }
 
+/// An earlier text of a forum post.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Version {
+    pub body: String,
+    pub writer_name: Option<String>,
+    pub written_at: OffsetDateTime,
+    pub replacer_name: Option<String>,
+    pub replaced_at: OffsetDateTime,
+}
+
+/// Post `id`'s earlier texts, the latest first.
+pub async fn versions(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Vec<Version>> {
+    sqlx::query_as(
+        "SELECT v.body, w.name::text AS writer_name, v.written_at,
+                r.name::text AS replacer_name, v.replaced_at
+         FROM forum_post_versions v
+         LEFT JOIN users w ON w.id = v.writer_id
+         LEFT JOIN users r ON r.id = v.replacer_id
+         WHERE v.post_id = $1 ORDER BY v.id DESC",
+    )
+    .bind(id)
+    .fetch_all(db)
+    .await
+}
+
 /// Hides an active post as staff, or (with `hidden` false) shows one staff
 /// hid; false if it wasn't. Neither touches what the spam filter holds:
 /// that's for the staff to approve or reject.
@@ -710,6 +735,17 @@ mod tests {
             .await
             .unwrap();
         assert!(!post(&pool, first).await.unwrap().unwrap().is_hidden);
+        // Each change keeps the text it replaced.
+        let earlier = versions(&pool, first).await.unwrap();
+        assert_eq!(
+            earlier.iter().map(|v| v.body.as_str()).collect::<Vec<_>>(),
+            ["First post"]
+        );
+        assert_eq!(earlier[0].writer_name.as_deref(), Some("alice"));
+        assert_eq!(earlier[0].replacer_name.as_deref(), Some("alice"));
+        let replaced = versions(&pool, reply).await.unwrap();
+        assert_eq!(replaced[0].body, "A reply about cats");
+        assert_eq!(replaced[0].writer_name.as_deref(), Some("bob"));
         set_post_hidden(&pool, reply, true).await.unwrap();
         assert_eq!(
             super::topic(&pool, None, topic)

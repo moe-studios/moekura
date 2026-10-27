@@ -605,6 +605,8 @@ pub struct ApiBan {
     pub id: i64,
     pub user: String,
     pub reason: String,
+    /// What a partial ban takes away; `null` for a full ban.
+    pub restricts: Option<Vec<String>>,
     pub banner: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -665,6 +667,12 @@ pub(crate) async fn list_bans(
                 id: b.id,
                 user: b.user_name,
                 reason: b.reason,
+                restricts: b.restricts.map(|bits| {
+                    crate::bans::restricted_keys(bits)
+                        .into_iter()
+                        .map(String::from)
+                        .collect()
+                }),
                 banner: b.banner_name,
                 created_at: b.created_at,
                 expires_at: b.expires_at,
@@ -696,12 +704,18 @@ pub struct NewBan {
     reason: String,
     /// How long, in days; leave out for until lifted.
     days: Option<i64>,
+    /// Only these permissions (`upload`, `comment`, `vote`, …); leave out
+    /// to ban them from everything but looking around.
+    #[serde(default)]
+    restricts: Option<Vec<String>>,
 }
 
 /// Ban a user.
 ///
-/// Needs `ban_users` and a role ranked above the user's. Banned users can
-/// look around as visitors do, but can't change anything.
+/// Needs `ban_users` and a role ranked above the user's, and to have set
+/// (or outrank whoever set) any ban it replaces. Banned users can look
+/// around as visitors do, but can't change anything; with `restricts`,
+/// they lose only those permissions.
 #[utoipa::path(
     post,
     path = "/users/{name}/ban",
@@ -722,7 +736,12 @@ pub(crate) async fn ban_user(
 ) -> Result<StatusCode, AppError> {
     current.require(Permission::BanUsers)?;
     let expires_at = expiry(ban.days)?;
-    crate::bans::ban(&state, &current, &name, &ban.reason, expires_at).await?;
+    let restricts = ban
+        .restricts
+        .as_deref()
+        .map(crate::bans::restrictions)
+        .transpose()?;
+    crate::bans::ban(&state, &current, &name, &ban.reason, expires_at, restricts).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

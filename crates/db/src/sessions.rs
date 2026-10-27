@@ -83,14 +83,15 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
         banned: bool,
         ban_reason: Option<String>,
         ban_expires_at: Option<OffsetDateTime>,
+        ban_restricts: Option<i64>,
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT s.id AS session_id, s.created_at AS session_created_at, s.last_used_at,
                 u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings, u.is_bot, u.is_owner,
-                u.avatar_key, b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
+                u.avatar_key, b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at, b.restricts AS ban_restricts
          FROM sessions s JOIN users u ON u.id = s.user_id
          LEFT JOIN LATERAL (
-             SELECT id, reason, expires_at FROM bans
+             SELECT id, reason, expires_at, restricts FROM bans
              WHERE user_id = u.id AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
              ORDER BY expires_at DESC NULLS FIRST LIMIT 1
          ) b ON true
@@ -109,6 +110,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
         ban: r.banned.then(|| ActiveBan {
             reason: r.ban_reason.unwrap_or_default(),
             expires_at: r.ban_expires_at,
+            restricts: r.ban_restricts,
         }),
     }))
 }

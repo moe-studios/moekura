@@ -98,7 +98,15 @@ impl CurrentUser {
             .cloned()
             .unwrap_or_else(|| anonymous_role(site));
         let role = match &ban {
-            Some(_) => banned_role(role, site),
+            Some(ban) => match ban.restricts {
+                // A partial ban takes away only what it names.
+                Some(bits) => {
+                    let mut role = role;
+                    role.permissions = role.permissions.without(Permissions::from_db(bits));
+                    role
+                }
+                None => banned_role(role, site),
+            },
             None => role,
         };
         let safe_mode =

@@ -112,21 +112,16 @@
         <ul class="plain">
           {% for b in bans %}
           <li><span class="status status-{{ 'open' if b.active else 'dismissed' }}">{{ t("status-active") if b.active else (t("ban-lifted") if b.lifted else t("news-state-expired")) }}</span>
-            {{ b.since }}{% if b.until %}–{{ b.until }}{% endif %}{% if b.by %} {{ t("by-user", user=b.by) }}{% endif %}: {{ b.reason }}</li>
+            {{ b.since }}{% if b.until %}–{{ b.until }}{% endif %}{% if b.by %} {{ t("by-user", user=b.by) }}{% endif %}{% if b.restricts %} · {{ t("ban-only") }} {% for p in b.restricts %}{{ t("permission-" ~ p) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}: {{ b.reason }}</li>
           {% endfor %}
         </ul>
         {% endif %}
         {% if can_ban %}
         <details class="edit">
-          <summary>{% if banned %}{{ t("ban-change") }}{% else %}{{ t("ban") }}{% endif %}</summary>
-          {% if banned %}<p class="hint">{{ t("ban-replaces") }}</p>{% endif %}
+          <summary>{% if is_banned %}{{ t("ban-change") }}{% else %}{{ t("ban") }}{% endif %}</summary>
+          {% if is_banned %}<p class="hint">{{ t("ban-replaces") }}</p>{% endif %}
           <form method="post" action="/users/{{ user.name }}/ban">
-            <label for="ban-reason">{{ t("reason") }}</label>
-            <input id="ban-reason" name="reason" maxlength="2000" required>
-            <label for="ban-days">{{ t("ban-for") }}</label>
-            <select id="ban-days" name="days">
-              {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ t("ban-for-" ~ (d.days or "ever")) }}</option>{% endfor %}
-            </select>
+            {% include "ban_fields.html" %}
             <button type="submit" class="danger">{{ t("ban-user", user=user.name) }}</button>
           </form>
         </details>

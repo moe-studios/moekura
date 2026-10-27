@@ -12,6 +12,16 @@ pub struct ActiveBan {
     pub reason: String,
     /// `None` until lifted.
     pub expires_at: Option<OffsetDateTime>,
+    /// The permission bits a partial ban takes away; `None` for a full
+    /// ban.
+    pub restricts: Option<i64>,
+}
+
+impl ActiveBan {
+    /// Whether it leaves only looking around.
+    pub fn is_full(&self) -> bool {
+        self.restricts.is_none()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -20,6 +30,8 @@ pub struct Ban {
     pub user_id: i64,
     pub user_name: String,
     pub reason: String,
+    /// See [`ActiveBan::restricts`].
+    pub restricts: Option<i64>,
     pub banner_id: Option<i64>,
     pub banner_name: Option<String>,
     pub expires_at: Option<OffsetDateTime>,
@@ -32,7 +44,7 @@ pub struct Ban {
 macro_rules! select_bans {
     ($rest:literal) => {
         concat!(
-            "SELECT b.id, b.user_id, u.name::text AS user_name, b.reason,
+            "SELECT b.id, b.user_id, u.name::text AS user_name, b.reason, b.restricts,
                     b.banner_id, x.name::text AS banner_name, b.expires_at, b.lifted_at, b.created_at,
                     (b.lifted_at IS NULL AND (b.expires_at IS NULL OR b.expires_at > now())) AS active
              FROM bans b JOIN users u ON u.id = b.user_id
@@ -50,6 +62,7 @@ pub async fn ban(
     user_id: i64,
     reason: &str,
     expires_at: Option<OffsetDateTime>,
+    restricts: Option<i64>,
     banner_id: Option<i64>,
 ) -> sqlx::Result<Option<ActiveBan>> {
     sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE")
@@ -62,19 +75,21 @@ pub async fn ban(
              UPDATE bans SET lifted_at = now(), lifter_id = $2
              WHERE user_id = $1 AND lifted_at IS NULL
                AND (expires_at IS NULL OR expires_at > now())
-             RETURNING id, reason, expires_at)
-         SELECT reason, expires_at FROM lifted ORDER BY id",
+             RETURNING id, reason, expires_at, restricts)
+         SELECT reason, expires_at, restricts FROM lifted ORDER BY id",
     )
     .bind(user_id)
     .bind(banner_id)
     .fetch_all(&mut *conn)
     .await?;
     sqlx::query(
-        "INSERT INTO bans (user_id, reason, expires_at, banner_id) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO bans (user_id, reason, expires_at, restricts, banner_id)
+         VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(user_id)
     .bind(reason)
     .bind(expires_at)
+    .bind(restricts)
     .bind(banner_id)
     .execute(&mut *conn)
     .await?;
@@ -310,11 +325,13 @@ mod tests {
         let alice = user(&pool, "alice").await;
         let mut conn = pool.acquire().await.unwrap();
         let past = OffsetDateTime::now_utc() - time::Duration::days(1);
-        ban(&mut conn, alice, "old", Some(past), None)
+        ban(&mut conn, alice, "old", Some(past), None, None)
             .await
             .unwrap();
         assert!(active(&pool, 10).await.unwrap().is_empty(), "expired");
-        let replaced = ban(&mut conn, alice, "spam", None, None).await.unwrap();
+        let replaced = ban(&mut conn, alice, "spam", None, None, None)
+            .await
+            .unwrap();
         assert_eq!(replaced, None, "the expired ban wasn't in force");
         let bans = for_user(&pool, alice).await.unwrap();
         assert_eq!(
@@ -325,19 +342,21 @@ mod tests {
         );
         // A new ban replaces the one in force.
         let week = OffsetDateTime::now_utc() + time::Duration::days(7);
-        let replaced = ban(&mut conn, alice, "spam, a week", Some(week), None)
+        let replaced = ban(&mut conn, alice, "spam, a week", Some(week), Some(8), None)
             .await
             .unwrap();
         assert_eq!(
             replaced,
             Some(ActiveBan {
                 reason: "spam".into(),
-                expires_at: None
+                expires_at: None,
+                restricts: None,
             })
         );
         let active_now = active(&pool, 10).await.unwrap();
         assert_eq!(active_now.len(), 1);
         assert_eq!(active_now[0].reason, "spam, a week");
+        assert_eq!(active_now[0].restricts, Some(8), "a partial ban");
         assert_eq!(lift(&pool, alice, None).await.unwrap(), 1);
         assert!(active(&pool, 10).await.unwrap().is_empty());
     }

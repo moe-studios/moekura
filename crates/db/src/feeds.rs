@@ -42,14 +42,15 @@ pub async fn user(
         banned: bool,
         ban_reason: Option<String>,
         ban_expires_at: Option<OffsetDateTime>,
+        ban_restricts: Option<i64>,
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status,
                 u.created_at, u.last_seen_at, u.settings, u.is_bot, u.is_owner,
-                b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
+                b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at, b.restricts AS ban_restricts
          FROM users u
          LEFT JOIN LATERAL (
-             SELECT id, reason, expires_at FROM bans
+             SELECT id, reason, expires_at, restricts FROM bans
              WHERE user_id = u.id AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())
              ORDER BY expires_at DESC NULLS FIRST LIMIT 1
          ) b ON true
@@ -62,6 +63,7 @@ pub async fn user(
         let ban = r.banned.then(|| ActiveBan {
             reason: r.ban_reason.unwrap_or_default(),
             expires_at: r.ban_expires_at,
+            restricts: r.ban_restricts,
         });
         (r.user, ban)
     }))

@@ -116,7 +116,7 @@ fn render_form(
 /// mocks the ban, nor back from one staff gave them.
 fn renamer(page: &Page) -> Result<User, AppError> {
     let user = page.current.user.clone().ok_or(AppError::Unauthorized)?;
-    if page.current.ban.is_some() {
+    if page.current.ban.as_ref().is_some_and(|b| b.is_full()) {
         return Err(AppError::Forbidden);
     }
     Ok(user)

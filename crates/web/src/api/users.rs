@@ -138,6 +138,8 @@ pub struct ApiSettings {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ApiActiveBan {
     pub reason: String,
+    /// What a partial ban takes away; `null` for a full ban.
+    pub restricts: Option<Vec<String>>,
     /// `null` for a permanent ban.
     #[serde(with = "time::serde::rfc3339::option")]
     pub expires_at: Option<OffsetDateTime>,
@@ -193,6 +195,12 @@ pub(crate) async fn me(
         },
         ban: current.ban.as_ref().map(|ban| ApiActiveBan {
             reason: ban.reason.clone(),
+            restricts: ban.restricts.map(|bits| {
+                crate::bans::restricted_keys(bits)
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            }),
             expires_at: ban.expires_at,
         }),
     }))

@@ -237,12 +237,13 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
             can_ban => can_ban,
             ban_locked => ban_locked,
-            banned => banned,
+            is_banned => banned,
             notes => notes,
             record_url => crate::user_moderation::may_view_user(page.state(), &page.current, &user)
                 .then(|| crate::templates::url_value(&crate::user_moderation::url(&user.name))),
             can_unban => can_ban && banned,
             durations => crate::bans::durations(),
+            ban_permissions => moekura_core::permissions::PARTIAL_BAN.map(|p| p.key()),
         },
     ))
 }

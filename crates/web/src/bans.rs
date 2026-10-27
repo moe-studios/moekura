@@ -8,7 +8,7 @@ use axum_extra::extract::CookieJar;
 use ipnet::IpNet;
 use minijinja::{Value, context};
 use moekura_core::moderation::{ActionKind, MAX_BAN_DAYS, REASON_MAX_LEN};
-use moekura_core::permissions::Permission;
+use moekura_core::permissions::{PARTIAL_BAN, Permission, Permissions};
 use moekura_db::bans::{self, Ban};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, User};
@@ -47,6 +47,37 @@ struct BanForm {
     /// Days; empty for until lifted.
     #[serde(default)]
     days: String,
+    /// `partial` to take away only what `restrict` names; anything else
+    /// is a full ban.
+    #[serde(default)]
+    kind: String,
+    /// Permission keys a partial ban takes away.
+    #[serde(default)]
+    restrict: Vec<String>,
+}
+
+/// What a partial ban takes away, from permission keys; an error if none,
+/// or one a partial ban can't take.
+pub(crate) fn restrictions(keys: &[String]) -> Result<Permissions, AppError> {
+    let mut taken = Permissions::NONE;
+    for key in keys {
+        let permission = PARTIAL_BAN
+            .into_iter()
+            .find(|p| p.key() == key)
+            .ok_or_else(|| AppError::BadRequest(format!("A ban can't take away `{key}` alone")))?;
+        taken = taken.with(Permissions::of(&[permission]));
+    }
+    if taken == Permissions::NONE {
+        return Err(AppError::BadRequest(
+            "Tick what the ban takes away, or ban them from everything".into(),
+        ));
+    }
+    Ok(taken)
+}
+
+/// What a partial ban's `bits` take away, by key.
+pub(crate) fn restricted_keys(bits: i64) -> Vec<&'static str> {
+    Permissions::from_db(bits).iter().map(|p| p.key()).collect()
 }
 
 /// Where to go after banning or unbanning: the profile, unless the form
@@ -155,6 +186,7 @@ pub fn ban_context(ban: &Ban) -> Value {
     context! {
         user => ban.user_name,
         reason => ban.reason,
+        restricts => ban.restricts.map(restricted_keys),
         by => ban.banner_name,
         since => crate::dates::day(ban.created_at),
         until => ban.expires_at.map(crate::dates::day),
@@ -183,14 +215,27 @@ async fn ban_user(
     jar: CookieJar,
     Path(name): Path<String>,
     Query(back): Query<Back>,
-    Form(form): Form<BanForm>,
+    axum_extra::extract::Form(form): axum_extra::extract::Form<BanForm>,
 ) -> Result<Response, AppError> {
     let expires_at = form_expiry(&form.days)?;
-    let user = ban(page.state(), &page.current, &name, &form.reason, expires_at).await?;
+    let restricts = match form.kind.as_str() {
+        "partial" => Some(restrictions(&form.restrict)?),
+        _ => None,
+    };
+    let user = ban(
+        page.state(),
+        &page.current,
+        &name,
+        &form.reason,
+        expires_at,
+        restricts,
+    )
+    .await?;
     Ok(saved(jar, &back.or_profile(&user)))
 }
 
-/// Bans the user called `name` until `expires_at` (or until lifted),
+/// Bans the user called `name` until `expires_at` (or until lifted), from
+/// everything but looking around or, with `restricts`, only from that,
 /// replacing any ban they're under.
 pub(crate) async fn ban(
     state: &AppState,
@@ -198,16 +243,21 @@ pub(crate) async fn ban(
     name: &str,
     reason_text: &str,
     expires_at: Option<OffsetDateTime>,
+    restricts: Option<Permissions>,
 ) -> Result<User, AppError> {
     let user = target(state, current, name).await?;
     let reason = reason(reason_text)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
     check_banners(state, current, &mut tx, user.id).await?;
-    let replaced = bans::ban(&mut tx, user.id, reason, expires_at, actor).await?;
+    let bits = restricts.map(Permissions::to_db);
+    let replaced = bans::ban(&mut tx, user.id, reason, expires_at, bits, actor).await?;
     let mut details = serde_json::json!({
         "until": expires_at.map(|t| t.date().to_string()),
     });
+    if let Some(bits) = bits {
+        details["restricts"] = restricted_keys(bits).into();
+    }
     if let Some(replaced) = replaced {
         details["replaced_until"] = replaced.expires_at.map(|t| t.date().to_string()).into();
     }
@@ -568,7 +618,7 @@ mod tests {
         let state = test_state(&pool).await;
         let current = crate::test_support::current_user(&state, &alice).await;
         let banner = crate::test_support::current_user(&state, &moderator).await;
-        super::ban(&state, &banner, "alice", "spam", None)
+        super::ban(&state, &banner, "alice", "spam", None, None)
             .await
             .unwrap();
         assert!(current.can(Permission::Comment), "before the ban");
@@ -577,6 +627,59 @@ mod tests {
         for permission in [Permission::Comment, Permission::Vote, Permission::Upload] {
             assert!(!banned.can(permission), "{permission:?}");
         }
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn partial_bans_take_away_only_what_they_name(pool: PgPool) {
+        use moekura_core::permissions::Permission;
+        let state = test_state(&pool).await;
+        let app = TestApp::new(state.clone(), super::routes().merge(crate::users::routes()));
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let refused = app
+            .post_form(
+                "/users/alice/ban",
+                Some(&moderator),
+                &[],
+                "reason=x&kind=partial",
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "nothing ticked");
+        let banned = app
+            .post_form(
+                "/users/alice/ban",
+                Some(&moderator),
+                &[],
+                "reason=rude+comments&days=7&kind=partial&restrict=comment&restrict=send_messages",
+            )
+            .await;
+        assert_eq!(banned.status, StatusCode::SEE_OTHER, "{}", banned.body);
+        let current = crate::test_support::current_user(&state, &alice).await;
+        assert!(!current.can(Permission::Comment));
+        assert!(!current.can(Permission::SendMessages));
+        assert!(current.can(Permission::Upload) && current.can(Permission::Vote));
+        let home = app.get("/users/alice", Some(&alice)).await.body;
+        assert!(home.contains("You are banned from some things"), "{home}");
+        assert!(home.contains("Send private messages"), "{home}");
+        let logged: serde_json::Value =
+            sqlx::query_scalar("SELECT details FROM mod_actions WHERE action = 'user.ban'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            logged["restricts"],
+            serde_json::json!(["comment", "send_messages"])
+        );
+        // A partial ban can't take what isn't one of its choices.
+        let odd = app
+            .post_form(
+                "/users/alice/ban",
+                Some(&moderator),
+                &[],
+                "reason=x&kind=partial&restrict=view_posts",
+            )
+            .await;
+        assert_eq!(odd.status, StatusCode::BAD_REQUEST);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -177,7 +177,15 @@ uploader.
 ## Bans
 
 Ban a user from their profile, for a set time or until lifted, with a
-reason. Banned users can still log in and look around as visitors do, see
+reason, from everything or only from some things.
+
+A **partial** ban takes away only what's ticked: uploading, editing
+posts and tags, commenting (and posting in the forum), voting, flagging,
+editing the wiki, pools or notes, sending messages, or leaving feedback.
+Everything else stays as their role has it, and they're told on every
+page what they can't do, and why.
+
+A full ban leaves only looking around. Banned users can still log in and look around as visitors do, see
 why they're banned, and can't change anything, even what the site lets
 visitors do (if visitors may comment or vote, banned users still can't);
 their API keys are limited the same way. Banning someone who's already banned replaces their ban

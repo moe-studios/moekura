@@ -236,6 +236,7 @@ pub(crate) fn render(
         banned => current.and_then(|c| c.ban.as_ref()).map(|ban| context! {
             reason => ban.reason,
             until => ban.expires_at.map(crate::dates::day),
+            restricts => ban.restricts.map(crate::bans::restricted_keys),
         }),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
         // Reporting things to staff (messages are reported from their page).

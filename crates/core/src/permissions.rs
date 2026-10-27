@@ -176,6 +176,21 @@ impl Permission {
     }
 }
 
+/// What a partial ban can take away, each on its own: everything else a
+/// banned user keeps.
+pub const PARTIAL_BAN: [Permission; 10] = [
+    Permission::Upload,
+    Permission::EditPosts,
+    Permission::Comment,
+    Permission::Vote,
+    Permission::Flag,
+    Permission::EditWiki,
+    Permission::EditPools,
+    Permission::EditNotes,
+    Permission::SendMessages,
+    Permission::GiveFeedback,
+];
+
 /// A set of [`Permission`]s.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Permissions(u64);

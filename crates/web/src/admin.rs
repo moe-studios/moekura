@@ -1594,7 +1594,7 @@ mod tests {
             .unwrap()
             .id;
         let mut tx = pool.begin().await.unwrap();
-        moekura_db::bans::ban(&mut tx, alice_id, "spam", None, None)
+        moekura_db::bans::ban(&mut tx, alice_id, "spam", None, None, None)
             .await
             .unwrap();
         tx.commit().await.unwrap();

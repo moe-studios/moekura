@@ -175,10 +175,11 @@ pub enum ActionKind {
     TagCategoryMove,
     TagCategoryDelete,
     UserOwner,
+    UserNoteDelete,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 60] = [
+    pub const ALL: [ActionKind; 61] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -239,6 +240,7 @@ impl ActionKind {
         ActionKind::TagCategoryMove,
         ActionKind::TagCategoryDelete,
         ActionKind::UserOwner,
+        ActionKind::UserNoteDelete,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -303,6 +305,7 @@ impl ActionKind {
             ActionKind::TagCategoryMove => "tag_category.move",
             ActionKind::TagCategoryDelete => "tag_category.delete",
             ActionKind::UserOwner => "user.owner",
+            ActionKind::UserNoteDelete => "user_note.delete",
         }
     }
 
@@ -369,6 +372,7 @@ impl ActionKind {
             ActionKind::TagCategoryMove => "reordered the tag categories",
             ActionKind::TagCategoryDelete => "deleted a tag category",
             ActionKind::UserOwner => "handed the site's ownership to",
+            ActionKind::UserNoteDelete => "deleted a staff note about",
         }
     }
 

@@ -128,6 +128,7 @@ staff-notes = Staff notes
 staff-notes-hint = Only staff see these.
 staff-notes-add = Add a note
 staff-notes-add-button = Add note
+staff-notes-deleted = deleted { $day } by { $user }
 
 all = All
 more = More

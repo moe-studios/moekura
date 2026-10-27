@@ -85,7 +85,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let favorite_groups = moekura_db::favorite_groups::for_user(db, user.id, own)
         .await?
         .len();
-    let notes = crate::user_moderation::notes(page.state(), &page.current, user.id).await?;
+    let notes = crate::user_moderation::notes(page.state(), &page.current, &user).await?;
     let me = page.current.user.as_ref().map(|u| u.id);
     let messages = match me.filter(|&me| me != user.id) {
         Some(me) => Some(context! {
@@ -238,7 +238,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             ban_locked => ban_locked,
             banned => banned,
             notes => notes,
-            record_url => crate::user_moderation::may_view(&page.current)
+            record_url => crate::user_moderation::may_view_user(page.state(), &page.current, &user)
                 .then(|| crate::templates::url_value(&crate::user_moderation::url(&user.name))),
             can_unban => can_ban && banned,
             durations => crate::bans::durations(),

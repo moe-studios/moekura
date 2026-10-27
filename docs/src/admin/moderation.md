@@ -163,7 +163,9 @@ per request; changes reach other nodes within moments.
 ## A user's record
 
 Staff who can ban users or read the log see a **Moderation record** link
-on each profile (and the log's user names lead there too). The page puts a
+on the profiles of people ranked below them (and the log's user names
+lead there too); nobody sees their own record, or that of a peer or
+anyone above them. The page puts a
 user's history in one place: their role, status, when they joined and were
 last seen, whether two-factor login is on and whether they're kept from
 automatic promotion; their bans, with controls to ban or lift the ban;
@@ -194,10 +196,13 @@ ban it separately. The API has the same operation
 
 ### Staff notes
 
-The same staff keep private notes about users, on the profile and the
-record: who wrote each and when, in the same markup as comments. Only
-staff see them, not the user. Authors delete their own notes; those who
-can ban users delete anyone's.
+The same staff keep private notes about users ranked below them, on the
+profile and the record: who wrote each and when, in the same markup as
+comments. Only those staff see them, not the user, nor the user's peers
+when they're staff themselves. Authors delete their own notes; those who
+can ban users delete the notes of people ranked below them. A deleted
+note is kept, marked with who deleted it and when, for staff who read
+the log, and the deletion is logged (without the note's text).
 
 ### Addresses
 

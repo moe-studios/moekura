@@ -6,8 +6,8 @@
   {% if notes %}
   <ol class="log">
     {% for n in notes %}
-    <li>
-      <span class="hint">{{ n.when }}{% if n.by %} · {{ n.by }}{% endif %}</span>
+    <li{% if n.deleted %} class="deleted"{% endif %}>
+      <span class="hint">{{ n.when }}{% if n.by %} · {{ n.by }}{% endif %}{% if n.deleted %} · {{ t("staff-notes-deleted", day=n.deleted, user=n.deleted_by or "?") }}{% endif %}</span>
       <div class="markup">{{ n.html }}</div>
       {% if n.can_delete %}<form class="inline" method="post" action="/moderation/user-notes/{{ n.id }}/delete?back={{ path | urlencode }}"><button type="submit" class="secondary">{{ t("delete") }}</button></form>{% endif %}
     </li>

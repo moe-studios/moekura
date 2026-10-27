@@ -794,11 +794,10 @@ mod tests {
             StatusCode::SEE_OTHER
         );
 
-        // Addresses show only on the records of those below the viewer,
-        // and so do the other accounts on them.
+        // Records, with their addresses, are only of those below the
+        // viewer, and so are the other accounts on them.
         let root = app.get("/moderation/users/root", Some(&moderator)).await;
-        assert_eq!(root.status, StatusCode::OK);
-        assert!(!root.body.contains("198.51.100.7"), "{}", root.body);
+        assert_eq!(root.status, StatusCode::FORBIDDEN);
         let alice = app
             .get("/moderation/users/alice", Some(&moderator))
             .await

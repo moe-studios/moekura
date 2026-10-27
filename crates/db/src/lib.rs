@@ -61,6 +61,7 @@ pub mod user_feedbacks;
 pub mod user_ips;
 pub mod user_notes;
 pub mod user_record;
+pub mod user_warnings;
 pub mod users;
 pub mod webhooks;
 pub mod wiki;

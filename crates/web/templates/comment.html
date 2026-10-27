@@ -21,7 +21,8 @@
   {% else %}
   <div class="markup">{{ comment.html }}</div>
   {% endif %}
-  {% if comment.can_reply or comment.can_edit or comment.can_report or comment.can_stick or comment.can_hide or comment.can_restore %}
+  {% if comment.warned %}<p class="hint warned">{{ t("warned-about-this") }}</p>{% endif %}
+  {% if comment.can_reply or comment.can_edit or comment.can_report or comment.can_stick or comment.can_hide or comment.can_restore or comment.can_warn %}
   <footer class="comment-actions">
     {% if comment.can_reply %}<a href="/posts/{{ comment.post_id }}?reply={{ comment.id }}#new-comment">{{ t("reply") }}</a>{% endif %}
     {% if comment.can_edit %}
@@ -53,6 +54,17 @@
     {% endif %}
     {% if comment.can_restore %}
     <form method="post" action="/comments/{{ comment.id }}/restore"><button type="submit" class="link">{{ t("restore") }}</button></form>
+    {% endif %}
+    {% if comment.can_warn %}
+    <details class="inline">
+      <summary>{{ t("warn") }}</summary>
+      <form method="post" action="/users/{{ comment.author|urlencode }}/warn?back={{ path|urlencode }}">
+        <input type="hidden" name="about" value="comment:{{ comment.id }}">
+        <label for="warn-{{ comment.id }}">{{ t("warn-why") }}</label>
+        <input id="warn-{{ comment.id }}" name="reason" maxlength="2000" required>
+        <button type="submit" class="danger">{{ t("warn-user", user=comment.author) }}</button>
+      </form>
+    </details>
     {% endif %}
   </footer>
   {% endif %}

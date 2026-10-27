@@ -157,6 +157,30 @@
   {% endif %}
 </section>
 
+<section class="card">
+  <h2>{{ t("warnings") }}</h2>
+  {% if warnings %}
+  <ul class="plain">
+    {% for w in warnings %}
+    <li>{{ w.when }}{% if w.by %} · {{ t("by-user", user=w.by) }}{% endif %}{% if w.url %} · <a href="{{ w.url }}">{{ t("subject-" ~ w.kind|replace("_", "-")) }} #{{ w.id }}</a>{% endif %}
+      <div class="reason">“{{ w.reason }}”</div></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="hint">{{ t("warnings-none") }}</p>
+  {% endif %}
+  {% if can_ban %}
+  <details class="edit">
+    <summary>{{ t("warn") }}</summary>
+    <form method="post" action="/users/{{ user.name|urlencode }}/warn?back={{ path|urlencode }}">
+      <label for="warn-reason">{{ t("warn-why") }}</label>
+      <input id="warn-reason" name="reason" maxlength="2000" required>
+      <button type="submit" class="danger">{{ t("warn-user", user=user.name) }}</button>
+    </form>
+  </details>
+  {% endif %}
+</section>
+
 {% if other_reports %}
 <section class="card">
   <h2>{{ t("mod-nav-reports") }}</h2>

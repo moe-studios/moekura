@@ -267,6 +267,15 @@ ban it separately. The API has the same operation
 (`POST /api/v1/users/{name}/delete-uploads`, followed with
 `GET /api/v1/moderation/post-batches/{id}`).
 
+### Warnings
+
+Short of a ban, staff who can ban someone can **Warn** them, with a
+reason: from their record, or about a comment or forum post of theirs
+(**Warn** among its staff controls). The user is notified ("You were
+warned about your comment on post #12: …"), the comment or forum post
+says for everyone that its writer was warned about it, the record lists
+the user's warnings, and the log has each.
+
 ### Staff notes
 
 The same staff keep private notes about users ranked below them, on the

@@ -491,6 +491,9 @@ async fn show(
         forum::visit(db, me, id).await?;
     }
     let can_post = me.is_some() && page.current.can(Permission::Comment);
+    let ids: Vec<i64> = found.iter().map(|p| p.id).collect();
+    let warned = moekura_db::user_warnings::warned_among(db, SubjectKind::ForumPost, &ids).await?;
+    let can_warn = page.current.can(Permission::BanUsers);
     let posts: Vec<Value> = found
         .iter()
         .map(|p| {
@@ -502,6 +505,8 @@ async fn show(
                 html => Value::from_safe_string(markup::render(&p.body)),
                 hidden => p.is_hidden,
                 held => p.status == forum::Status::Held,
+                warned => warned.contains(&p.id),
+                can_warn => can_warn && !mine && p.creator_id.is_some(),
                 score => p.score,
                 vote => votes.iter().find(|(post, _)| *post == p.id).map(|(_, s)| *s),
                 date => crate::dates::day(p.created_at),

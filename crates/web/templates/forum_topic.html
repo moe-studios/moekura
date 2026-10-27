@@ -21,6 +21,7 @@
       <span class="score" title="{{ t('votes') }}">{{ "%+d"|format(p.score) if p.score else "0" }}</span>
     </div>
     <div class="markup">{{ p.html }}</div>
+    {% if p.warned %}<p class="hint warned">{{ t("warned-about-this") }}</p>{% endif %}
     <div class="actions">
       {% if p.can_vote %}
       <form method="post" action="/forum_posts/{{ p.id }}/vote"><input type="hidden" name="score" value="{{ '0' if p.vote == 1 else '1' }}"><button type="submit" class="secondary" aria-pressed="{{ 'true' if p.vote == 1 else 'false' }}" aria-label="{{ t('vote-up') }}">▲</button></form>
@@ -28,6 +29,17 @@
       {% endif %}
       {% if p.can_edit %}<a class="button secondary" href="/forum_posts/{{ p.id }}/edit">{{ t("edit") }}</a>{% endif %}
       {% if can_report and p.creator and not (me and me.name == p.creator) %}{{ report_form("forum_post", p.id) }}{% endif %}
+      {% if p.can_warn %}
+      <details class="edit">
+        <summary>{{ t("warn") }}</summary>
+        <form method="post" action="/users/{{ p.creator|urlencode }}/warn?back={{ path|urlencode }}">
+          <input type="hidden" name="about" value="forum_post:{{ p.id }}">
+          <label for="warn-{{ p.id }}">{{ t("warn-why") }}</label>
+          <input id="warn-{{ p.id }}" name="reason" maxlength="2000" required>
+          <button type="submit" class="danger">{{ t("warn-user", user=p.creator) }}</button>
+        </form>
+      </details>
+      {% endif %}
       {% if can_moderate and not p.held %}
       <form class="inline" method="post" action="/forum_posts/{{ p.id }}/{{ 'unhide' if p.hidden else 'hide' }}"><input name="reason" maxlength="2000" placeholder="{{ t('reason') }}" aria-label="{{ t('reason') }}"><button type="submit" class="secondary">{{ t("unhide") if p.hidden else t("hide") }}</button></form>
       {% endif %}

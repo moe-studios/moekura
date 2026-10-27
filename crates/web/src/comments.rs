@@ -242,13 +242,13 @@ async fn comment_contexts(
     current: &CurrentUser,
     comments: &[Comment],
 ) -> Result<Vec<Value>, AppError> {
+    let ids: Vec<i64> = comments.iter().map(|c| c.id).collect();
+    let db = state.db.primary();
     let votes = match &current.user {
-        Some(user) => {
-            let ids: Vec<i64> = comments.iter().map(|c| c.id).collect();
-            comments::votes_of(state.db.primary(), user.id, &ids).await?
-        }
+        Some(user) => comments::votes_of(db, user.id, &ids).await?,
         None => Vec::new(),
     };
+    let warned = moekura_db::user_warnings::warned_among(db, SubjectKind::Comment, &ids).await?;
     Ok(comments
         .iter()
         .map(|c| {
@@ -256,13 +256,14 @@ async fn comment_contexts(
                 .iter()
                 .find(|(id, _)| *id == c.id)
                 .map_or(0, |(_, v)| *v);
-            comment_context(current, c, vote)
+            comment_context(current, c, vote, warned.contains(&c.id))
         })
         .collect())
 }
 
-/// A comment for templates; `vote` is the viewer's.
-fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value {
+/// A comment for templates; `vote` is the viewer's, and `warned` whether
+/// its writer was warned about it.
+fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16, warned: bool) -> Value {
     let me = current.user.as_ref().map(|u| u.id);
     let own = comment.creator_id.is_some() && comment.creator_id == me;
     let may_comment = current.can(Permission::Comment);
@@ -293,6 +294,8 @@ fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value
         can_stick => moderate && !comment.is_deleted,
         can_hide => moderate && !comment.is_deleted,
         can_restore => moderate && comment.status == Status::Hidden,
+        warned => warned,
+        can_warn => current.can(Permission::BanUsers) && !own && comment.creator_id.is_some(),
     }
 }
 
@@ -1413,6 +1416,74 @@ mod tests {
             .await;
         assert_eq!(restore.status, StatusCode::BAD_REQUEST);
         assert!(restore.body.contains("writer deleted"), "{}", restore.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn writers_are_warned_about_what_they_wrote(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            routes()
+                .merge(crate::posts::routes())
+                .merge(crate::user_moderation::routes()),
+        );
+        let post = post(&pool, "active").await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let response = app
+            .post_form(
+                &format!("/posts/{post}/comments"),
+                Some(&alice),
+                &[],
+                "body=You+idiot",
+            )
+            .await;
+        let id: i64 = response
+            .location
+            .unwrap()
+            .rsplit("#comment-")
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let warn = format!("about=comment%3A{id}&reason=Be+civil");
+        // Those who can ban, about the writer's own words.
+        for who in [&janitor, &bob] {
+            let refused = app
+                .post_form("/users/alice/warn", Some(who), &[], &warn)
+                .await;
+            assert_eq!(refused.status, StatusCode::FORBIDDEN);
+        }
+        let wrong = app
+            .post_form("/users/bob/warn", Some(&moderator), &[], &warn)
+            .await;
+        assert_eq!(wrong.status, StatusCode::NOT_FOUND, "not bob's comment");
+        let warned = app
+            .post_form("/users/alice/warn", Some(&moderator), &[], &warn)
+            .await;
+        assert_eq!(warned.status, StatusCode::SEE_OTHER, "{}", warned.body);
+        let page = app.get(&format!("/posts/{post}"), Some(&bob)).await.body;
+        assert!(page.contains("Its writer was warned about this"), "{page}");
+        let told: String =
+            sqlx::query_scalar("SELECT subject FROM notifications WHERE kind = 'moderation'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            told,
+            format!("You were warned about your comment on post #{post}: “Be civil”")
+        );
+        let record = app
+            .get("/moderation/users/alice", Some(&moderator))
+            .await
+            .body;
+        assert!(record.contains("Be civil"), "{record}");
+        let logged: String = sqlx::query_scalar("SELECT action FROM mod_actions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logged, "user.warn");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

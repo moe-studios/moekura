@@ -12,6 +12,7 @@ use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Filter, NewAction};
 use moekura_db::user_notes::{self, UserNote};
 use moekura_db::user_record::{self, Tally};
+use moekura_db::user_warnings;
 use moekura_db::users::{self, User};
 use moekura_db::{bans, post_batches, user_ips};
 use serde::Deserialize;
@@ -37,6 +38,105 @@ pub fn routes() -> Router<AppState> {
         .route("/moderation/users/{name}", get(page))
         .route("/users/{name}/notes", post(add_note))
         .route("/moderation/user-notes/{id}/delete", post(delete_note))
+        .route("/users/{name}/warn", post(warn_form))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct WarnForm {
+    #[serde(default)]
+    reason: String,
+    /// What it's about: `comment:<id>` or `forum_post:<id>`; empty for
+    /// nothing in particular.
+    #[serde(default)]
+    about: String,
+}
+
+async fn warn_form(
+    page: Page,
+    jar: CookieJar,
+    Path(name): Path<String>,
+    Query(back): Query<Back>,
+    Form(form): Form<WarnForm>,
+) -> Result<Response, AppError> {
+    let about = match form.about.split_once(':') {
+        None if form.about.is_empty() => None,
+        Some(("comment", id)) => Some((
+            SubjectKind::Comment,
+            id.parse().map_err(|_| AppError::NotFound)?,
+        )),
+        Some(("forum_post", id)) => Some((
+            SubjectKind::ForumPost,
+            id.parse().map_err(|_| AppError::NotFound)?,
+        )),
+        _ => {
+            return Err(AppError::BadRequest(
+                "Warn about a comment or forum post".into(),
+            ));
+        }
+    };
+    warn(page.state(), &page.current, &name, &form.reason, about).await?;
+    let to = crate::account::safe_next(back.back.as_deref()).to_owned();
+    Ok((flash::set(jar, Flash::Saved), Redirect::to(&to)).into_response())
+}
+
+/// Formally warns the user called `name`, as `current` (who must be able
+/// to ban them), with `reason`, about something they wrote if `about`
+/// names it: recorded, logged and told to them.
+pub(crate) async fn warn(
+    state: &AppState,
+    current: &CurrentUser,
+    name: &str,
+    reason: &str,
+    about: Option<(SubjectKind, i64)>,
+) -> Result<(), AppError> {
+    current.require(Permission::BanUsers)?;
+    let db = state.db.primary();
+    let user = users::by_name(db, name).await?.ok_or(AppError::NotFound)?;
+    if !crate::bans::may_ban(state, current, &user) {
+        return Err(AppError::Forbidden);
+    }
+    let reason = crate::moderation::check_reason(reason)?;
+    if reason.is_empty() {
+        return Err(AppError::BadRequest("Say what the warning is for".into()));
+    }
+    // What it's about must be theirs; where it is, for them to see.
+    let (url, what) = match about {
+        Some((SubjectKind::Comment, id)) => {
+            let c = moekura_db::comments::by_id(db, id)
+                .await?
+                .filter(|c| c.creator_id == Some(user.id))
+                .ok_or(AppError::NotFound)?;
+            (
+                crate::comments::url(&c),
+                format!(" about your comment on post #{}", c.post_id),
+            )
+        }
+        Some((SubjectKind::ForumPost, id)) => {
+            let p = moekura_db::forum::post(db, id)
+                .await?
+                .filter(|p| p.creator_id == Some(user.id))
+                .ok_or(AppError::NotFound)?;
+            (
+                format!("/forum_posts/{id}"),
+                format!(" about your post in “{}”", p.topic_title),
+            )
+        }
+        _ => (url(&user.name), String::new()),
+    };
+    let actor = current.user.as_ref().map(|u| u.id);
+    let mut tx = db.begin().await?;
+    user_warnings::create(&mut *tx, user.id, actor, reason, about).await?;
+    let mut entry = NewAction::new(actor, ActionKind::UserWarn)
+        .user(user.id)
+        .reason(reason);
+    if let Some((kind, id)) = about {
+        entry = entry.subject(kind, id);
+    }
+    mod_actions::record(&mut *tx, entry).await?;
+    tx.commit().await?;
+    let told = format!("You were warned{what}: “{reason}”");
+    crate::notifications::moderated(state, Some(user.id), actor, &told, &url).await;
+    Ok(())
 }
 
 /// Whether `current` is staff who see users' moderation pages, and staff
@@ -292,6 +392,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     let flags_filed = user_record::flags_filed(db, user.id).await?;
     let reports = user_record::reports_received(db, user.id).await?;
     let hidden = user_record::hidden_comments(db, user.id, RECENT).await?;
+    let warnings = user_warnings::for_user(db, user.id).await?;
     // Reports about them or what they wrote, of the kinds the viewer
     // handles (messages only for those who read them).
     let kinds = crate::moderation_reports::handled_kinds(&page.current);
@@ -395,6 +496,18 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
                 body => c.body,
                 reports => c.reports,
                 when => crate::dates::day(c.created_at),
+            }).collect::<Vec<_>>(),
+            warnings => warnings.iter().map(|w| context! {
+                reason => w.reason,
+                by => w.creator_name,
+                when => crate::dates::day(w.created_at),
+                kind => w.subject_kind,
+                id => w.subject_id,
+                url => match (w.subject_kind.as_deref(), w.subject_id) {
+                    (Some("comment"), Some(id)) => Some(url_value(&format!("/comments/{id}"))),
+                    (Some("forum_post"), Some(id)) => Some(url_value(&format!("/forum_posts/{id}"))),
+                    _ => None,
+                },
             }).collect::<Vec<_>>(),
             other_reports => other_reports.iter().map(|r| context! {
                 kind => r.subject_kind,

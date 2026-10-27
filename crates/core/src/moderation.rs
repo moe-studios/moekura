@@ -354,10 +354,11 @@ pub enum ActionKind {
     BanAppealCreate,
     BanAppealGrant,
     BanAppealDeny,
+    UserWarn,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 75] = [
+    pub const ALL: [ActionKind; 76] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -433,6 +434,7 @@ impl ActionKind {
         ActionKind::BanAppealCreate,
         ActionKind::BanAppealGrant,
         ActionKind::BanAppealDeny,
+        ActionKind::UserWarn,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -512,6 +514,7 @@ impl ActionKind {
             ActionKind::BanAppealCreate => "ban_appeal.create",
             ActionKind::BanAppealGrant => "ban_appeal.grant",
             ActionKind::BanAppealDeny => "ban_appeal.deny",
+            ActionKind::UserWarn => "user.warn",
         }
     }
 
@@ -593,6 +596,7 @@ impl ActionKind {
             ActionKind::BanAppealCreate => "appealed the ban of",
             ActionKind::BanAppealGrant => "granted the ban appeal of",
             ActionKind::BanAppealDeny => "turned down the ban appeal of",
+            ActionKind::UserWarn => "warned",
         }
     }
 

@@ -22,7 +22,8 @@ An approver can also *disapprove* a post: pass on it without rejecting
 it, saying whether it breaks the rules, is of poor quality, or just isn't
 for them, with an optional note. The post stays pending and leaves that
 approver's queue, while other approvers see the disapprovals (and the post
-page lists them). The queue holds the posts found by `status:unmoderated`:
+page lists them, with **Take it back** on your own, which returns the
+post to your queue). The queue holds the posts found by `status:unmoderated`:
 pending posts the approver didn't upload and hasn't disapproved. A user's
 moderation record counts the posts they disapproved.
 

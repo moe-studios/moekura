@@ -188,7 +188,8 @@
     <section class="family flags" aria-label="{{ t('post-disapprovals') }}">
       <p>{{ t("post-disapprovals-intro") }}</p>
       <ul class="plain">
-        {% for d in moderate.disapprovals %}<li>{{ d.when }} {{ d.by }}: {{ t("disapproval-reason-" ~ d.reason) if d.known else d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}</li>{% endfor %}
+        {% for d in moderate.disapprovals %}<li>{{ d.when }} {{ d.by }}: {{ t("disapproval-reason-" ~ d.reason) if d.known else d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}
+          {% if me and d.by == me.name %}<form class="inline" method="post" action="/posts/{{ post.id }}/disapprove/withdraw"><button type="submit" class="secondary">{{ t("disapproval-withdraw") }}</button></form>{% endif %}</li>{% endfor %}
       </ul>
     </section>
     {% endif %}

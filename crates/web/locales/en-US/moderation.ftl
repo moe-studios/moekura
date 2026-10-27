@@ -120,6 +120,7 @@ action-user_feedback_update = changed feedback on
 action-report_create = made a report about
 action-report_settle = settled reports about
 action-post_remove_old_file = removed an earlier file of post
+action-post_undisapprove = took back passing on post
 
 mod-log-title = Moderation log
 mod-log-subject = About
@@ -282,6 +283,7 @@ reason-reject-ticked = Reason for rejecting the ticked posts
 reason-reject-post = Reason for rejecting #{ $id }
 no-tags = no tags
 disapproved = disapproved
+disapproval-withdraw = Take it back
 disapproval-reason-breaks_rules = Breaks the rules
 disapproval-reason-poor_quality = Poor quality
 disapproval-reason-disinterest = Not interested

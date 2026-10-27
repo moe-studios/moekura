@@ -46,6 +46,10 @@ pub fn routes() -> Router<AppState> {
         .route("/posts/{id}/flags/dismiss", post(dismiss_flags))
         .route("/posts/{id}/approve", post(approve))
         .route("/posts/{id}/disapprove", post(disapprove))
+        .route(
+            "/posts/{id}/disapprove/withdraw",
+            post(withdraw_disapproval),
+        )
         .route("/posts/{id}/reject", post(reject))
         .route("/posts/{id}/delete", post(delete))
         .route("/posts/{id}/restore", post(restore))
@@ -1081,6 +1085,39 @@ pub(crate) async fn disapprove_post(
     Ok(())
 }
 
+async fn withdraw_disapproval(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+) -> Result<Response, AppError> {
+    withdraw(page.state(), &page.current, id).await?;
+    Ok(back_to(jar, &format!("/posts/{id}")))
+}
+
+/// Takes back `current`'s disapproval of post `id`, so it's back in their
+/// approval queue.
+pub(crate) async fn withdraw(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+) -> Result<(), AppError> {
+    current.require(Permission::ApprovePosts)?;
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let mut tx = state.db.primary().begin().await?;
+    if !moekura_db::disapprovals::withdraw(&mut *tx, id, user.id).await? {
+        return Err(AppError::BadRequest(
+            "You haven't passed on this post".into(),
+        ));
+    }
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(Some(user.id), ActionKind::PostUndisapprove).post(id),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Where approving or rejecting goes back to: the queue, or with
 /// `from=post` the post's page.
 #[derive(Debug, Default, Deserialize)]
@@ -1609,6 +1646,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(appeal().await.status, StatusCode::SEE_OTHER);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn approvers_take_back_a_pass(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            super::routes().merge(crate::posts::routes()),
+        );
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let id = post_by(&pool, "alice", "pending").await;
+        let withdraw = format!("/posts/{id}/disapprove/withdraw");
+        assert_eq!(
+            app.post(&withdraw, Some(&janitor), &[]).await.status,
+            StatusCode::BAD_REQUEST
+        );
+        app.post_form(
+            &format!("/posts/{id}/disapprove"),
+            Some(&janitor),
+            &[],
+            "reason=disinterest",
+        )
+        .await;
+        assert_eq!(
+            app.post(&withdraw, Some(&janitor), &[]).await.status,
+            StatusCode::SEE_OTHER
+        );
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM post_disapprovals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 0);
+        let logged: Vec<String> = sqlx::query_scalar("SELECT action FROM mod_actions ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logged, ["post.disapprove", "post.undisapprove"]);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

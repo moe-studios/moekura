@@ -152,6 +152,30 @@ pub(crate) async fn disapprove(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Take back a disapproval.
+///
+/// Needs `approve_posts`. Takes back your disapproval of the post, so it's
+/// in your approval queue again.
+#[utoipa::path(
+    delete,
+    path = "/posts/{id}/disapprove",
+    operation_id = "withdraw_disapproval",
+    tag = "moderation",
+    params(("id" = i64, Path, description = "Post number")),
+    responses(
+        (status = 204, description = "Taken back"),
+        (status = 400, body = ErrorBody, description = "You hadn't disapproved it"),
+    ),
+)]
+pub(crate) async fn withdraw_disapproval(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    crate::moderation::withdraw(&state, &current, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Delete a post.
 ///
 /// Needs `delete_posts`, and a reason, which the post shows in its place.

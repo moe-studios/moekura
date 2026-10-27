@@ -59,6 +59,40 @@ impl PostReasons {
     }
 }
 
+/// Posts left waiting too long, as Danbooru deletes them: pending posts
+/// nobody approved, and flagged posts whose flags nobody dealt with, in
+/// that many days. 0 leaves them waiting.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StalePosts {
+    pub pending_days: u32,
+    pub flagged_days: u32,
+}
+
+/// The longest [`StalePosts`] wait.
+pub const MAX_STALE_DAYS: u32 = 365;
+
+impl StalePosts {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.pending_days > MAX_STALE_DAYS || self.flagged_days > MAX_STALE_DAYS {
+            return Err(format!(
+                "posts wait at most {MAX_STALE_DAYS} days before they're deleted"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The reason a pending post deleted this way shows.
+    pub fn pending_reason(&self) -> String {
+        format!("Unapproved in {} days", self.pending_days)
+    }
+
+    /// The reason a flagged post deleted this way shows.
+    pub fn flagged_reason(&self) -> String {
+        format!("Flagged and not reviewed in {} days", self.flagged_days)
+    }
+}
+
 /// The reason given with a preset (`preset`) and free text (`text`): the
 /// preset, the text, or both as "preset: text".
 pub fn combine_reason(preset: &str, text: &str) -> String {

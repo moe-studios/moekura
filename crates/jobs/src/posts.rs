@@ -2,7 +2,8 @@
 //! such as deleting every upload of a spam account or purging deleted
 //! posts, in batches.
 
-use moekura_core::jobs::PostBatch;
+use moekura_core::jobs::{ExpireStalePosts, PostBatch};
+use moekura_core::posts::PostStatus;
 use moekura_db::post_batches::{self, Progress};
 use moekura_db::search::{PageRef, Plan};
 use moekura_storage::Storage;
@@ -14,6 +15,9 @@ use crate::{JobError, Registry};
 
 /// Posts handled per transaction.
 const BATCH: i64 = 100;
+
+/// How often posts left waiting too long are looked for.
+const STALE_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
 /// Posts in a row a purge may fail to remove before the job stops, to be
 /// retried later from the first of them: storage is probably down.
@@ -34,6 +38,13 @@ enum Targets {
 
 impl PostJobs {
     pub fn register(self, registry: &mut Registry) {
+        let expirer = self.clone();
+        registry
+            .register(move |_: ExpireStalePosts| {
+                let jobs = expirer.clone();
+                async move { jobs.expire_stale().await.map(|_| ()) }
+            })
+            .every::<ExpireStalePosts>(STALE_EVERY);
         registry.register(move |job: PostBatch| {
             let jobs = self.clone();
             async move {
@@ -44,6 +55,48 @@ impl PostJobs {
                 result.map(|_| ())
             }
         });
+    }
+
+    /// Deletes the posts left waiting longer than the `stale_posts`
+    /// setting allows; returns how many. Pending posts are rejected,
+    /// flagged ones deleted with their flags upheld, each logged as by
+    /// nobody in particular; those whose status is locked are left.
+    pub async fn expire_stale(&self) -> Result<u64, JobError> {
+        let stale = moekura_db::settings::load(&self.db).await?.stale_posts;
+        if stale.pending_days == 0 && stale.flagged_days == 0 {
+            return Ok(0);
+        }
+        let mut deleted = 0;
+        loop {
+            let (pending, flagged) =
+                post_batches::stale(&self.db, stale.pending_days, stale.flagged_days, BATCH)
+                    .await?;
+            if pending.is_empty() && flagged.is_empty() {
+                break;
+            }
+            let mut progress = 0;
+            for id in pending {
+                let reason = stale.pending_reason();
+                progress += u64::from(
+                    post_batches::expire(&self.db, id, PostStatus::Pending, &reason).await?,
+                );
+            }
+            for id in flagged {
+                let reason = stale.flagged_reason();
+                progress += u64::from(
+                    post_batches::expire(&self.db, id, PostStatus::Flagged, &reason).await?,
+                );
+            }
+            deleted += progress;
+            // Everything found was dealt with meanwhile: don't spin.
+            if progress == 0 {
+                break;
+            }
+        }
+        if deleted > 0 {
+            tracing::info!(deleted, "deleted posts left waiting too long");
+        }
+        Ok(deleted)
     }
 
     /// Works through batch `id` from where it stopped; returns what this
@@ -304,6 +357,68 @@ mod tests {
         assert_eq!(status(&pool, newer).await, "active", "already handled");
         let batch = post_batches::by_id(&pool, id).await.unwrap().unwrap();
         assert_eq!((batch.done, batch.skipped), (2, 0));
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn posts_left_waiting_too_long_go(pool: PgPool) {
+        let uploader = user(&pool, "uploader").await;
+        let flagger = user(&pool, "flagger").await;
+        let aged = async |id: i64| {
+            sqlx::query("UPDATE posts SET created_at = now() - interval '10 days' WHERE id = $1")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        };
+        let old_pending = post(&pool, uploader, "pending", &[]).await;
+        aged(old_pending).await;
+        let new_pending = post(&pool, uploader, "pending", &[]).await;
+        let locked = post(&pool, uploader, "pending", &["status"]).await;
+        aged(locked).await;
+        let flagged = post(&pool, uploader, "flagged", &[]).await;
+        sqlx::query(
+            "INSERT INTO post_flags (post_id, creator_id, reason, created_at)
+             VALUES ($1, $2, 'bad', now() - interval '10 days')",
+        )
+        .bind(flagged)
+        .bind(flagger)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Off by default.
+        assert_eq!(jobs(&pool).expire_stale().await.unwrap(), 0);
+        moekura_db::settings::set(
+            &pool,
+            "stale_posts",
+            serde_json::json!({ "pending_days": 3, "flagged_days": 3 }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(jobs(&pool).expire_stale().await.unwrap(), 2);
+        assert_eq!(status(&pool, old_pending).await, "deleted");
+        assert_eq!(status(&pool, flagged).await, "deleted");
+        assert_eq!(status(&pool, new_pending).await, "pending");
+        assert_eq!(
+            status(&pool, locked).await,
+            "pending",
+            "its status is locked"
+        );
+        let upheld: String = sqlx::query_scalar("SELECT status FROM post_flags")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(upheld, "upheld");
+        let reasons: Vec<String> =
+            sqlx::query_scalar("SELECT reason FROM mod_actions ORDER BY post_id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            reasons,
+            ["Unapproved in 3 days", "Flagged and not reviewed in 3 days"]
+        );
+        assert_eq!(jobs(&pool).expire_stale().await.unwrap(), 0);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

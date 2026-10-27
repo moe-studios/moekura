@@ -40,7 +40,20 @@ Members flag posts that should go, with a reason. Flagged posts stay
 visible, marked *flagged*, and appear under **Moderation → Flags**.
 Dismiss the flags to keep the post, or delete it, which upholds them.
 Each person can flag posts and report comments about ten times at once,
-then once a minute.
+then once a minute; a flag they already made, or one on a post whose
+flag of theirs was dismissed in the past week, is refused before it
+counts. Nobody dismisses flags on their own uploads.
+
+### Posts left waiting
+
+By default posts wait in the approval and flag queues until someone
+deals with them. Under **Admin → Settings → Moderation reasons**, *Posts
+left waiting* can delete them after a number of days, as Danbooru does:
+pending posts nobody approved are rejected ("Unapproved in 3 days"), and
+flagged posts whose flags nobody reviewed are deleted, upholding the
+flags ("Flagged and not reviewed in 3 days"). The `posts.expire_stale`
+job checks hourly and logs each as done by nobody in particular; posts
+whose status is locked stay. 0 (the default) leaves them waiting.
 
 ## Comments
 
@@ -151,7 +164,8 @@ every post, so a renamed tag stays renamed.
 The uploader of a deleted post (and anyone who can see deleted posts),
 if their role can flag posts, can *appeal* it from the post page with a
 reason. A post has one open appeal at a time, and each person can appeal
-three posts at once, then one more every four hours. Open appeals are
+three posts at once, then one more every four hours. Once an appeal is
+turned down, the post can't be appealed again for a week. Open appeals are
 listed under **Moderation → Appeals** (and found with `status:appealed`)
 for those who can delete and restore posts: **Restore** brings the post
 back and grants the appeal (so does restoring it any other way); **Keep

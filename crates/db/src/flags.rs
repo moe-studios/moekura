@@ -18,10 +18,42 @@ pub struct Flag {
 pub enum FlagError {
     #[error("You already flagged this post.")]
     AlreadyFlagged,
+    #[error(
+        "Staff dismissed your flag on this post lately; wait a few days before flagging it again."
+    )]
+    TooSoon,
     #[error("Only active posts can be flagged.")]
     NotActive,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
+}
+
+/// Whether `creator_id` may flag post `post_id` now: they have no open
+/// flag on it, and none dismissed in the past
+/// [`REPORT_COOLDOWN_DAYS`](moekura_core::moderation::REPORT_COOLDOWN_DAYS).
+pub async fn check_new(
+    db: impl PgExecutor<'_>,
+    post_id: i64,
+    creator_id: i64,
+) -> Result<(), FlagError> {
+    let (open, recent): (bool, bool) = sqlx::query_as(
+        "SELECT coalesce(bool_or(status = 'open'), false),
+                coalesce(bool_or(status = 'dismissed'
+                                 AND resolved_at > now() - make_interval(days => $3)), false)
+         FROM post_flags WHERE post_id = $1 AND creator_id = $2",
+    )
+    .bind(post_id)
+    .bind(creator_id)
+    .bind(moekura_core::moderation::REPORT_COOLDOWN_DAYS as i32)
+    .fetch_one(db)
+    .await?;
+    if open {
+        Err(FlagError::AlreadyFlagged)
+    } else if recent {
+        Err(FlagError::TooSoon)
+    } else {
+        Ok(())
+    }
 }
 
 /// Flags a post, marking it flagged if it was active.
@@ -39,6 +71,7 @@ pub async fn create(
     if !matches!(status.as_deref(), Some("active" | "flagged")) {
         return Err(FlagError::NotActive);
     }
+    check_new(&mut *conn, post_id, creator_id).await?;
     sqlx::query("INSERT INTO post_flags (post_id, creator_id, reason) VALUES ($1, $2, $3)")
         .bind(post_id)
         .bind(creator_id)
@@ -167,7 +200,15 @@ mod tests {
         let history = for_post(&pool, post).await.unwrap();
         assert_eq!(history[0].status, "dismissed");
         assert_eq!(history[0].resolver_name.as_deref(), Some("bob"));
-        // Flagging again after a dismissal is allowed.
+        // Flagging again after a dismissal is allowed, after a while.
+        assert!(matches!(
+            create(&mut conn, post, alice, "still off-topic").await,
+            Err(FlagError::TooSoon)
+        ));
+        sqlx::query("UPDATE post_flags SET resolved_at = now() - interval '8 days'")
+            .execute(&pool)
+            .await
+            .unwrap();
         create(&mut conn, post, alice, "still off-topic")
             .await
             .unwrap();

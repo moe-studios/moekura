@@ -175,6 +175,16 @@ impl Job for ApplyBulkUpdate {
     const MAX_ATTEMPTS: i32 = 2;
 }
 
+/// Delete posts left waiting too long in the queues, as the
+/// `stale_posts` site setting says; scheduled hourly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpireStalePosts {}
+
+impl Job for ExpireStalePosts {
+    const KIND: &'static str = "posts.expire_stale";
+    const MAX_ATTEMPTS: i32 = 3;
+}
+
 /// Remove staged uploads nobody made into a post; scheduled hourly.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpireStagedUploads {}

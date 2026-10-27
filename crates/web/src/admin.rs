@@ -205,6 +205,10 @@ fn render_settings(
                     allow => current.email_domains.mode == moekura_core::spam::DomainMode::Allow,
                     list => current.email_domains.domains.join("\n"),
                 },
+                stale_posts => context! {
+                    pending_days => current.stale_posts.pending_days,
+                    flagged_days => current.stale_posts.flagged_days,
+                },
                 post_reasons => context! {
                     deletion => current.post_reasons.deletion.join("\n"),
                     flag => current.post_reasons.flag.join("\n"),
@@ -365,6 +369,9 @@ struct SettingsForm {
     deletion_reasons: Option<String>,
     /// One per line.
     flag_reasons: Option<String>,
+    /// Days; 0 or blank never deletes them.
+    stale_pending_days: Option<String>,
+    stale_flagged_days: Option<String>,
     default_theme: Option<String>,
     /// Blank: the server configuration's.
     pagination_per_page: Option<String>,
@@ -388,6 +395,15 @@ fn number(text: &str) -> serde_json::Value {
     text.trim()
         .parse::<u32>()
         .map_or_else(|_| json!(text.trim()), |n| json!(n))
+}
+
+/// A number of days as JSON, blank for 0 (never).
+fn days_or_never(text: &str) -> serde_json::Value {
+    if text.trim().is_empty() {
+        json!(0)
+    } else {
+        number(text)
+    }
 }
 
 /// An optional number field as JSON: null when blank, `before` when the
@@ -609,6 +625,19 @@ async fn save_settings(
                 "flag": form.flag_reasons.as_deref().map_or_else(
                     || before.post_reasons.flag.clone(),
                     moekura_core::moderation::PostReasons::parse_list,
+                ),
+            }),
+        ),
+        (
+            "stale_posts",
+            json!({
+                "pending_days": form.stale_pending_days.as_deref().map_or_else(
+                    || json!(before.stale_posts.pending_days),
+                    days_or_never,
+                ),
+                "flagged_days": form.stale_flagged_days.as_deref().map_or_else(
+                    || json!(before.stale_posts.flagged_days),
+                    days_or_never,
                 ),
             }),
         ),

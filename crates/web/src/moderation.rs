@@ -291,6 +291,12 @@ pub(crate) async fn flag_post(
         return Err(AppError::BadRequest("Say why the post should go".into()));
     }
     crate::posts::check_lock(current, &post, PostLock::Status)?;
+    // Before the rate limit, so a refused repeat doesn't use it up.
+    match flags::check_new(state.db.primary(), id, user.id).await {
+        Ok(()) => {}
+        Err(FlagError::Db(e)) => return Err(e.into()),
+        Err(e) => return Err(AppError::BadRequest(e.to_string())),
+    }
     state.rate_limits.check_report(user.id).await?;
     let mut tx = state.db.primary().begin().await?;
     match flags::create(&mut tx, id, user.id, reason).await {
@@ -554,6 +560,12 @@ pub(crate) async fn appeal_post(
         return Err(AppError::BadRequest(
             "Say why the post should come back".into(),
         ));
+    }
+    // Before the rate limit, so a refused repeat doesn't use it up.
+    match appeals::check_new(db, id).await {
+        Ok(()) => {}
+        Err(AppealError::Db(e)) => return Err(e.into()),
+        Err(e) => return Err(AppError::BadRequest(e.to_string())),
     }
     state.rate_limits.check_appeal(user.id).await?;
     let mut tx = db.begin().await?;
@@ -1539,6 +1551,69 @@ mod tests {
             )
             .await;
         assert_eq!(granted.status, StatusCode::SEE_OTHER);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn flags_and_appeals_wait_after_being_turned_down(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let id = post_by(&pool, "bob", "active").await;
+        let flag = async || {
+            app.post_form(
+                &format!("/posts/{id}/flag"),
+                Some(&alice),
+                &[],
+                "reason=bad",
+            )
+            .await
+        };
+        assert_eq!(flag().await.status, StatusCode::SEE_OTHER);
+        assert_eq!(
+            flag().await.status,
+            StatusCode::BAD_REQUEST,
+            "already flagged"
+        );
+        app.post(&format!("/posts/{id}/flags/dismiss"), Some(&janitor), &[])
+            .await;
+        let again = flag().await;
+        assert_eq!(again.status, StatusCode::BAD_REQUEST);
+        assert!(again.body.contains("wait a few days"), "{}", again.body);
+
+        app.post_form(
+            &format!("/posts/{id}/delete"),
+            Some(&janitor),
+            &[],
+            "reason=dup",
+        )
+        .await;
+        let appeal = async || {
+            app.post_form(
+                &format!("/posts/{id}/appeal"),
+                Some(&bob),
+                &[],
+                "reason=mine",
+            )
+            .await
+        };
+        assert_eq!(appeal().await.status, StatusCode::SEE_OTHER);
+        app.post_form(
+            &format!("/posts/{id}/appeals/reject"),
+            Some(&janitor),
+            &[],
+            "reason=no",
+        )
+        .await;
+        let again = appeal().await;
+        assert_eq!(again.status, StatusCode::BAD_REQUEST);
+        assert!(again.body.contains("wait a few days"), "{}", again.body);
+        // A week later, they may.
+        sqlx::query("UPDATE post_appeals SET resolved_at = now() - interval '8 days'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(appeal().await.status, StatusCode::SEE_OTHER);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

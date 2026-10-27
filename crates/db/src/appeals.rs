@@ -18,10 +18,37 @@ pub struct Appeal {
 pub enum AppealError {
     #[error("This post has already been appealed; staff will look at it.")]
     AlreadyAppealed,
+    #[error(
+        "Staff turned down an appeal of this post lately; wait a few days before appealing again."
+    )]
+    TooSoon,
     #[error("Only deleted posts can be appealed.")]
     NotDeleted,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
+}
+
+/// Whether post `post_id` may be appealed now: it has no open appeal,
+/// and none was turned down in the past
+/// [`REPORT_COOLDOWN_DAYS`](moekura_core::moderation::REPORT_COOLDOWN_DAYS).
+pub async fn check_new(db: impl PgExecutor<'_>, post_id: i64) -> Result<(), AppealError> {
+    let (open, recent): (bool, bool) = sqlx::query_as(
+        "SELECT coalesce(bool_or(status = 'open'), false),
+                coalesce(bool_or(status = 'rejected'
+                                 AND resolved_at > now() - make_interval(days => $2)), false)
+         FROM post_appeals WHERE post_id = $1",
+    )
+    .bind(post_id)
+    .bind(moekura_core::moderation::REPORT_COOLDOWN_DAYS as i32)
+    .fetch_one(db)
+    .await?;
+    if open {
+        Err(AppealError::AlreadyAppealed)
+    } else if recent {
+        Err(AppealError::TooSoon)
+    } else {
+        Ok(())
+    }
 }
 
 /// Appeals deleted post `post_id`; returns the appeal's id.
@@ -40,6 +67,7 @@ pub async fn create(
     if status.as_deref() != Some("deleted") {
         return Err(AppealError::NotDeleted);
     }
+    check_new(&mut *conn, post_id).await?;
     sqlx::query_scalar(
         "INSERT INTO post_appeals (post_id, creator_id, reason) VALUES ($1, $2, $3) RETURNING id",
     )
@@ -152,7 +180,15 @@ mod tests {
         assert_eq!(open(&pool, 0, 10).await.unwrap().len(), 1);
         assert_eq!(resolve(&pool, deleted, false, None).await.unwrap(), 1);
         assert!(open(&pool, 0, 10).await.unwrap().is_empty());
-        // A rejected appeal can be followed by another.
+        // A rejected appeal can be followed by another, after a while.
+        assert!(matches!(
+            create(&mut conn, deleted, alice, "please").await,
+            Err(AppealError::TooSoon)
+        ));
+        sqlx::query("UPDATE post_appeals SET resolved_at = now() - interval '8 days'")
+            .execute(&pool)
+            .await
+            .unwrap();
         create(&mut conn, deleted, alice, "please").await.unwrap();
         let history = for_post(&pool, deleted).await.unwrap();
         assert_eq!(

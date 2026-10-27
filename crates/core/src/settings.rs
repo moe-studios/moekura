@@ -97,6 +97,8 @@ pub struct SiteSettings {
     pub spam_filter: crate::spam::SpamFilter,
     /// Reasons offered for deleting, rejecting and flagging posts.
     pub post_reasons: crate::moderation::PostReasons,
+    /// When posts left waiting in the queues are deleted.
+    pub stale_posts: crate::moderation::StalePosts,
     /// Uploads and edits get `artist_request` while a post has no artist
     /// tag and `tagme` while it has few general tags, and lose them again
     /// once they don't apply.
@@ -236,6 +238,7 @@ impl Default for SiteSettings {
             captcha: crate::spam::CaptchaSettings::default(),
             spam_filter: crate::spam::SpamFilter::default(),
             post_reasons: crate::moderation::PostReasons::default(),
+            stale_posts: crate::moderation::StalePosts::default(),
             request_tags: false,
             automatic_tags: crate::auto_tags::AutomaticTags::default(),
             banned_artists: BannedArtists::default(),
@@ -429,6 +432,7 @@ impl SiteSettings {
         self.email_domains.validate()?;
         self.spam_filter.validate()?;
         self.post_reasons.validate()?;
+        self.stale_posts.validate()?;
         self.pagination.validate()?;
         if self.robots_txt.len() > MAX_ROBOTS_TXT {
             return Err(format!("at most {MAX_ROBOTS_TXT} bytes"));
@@ -484,6 +488,7 @@ mod tests {
                 "site_description",
                 "site_name",
                 "spam_filter",
+                "stale_posts",
                 "tagger",
                 "terms_of_service",
                 "upload_approval",

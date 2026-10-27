@@ -267,6 +267,73 @@ pub async fn record_purge(
     advance(db, batch.id, progress, post_id).await
 }
 
+/// Which posts have waited too long: pending ones uploaded more than
+/// `pending_days` ago, and flagged ones whose oldest open flag is more
+/// than `flagged_days` old (0 for neither), at most `limit` of each,
+/// leaving out those whose status is locked.
+pub async fn stale(
+    db: impl PgExecutor<'_>,
+    pending_days: u32,
+    flagged_days: u32,
+    limit: i64,
+) -> sqlx::Result<(Vec<i64>, Vec<i64>)> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "(SELECT 'pending', id FROM posts
+          WHERE $1 > 0 AND status = 'pending' AND NOT purging
+            AND created_at < now() - make_interval(days => $1)
+            AND NOT 'status' = ANY(locks)
+          ORDER BY id LIMIT $3)
+         UNION ALL
+         (SELECT 'flagged', p.id FROM posts p
+          WHERE $2 > 0 AND p.status = 'flagged' AND NOT 'status' = ANY(p.locks)
+            AND (SELECT min(f.created_at) FROM post_flags f
+                 WHERE f.post_id = p.id AND f.status = 'open')
+                < now() - make_interval(days => $2)
+          ORDER BY p.id LIMIT $3)",
+    )
+    .bind(i32::try_from(pending_days).unwrap_or(i32::MAX))
+    .bind(i32::try_from(flagged_days).unwrap_or(i32::MAX))
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    let of = |kind: &str| {
+        rows.iter()
+            .filter(|(k, _)| k == kind)
+            .map(|(_, id)| *id)
+            .collect()
+    };
+    Ok((of("pending"), of("flagged")))
+}
+
+/// Deletes post `id` for having waited too long in status `from`, as a
+/// deletion by nobody in particular, with `reason`; false if it was
+/// dealt with meanwhile.
+pub async fn expire(db: &PgPool, id: i64, from: PostStatus, reason: &str) -> sqlx::Result<bool> {
+    let mut tx = db.begin().await?;
+    let still = posts::lock(&mut *tx, id)
+        .await?
+        .is_some_and(|post| post.status == from && !post.is_locked(PostLock::Status));
+    if !still || !posts::set_status(&mut *tx, id, &[from], PostStatus::Deleted).await? {
+        return Ok(false);
+    }
+    flags::resolve(&mut *tx, id, true, None).await?;
+    let kind = if from == PostStatus::Pending {
+        ActionKind::PostReject
+    } else {
+        ActionKind::PostDelete
+    };
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(None, kind)
+            .post(id)
+            .reason(reason)
+            .details(serde_json::json!({ "stale": true })),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
 /// Deletes posts `ids` (newest first) for deletion `batch`, as a single
 /// deletion would: as its creator, with its reason in the log, settling
 /// open flags as upheld. Posts dealt with meanwhile, or whose status is

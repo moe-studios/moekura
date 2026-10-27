@@ -33,13 +33,7 @@ pub fn routes() -> Router<AppState> {
 /// Whether `current` may rename `user`: staff who can ban, someone
 /// else ranked below them.
 pub(crate) fn may_rename(state: &AppState, current: &CurrentUser, user: &User) -> bool {
-    current.can(Permission::BanUsers)
-        && current.user.as_ref().is_some_and(|me| me.id != user.id)
-        && state
-            .site
-            .get()
-            .role(user.role_id)
-            .is_some_and(|role| current.role.outranks(role))
+    current.can(Permission::BanUsers) && crate::ranks::outranks(&state.site.get(), current, user)
 }
 
 /// Renames `user` to `wanted`, by `changer`; the message says what's wrong.

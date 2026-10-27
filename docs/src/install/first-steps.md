@@ -11,7 +11,9 @@ moekura admin create-user yourname --role admin
 docker compose -f deploy/compose.tiny.yml exec app moekura admin create-user yourname --role admin
 ```
 
-Log in, then open **Admin** in the menu.
+The first admin is also the site's [owner](../admin/roles.md#the-owner),
+the one account that outranks the other admins. Log in, then open
+**Admin** in the menu.
 
 ## Name, logo, rules and policies
 

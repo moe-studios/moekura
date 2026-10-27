@@ -45,7 +45,7 @@ pub async fn user(
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status,
-                u.created_at, u.last_seen_at, u.settings, u.is_bot,
+                u.created_at, u.last_seen_at, u.settings, u.is_bot, u.is_owner,
                 b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
          FROM users u
          LEFT JOIN LATERAL (

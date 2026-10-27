@@ -239,13 +239,7 @@ async fn undo(
         .await?
         .ok_or(AppError::NotFound)?;
     // Not someone of one's own rank or higher.
-    let outranks = page
-        .state()
-        .site
-        .get()
-        .role(user.role_id)
-        .is_none_or(|r| page.current.role.outranks(r));
-    if !outranks {
+    if !crate::ranks::outranks(&page.state().site.get(), &page.current, &user) {
         return Err(AppError::Forbidden);
     }
     let (since, until) = day_span(parse_day(&form.since)?, parse_day(&form.until)?);

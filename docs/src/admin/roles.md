@@ -106,6 +106,17 @@ roles: you can give or take away only roles ranked below your own that
 grant nothing you lack, and never change your own role or status. That keeps a mistake, or a
 compromised account, from locking out the people above it.
 
+### The owner
+
+Admins share the top rank, so on their own they can't act on each other.
+One account is the site's **owner**, who outranks every role: the owner
+can ban, rename or change the role of an admin, give the admin role, and
+moderate what admins wrote or uploaded. The first admin created with
+`moekura admin create-user` becomes the owner (on sites that had admins
+before, the oldest one did). Only the shell changes it:
+`moekura admin set-owner NAME` hands ownership to someone else, and the
+log records it.
+
 From the shell, `moekura admin set-role NAME ROLE` changes anyone's role,
 which is how you recover if the last admin loses access, and
 `moekura admin lift-network-ban ADDRESS` lifts network bans that lock

@@ -58,6 +58,7 @@ mod post_history;
 mod posts;
 mod previews;
 mod profiles;
+mod ranks;
 pub mod rate_limit;
 mod recent_changes;
 mod related_tags;

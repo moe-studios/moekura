@@ -45,12 +45,7 @@ pub fn routes() -> Router<AppState> {
 /// Whether `current` may delete every upload of `user`: with
 /// `delete_posts`, and only for users ranked below them.
 pub(crate) fn may_delete_uploads(state: &AppState, current: &CurrentUser, user: &User) -> bool {
-    current.can(Permission::DeletePosts)
-        && state
-            .site
-            .get()
-            .role(user.role_id)
-            .is_none_or(|r| current.role.outranks(r))
+    current.can(Permission::DeletePosts) && crate::ranks::outranks(&state.site.get(), current, user)
 }
 
 /// Starts deleting every upload of `user` that can be deleted, as

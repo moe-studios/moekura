@@ -44,12 +44,7 @@ pub fn routes() -> Router<AppState> {
 /// on someone else of lower rank.
 pub(crate) fn may_give(state: &AppState, current: &CurrentUser, user: &User) -> bool {
     current.can(Permission::GiveFeedback)
-        && current.user.as_ref().is_some_and(|me| me.id != user.id)
-        && state
-            .site
-            .get()
-            .role(user.role_id)
-            .is_some_and(|role| current.role.outranks(role))
+        && crate::ranks::outranks(&state.site.get(), current, user)
 }
 
 /// Whether `current` may delete or restore feedback `f`: staff who ban
@@ -61,7 +56,7 @@ pub(crate) fn may_moderate(state: &AppState, current: &CurrentUser, f: &Feedback
     let site = state.site.get();
     let below = |role_id: i32| {
         site.role(role_id)
-            .is_some_and(|role| current.role.outranks(role))
+            .is_some_and(|role| current.standing() > crate::ranks::Standing::Rank(role.rank))
     };
     current.can(Permission::BanUsers)
         && current.user.as_ref().is_some_and(|me| {

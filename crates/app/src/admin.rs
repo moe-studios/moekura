@@ -35,6 +35,9 @@ pub enum AdminCommand {
     },
     /// Change a user's role
     SetRole { name: String, role: String },
+    /// Make an account the site's owner, who outranks every role (so can
+    /// act on admins), in place of the current owner
+    SetOwner { name: String },
     /// Make an account a bot, which can't log in on the site and uses API
     /// keys only, or (with --off) a person's again
     SetBot {
@@ -316,6 +319,9 @@ pub async fn run(
             let password = read_password()?;
             let user = create_user(db, &name, &role, email.as_deref(), &password).await?;
             println!("created {} (id {})", user.name, user.id);
+            if user.is_owner {
+                println!("{} is the site's owner", user.name);
+            }
         }
         AdminCommand::SetBot { name, off } => {
             let user = set_bot(db, &name, !off).await?;
@@ -331,6 +337,10 @@ pub async fn run(
         AdminCommand::SetRole { name, role } => {
             let role = set_role(db, &name, &role).await?;
             println!("{name} is now {}", role.name);
+        }
+        AdminCommand::SetOwner { name } => {
+            let user = set_owner(db, &name).await?;
+            println!("{} is now the site's owner", user.name);
         }
         AdminCommand::LiftNetworkBan { network } => {
             let lifted = lift_network_bans(db, &network).await?;
@@ -536,7 +546,15 @@ pub async fn create_user(
         role_id: role.id,
         status: UserStatus::Active,
     };
-    Ok(accounts::create(db, account).await?)
+    let mut user = accounts::create(db, account).await?;
+    // The first admin of a new site owns it.
+    if role.system == Some(SystemRole::Admin) && !users::owner_exists(db).await? {
+        let mut tx = db.begin().await?;
+        users::set_owner(&mut tx, user.id).await?;
+        tx.commit().await?;
+        user.is_owner = true;
+    }
+    Ok(user)
 }
 
 pub async fn create_bot(db: &PgPool, name: &str, role: &str) -> anyhow::Result<User> {
@@ -555,6 +573,25 @@ pub async fn set_bot(db: &PgPool, name: &str, is_bot: bool) -> anyhow::Result<Us
         moekura_db::sessions::delete_all_for_user(&mut *tx, user.id).await?;
         moekura_db::feeds::set_token(&mut *tx, user.id, None).await?;
     }
+    tx.commit().await?;
+    Ok(user)
+}
+
+/// Makes `name` the site's owner, in place of whoever was.
+pub async fn set_owner(db: &PgPool, name: &str) -> anyhow::Result<User> {
+    let user = find_user(db, name).await?;
+    if user.is_bot {
+        bail!("{name} is a bot; bots can't own the site");
+    }
+    let mut tx = db.begin().await?;
+    users::set_owner(&mut tx, user.id).await?;
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(None, ActionKind::UserOwner)
+            .user(user.id)
+            .details(serde_json::json!({ "via": "cli" })),
+    )
+    .await?;
     tx.commit().await?;
     Ok(user)
 }
@@ -742,6 +779,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(user.role_id, admin.id);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn hands_the_site_over(pool: PgPool) {
+        let first = create_user(&pool, "first", "admin", None, "correct horse")
+            .await
+            .unwrap();
+        assert!(first.is_owner, "the first admin owns the site");
+        let second = create_user(&pool, "second", "admin", None, "correct horse")
+            .await
+            .unwrap();
+        assert!(!second.is_owner);
+        set_owner(&pool, "Second").await.unwrap();
+        let owners: Vec<String> = sqlx::query_scalar("SELECT name::text FROM users WHERE is_owner")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(owners, ["second"]);
+        let logged: String = sqlx::query_scalar("SELECT action FROM mod_actions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logged, "user.owner");
+        assert!(set_owner(&pool, "nobody").await.is_err());
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

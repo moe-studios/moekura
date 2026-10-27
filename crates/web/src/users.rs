@@ -71,12 +71,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     let comments = moekura_db::comments::count_by_user(db, user.id).await?;
     let (promotion_blocked, promoted_at) = moekura_db::promotion::status(db, user.id).await?;
     let can_manage = page.current.can(Permission::ManageUsers)
-        && page
-            .state()
-            .site
-            .get()
-            .role(user.role_id)
-            .is_some_and(|r| page.current.role.outranks(r));
+        && crate::ranks::outranks(&page.state().site.get(), &page.current, &user);
     let own = page.current.user.as_ref().map(|u| u.id) == Some(user.id);
     let favorite_groups = moekura_db::favorite_groups::for_user(db, user.id, own)
         .await?
@@ -282,13 +277,7 @@ async fn set_auto_promotion(
     page.current.require(Permission::ManageUsers)?;
     let db = page.state().db.primary();
     let user = users::by_name(db, &name).await?.ok_or(AppError::NotFound)?;
-    let outranks = page
-        .state()
-        .site
-        .get()
-        .role(user.role_id)
-        .is_some_and(|r| page.current.role.outranks(r));
-    if !outranks {
+    if !crate::ranks::outranks(&page.state().site.get(), &page.current, &user) {
         return Err(AppError::Forbidden);
     }
     let blocked = form.blocked.is_some();

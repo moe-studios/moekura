@@ -761,12 +761,10 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
     )
     .await?;
     let more = found.len() > USERS_PAGE as usize;
-    let my_rank = page.current.role.rank;
-    let me = actor(&page);
     let assignable: Vec<Value> = site
         .roles()
         .iter()
-        .filter(|r| may_assign(&page.current.role, r))
+        .filter(|r| may_assign(&page.current, r))
         .map(|r| context! { id => r.id, name => r.name })
         .collect();
     let ids: Vec<i64> = found.iter().map(|u| u.id).collect();
@@ -777,12 +775,12 @@ async fn user_list(page: Page, Query(query): Query<UserQuery>) -> Result<Respons
         .take(USERS_PAGE as usize)
         .map(|user| {
             let role = site.role(user.role_id);
-            let editable = Some(user.id) != me && role.is_none_or(|r| r.rank < my_rank);
+            let editable = crate::ranks::outranks(&site, &page.current, user);
             context! {
                 name => user.name,
                 role_id => user.role_id,
                 role => role.map(|r| r.name.clone()),
-                role_assignable => role.is_some_and(|r| may_assign(&page.current.role, r)),
+                role_assignable => role.is_some_and(|r| may_assign(&page.current, r)),
                 status => user.status.as_str(),
                 joined => crate::dates::day(user.created_at),
                 editable => editable,
@@ -842,16 +840,14 @@ async fn update_user(
     let state = page.state();
     let db = state.db.primary();
     let site = state.site.get();
-    let my_rank = page.current.role.rank;
     let user = users::by_name(db, &name).await?.ok_or(AppError::NotFound)?;
-    let current_rank = site.role(user.role_id).map_or(0, |r| r.rank);
-    if Some(user.id) == actor(&page) || current_rank >= my_rank {
+    if !crate::ranks::outranks(&site, &page.current, &user) {
         return Err(AppError::Forbidden);
     }
     // Keeping a user's role needs no say over it; changing it does.
     let role = site
         .role(form.role)
-        .filter(|r| r.id == user.role_id || may_assign(&page.current.role, r))
+        .filter(|r| r.id == user.role_id || may_assign(&page.current, r))
         .ok_or_else(|| AppError::BadRequest("You can't give that role".into()))?;
     let status = UserStatus::parse(&form.status)
         .ok_or_else(|| AppError::BadRequest("Unknown status".into()))?;
@@ -892,10 +888,16 @@ async fn update_user(
     Ok(saved(jar, "/admin/users"))
 }
 
-/// Whether holders of `mine` may give users `role`: it ranks below
-/// theirs, grants nothing they lack, and isn't the visitors' role.
-fn may_assign(mine: &Role, role: &Role) -> bool {
-    mine.outranks(role)
+/// Whether `current` may give users `role`: it ranks below theirs (the
+/// owner may give their own too), grants nothing they lack, and isn't
+/// the visitors' role.
+fn may_assign(current: &crate::auth::CurrentUser, role: &Role) -> bool {
+    let mine = &current.role;
+    let below = match current.standing() {
+        crate::ranks::Standing::Owner => role.rank <= mine.rank,
+        crate::ranks::Standing::Rank(_) => mine.outranks(role),
+    };
+    below
         && mine.permissions.contains_all(role.permissions)
         && role.system != Some(SystemRole::Anonymous)
 }
@@ -940,7 +942,7 @@ async fn role_list(page: Page) -> Result<Response, AppError> {
     let targets: Vec<(i32, &str)> = site
         .roles()
         .iter()
-        .filter(|r| may_assign(&page.current.role, r))
+        .filter(|r| may_assign(&page.current, r))
         .map(|r| (r.id, r.name.as_str()))
         .collect();
     let rows: Vec<Value> = site
@@ -1059,7 +1061,7 @@ async fn delete_role(
     }
     let target = site
         .role(form.move_to)
-        .filter(|r| r.id != id && may_assign(&page.current.role, r))
+        .filter(|r| r.id != id && may_assign(&page.current, r))
         .ok_or_else(|| AppError::BadRequest("You can't move its users to that role".into()))?;
     let mut tx = db.begin().await?;
     let moved = roles::delete(&mut tx, id, target.id)

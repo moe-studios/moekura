@@ -104,11 +104,7 @@ fn reason(text: &str) -> Result<&str, AppError> {
 
 /// Whether `current` may ban `target`: `BanUsers`, and a higher rank.
 pub fn may_ban(state: &AppState, current: &CurrentUser, target: &User) -> bool {
-    let site = state.site.get();
-    let target_rank = site.role(target.role_id).map_or(0, |r| r.rank);
-    current.can(Permission::BanUsers)
-        && current.user.as_ref().is_some_and(|me| me.id != target.id)
-        && current.role.rank > target_rank
+    current.can(Permission::BanUsers) && crate::ranks::outranks(&state.site.get(), current, target)
 }
 
 pub fn ban_context(ban: &Ban) -> Value {
@@ -264,7 +260,7 @@ async fn check_rank_in(
     network: IpNet,
 ) -> Result<(), AppError> {
     let top = moekura_db::user_ips::top_rank_in(state.db.primary(), network).await?;
-    if top.is_some_and(|rank| rank >= current.role.rank) {
+    if top.is_some_and(|rank| rank >= current.standing().as_rank()) {
         return Err(AppError::Blocked(
             "That range includes an address of someone ranked at or above you".into(),
         ));

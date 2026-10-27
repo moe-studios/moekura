@@ -86,7 +86,7 @@ pub async fn lookup(db: impl PgExecutor<'_>, token: &str) -> sqlx::Result<Option
     }
     let row: Option<Row> = sqlx::query_as(
         "SELECT s.id AS session_id, s.created_at AS session_created_at, s.last_used_at,
-                u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings, u.is_bot,
+                u.id, u.name::text, u.email::text, u.email_verified_at, u.role_id, u.status, u.created_at, u.last_seen_at, u.settings, u.is_bot, u.is_owner,
                 u.avatar_key, b.id IS NOT NULL AS banned, b.reason AS ban_reason, b.expires_at AS ban_expires_at
          FROM sessions s JOIN users u ON u.id = s.user_id
          LEFT JOIN LATERAL (

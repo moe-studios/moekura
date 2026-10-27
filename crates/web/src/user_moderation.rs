@@ -227,7 +227,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     let (addresses, related) = if can_ban {
         (
             user_ips::for_user(db, user.id, ADDRESSES).await?,
-            user_ips::related(db, user.id, page.current.role.rank, ADDRESSES).await?,
+            user_ips::related(db, user.id, page.current.standing().as_rank(), ADDRESSES).await?,
         )
     } else {
         (Vec::new(), Vec::new())

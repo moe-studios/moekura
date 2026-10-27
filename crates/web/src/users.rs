@@ -65,8 +65,17 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     } else {
         Vec::new()
     };
-    let can_ban = crate::bans::may_ban(page.state(), &page.current, &user);
     let banned = ban_history.iter().any(|b| b.active);
+    let may_ban = crate::bans::may_ban(page.state(), &page.current, &user);
+    // A ban set by someone ranked at or above them stays as it is.
+    let ban_locked = may_ban
+        && !crate::bans::may_change_bans(
+            page.state(),
+            &page.current,
+            &active_banners(&ban_history),
+        )
+        .await?;
+    let can_ban = may_ban && !ban_locked;
     let favorites = favorites::count_by_user(db, user.id).await?;
     let comments = moekura_db::comments::count_by_user(db, user.id).await?;
     let (promotion_blocked, promoted_at) = moekura_db::promotion::status(db, user.id).await?;
@@ -226,6 +235,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             )),
             bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
             can_ban => can_ban,
+            ban_locked => ban_locked,
             banned => banned,
             notes => notes,
             record_url => crate::user_moderation::may_view(&page.current)
@@ -234,6 +244,14 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             durations => crate::bans::durations(),
         },
     ))
+}
+
+/// Who set the bans in force among `bans`.
+pub(crate) fn active_banners(bans: &[moekura_db::bans::Ban]) -> Vec<Option<i64>> {
+    bans.iter()
+        .filter(|b| b.active)
+        .map(|b| b.banner_id)
+        .collect()
 }
 
 /// Months the profile's upload chart covers.

@@ -51,6 +51,7 @@
   <form method="post" action="/users/{{ user.name }}/unban?back={{ path | urlencode }}"><button type="submit">{{ t("ban-lift") }}</button></form>
   {% endif %}
   {% endif %}
+  {% if ban_locked %}<p class="hint">{{ t("ban-locked") }}</p>{% endif %}
 </section>
 
 <section class="card">

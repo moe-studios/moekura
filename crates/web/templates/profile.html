@@ -94,7 +94,7 @@
         </ul>
       </section>
       {% endif %}
-      {% if promotion.promoted or promotion.can_change or bans or can_ban or can_unban or can_rename or can_clear_profile %}
+      {% if promotion.promoted or promotion.can_change or bans or can_ban or can_unban or ban_locked or can_rename or can_clear_profile %}
       <section class="card profile-staff">
         <h2>{{ t("profile-staff") }}</h2>
         {% if promotion.promoted %}<p class="hint">{{ t("profile-promoted", day=promotion.promoted) }}</p>{% endif %}
@@ -132,6 +132,7 @@
         {% if can_unban %}
         <form method="post" action="/users/{{ user.name }}/unban"><button type="submit">{{ t("ban-lift") }}</button></form>
         {% endif %}
+        {% if ban_locked %}<p class="hint">{{ t("ban-locked") }}</p>{% endif %}
         {% if can_rename %}
         <details class="edit">
           <summary>{{ t("rename") }}</summary>

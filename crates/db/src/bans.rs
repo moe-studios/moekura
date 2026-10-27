@@ -20,6 +20,7 @@ pub struct Ban {
     pub user_id: i64,
     pub user_name: String,
     pub reason: String,
+    pub banner_id: Option<i64>,
     pub banner_name: Option<String>,
     pub expires_at: Option<OffsetDateTime>,
     pub lifted_at: Option<OffsetDateTime>,
@@ -32,7 +33,7 @@ macro_rules! select_bans {
     ($rest:literal) => {
         concat!(
             "SELECT b.id, b.user_id, u.name::text AS user_name, b.reason,
-                    x.name::text AS banner_name, b.expires_at, b.lifted_at, b.created_at,
+                    b.banner_id, x.name::text AS banner_name, b.expires_at, b.lifted_at, b.created_at,
                     (b.lifted_at IS NULL AND (b.expires_at IS NULL OR b.expires_at > now())) AS active
              FROM bans b JOIN users u ON u.id = b.user_id
              LEFT JOIN users x ON x.id = b.banner_id ",
@@ -78,6 +79,26 @@ pub async fn ban(
     .execute(&mut *conn)
     .await?;
     Ok(replaced.into_iter().last())
+}
+
+/// Who set the bans in force on a user (`None` for an account since
+/// deleted). The user is locked until the transaction ends, so the bans
+/// can't change before they're replaced or lifted.
+pub async fn banners_in_force(
+    conn: &mut PgConnection,
+    user_id: i64,
+) -> sqlx::Result<Vec<Option<i64>>> {
+    sqlx::query("SELECT 1 FROM users WHERE id = $1 FOR UPDATE")
+        .bind(user_id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query_scalar(
+        "SELECT banner_id FROM bans
+         WHERE user_id = $1 AND lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())",
+    )
+    .bind(user_id)
+    .fetch_all(&mut *conn)
+    .await
 }
 
 /// Lifts a user's active bans; returns how many.

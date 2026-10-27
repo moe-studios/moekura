@@ -185,7 +185,16 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
     let account = user_record::account(db, user.id).await?;
     let ban_history = bans::for_user(db, user.id).await?;
     let banned = ban_history.iter().any(|b| b.active);
-    let can_ban = crate::bans::may_ban(state, &page.current, &user);
+    let may_ban = crate::bans::may_ban(state, &page.current, &user);
+    // A ban set by someone ranked at or above them stays as it is.
+    let ban_locked = may_ban
+        && !crate::bans::may_change_bans(
+            state,
+            &page.current,
+            &crate::users::active_banners(&ban_history),
+        )
+        .await?;
+    let can_ban = may_ban && !ban_locked;
     let read_log = page.current.can(Permission::ViewAuditLog);
     let (about, by) = if read_log {
         let about = Filter {
@@ -252,6 +261,7 @@ async fn page(page: Page, Path(name): Path<String>) -> Result<Response, AppError
             },
             bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
             can_ban => can_ban,
+            ban_locked => ban_locked,
             banned => banned,
             durations => crate::bans::durations(),
             notes => notes,

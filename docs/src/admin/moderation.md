@@ -130,7 +130,9 @@ Ban a user from their profile, for a set time or until lifted, with a
 reason. Banned users can still log in and look around as visitors do, see
 why they're banned, and can't change anything; their API keys are limited
 the same way. Banning someone who's already banned replaces their ban
-with the new reason and length. Timed bans last up to 3650 days.
+with the new reason and length. Timed bans last up to 3650 days. Only
+whoever set a ban, or someone ranked above them, can lift it or replace
+it, so a moderator can't undo or shorten a ban an admin set.
 
 Networks (an address or a CIDR range such as `203.0.113.0/24`, or
 `2001:db8::/64` for IPv6, where one household usually has a whole `/64`)

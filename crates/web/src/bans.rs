@@ -107,6 +107,50 @@ pub fn may_ban(state: &AppState, current: &CurrentUser, target: &User) -> bool {
     current.can(Permission::BanUsers) && crate::ranks::outranks(&state.site.get(), current, target)
 }
 
+/// Whether `current` may lift or replace bans set by `banners` (`None`
+/// for an account since deleted): their own, or those of someone they
+/// outrank, so nobody undoes what those above them decided.
+pub(crate) async fn may_change_bans(
+    state: &AppState,
+    current: &CurrentUser,
+    banners: &[Option<i64>],
+) -> Result<bool, AppError> {
+    let me = current.user.as_ref().map(|u| u.id);
+    let others: Vec<i64> = banners
+        .iter()
+        .flatten()
+        .copied()
+        .filter(|id| Some(*id) != me)
+        .collect();
+    if others.is_empty() {
+        return Ok(true);
+    }
+    let site = state.site.get();
+    let found = users::by_ids(state.db.primary(), &others).await?;
+    Ok(found
+        .iter()
+        .all(|banner| crate::ranks::outranks(&site, current, banner)))
+}
+
+/// Refuses unless `current` may change the bans on `user_id` in force;
+/// call it in the transaction changing them.
+async fn check_banners(
+    state: &AppState,
+    current: &CurrentUser,
+    conn: &mut sqlx::PgConnection,
+    user_id: i64,
+) -> Result<(), AppError> {
+    let banners = bans::banners_in_force(conn, user_id).await?;
+    if may_change_bans(state, current, &banners).await? {
+        Ok(())
+    } else {
+        Err(AppError::Blocked(
+            "Someone ranked at or above you set this ban; only they or someone above them can lift or change it"
+                .into(),
+        ))
+    }
+}
+
 pub fn ban_context(ban: &Ban) -> Value {
     context! {
         user => ban.user_name,
@@ -159,6 +203,7 @@ pub(crate) async fn ban(
     let reason = reason(reason_text)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
+    check_banners(state, current, &mut tx, user.id).await?;
     let replaced = bans::ban(&mut tx, user.id, reason, expires_at, actor).await?;
     let mut details = serde_json::json!({
         "until": expires_at.map(|t| t.date().to_string()),
@@ -198,6 +243,7 @@ pub(crate) async fn unban(
     let user = target(state, current, name).await?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
+    check_banners(state, current, &mut tx, user.id).await?;
     if bans::lift(&mut *tx, user.id, actor).await? == 0 {
         return Err(AppError::BadRequest("That user isn't banned".into()));
     }
@@ -481,6 +527,61 @@ mod tests {
         );
         let history = app.get("/users/alice", Some(&moderator)).await.body;
         assert!(history.contains("lifted"), "{history}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn bans_from_above_stay(pool: PgPool) {
+        let state = test_state(&pool).await;
+        let app = TestApp::new(state, super::routes().merge(crate::users::routes()));
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let other = session_for(&pool, "mod2", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        session_for(&pool, "alice", SystemRole::Member).await;
+        session_for(&pool, "bob", SystemRole::Member).await;
+        let banned_until = || async {
+            sqlx::query_scalar::<_, Option<time::OffsetDateTime>>(
+                "SELECT b.expires_at FROM bans b JOIN users u ON u.id = b.user_id
+                 WHERE u.name = 'alice' AND b.lifted_at IS NULL",
+            )
+            .fetch_optional(&pool)
+            .await
+            .unwrap()
+        };
+
+        let response = app
+            .post_form("/users/alice/ban", Some(&admin), &[], "reason=spam")
+            .await;
+        assert_eq!(response.status, StatusCode::SEE_OTHER);
+        // A moderator can neither lift an admin's ban nor shorten it.
+        let lift = app.post("/users/alice/unban", Some(&moderator), &[]).await;
+        assert_eq!(lift.status, StatusCode::FORBIDDEN, "{}", lift.body);
+        let shorten = app
+            .post_form("/users/alice/ban", Some(&moderator), &[], "reason=x&days=1")
+            .await;
+        assert_eq!(shorten.status, StatusCode::FORBIDDEN);
+        assert_eq!(banned_until().await, Some(None), "still until lifted");
+        let profile = app.get("/users/alice", Some(&moderator)).await.body;
+        assert!(!profile.contains("/users/alice/unban"), "{profile}");
+        assert!(
+            profile.contains("only they or someone above them"),
+            "{profile}"
+        );
+        assert!(
+            app.get("/users/alice", Some(&admin))
+                .await
+                .body
+                .contains("/users/alice/unban")
+        );
+
+        // A peer's ban is theirs too; one's own can change.
+        app.post_form("/users/bob/ban", Some(&moderator), &[], "reason=x&days=7")
+            .await;
+        let peer = app.post("/users/bob/unban", Some(&other), &[]).await;
+        assert_eq!(peer.status, StatusCode::FORBIDDEN);
+        let own = app.post("/users/bob/unban", Some(&moderator), &[]).await;
+        assert_eq!(own.status, StatusCode::SEE_OTHER);
+        let above = app.post("/users/alice/unban", Some(&admin), &[]).await;
+        assert_eq!(above.status, StatusCode::SEE_OTHER);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

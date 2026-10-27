@@ -131,6 +131,7 @@ promotion-allowed = allowed
 ban = Ban
 ban-change = Change the ban
 ban-replaces = The new ban replaces the one in force.
+ban-locked = Someone ranked at or above you set this ban; only they or someone above them can lift or change it.
 ban-for = For
 ban-for-1 = 1 day
 ban-for-3 = 3 days

@@ -193,9 +193,12 @@ are banned under **Moderation → Bans**, partly or fully:
 - a **full** ban keeps the network from seeing the site at all: every
   page and API call answers that the network is banned, with the reason.
 
-The range may not include your own address, or be wider than a `/8`
-(IPv4) or `/16` (IPv6), and only staff who manage users can fully ban a
-range wider than a `/24` (IPv4) or `/48` (IPv6). As with banning users,
+A bare IPv6 address bans its `/64`, since one household or phone moves
+around within it; an IPv4 address is banned alone. The range may not
+include your own address, or be wider than a `/8` (IPv4) or `/16`
+(IPv6); only staff who manage users can ban a range wider than a `/16`
+(IPv4) or `/32` (IPv6) at all, or fully ban one wider than a `/24` (IPv4)
+or `/48` (IPv6). As with banning users,
 rank counts: you can't ban a range, or lift a ban on one, that includes
 an address of anyone ranked at or above you (yourself included), as
 kept under [Addresses](#addresses) or by a session still open. If a

@@ -320,6 +320,29 @@ fn is_wide(network: IpNet) -> bool {
     network.prefix_len() < if network.addr().is_ipv4() { 24 } else { 48 }
 }
 
+/// Whether any ban of `network` needs `ManageUsers`: wider than a /16
+/// (IPv4) or /32 (IPv6), it reaches far beyond one household or office.
+fn is_very_wide(network: IpNet) -> bool {
+    network.prefix_len() < if network.addr().is_ipv4() { 16 } else { 32 }
+}
+
+/// What a typed address or range bans: a range as given, an IPv4
+/// address alone, and an IPv6 address's /64, which one household or
+/// phone usually has to itself and moves around in.
+fn network_from(text: &str) -> Option<IpNet> {
+    let network = match text.parse::<IpNet>() {
+        Ok(network) => network,
+        Err(_) => match text.parse::<std::net::IpAddr>().ok()? {
+            ip @ std::net::IpAddr::V4(_) => IpNet::from(ip),
+            ip @ std::net::IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+                Some(_) => IpNet::from(ip),
+                None => IpNet::new(ip, 64).ok()?.trunc(),
+            },
+        },
+    };
+    Some(crate::client_ip::canonical_net(network))
+}
+
 /// Bans a network (an address or a CIDR range) from making changes, or
 /// with `full` from seeing the site at all. `own_ip` is the requester's
 /// address, which the range may not include: they couldn't lift the ban.
@@ -334,14 +357,9 @@ pub(crate) async fn ban_network(
     full: bool,
 ) -> Result<IpNet, AppError> {
     current.require(Permission::BanUsers)?;
-    let text = text.trim();
-    let network: IpNet = text
-        .parse()
-        .or_else(|_| text.parse::<std::net::IpAddr>().map(IpNet::from))
-        .map(crate::client_ip::canonical_net)
-        .map_err(|_| {
-            AppError::BadRequest("Give an address or a range like 203.0.113.0/24".into())
-        })?;
+    let network = network_from(text.trim()).ok_or_else(|| {
+        AppError::BadRequest("Give an address or a range like 203.0.113.0/24".into())
+    })?;
     // Guard against banning everyone by mistake.
     if network.prefix_len() < if network.addr().is_ipv4() { 8 } else { 16 } {
         return Err(AppError::BadRequest("That range is too wide".into()));
@@ -352,6 +370,11 @@ pub(crate) async fn ban_network(
         ));
     }
     let reason = reason(reason_text)?;
+    if is_very_wide(network) && !current.can(Permission::ManageUsers) {
+        return Err(AppError::BadRequest(
+            "Only staff who manage users can ban a range wider than /16 (/32 for IPv6)".into(),
+        ));
+    }
     if full && is_wide(network) && !current.can(Permission::ManageUsers) {
         return Err(AppError::BadRequest(
             "Only staff who manage users can fully ban a range wider than /24 (/48 for IPv6)"
@@ -768,6 +791,27 @@ mod tests {
             ban(&moderator, "network=198.51.100.0%2F24").await,
             StatusCode::BAD_REQUEST
         );
+
+        // So are very wide partial ones.
+        assert_eq!(
+            ban(&moderator, "network=10.0.0.0%2F12&reason=x").await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ban(&admin, "network=172.16.0.0%2F12&reason=x").await,
+            StatusCode::SEE_OTHER
+        );
+        // A bare IPv6 address bans the /64 its owner moves around in.
+        assert_eq!(
+            ban(&moderator, "network=2001%3Adb8%3A1%3A2%3A%3A9&reason=x").await,
+            StatusCode::SEE_OTHER
+        );
+        let stored: Vec<String> =
+            sqlx::query_scalar("SELECT network::text FROM ip_bans WHERE family(network) = 6")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, ["2001:db8:1:2::/64"]);
 
         // Wide full bans are for those who manage users.
         assert_eq!(

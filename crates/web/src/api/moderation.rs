@@ -64,7 +64,7 @@ pub(crate) async fn approve(
 
 /// Reject a pending post.
 ///
-/// Needs `approve_posts`. The post is deleted.
+/// Needs `approve_posts`, and a reason. The post is deleted.
 #[utoipa::path(
     post,
     path = "/posts/{id}/reject",
@@ -74,7 +74,8 @@ pub(crate) async fn approve(
     request_body = Reason,
     responses(
         (status = 200, body = ApiPost),
-        (status = 400, body = ErrorBody, description = "The post isn't pending"),
+        (status = 400, body = ErrorBody, description = "The post isn't pending, or no reason was given"),
+        (status = 403, body = ErrorBody, description = "The uploader ranks at or above you"),
     ),
 )]
 pub(crate) async fn reject(
@@ -179,7 +180,9 @@ pub(crate) async fn delete(
 
 /// Restore a deleted post.
 ///
-/// Needs `delete_posts`.
+/// Needs `delete_posts`, and to outrank the uploader: not your own upload.
+/// A post deleted before anyone approved it (a rejected one, say) goes
+/// back to the approval queue as pending rather than active.
 #[utoipa::path(
     post,
     path = "/posts/{id}/restore",
@@ -189,6 +192,7 @@ pub(crate) async fn delete(
     responses(
         (status = 200, body = ApiPost),
         (status = 400, body = ErrorBody, description = "The post isn't deleted"),
+        (status = 403, body = ErrorBody, description = "Your own upload, or the uploader ranks at or above you"),
     ),
 )]
 pub(crate) async fn restore(

@@ -120,6 +120,12 @@ async fn decide(
     let state = page.state();
     let db = state.db.primary();
     let item = held::get(db, kind, id).await?.ok_or(AppError::NotFound)?;
+    let act = if approve {
+        crate::ranks::Act::For
+    } else {
+        crate::ranks::Act::Against
+    };
+    crate::ranks::check_moderate(state, &page.current, item.creator_id, act).await?;
     let mut tx = db.begin().await?;
     let done = if approve {
         held::approve(&mut tx, kind, id).await?

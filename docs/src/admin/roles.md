@@ -106,6 +106,18 @@ roles: you can give or take away only roles ranked below your own that
 grant nothing you lack, and never change your own role or status. That keeps a mistake, or a
 compromised account, from locking out the people above it.
 
+The same goes for what people wrote or uploaded: deleting, restoring,
+rejecting or purging a post, dismissing flags on it or deciding its
+appeal; hiding or restoring a comment or dismissing reports about it;
+hiding, editing, renaming, locking or deleting forum posts and topics; and
+approving or rejecting writing held as spam all need you to outrank its
+writer or uploader (or the account to be gone). Your own you may act
+against, such as deleting your own upload, but not settle in your own
+favour: you can't restore your own deleted upload, grant its appeal,
+dismiss flags or reports about your own work, or show your own hidden
+comment again. Approving your own pending upload is still allowed, as
+the queue explains. A refusal says which applies.
+
 ### The owner
 
 Admins share the top rank, so on their own they can't act on each other.

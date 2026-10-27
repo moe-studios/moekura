@@ -13,6 +13,11 @@ them with a reason, from **Moderation → Approval queue**, or under
 uploads; find those with `status:pending user:yourname` and approve them
 from their page.
 
+A rejection needs a reason, as a deletion does. Restoring a post that was
+deleted before anyone approved it (a rejected one, say) sends it back to
+the queue as pending, so deleting and restoring can't stand in for
+approval.
+
 An approver can also *disapprove* a post: pass on it without rejecting
 it, saying whether it breaks the rules, is of poor quality, or just isn't
 for them, with an optional note. The post stays pending and leaves that

@@ -354,7 +354,8 @@ pub async fn set_status(
 ) -> sqlx::Result<bool> {
     let from: Vec<&str> = from.iter().map(|s| s.as_str()).collect();
     let result = sqlx::query(
-        "UPDATE posts SET status = $3, updated_at = now()
+        "UPDATE posts SET status = $3, updated_at = now(),
+                deleted_from = CASE WHEN $3 = 'deleted' THEN status END
          WHERE id = $1 AND status = ANY($2) AND NOT purging",
     )
     .bind(id)
@@ -363,6 +364,17 @@ pub async fn set_status(
     .execute(db)
     .await?;
     Ok(result.rows_affected() == 1)
+}
+
+/// The status deleted post `id` had before it was deleted, if known.
+pub async fn deleted_from(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Option<PostStatus>> {
+    let from: Option<String> =
+        sqlx::query_scalar("SELECT deleted_from FROM posts WHERE id = $1 AND status = 'deleted'")
+            .bind(id)
+            .fetch_optional(db)
+            .await?
+            .flatten();
+    Ok(from.and_then(|s| s.parse().ok()))
 }
 
 /// Records who approved a post.

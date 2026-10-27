@@ -26,6 +26,7 @@ use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
+use crate::ranks::Act;
 use crate::templates::url_value;
 
 /// Log entries per page.
@@ -82,45 +83,6 @@ pub(crate) fn check_reason(reason: &str) -> Result<&str, AppError> {
     Ok(reason)
 }
 
-/// Moves post `id` between statuses and logs it, in one transaction.
-/// Moving a post to deleted settles its open flags as upheld.
-async fn change_status(
-    state: &AppState,
-    current: &CurrentUser,
-    id: i64,
-    from: &[PostStatus],
-    to: PostStatus,
-    kind: ActionKind,
-    reason: &str,
-) -> Result<(), AppError> {
-    let actor = current.user.as_ref().map(|u| u.id);
-    let mut tx = state.db.primary().begin().await?;
-    if !posts::set_status(&mut *tx, id, from, to).await? {
-        return Err(AppError::BadRequest(
-            "The post isn't in a state where that applies (someone may have got there first)"
-                .into(),
-        ));
-    }
-    if to == PostStatus::Deleted {
-        flags::resolve(&mut *tx, id, true, actor).await?;
-    }
-    if kind == ActionKind::PostApprove {
-        posts::set_approver(&mut *tx, id, actor).await?;
-    }
-    // Restoring a post grants its appeal.
-    if from.contains(&PostStatus::Deleted) {
-        appeals::resolve(&mut *tx, id, true, actor).await?;
-    }
-    mod_actions::record(
-        &mut *tx,
-        NewAction::new(actor, kind).post(id).reason(reason),
-    )
-    .await?;
-    tx.commit().await?;
-    tracing::info!(post_id = id, action = kind.as_str(), "post moderated");
-    Ok(())
-}
-
 fn back_to(jar: CookieJar, url: &str) -> Response {
     (flash::set(jar, Flash::Saved), Redirect::to(url)).into_response()
 }
@@ -139,7 +101,13 @@ pub(crate) enum PostAction {
 }
 
 /// Applies `action` to post `id` with `current`'s permissions, and logs
-/// it. `reason` is kept for rejections and deletions.
+/// it, in one transaction with the post locked. `reason` is kept for
+/// rejections and deletions, which need one.
+///
+/// The permission is checked first, so those without it learn nothing
+/// about the post; then the post must be one they can see, its status
+/// not locked (unless they can lock posts), and what it does to the
+/// uploader within their rank (see [`crate::ranks::may_moderate`]).
 pub(crate) async fn moderate(
     state: &AppState,
     current: &CurrentUser,
@@ -147,78 +115,124 @@ pub(crate) async fn moderate(
     action: PostAction,
     reason: &str,
 ) -> Result<(), AppError> {
-    let db = state.db.primary();
     let actor = current.user.as_ref().map(|u| u.id);
-    let post = posts::by_id(db, id).await?.ok_or(AppError::NotFound)?;
-    crate::posts::check_lock(current, &post, PostLock::Status)?;
-    let (permission, from, to, kind, reason): (_, &[PostStatus], _, _, _) = match action {
+    // What it needs, the statuses it applies to, and which way it goes for
+    // the uploader (approving one's own upload is allowed: none).
+    let (permission, from, kind, act): (_, &[PostStatus], _, _) = match action {
         PostAction::Approve => (
             Permission::ApprovePosts,
             &[PostStatus::Pending],
-            PostStatus::Active,
             ActionKind::PostApprove,
-            "",
+            None,
         ),
         PostAction::Reject => (
             Permission::ApprovePosts,
             &[PostStatus::Pending],
-            PostStatus::Deleted,
             ActionKind::PostReject,
-            reason,
+            Some(Act::Against),
         ),
         PostAction::Delete => (
             Permission::DeletePosts,
             &[PostStatus::Active, PostStatus::Flagged, PostStatus::Pending],
-            PostStatus::Deleted,
             ActionKind::PostDelete,
-            reason,
+            Some(Act::Against),
         ),
         PostAction::Restore => (
             Permission::DeletePosts,
             &[PostStatus::Deleted],
-            PostStatus::Active,
             ActionKind::PostRestore,
-            "",
+            Some(Act::For),
         ),
-        PostAction::Purge => {
-            current.require(Permission::PurgePosts)?;
-            let mut tx = db.begin().await?;
-            let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
-            if post.status != PostStatus::Deleted {
-                return Err(AppError::BadRequest(
-                    "Only deleted posts can be purged".into(),
-                ));
-            }
-            if moekura_db::appeals::for_post(&mut *tx, id)
-                .await?
-                .iter()
-                .any(|a| a.status == "open")
-            {
-                return Err(AppError::BadRequest(
-                    "The post's uploader asked for it back; decide the appeal first".into(),
-                ));
-            }
-            // The job logs the purge once the post is gone.
-            let job = PurgePost {
-                post_id: id,
-                actor_id: actor,
-                override_locks: current.can(Permission::LockPosts),
-                log: true,
-            };
-            jobs::enqueue(&mut tx, &job).await?;
-            tx.commit().await?;
-            return Ok(());
-        }
+        PostAction::Purge => (
+            Permission::PurgePosts,
+            &[PostStatus::Deleted],
+            ActionKind::PostPurge,
+            Some(Act::Against),
+        ),
     };
     current.require(permission)?;
-    let reason = check_reason(reason)?;
+    let reason = match action {
+        PostAction::Reject | PostAction::Delete => check_reason(reason)?,
+        _ => "",
+    };
     // The reason is what the post shows in its place.
-    if action == PostAction::Delete && reason.is_empty() {
+    if matches!(action, PostAction::Reject | PostAction::Delete) && reason.is_empty() {
+        return Err(AppError::BadRequest(if action == PostAction::Reject {
+            "Say why the post is being rejected".into()
+        } else {
+            "Say why the post is being deleted".into()
+        }));
+    }
+    let mut tx = state.db.primary().begin().await?;
+    let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
+    // Those who may act on a post's status see it for that.
+    if !(crate::posts::visibility(current).allows(&post) || from.contains(&post.status)) {
+        return Err(AppError::NotFound);
+    }
+    crate::posts::check_lock(current, &post, PostLock::Status)?;
+    if let Some(act) = act {
+        crate::ranks::check_moderate(state, current, post.uploader_id, act).await?;
+    }
+    if !from.contains(&post.status) {
+        return Err(AppError::BadRequest(match action {
+            PostAction::Purge => "Only deleted posts can be purged".into(),
+            _ => "The post isn't in a state where that applies (someone may have got there first)"
+                .into(),
+        }));
+    }
+    if action == PostAction::Purge {
+        if appeals::for_post(&mut *tx, id)
+            .await?
+            .iter()
+            .any(|a| a.status == "open")
+        {
+            return Err(AppError::BadRequest(
+                "The post's uploader asked for it back; decide the appeal first".into(),
+            ));
+        }
+        // The job logs the purge once the post is gone.
+        let job = PurgePost {
+            post_id: id,
+            actor_id: actor,
+            override_locks: current.can(Permission::LockPosts),
+            log: true,
+        };
+        jobs::enqueue(&mut tx, &job).await?;
+        tx.commit().await?;
+        return Ok(());
+    }
+    let to = match action {
+        PostAction::Approve => PostStatus::Active,
+        PostAction::Reject | PostAction::Delete => PostStatus::Deleted,
+        // A post deleted before anyone approved it goes back to the queue.
+        _ => match posts::deleted_from(&mut *tx, id).await? {
+            Some(PostStatus::Pending) => PostStatus::Pending,
+            _ => PostStatus::Active,
+        },
+    };
+    if !posts::set_status(&mut *tx, id, from, to).await? {
         return Err(AppError::BadRequest(
-            "Say why the post is being deleted".into(),
+            "The post isn't in a state where that applies (someone may have got there first)"
+                .into(),
         ));
     }
-    change_status(state, current, id, from, to, kind, reason).await?;
+    if to == PostStatus::Deleted {
+        flags::resolve(&mut *tx, id, true, actor).await?;
+    }
+    if action == PostAction::Approve {
+        posts::set_approver(&mut *tx, id, actor).await?;
+    }
+    // Restoring a post grants its appeal.
+    if action == PostAction::Restore {
+        appeals::resolve(&mut *tx, id, true, actor).await?;
+    }
+    let mut entry = NewAction::new(actor, kind).post(id).reason(reason);
+    if to == PostStatus::Pending {
+        entry = entry.details(serde_json::json!({ "to": "pending" }));
+    }
+    mod_actions::record(&mut *tx, entry).await?;
+    tx.commit().await?;
+    tracing::info!(post_id = id, action = kind.as_str(), "post moderated");
     let event = match action {
         PostAction::Approve => Some(Event::PostApproved),
         PostAction::Reject | PostAction::Delete => Some(Event::PostDeleted),
@@ -350,10 +364,15 @@ pub(crate) async fn dismiss(
     current.require(Permission::ApprovePosts)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
+    let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
+    if !crate::posts::visibility(current).allows(&post) {
+        return Err(AppError::NotFound);
+    }
     // Dismissing makes a flagged post active again, which a status lock
     // keeps for those who can lock posts.
-    let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
     crate::posts::check_lock(current, &post, PostLock::Status)?;
+    // Not on one's own upload, nor one of someone at or above them.
+    crate::ranks::check_moderate(state, current, post.uploader_id, Act::For).await?;
     let dismissed = flags::resolve(&mut *tx, id, false, actor).await?;
     if dismissed == 0 {
         return Err(AppError::BadRequest("The post has no open flags".into()));
@@ -613,6 +632,11 @@ pub(crate) async fn turn_down_appeal(
     let reason = check_reason(reason)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let mut tx = state.db.primary().begin().await?;
+    let post = posts::lock(&mut *tx, id).await?.ok_or(AppError::NotFound)?;
+    if !(crate::posts::visibility(current).allows(&post) || post.status == PostStatus::Deleted) {
+        return Err(AppError::NotFound);
+    }
+    crate::ranks::check_moderate(state, current, post.uploader_id, Act::Against).await?;
     if appeals::resolve(&mut *tx, id, false, actor).await? == 0 {
         return Err(AppError::BadRequest("The post has no open appeal".into()));
     }
@@ -929,13 +953,19 @@ async fn bulk_review(
         reason: form.reason.clone(),
     }
     .reason();
-    check_reason(&reason)?;
+    if check_reason(&reason)?.is_empty() && action == PostAction::Reject {
+        return Err(AppError::BadRequest(
+            "Say why the posts are being rejected".into(),
+        ));
+    }
     let mut skipped = 0;
     for id in &form.ids {
         match moderate(page.state(), &page.current, *id, action, &reason).await {
             Ok(()) => {}
-            // Someone got there first.
-            Err(AppError::BadRequest(_) | AppError::NotFound) => skipped += 1,
+            // Someone got there first, or it's not theirs to decide.
+            Err(AppError::BadRequest(_) | AppError::NotFound | AppError::Blocked(_)) => {
+                skipped += 1
+            }
             Err(error) => return Err(error),
         }
     }
@@ -991,6 +1021,11 @@ pub(crate) async fn disapprove_post(
         AppError::BadRequest("Say why: breaks_rules, poor_quality or disinterest".into())
     })?;
     let message = check_reason(message)?;
+    let post = posts::by_id(state.db.primary(), id)
+        .await?
+        .filter(|p| crate::posts::visibility(current).allows(p))
+        .ok_or(AppError::NotFound)?;
+    crate::ranks::check_moderate(state, current, post.uploader_id, Act::Against).await?;
     if !moekura_db::disapprovals::disapprove(state.db.primary(), id, user.id, reason, message)
         .await?
     {
@@ -1339,6 +1374,180 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(logged, ["post.delete", "post.restore", "post.delete"]);
+    }
+
+    /// A post by `uploader` with `status`, straight into the table.
+    async fn post_by(pool: &PgPool, uploader: &str, status: &str) -> i64 {
+        sqlx::query_scalar(
+            "INSERT INTO posts (rating, status, uploader_id)
+             SELECT 'g', $2, id FROM users WHERE name = $1 RETURNING id",
+        )
+        .bind(uploader)
+        .bind(status)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn staff_act_within_their_rank(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let delete = async |who: &str, id: i64| {
+            app.post_form(&format!("/posts/{id}/delete"), Some(who), &[], "reason=x")
+                .await
+                .status
+        };
+
+        // Not one by someone at or above them, one at a time either.
+        let admins = post_by(&pool, "root", "active").await;
+        assert_eq!(delete(&janitor, admins).await, StatusCode::FORBIDDEN);
+        let peers = post_by(&pool, "mod", "active").await;
+        let other = session_for(&pool, "mod2", SystemRole::Moderator).await;
+        assert_eq!(delete(&other, peers).await, StatusCode::FORBIDDEN);
+        let members = post_by(&pool, "alice", "active").await;
+        assert_eq!(delete(&janitor, members).await, StatusCode::SEE_OTHER);
+
+        // Their own: against it, yes; in its favour, no.
+        assert_eq!(delete(&moderator, peers).await, StatusCode::SEE_OTHER);
+        let restore = app
+            .post(&format!("/posts/{peers}/restore"), Some(&moderator), &[])
+            .await;
+        assert_eq!(restore.status, StatusCode::FORBIDDEN, "{}", restore.body);
+        assert!(restore.body.contains("your own"), "{}", restore.body);
+        let flagged = post_by(&pool, "mod", "active").await;
+        app.post_form(
+            &format!("/posts/{flagged}/flag"),
+            Some(&alice),
+            &[],
+            "reason=bad",
+        )
+        .await;
+        let dismiss = app
+            .post(
+                &format!("/posts/{flagged}/flags/dismiss"),
+                Some(&moderator),
+                &[],
+            )
+            .await;
+        assert_eq!(dismiss.status, StatusCode::FORBIDDEN);
+        let appealed = app
+            .post_form(
+                &format!("/posts/{peers}/appeal"),
+                Some(&moderator),
+                &[],
+                "reason=mine",
+            )
+            .await;
+        assert_eq!(appealed.status, StatusCode::SEE_OTHER);
+        let granted = app
+            .post(
+                &format!("/posts/{peers}/appeals/approve"),
+                Some(&moderator),
+                &[],
+            )
+            .await;
+        assert_eq!(
+            granted.status,
+            StatusCode::FORBIDDEN,
+            "not their own appeal"
+        );
+        // Someone above them can.
+        let granted = app
+            .post(
+                &format!("/posts/{peers}/appeals/approve"),
+                Some(&admin),
+                &[],
+            )
+            .await;
+        assert_eq!(granted.status, StatusCode::SEE_OTHER);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn restoring_never_approves(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let pending = post_by(&pool, "alice", "pending").await;
+        // A rejection says why.
+        let unexplained = app
+            .post_form(
+                &format!("/posts/{pending}/reject"),
+                Some(&janitor),
+                &[],
+                "reason=",
+            )
+            .await;
+        assert_eq!(unexplained.status, StatusCode::BAD_REQUEST);
+        let rejected = app
+            .post_form(
+                &format!("/posts/{pending}/reject"),
+                Some(&janitor),
+                &[],
+                "reason=blurry",
+            )
+            .await;
+        assert_eq!(rejected.status, StatusCode::SEE_OTHER);
+        let deleted_pending = post_by(&pool, "alice", "pending").await;
+        app.post_form(
+            &format!("/posts/{deleted_pending}/delete"),
+            Some(&janitor),
+            &[],
+            "reason=spam",
+        )
+        .await;
+        let active = post_by(&pool, "alice", "active").await;
+        app.post_form(
+            &format!("/posts/{active}/delete"),
+            Some(&janitor),
+            &[],
+            "reason=dup",
+        )
+        .await;
+        for id in [pending, deleted_pending, active] {
+            let restored = app
+                .post(&format!("/posts/{id}/restore"), Some(&janitor), &[])
+                .await;
+            assert_eq!(restored.status, StatusCode::SEE_OTHER);
+        }
+        let statuses: Vec<String> =
+            sqlx::query_scalar("SELECT status FROM posts WHERE id = ANY($1) ORDER BY id")
+                .bind(vec![pending, deleted_pending, active])
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(statuses, ["pending", "pending", "active"]);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn refusals_tell_members_nothing(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        session_for(&pool, "bob", SystemRole::Member).await;
+        let locked = post_by(&pool, "bob", "active").await;
+        sqlx::query("UPDATE posts SET locks = '{status}' WHERE id = $1")
+            .bind(locked)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let hidden = post_by(&pool, "bob", "deleted").await;
+        // Missing, locked, deleted or plain: the same answer.
+        for id in [locked + 1000, locked, hidden, locked - 1] {
+            for action in ["delete", "restore", "approve", "purge"] {
+                let response = app
+                    .post_form(
+                        &format!("/posts/{id}/{action}"),
+                        Some(&alice),
+                        &[],
+                        "reason=x",
+                    )
+                    .await;
+                assert_eq!(response.status, StatusCode::FORBIDDEN, "{action} {id}");
+            }
+        }
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

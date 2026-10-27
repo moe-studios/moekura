@@ -28,6 +28,7 @@ use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
 use crate::posts::{CommentDraft, Extra, render_post, visibility};
+use crate::ranks::Act;
 use crate::templates::url_value;
 
 /// Longest comment, in characters.
@@ -655,6 +656,8 @@ pub(crate) async fn moderate(
         )));
     }
     let (comment, _) = visible_comment(state, current, id).await?;
+    let act = if hidden { Act::Against } else { Act::For };
+    crate::ranks::check_moderate(state, current, comment.creator_id, act).await?;
     let mut tx = state.db.primary().begin().await?;
     if !comments::set_hidden(&mut *tx, id, hidden).await? {
         // Held writing is the spam queue's to settle, and what its writer
@@ -750,6 +753,8 @@ pub(crate) async fn dismiss(
     current.require(Permission::ModerateComments)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let (comment, _) = visible_comment(state, current, id).await?;
+    // Not about one's own comment, nor one of someone at or above them.
+    crate::ranks::check_moderate(state, current, comment.creator_id, Act::For).await?;
     let mut tx = state.db.primary().begin().await?;
     let dismissed = comments::resolve_reports(&mut *tx, id, false, actor).await?;
     if dismissed == 0 {
@@ -1283,6 +1288,91 @@ mod tests {
                 .body
                 .contains("id=\"new-comment\"")
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn staff_moderate_only_comments_below_them(pool: PgPool) {
+        let app = app(&pool).await;
+        let post = post(&pool, "active").await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let comment = async |who: &str| -> i64 {
+            let response = app
+                .post_form(
+                    &format!("/posts/{post}/comments"),
+                    Some(who),
+                    &[],
+                    "body=Hello",
+                )
+                .await;
+            let location = response.location.unwrap();
+            location
+                .rsplit("#comment-")
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+        let mods = comment(&moderator).await;
+        let hide = app
+            .post_form(
+                &format!("/comments/{mods}/hide"),
+                Some(&janitor),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(hide.status, StatusCode::FORBIDDEN);
+        // Reports on their own comment are for others to settle.
+        app.post_form(
+            &format!("/comments/{mods}/report"),
+            Some(&alice),
+            &[],
+            "reason=rude",
+        )
+        .await;
+        let dismissed = app
+            .post(
+                &format!("/comments/{mods}/reports/dismiss"),
+                Some(&moderator),
+                &[],
+            )
+            .await;
+        assert_eq!(dismissed.status, StatusCode::FORBIDDEN);
+        // They may hide their own, but not bring it back.
+        let own = app
+            .post_form(
+                &format!("/comments/{mods}/hide"),
+                Some(&moderator),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(own.status, StatusCode::SEE_OTHER);
+        let back = app
+            .post(&format!("/comments/{mods}/restore"), Some(&moderator), &[])
+            .await;
+        assert_eq!(back.status, StatusCode::FORBIDDEN);
+        // A member's is fine; one its writer deleted stays deleted.
+        let alices = comment(&alice).await;
+        let hidden = app
+            .post_form(
+                &format!("/comments/{alices}/hide"),
+                Some(&janitor),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(hidden.status, StatusCode::SEE_OTHER);
+        let deleted = comment(&alice).await;
+        app.post(&format!("/comments/{deleted}/delete"), Some(&alice), &[])
+            .await;
+        let restore = app
+            .post(&format!("/comments/{deleted}/restore"), Some(&janitor), &[])
+            .await;
+        assert_eq!(restore.status, StatusCode::BAD_REQUEST);
+        assert!(restore.body.contains("writer deleted"), "{}", restore.body);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

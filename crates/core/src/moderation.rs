@@ -351,10 +351,13 @@ pub enum ActionKind {
     ReportSettle,
     PostRemoveOldFile,
     PostUndisapprove,
+    BanAppealCreate,
+    BanAppealGrant,
+    BanAppealDeny,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 72] = [
+    pub const ALL: [ActionKind; 75] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -427,6 +430,9 @@ impl ActionKind {
         ActionKind::ReportSettle,
         ActionKind::PostRemoveOldFile,
         ActionKind::PostUndisapprove,
+        ActionKind::BanAppealCreate,
+        ActionKind::BanAppealGrant,
+        ActionKind::BanAppealDeny,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -503,6 +509,9 @@ impl ActionKind {
             ActionKind::ReportSettle => "report.settle",
             ActionKind::PostRemoveOldFile => "post.remove_old_file",
             ActionKind::PostUndisapprove => "post.undisapprove",
+            ActionKind::BanAppealCreate => "ban_appeal.create",
+            ActionKind::BanAppealGrant => "ban_appeal.grant",
+            ActionKind::BanAppealDeny => "ban_appeal.deny",
         }
     }
 
@@ -581,6 +590,9 @@ impl ActionKind {
             ActionKind::ReportSettle => "settled reports about",
             ActionKind::PostRemoveOldFile => "removed an earlier file of post",
             ActionKind::PostUndisapprove => "took back passing on post",
+            ActionKind::BanAppealCreate => "appealed the ban of",
+            ActionKind::BanAppealGrant => "granted the ban appeal of",
+            ActionKind::BanAppealDeny => "turned down the ban appeal of",
         }
     }
 

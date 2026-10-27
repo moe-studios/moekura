@@ -9,6 +9,7 @@ use ipnet::IpNet;
 use minijinja::{Value, context};
 use moekura_core::moderation::{ActionKind, MAX_BAN_DAYS, REASON_MAX_LEN};
 use moekura_core::permissions::{PARTIAL_BAN, Permission, Permissions};
+use moekura_db::ban_appeals;
 use moekura_db::bans::{self, Ban};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, User};
@@ -38,6 +39,11 @@ pub fn routes() -> Router<AppState> {
         .route("/users/{name}/unban", post(unban_user))
         .route("/moderation/ip-bans", post(ban_network_form))
         .route("/moderation/ip-bans/{id}/lift", post(lift_network_form))
+        .route("/bans/appeal", get(appeal_page).post(appeal))
+        .route(
+            "/moderation/ban-appeals/{id}/{decision}",
+            post(decide_appeal_form),
+        )
 }
 
 #[derive(Debug, Deserialize)]
@@ -499,9 +505,32 @@ struct IndexQuery {
 
 async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, AppError> {
     page.current.require(Permission::BanUsers)?;
-    let db = page.state().db.primary();
+    let state = page.state();
+    let db = state.db.primary();
     let users = bans::active(db, 200).await?;
     let networks = bans::active_networks(db).await?;
+    let mut appeals = Vec::new();
+    for a in ban_appeals::open(db, 200).await? {
+        let user = users::by_id(db, a.user_id).await?;
+        // Those they couldn't decide, they see but can't act on.
+        let can_decide = match &user {
+            Some(user) => {
+                may_ban(state, &page.current, user)
+                    && may_change_bans(state, &page.current, &[a.banner_id]).await?
+            }
+            None => false,
+        };
+        appeals.push(context! {
+            id => a.id,
+            user => a.user_name,
+            reason => a.reason,
+            when => crate::dates::day(a.created_at),
+            ban_reason => a.ban_reason,
+            until => a.ban_expires_at.map(crate::dates::day),
+            by => a.banner_name,
+            can_decide => can_decide,
+        });
+    }
     Ok(page.render(
         "moderation_bans.html",
         context! {
@@ -516,8 +545,173 @@ async fn index(page: Page, Query(query): Query<IndexQuery>) -> Result<Response, 
             }).collect::<Vec<_>>(),
             durations => durations(),
             network => query.network,
+            appeals => appeals,
         },
     ))
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct AppealForm {
+    #[serde(default)]
+    reason: String,
+}
+
+/// A banned user's own page for appealing their ban.
+async fn appeal_page(page: Page) -> Result<Response, AppError> {
+    let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let db = page.state().db.primary();
+    let ban = bans::for_user(db, user.id)
+        .await?
+        .into_iter()
+        .find(|b| b.active);
+    let appeals = ban_appeals::for_user(db, user.id).await?;
+    Ok(page.render(
+        "ban_appeal.html",
+        context! {
+            ban => ban.as_ref().map(ban_context),
+            open => appeals.iter().any(|a| a.status == "open"),
+            appeals => appeals.iter().map(|a| context! {
+                reason => a.reason,
+                status => a.status,
+                outcome => a.outcome,
+                when => crate::dates::day(a.created_at),
+            }).collect::<Vec<_>>(),
+        },
+    ))
+}
+
+async fn appeal(
+    page: Page,
+    jar: CookieJar,
+    Form(form): Form<AppealForm>,
+) -> Result<Response, AppError> {
+    appeal_ban(page.state(), &page.current, &form.reason).await?;
+    Ok(saved(jar, "/bans/appeal"))
+}
+
+/// Appeals `current`'s ban in force, asking staff to lift it.
+pub(crate) async fn appeal_ban(
+    state: &AppState,
+    current: &CurrentUser,
+    reason: &str,
+) -> Result<i64, AppError> {
+    let user = current.user.as_ref().ok_or(AppError::Unauthorized)?;
+    let reason = reason.trim();
+    if reason.is_empty() || reason.chars().count() > REASON_MAX_LEN {
+        return Err(AppError::BadRequest(format!(
+            "Say why, in at most {REASON_MAX_LEN} characters"
+        )));
+    }
+    let refused = |e: ban_appeals::AppealError| match e {
+        ban_appeals::AppealError::Db(e) => AppError::from(e),
+        other => AppError::BadRequest(other.to_string()),
+    };
+    // Before the rate limit, so a refused repeat doesn't use it up.
+    let mut conn = state.db.primary().acquire().await?;
+    ban_appeals::check_new(&mut conn, user.id)
+        .await
+        .map_err(refused)?;
+    drop(conn);
+    state.rate_limits.check_appeal(user.id).await?;
+    let mut tx = state.db.primary().begin().await?;
+    let id = ban_appeals::create(&mut tx, user.id, reason)
+        .await
+        .map_err(refused)?;
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(Some(user.id), ActionKind::BanAppealCreate)
+            .user(user.id)
+            .reason(reason)
+            .details(serde_json::json!({ "appeal": id })),
+    )
+    .await?;
+    tx.commit().await?;
+    tracing::info!(user = user.name, "ban appealed");
+    Ok(id)
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DecisionForm {
+    /// How it ended, for the user and the log.
+    #[serde(default)]
+    outcome: String,
+}
+
+async fn decide_appeal_form(
+    page: Page,
+    jar: CookieJar,
+    Path((id, decision)): Path<(i64, String)>,
+    Form(form): Form<DecisionForm>,
+) -> Result<Response, AppError> {
+    let grant = match decision.as_str() {
+        "grant" => true,
+        "deny" => false,
+        _ => return Err(AppError::NotFound),
+    };
+    decide_appeal(page.state(), &page.current, id, grant, &form.outcome).await?;
+    Ok(saved(jar, "/moderation/bans"))
+}
+
+/// Grants ban appeal `id` (lifting the ban) or turns it down, with
+/// `outcome`, as `current`, who must be able to lift that ban.
+pub(crate) async fn decide_appeal(
+    state: &AppState,
+    current: &CurrentUser,
+    id: i64,
+    grant: bool,
+    outcome: &str,
+) -> Result<(), AppError> {
+    current.require(Permission::BanUsers)?;
+    let outcome = crate::moderation::check_reason(outcome)?;
+    let actor = current.user.as_ref().map(|u| u.id);
+    let db = state.db.primary();
+    let mut tx = db.begin().await?;
+    let appeal = ban_appeals::lock(&mut tx, id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let user = users::by_id(db, appeal.user_id)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if !may_ban(state, current, &user) {
+        return Err(AppError::Forbidden);
+    }
+    check_banners(state, current, &mut tx, user.id).await?;
+    if !ban_appeals::resolve(&mut *tx, id, grant, actor, outcome).await? {
+        return Err(AppError::BadRequest(
+            "The appeal was decided already".into(),
+        ));
+    }
+    if grant {
+        bans::lift(&mut *tx, user.id, actor).await?;
+        mod_actions::record(
+            &mut *tx,
+            NewAction::new(actor, ActionKind::UserUnban)
+                .user(user.id)
+                .details(serde_json::json!({ "appeal": id })),
+        )
+        .await?;
+    }
+    let kind = if grant {
+        ActionKind::BanAppealGrant
+    } else {
+        ActionKind::BanAppealDeny
+    };
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(actor, kind)
+            .user(user.id)
+            .reason(outcome)
+            .details(serde_json::json!({ "appeal": id })),
+    )
+    .await?;
+    tx.commit().await?;
+    let told = match (grant, outcome) {
+        (true, _) => "Your ban appeal was granted: the ban is lifted".to_owned(),
+        (false, "") => "Your ban appeal was turned down".to_owned(),
+        (false, why) => format!("Your ban appeal was turned down: “{why}”"),
+    };
+    crate::notifications::moderated(state, Some(user.id), actor, &told, "/bans/appeal").await;
+    Ok(())
 }
 
 pub fn durations() -> Vec<Value> {
@@ -680,6 +874,105 @@ mod tests {
             )
             .await;
         assert_eq!(odd.status, StatusCode::BAD_REQUEST);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn banned_users_appeal(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let other = session_for(&pool, "mod2", SystemRole::Moderator).await;
+        let admin = session_for(&pool, "root", SystemRole::Admin).await;
+        let send = async |reason: &str| {
+            app.post_form(
+                "/bans/appeal",
+                Some(&alice),
+                &[],
+                &format!("reason={reason}"),
+            )
+            .await
+            .status
+        };
+        assert_eq!(send("why").await, StatusCode::BAD_REQUEST, "not banned");
+        app.post_form("/users/alice/ban", Some(&moderator), &[], "reason=spam")
+            .await;
+        let page = app.get("/bans/appeal", Some(&alice)).await.body;
+        assert!(page.contains("“spam”"), "{page}");
+        assert_eq!(send("it+was+my+brother").await, StatusCode::SEE_OTHER);
+        assert_eq!(
+            send("again").await,
+            StatusCode::BAD_REQUEST,
+            "one at a time"
+        );
+
+        // Only those who could lift the ban decide it.
+        let id: i64 = sqlx::query_scalar("SELECT id FROM ban_appeals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let queue = app.get("/moderation/bans", Some(&other)).await.body;
+        assert!(queue.contains("it was my brother"), "{queue}");
+        assert!(!queue.contains(&format!("/moderation/ban-appeals/{id}/grant")));
+        let refused = app
+            .post_form(
+                &format!("/moderation/ban-appeals/{id}/grant"),
+                Some(&other),
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
+        let denied = app
+            .post_form(
+                &format!("/moderation/ban-appeals/{id}/deny"),
+                Some(&moderator),
+                &[],
+                "outcome=no+brothers+here",
+            )
+            .await;
+        assert_eq!(denied.status, StatusCode::SEE_OTHER);
+        assert_eq!(
+            send("please").await,
+            StatusCode::BAD_REQUEST,
+            "a week first"
+        );
+        sqlx::query("UPDATE ban_appeals SET resolved_at = now() - interval '8 days'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(send("please").await, StatusCode::SEE_OTHER);
+        let id: i64 = sqlx::query_scalar("SELECT max(id) FROM ban_appeals")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let granted = app
+            .post_form(
+                &format!("/moderation/ban-appeals/{id}/grant"),
+                Some(&admin),
+                &[],
+                "",
+            )
+            .await;
+        assert_eq!(granted.status, StatusCode::SEE_OTHER);
+        let banned: bool =
+            sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM bans WHERE lifted_at IS NULL)")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(!banned, "lifted");
+        let told: Vec<String> = sqlx::query_scalar(
+            "SELECT subject FROM notifications WHERE kind = 'moderation' ORDER BY id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            told,
+            [
+                "Your ban appeal was turned down: “no brothers here”",
+                "Your ban appeal was granted: the ban is lifted"
+            ]
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ t("ban-appeal-title") }} · {{ site.name }}{% endblock %}
+{% block content %}
+<h1>{{ t("ban-appeal-title") }}</h1>
+{% if ban %}
+<p>{{ t("ban-appeal-your-ban", reason=ban.reason, since=ban.since) }}{% if ban.until %} {{ t("ban-appeal-until", until=ban.until) }}{% endif %}</p>
+{% if open %}
+<p class="hint">{{ t("ban-appeal-waiting") }}</p>
+{% else %}
+<form method="post" action="/bans/appeal">
+  <label for="appeal-reason">{{ t("ban-appeal-why") }}</label>
+  <textarea id="appeal-reason" name="reason" rows="4" maxlength="2000" required></textarea>
+  <p class="hint">{{ t("ban-appeal-hint") }}</p>
+  <button type="submit">{{ t("ban-appeal-send") }}</button>
+</form>
+{% endif %}
+{% else %}
+<p class="empty">{{ t("ban-appeal-not-banned") }}</p>
+{% endif %}
+{% if appeals %}
+<h2>{{ t("ban-appeal-history") }}</h2>
+<ul class="plain">
+  {% for a in appeals %}
+  <li><span class="status status-{{ 'open' if a.status == 'open' else 'dismissed' }}">{{ t("ban-appeal-status-" ~ a.status) }}</span> {{ a.when }}: “{{ a.reason }}”{% if a.outcome %} → {{ a.outcome }}{% endif %}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

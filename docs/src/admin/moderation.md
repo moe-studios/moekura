@@ -193,6 +193,17 @@ with the new reason and length. Timed bans last up to 3650 days. Only
 whoever set a ban, or someone ranked above them, can lift it or replace
 it, so a moderator can't undo or shorten a ban an admin set.
 
+### Ban appeals
+
+Banned users can **Appeal** their ban, from the notice every page shows
+them (`/bans/appeal`), saying why it should be lifted: one appeal at a
+time, and a week's wait after one is turned down. Open appeals are listed
+at the top of **Moderation → Bans**, with the ban's reason and who set
+it. Those who could lift the ban (who outrank the user, and set the ban
+or outrank whoever did) **Lift the ban**, which grants the appeal, or
+**Keep it**, with an optional note on why. The user is notified either
+way, and both go in the log.
+
 Networks (an address or a CIDR range such as `203.0.113.0/24`, or
 `2001:db8::/64` for IPv6, where one household usually has a whole `/64`)
 are banned under **Moderation → Bans**, partly or fully:

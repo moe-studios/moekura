@@ -6,6 +6,7 @@ pub mod api_keys;
 pub mod appeals;
 pub mod artist_commentaries;
 pub mod artists;
+pub mod ban_appeals;
 pub mod bans;
 pub mod bench;
 pub mod comments;

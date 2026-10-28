@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ t("note-history-title", id=post_id) }} · {{ site.name }}{% endblock %}
 {% block content %}
+{% from "report_form.html" import report_form %}
 <p class="back"><a href="/posts/{{ post_id }}">« {{ t("post-number", id=post_id) }}</a></p>
 <h1>{{ t("note-history-title", id=post_id) }}</h1>
 <p class="hint">{{ t("note-history-all") }}</p>
@@ -16,6 +17,7 @@
       {% endif %}
     </div>
     <p class="note-text">{{ v.body }}</p>
+    {% if can_report and v.current and v.active %}{{ report_form("note", v.note_id) }}{% endif %}
   </li>
   {% endfor %}
 </ol>

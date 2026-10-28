@@ -52,6 +52,9 @@ pub struct User {
     pub settings: serde_json::Value,
     /// Run by a program through API keys: it can't log in on the site.
     pub is_bot: bool,
+    /// The site's owner, who outranks every role (`moekura admin
+    /// set-owner`).
+    pub is_owner: bool,
 }
 
 pub struct NewUser<'a> {
@@ -76,7 +79,7 @@ pub enum InsertError {
 macro_rules! select_users {
     ($rest:literal) => {
         concat!(
-            "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot FROM users ",
+            "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot, is_owner FROM users ",
             $rest
         )
     };
@@ -86,7 +89,7 @@ pub async fn insert(db: impl PgExecutor<'_>, user: NewUser<'_>) -> Result<User, 
     sqlx::query_as(
         "INSERT INTO users (name, email, password_hash, role_id, status)
          VALUES ($1, $2, $3, $4, $5)
-         RETURNING id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot",
+         RETURNING id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot, is_owner",
     )
     .bind(user.name)
     .bind(user.email)
@@ -276,7 +279,7 @@ pub async fn credentials_by_name(
         password_hash: Option<String>,
     }
     let row: Option<Row> = sqlx::query_as(
-        "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot, password_hash
+        "SELECT id, name::text, email::text, email_verified_at, role_id, status, created_at, last_seen_at, settings, is_bot, is_owner, password_hash
          FROM users WHERE name = $1::citext",
     )
     .bind(name)
@@ -419,6 +422,26 @@ pub async fn set_bot(db: impl PgExecutor<'_>, id: i64, is_bot: bool) -> sqlx::Re
         .bind(id)
         .bind(is_bot)
         .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Whether the site has an owner.
+pub async fn owner_exists(db: impl PgExecutor<'_>) -> sqlx::Result<bool> {
+    sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM users WHERE is_owner)")
+        .fetch_one(db)
+        .await
+}
+
+/// Makes user `id` the site's owner, in place of whoever was.
+pub async fn set_owner(conn: &mut sqlx::PgConnection, id: i64) -> sqlx::Result<()> {
+    sqlx::query("UPDATE users SET is_owner = false WHERE is_owner AND id <> $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("UPDATE users SET is_owner = true WHERE id = $1")
+        .bind(id)
+        .execute(&mut *conn)
         .await?;
     Ok(())
 }

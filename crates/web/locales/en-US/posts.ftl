@@ -30,6 +30,9 @@ metadata-none = This file has no metadata to show, or it hasn't been read yet.
 replacements-title = Replacements of post #{ $id }
 replacements-from = from { $source }
 replacements-none = This post's file was never replaced.
+replacements-removed = removed { $day } by { $user }
+replacements-remove = Remove this file
+replacements-remove-confirm = Remove this earlier file for good? It can't be brought back.
 
 fav-group-empty = This group has no posts yet.
 fav-group-delete-confirm = Delete this favorite group? The posts stay, but the group and its order are gone.
@@ -296,6 +299,7 @@ post-replace-file = New file
 post-replace-why = Why
 post-replace-placeholder = Higher resolution, uncropped, …
 post-replace-notes = Move and resize the notes to fit the new size
+post-replace-remove-old = Remove the old file for good (when it shows what the new one takes out), instead of keeping it in the post's replacements
 post-replace-hint = The post keeps its tags, comments, notes, pools and favourites; the old file is kept in its <a href="/posts/{ $id }/replacements">replacements</a>.
 post-replace-confirm = Replace this post's file?
 post-replace-button = Replace

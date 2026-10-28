@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use moekura_core::jobs::{
     ExpireStagedUploads, HashPixels, ProcessMedia, PurgePost, RemoveSquareThumbnails, TagPost,
 };
-use moekura_core::posts::PostStatus;
+use moekura_core::moderation::ActionKind;
 use moekura_db::media::{self, Asset, Variant};
+use moekura_db::mod_actions::NewAction;
 use moekura_media::{Media, MediaError, MediaType};
 use moekura_storage::{Key, Storage};
 use sqlx::PgPool;
@@ -19,17 +20,40 @@ pub const STAGED_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(2
 /// How often unused staged uploads are looked for.
 const STAGED_EVERY: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 
+/// Who purges a post, and how, for [`purge_post`].
+#[derive(Debug, Clone, Default)]
+pub struct Purge {
+    pub actor_id: Option<i64>,
+    /// Purge it even if its status is locked.
+    pub override_locks: bool,
+    /// Log the purge when done, with these details; `None` to leave it
+    /// out of the log.
+    pub log: Option<serde_json::Value>,
+}
+
 /// Removes deleted post `post_id`'s files, then the post; returns
 /// whether it was purged. Safe to repeat: missing files and a missing
-/// post are fine. A post restored in the meantime is left alone.
-pub async fn purge_post(db: &PgPool, storage: &Storage, post_id: i64) -> Result<bool, JobError> {
-    let Some(post) = moekura_db::posts::by_id(db, post_id).await? else {
-        return Ok(false);
-    };
-    if post.status != PostStatus::Deleted {
-        tracing::warn!(post_id, "purge skipped: the post is no longer deleted");
-        return Ok(false);
+/// post are fine.
+///
+/// The post is first marked as being purged, with its row locked, so it
+/// can't be restored or appealed once its files start to go. A post that
+/// was restored before that, whose status is locked (unless
+/// `override_locks`) or that has an open appeal is left alone.
+pub async fn purge_post(
+    db: &PgPool,
+    storage: &Storage,
+    post_id: i64,
+    purge: &Purge,
+) -> Result<bool, JobError> {
+    let mut tx = db.begin().await?;
+    match moekura_db::posts::start_purge(&mut tx, post_id, purge.override_locks).await? {
+        Ok(()) => {}
+        Err(why) => {
+            tracing::warn!(post_id, ?why, "purge skipped");
+            return Ok(false);
+        }
     }
+    tx.commit().await?;
     // Files the post had before a replacement, too.
     let replaced = moekura_db::replacements::old_keys(db, post_id).await?;
     for key in replaced.iter().filter_map(|k| Key::parse(k)) {
@@ -53,7 +77,20 @@ pub async fn purge_post(db: &PgPool, storage: &Storage, post_id: i64) -> Result<
                 .map_err(|e| JobError::retry(format!("deleting {key}: {e}")))?;
         }
     }
-    moekura_db::posts::delete(db, post_id).await?;
+    let mut tx = db.begin().await?;
+    if !moekura_db::posts::finish_purge(&mut *tx, post_id).await? {
+        return Ok(false);
+    }
+    if let Some(details) = &purge.log {
+        moekura_db::mod_actions::record(
+            &mut *tx,
+            NewAction::new(purge.actor_id, ActionKind::PostPurge)
+                .post(post_id)
+                .details(details.clone()),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     tracing::info!(post_id, "post purged");
     Ok(true)
 }
@@ -86,7 +123,14 @@ impl MediaJobs {
         });
         registry.register(move |job: PurgePost| {
             let jobs = purger.clone();
-            async move { jobs.purge(job.post_id).await }
+            async move {
+                let purge = Purge {
+                    actor_id: job.actor_id,
+                    override_locks: job.override_locks,
+                    log: job.log.then(|| serde_json::json!({})),
+                };
+                jobs.purge(job.post_id, &purge).await
+            }
         });
         registry.register(move |_: RemoveSquareThumbnails| {
             let jobs = remover.clone();
@@ -213,8 +257,8 @@ impl MediaJobs {
     }
 
     /// Removes a deleted post's files, then the post: see [`purge_post`].
-    pub async fn purge(&self, post_id: i64) -> Result<(), JobError> {
-        purge_post(&self.db, &self.storage, post_id)
+    pub async fn purge(&self, post_id: i64, purge: &Purge) -> Result<(), JobError> {
+        purge_post(&self.db, &self.storage, post_id, purge)
             .await
             .map(|_| ())
     }
@@ -768,8 +812,12 @@ mod tests {
             keys.push(Key::parse(&v.storage_key).unwrap());
         }
 
+        let purge = Purge {
+            log: Some(serde_json::json!({})),
+            ..Purge::default()
+        };
         // Not deleted: left alone.
-        jobs.purge(asset.post_id).await.unwrap();
+        jobs.purge(asset.post_id, &purge).await.unwrap();
         assert!(jobs.storage.exists(&keys[0]).await.unwrap());
 
         sqlx::query("UPDATE posts SET status = 'deleted' WHERE id = $1")
@@ -777,7 +825,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        jobs.purge(asset.post_id).await.unwrap();
+        jobs.purge(asset.post_id, &purge).await.unwrap();
         for key in &keys {
             assert!(!jobs.storage.exists(key).await.unwrap(), "{key}");
         }
@@ -787,8 +835,18 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+        // Logged once it's done, not when asked for.
+        let filter = moekura_db::mod_actions::Filter {
+            post_id: Some(asset.post_id),
+            ..Default::default()
+        };
+        let log = moekura_db::mod_actions::list(&pool, &filter, 10)
+            .await
+            .unwrap();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].action, "post.purge");
         // Again: nothing left to do.
-        jobs.purge(asset.post_id).await.unwrap();
+        jobs.purge(asset.post_id, &purge).await.unwrap();
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

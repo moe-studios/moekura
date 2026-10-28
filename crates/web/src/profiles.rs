@@ -65,7 +65,7 @@ pub(crate) fn bio_html(profile: &Profile) -> Option<Value> {
 /// Users may change their profile unless banned.
 fn editor(page: &Page) -> Result<&moekura_db::users::User, AppError> {
     let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
-    if page.current.ban.is_some() {
+    if page.current.ban.as_ref().is_some_and(|b| b.is_full()) {
         return Err(AppError::Forbidden);
     }
     Ok(user)

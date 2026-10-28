@@ -188,7 +188,8 @@
     <section class="family flags" aria-label="{{ t('post-disapprovals') }}">
       <p>{{ t("post-disapprovals-intro") }}</p>
       <ul class="plain">
-        {% for d in moderate.disapprovals %}<li>{{ d.when }} {{ d.by }}: {{ t("disapproval-reason-" ~ d.reason) if d.known else d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}</li>{% endfor %}
+        {% for d in moderate.disapprovals %}<li>{{ d.when }} {{ d.by }}: {{ t("disapproval-reason-" ~ d.reason) if d.known else d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}
+          {% if me and d.by == me.name %}<form class="inline" method="post" action="/posts/{{ post.id }}/disapprove/withdraw"><button type="submit" class="secondary">{{ t("disapproval-withdraw") }}</button></form>{% endif %}</li>{% endfor %}
       </ul>
     </section>
     {% endif %}
@@ -358,6 +359,7 @@
         <label for="replace-reason">{{ t("post-replace-why") }}</label>
         <input id="replace-reason" name="reason" maxlength="1000" placeholder="{{ t('post-replace-placeholder') }}">
         <label class="choice"><input type="checkbox" name="rescale_notes" checked> {{ t("post-replace-notes") }}</label>
+        <label class="choice"><input type="checkbox" name="remove_old"> {{ t("post-replace-remove-old") }}</label>
         <p class="hint">{{ t("post-replace-hint", id=post.id) }}</p>
         <button type="submit" data-confirm="{{ t('post-replace-confirm') }}">{{ t("post-replace-button") }}</button>
       </form>
@@ -379,7 +381,7 @@
       <p class="hint">{{ t("post-waiting") }}</p>
       <form method="post" action="/posts/{{ post.id }}/approve?from=post"><button type="submit">{{ t("approve") }}</button></form>
       <form method="post" action="/posts/{{ post.id }}/reject?from=post">
-        {{ reason_fields("reject-reason", reasons.deletion, t("reason-rejecting"), required=false) }}
+        {{ reason_fields("reject-reason", reasons.deletion, t("reason-rejecting")) }}
         <button type="submit" class="secondary">{{ t("reject") }}</button>
       </form>
       {% endif %}
@@ -389,6 +391,8 @@
           <legend>{{ t("post-locks") }}</legend>
           {% for l in moderate.locks %}<label class="choice"><input type="checkbox" name="{{ l.name }}"{% if l.on %} checked{% endif %}> {{ t("lock-" ~ l.name) }}</label>{% endfor %}
         </fieldset>
+        <label for="locks-reason">{{ t("reason") }} <span class="optional">{{ t("optional") }}</span></label>
+        <input id="locks-reason" name="reason" maxlength="2000">
         <button type="submit" class="secondary">{{ t("post-locks-save") }}</button>
       </form>
       {% endif %}

@@ -6,6 +6,7 @@ use sqlx::PgExecutor;
 use time::OffsetDateTime;
 
 use crate::posts::Visibility;
+pub use crate::writing::Status;
 
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Comment {
@@ -14,7 +15,9 @@ pub struct Comment {
     pub creator_id: Option<i64>,
     pub creator_name: Option<String>,
     pub body: String,
+    /// Not active: deleted, hidden or held (see `status`).
     pub is_deleted: bool,
+    pub status: Status,
     pub score: i32,
     pub created_at: OffsetDateTime,
     pub edited_at: Option<OffsetDateTime>,
@@ -30,7 +33,8 @@ macro_rules! select_comments {
     ($rest:literal) => {
         concat!(
             "SELECT c.id, c.post_id, c.creator_id, u.name::text AS creator_name, c.body,
-                    c.is_deleted, c.score, c.created_at, c.edited_at, c.is_sticky, c.do_not_bump
+                    c.is_deleted, c.status, c.score, c.created_at, c.edited_at, c.is_sticky,
+                    c.do_not_bump
              FROM comments c LEFT JOIN users u ON u.id = c.creator_id ",
             $rest
         )
@@ -50,7 +54,7 @@ pub async fn create(
 }
 
 /// [`create`], but when `held` (for review, with why) the comment is
-/// deleted until the staff approve it.
+/// held until the staff approve it.
 pub async fn create_held(
     db: impl PgExecutor<'_>,
     post_id: i64,
@@ -60,14 +64,18 @@ pub async fn create_held(
     held: Option<&str>,
 ) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "INSERT INTO comments (post_id, creator_id, body, do_not_bump, is_deleted, held_reason)
+        "INSERT INTO comments (post_id, creator_id, body, do_not_bump, status, held_reason)
          VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
     )
     .bind(post_id)
     .bind(creator_id)
     .bind(body)
     .bind(!bump)
-    .bind(held.is_some())
+    .bind(if held.is_some() {
+        Status::Held
+    } else {
+        Status::Active
+    })
     .bind(held)
     .fetch_one(db)
     .await
@@ -164,7 +172,7 @@ pub async fn update(db: impl PgExecutor<'_>, id: i64, body: &str) -> sqlx::Resul
 }
 
 /// [`update`], but when `held` (for review, with why) the comment is
-/// deleted until the staff approve it, as a new one would be.
+/// held until the staff approve it, as a new one would be.
 pub async fn update_held(
     db: impl PgExecutor<'_>,
     id: i64,
@@ -173,7 +181,8 @@ pub async fn update_held(
 ) -> sqlx::Result<()> {
     sqlx::query(
         "UPDATE comments SET body = $2, edited_at = now(),
-                is_deleted = is_deleted OR $3::text IS NOT NULL,
+                status = CASE WHEN $3::text IS NOT NULL AND status = 'active' THEN 'held'
+                              ELSE status END,
                 held_reason = coalesce($3, held_reason)
          WHERE id = $1 AND body <> $2",
     )
@@ -185,14 +194,37 @@ pub async fn update_held(
     Ok(())
 }
 
-/// Deletes or restores a comment; false if it already was.
-pub async fn set_deleted(db: impl PgExecutor<'_>, id: i64, deleted: bool) -> sqlx::Result<bool> {
-    let result =
-        sqlx::query("UPDATE comments SET is_deleted = $2, held_reason = NULL WHERE id = $1 AND is_deleted <> $2")
-            .bind(id)
-            .bind(deleted)
-            .execute(db)
-            .await?;
+/// Deletes an active comment for its writer; false if it wasn't active.
+pub async fn delete(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<bool> {
+    move_status(db, id, Status::Active, Status::Deleted).await
+}
+
+/// Hides an active comment as staff, or (with `hidden` false) shows one
+/// staff hid; false if it wasn't. Neither touches comments their writers
+/// deleted or the spam filter holds.
+pub async fn set_hidden(db: impl PgExecutor<'_>, id: i64, hidden: bool) -> sqlx::Result<bool> {
+    let (from, to) = if hidden {
+        (Status::Active, Status::Hidden)
+    } else {
+        (Status::Hidden, Status::Active)
+    };
+    move_status(db, id, from, to).await
+}
+
+/// Moves comment `id` from status `from` to `to`; false if it wasn't
+/// `from`.
+pub(crate) async fn move_status(
+    db: impl PgExecutor<'_>,
+    id: i64,
+    from: Status,
+    to: Status,
+) -> sqlx::Result<bool> {
+    let result = sqlx::query("UPDATE comments SET status = $3 WHERE id = $1 AND status = $2")
+        .bind(id)
+        .bind(from)
+        .bind(to)
+        .execute(db)
+        .await?;
     Ok(result.rows_affected() == 1)
 }
 
@@ -255,24 +287,43 @@ pub enum ReportError {
     Db(#[from] sqlx::Error),
 }
 
-/// Reports a comment to the moderators.
+/// Reports a comment to the moderators, keeping its text as it is now.
 pub async fn report(
     db: impl PgExecutor<'_>,
     comment_id: i64,
     creator_id: i64,
     reason: &str,
 ) -> Result<(), ReportError> {
-    sqlx::query("INSERT INTO comment_reports (comment_id, creator_id, reason) VALUES ($1, $2, $3)")
-        .bind(comment_id)
-        .bind(creator_id)
-        .bind(reason)
-        .execute(db)
-        .await
-        .map_err(|e| match &e {
-            sqlx::Error::Database(db) if db.is_unique_violation() => ReportError::AlreadyReported,
-            _ => ReportError::Db(e),
-        })?;
+    sqlx::query(
+        "INSERT INTO comment_reports (comment_id, creator_id, reason, snapshot)
+         SELECT $1, $2, $3, left(body, 50000) FROM comments WHERE id = $1",
+    )
+    .bind(comment_id)
+    .bind(creator_id)
+    .bind(reason)
+    .execute(db)
+    .await
+    .map_err(|e| match &e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => ReportError::AlreadyReported,
+        _ => ReportError::Db(e),
+    })?;
     Ok(())
+}
+
+/// Whether `creator_id` has an open report about a comment.
+pub async fn has_open_report(
+    db: impl PgExecutor<'_>,
+    comment_id: i64,
+    creator_id: i64,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM comment_reports
+                        WHERE comment_id = $1 AND creator_id = $2 AND status = 'open')",
+    )
+    .bind(comment_id)
+    .bind(creator_id)
+    .fetch_one(db)
+    .await
 }
 
 /// Closes a comment's open reports as `dismissed` or `upheld`; returns how
@@ -301,6 +352,8 @@ pub struct Report {
     pub comment_id: i64,
     pub creator_name: Option<String>,
     pub reason: String,
+    /// The comment's text when it was reported.
+    pub snapshot: String,
     pub created_at: OffsetDateTime,
 }
 
@@ -316,7 +369,8 @@ pub async fn open_reports(
         "WITH queued AS (
              SELECT comment_id, min(id) AS first FROM comment_reports WHERE status = 'open'
              GROUP BY comment_id HAVING min(id) > $1 ORDER BY first LIMIT $2)
-         SELECT r.id, r.comment_id, u.name::text AS creator_name, r.reason, r.created_at
+         SELECT r.id, r.comment_id, u.name::text AS creator_name, r.reason, r.snapshot,
+                r.created_at
          FROM queued q
          JOIN comment_reports r ON r.comment_id = q.comment_id AND r.status = 'open'
          LEFT JOIN users u ON u.id = r.creator_id
@@ -382,13 +436,13 @@ mod tests {
         let second_at = by_id(&pool, second).await.unwrap().unwrap().created_at;
         assert_eq!(counts(&pool, post).await, (2, Some(second_at)));
 
-        assert!(set_deleted(&pool, second, true).await.unwrap());
-        assert!(!set_deleted(&pool, second, true).await.unwrap());
+        assert!(set_hidden(&pool, second, true).await.unwrap());
+        assert!(!set_hidden(&pool, second, true).await.unwrap());
         let first_at = by_id(&pool, first).await.unwrap().unwrap().created_at;
         assert_eq!(counts(&pool, post).await, (1, Some(first_at)));
-        set_deleted(&pool, first, true).await.unwrap();
+        delete(&pool, first).await.unwrap();
         assert_eq!(counts(&pool, post).await, (0, None));
-        set_deleted(&pool, second, false).await.unwrap();
+        set_hidden(&pool, second, false).await.unwrap();
         assert_eq!(counts(&pool, post).await, (1, Some(second_at)));
         sqlx::query("DELETE FROM comments WHERE id = $1")
             .bind(second)
@@ -396,6 +450,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(counts(&pool, post).await, (0, None));
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn statuses_move_only_one_way_each(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let post = post(&pool, "active").await;
+        let status = |id: i64| {
+            let pool = pool.clone();
+            async move { by_id(&pool, id).await.unwrap().unwrap().status }
+        };
+        // Showing what staff hid doesn't undo the writer's own deletion,
+        // nor let out what the spam filter holds.
+        let deleted = create(&pool, post, alice, "Mine", true).await.unwrap();
+        assert!(delete(&pool, deleted).await.unwrap());
+        assert!(!set_hidden(&pool, deleted, false).await.unwrap());
+        assert!(!set_hidden(&pool, deleted, true).await.unwrap());
+        assert_eq!(status(deleted).await, Status::Deleted);
+        let held = create_held(&pool, post, alice, "Spam", true, Some("links"))
+            .await
+            .unwrap();
+        assert_eq!(status(held).await, Status::Held);
+        assert!(by_id(&pool, held).await.unwrap().unwrap().is_deleted);
+        assert!(!set_hidden(&pool, held, false).await.unwrap());
+        assert!(!delete(&pool, held).await.unwrap());
+        assert_eq!(status(held).await, Status::Held);
+        // An edit held as spam holds the comment; a hidden one stays so.
+        let edited = create(&pool, post, alice, "Fine", true).await.unwrap();
+        update_held(&pool, edited, "Spam now", Some("links"))
+            .await
+            .unwrap();
+        assert_eq!(status(edited).await, Status::Held);
+        let hidden = create(&pool, post, alice, "Rude", true).await.unwrap();
+        set_hidden(&pool, hidden, true).await.unwrap();
+        update_held(&pool, hidden, "Spam", Some("links"))
+            .await
+            .unwrap();
+        assert_eq!(status(hidden).await, Status::Hidden);
     }
 
     async fn bumped_at(pool: &PgPool, post: i64) -> Option<OffsetDateTime> {
@@ -417,7 +508,7 @@ mod tests {
         assert_eq!(bumped_at(&pool, post).await, Some(first_at));
         assert_eq!(counts(&pool, post).await, (2, Some(quiet_at)));
         assert!(by_id(&pool, quiet).await.unwrap().unwrap().do_not_bump);
-        set_deleted(&pool, first, true).await.unwrap();
+        delete(&pool, first).await.unwrap();
         assert_eq!(bumped_at(&pool, post).await, None);
     }
 
@@ -503,7 +594,7 @@ mod tests {
         ] {
             ids.push(create(&pool, post, user, body, true).await.unwrap());
         }
-        set_deleted(&pool, ids[1], true).await.unwrap();
+        set_hidden(&pool, ids[1], true).await.unwrap();
 
         let bodies = |found: Vec<Comment>| found.into_iter().map(|c| c.body).collect::<Vec<_>>();
         assert_eq!(

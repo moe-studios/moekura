@@ -11,7 +11,9 @@ moekura admin create-user yourname --role admin
 docker compose -f deploy/compose.tiny.yml exec app moekura admin create-user yourname --role admin
 ```
 
-Log in, then open **Admin** in the menu.
+The first admin is also the site's [owner](../admin/roles.md#the-owner),
+the one account that outranks the other admins. Log in, then open
+**Admin** in the menu.
 
 ## Name, logo, rules and policies
 
@@ -77,7 +79,8 @@ invites lasting up to 30 days, up to **Invites each person may make
 every 30 days** in **Admin → Settings** (5 to start with), and revoke
 their own. Those who can manage users have no limit, choose how many
 times an invite can be used and how long it lasts (or that it never
-expires), and see and revoke everyone's.
+expires), and see and revoke everyone's. An invite stops working while
+whoever made it is banned or their account isn't active.
 
 ## Search engines
 

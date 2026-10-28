@@ -9,10 +9,9 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::ReportKind;
 use moekura_core::permissions::Permission;
 use moekura_db::dmails::{self, Dmail, Folder, SendError};
-use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::users::{self, UserStatus};
 use serde::Deserialize;
 
@@ -38,8 +37,6 @@ pub fn routes() -> Router<AppState> {
         .route("/dmails/{id}", get(show))
         .route("/dmails/{id}/{action}", post(act))
         .route("/users/{name}/block", post(block))
-        .route("/moderation/dmails", get(reported))
-        .route("/moderation/dmails/{id}/settle", post(settle))
 }
 
 /// The logged-in user, who may read their messages.
@@ -62,8 +59,6 @@ fn dmail_context(d: &Dmail, html: bool) -> Value {
         html => html.then(|| Value::from_safe_string(markup::render(&d.body))),
         read => d.is_read,
         deleted => d.is_deleted,
-        reported => d.reported_at.is_some(),
-        report_reason => d.report_reason,
         date => crate::dates::day(d.created_at),
         time => crate::dates::clock(d.created_at),
     }
@@ -334,13 +329,15 @@ async fn act(
         "restore" => dmails::set_deleted(db, me, id, false).await?,
         "unread" => dmails::set_read(db, me, id, false).await?,
         "report" => {
-            let reason = form.reason.trim();
-            if reason.chars().count() > 1000 {
-                return Err(AppError::Unprocessable(
-                    "The reason can be at most 1000 characters long.".into(),
-                ));
-            }
-            dmails::report(db, me, id, reason).await?
+            crate::moderation_reports::report(
+                page.state(),
+                &page.current,
+                ReportKind::Dmail,
+                id,
+                &form.reason,
+            )
+            .await?;
+            true
         }
         _ => return Err(AppError::NotFound),
     };
@@ -352,7 +349,12 @@ async fn act(
     } else {
         "/dmails".to_owned()
     };
-    Ok((flash::set(jar, Flash::Saved), Redirect::to(&back)).into_response())
+    let flash = if action == "report" {
+        Flash::Reported
+    } else {
+        Flash::Saved
+    };
+    Ok((flash::set(jar, flash), Redirect::to(&back)).into_response())
 }
 
 async fn mark_all_read(page: Page, jar: CookieJar) -> Result<Response, AppError> {
@@ -390,40 +392,6 @@ async fn block(
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&back)).into_response())
 }
 
-async fn reported(page: Page) -> Result<Response, AppError> {
-    page.current.require(Permission::ModerateComments)?;
-    let found = dmails::reported(page.state().db.primary(), 0, 100).await?;
-    Ok(page.render(
-        "moderation_dmails.html",
-        context! {
-            dmails => found.iter().map(|d| dmail_context(d, true)).collect::<Vec<_>>(),
-        },
-    ))
-}
-
-async fn settle(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    page.current.require(Permission::ModerateComments)?;
-    let db = page.state().db.primary();
-    let d = dmails::by_id_any(db, id).await?.ok_or(AppError::NotFound)?;
-    if !dmails::settle_report(db, id).await? {
-        return Err(AppError::NotFound);
-    }
-    let mut action = NewAction::new(
-        page.current.user.as_ref().map(|u| u.id),
-        ActionKind::DmailReportSettle,
-    )
-    .details(serde_json::json!({ "dmail_id": id }));
-    if let Some(from) = d.from_id {
-        action = action.user(from);
-    }
-    mod_actions::record(db, action).await?;
-    Ok((
-        flash::set(jar, Flash::Saved),
-        Redirect::to("/moderation/dmails"),
-    )
-        .into_response())
-}
-
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
@@ -436,11 +404,14 @@ mod tests {
     async fn messages(pool: PgPool) {
         let app = TestApp::new(
             test_state(&pool).await,
-            super::routes().merge(crate::posts::routes()),
+            super::routes()
+                .merge(crate::posts::routes())
+                .merge(crate::moderation_reports::routes()),
         );
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
         let bob = session_for(&pool, "bob", SystemRole::Member).await;
         let staff = session_for(&pool, "staff", SystemRole::Moderator).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
         assert_eq!(app.get("/dmails", None).await.status, StatusCode::SEE_OTHER);
 
         let nobody = app
@@ -474,36 +445,85 @@ mod tests {
         assert!(read.contains("href=\"/wiki/cat\""), "{read}");
         assert!(!app.get("/", Some(&bob)).await.body.contains("count-badge"));
 
-        // Reported messages reach staff, and only those.
-        assert_eq!(
-            app.get("/moderation/dmails", Some(&staff))
+        // Reported messages reach staff who read messages, and only those.
+        let queue_url = "/moderation/reports?kind=dmail";
+        assert!(
+            !app.get(queue_url, Some(&staff))
                 .await
                 .body
-                .matches("Hello")
-                .count(),
-            0
+                .contains("Hello")
         );
-        app.post_form(
-            &format!("/dmails/{id}/report"),
-            Some(&bob),
-            &[],
-            "reason=spam",
-        )
-        .await;
-        let queue = app.get("/moderation/dmails", Some(&staff)).await.body;
+        let unexplained = app
+            .post_form(&format!("/dmails/{id}/report"), Some(&bob), &[], "reason=+")
+            .await;
+        assert_eq!(unexplained.status, StatusCode::BAD_REQUEST);
+        let reported = app
+            .post_form(
+                &format!("/dmails/{id}/report"),
+                Some(&bob),
+                &[],
+                "reason=spam",
+            )
+            .await;
+        assert_eq!(reported.status, StatusCode::SEE_OTHER, "{}", reported.body);
+        // Once is enough: a repeat neither reopens nor replaces it.
+        let again = app
+            .post_form(
+                &format!("/dmails/{id}/report"),
+                Some(&bob),
+                &[],
+                "reason=more",
+            )
+            .await;
+        assert_eq!(again.status, StatusCode::BAD_REQUEST);
+        let queue = app.get(queue_url, Some(&staff)).await.body;
         assert!(queue.contains("Hello") && queue.contains("spam"), "{queue}");
+        assert!(!queue.contains("“more”"), "{queue}");
+        assert!(
+            !app.get(queue_url, Some(&janitor))
+                .await
+                .body
+                .contains("Hello"),
+            "janitors don't read messages"
+        );
         assert_eq!(
-            app.get("/moderation/dmails", Some(&bob)).await.status,
+            app.get(queue_url, Some(&bob)).await.status,
             StatusCode::FORBIDDEN
         );
         let settled = app
-            .post(
-                &format!("/moderation/dmails/{id}/settle"),
+            .post_form(
+                &format!("/moderation/reports/dmail/{id}/settle"),
                 Some(&staff),
                 &[],
+                "decision=uphold&outcome=warned+alice",
             )
             .await;
-        assert_eq!(settled.status, StatusCode::SEE_OTHER);
+        assert_eq!(settled.status, StatusCode::SEE_OTHER, "{}", settled.body);
+        let (status, outcome): (String, String) =
+            sqlx::query_as("SELECT status, outcome FROM moderation_reports")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            (status.as_str(), outcome.as_str()),
+            ("upheld", "warned alice")
+        );
+        // Settled: not again straight away.
+        let reopened = app
+            .post_form(
+                &format!("/dmails/{id}/report"),
+                Some(&bob),
+                &[],
+                "reason=still",
+            )
+            .await;
+        assert_eq!(reopened.status, StatusCode::BAD_REQUEST);
+        assert!(
+            !app.get(queue_url, Some(&staff))
+                .await
+                .body
+                .contains("Hello")
+        );
 
         // Blocked senders are refused.
         app.post_form("/users/alice/block", Some(&bob), &[], "blocked=1")

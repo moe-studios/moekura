@@ -3,6 +3,32 @@
 {% block content %}
 {% include "moderation_nav.html" %}
 <h1>{{ t("mod-nav-bans") }}</h1>
+{% if appeals %}
+<h2>{{ t("ban-appeals") }}</h2>
+<ol class="history">
+  {% for a in appeals %}
+  <li>
+    <div class="history-head">
+      <strong><a href="/moderation/users/{{ a.user|urlencode }}">{{ a.user }}</a></strong>
+      <span class="hint">{{ a.when }} · {{ t("ban-appeal-of", reason=a.ban_reason) }}{% if a.until %} ({{ t("until") }} {{ a.until }}){% endif %}{% if a.by %} {{ t("by-user", user=a.by) }}{% endif %}</span>
+    </div>
+    <p>“{{ a.reason }}”</p>
+    {% if a.can_decide %}
+    <form method="post" action="/moderation/ban-appeals/{{ a.id }}/grant">
+      <label for="appeal-outcome-{{ a.id }}">{{ t("report-outcome") }} <span class="optional">{{ t("optional") }}</span></label>
+      <input id="appeal-outcome-{{ a.id }}" name="outcome" maxlength="2000">
+      <div class="actions">
+        <button type="submit">{{ t("ban-appeal-grant") }}</button>
+        <button type="submit" class="secondary" formaction="/moderation/ban-appeals/{{ a.id }}/deny">{{ t("ban-appeal-deny") }}</button>
+      </div>
+    </form>
+    {% else %}
+    <p class="hint">{{ t("ban-locked") }}</p>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% endif %}
 <h2>{{ t("stats-users") }}</h2>
 {% if bans %}
 <div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('bans-table') }}">

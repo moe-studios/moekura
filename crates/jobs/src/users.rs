@@ -38,9 +38,11 @@ impl UserJobs {
             .every::<PruneIpHistory>(PRUNE_IPS_EVERY);
     }
 
-    /// Forgets addresses unused for longer than the site keeps them;
-    /// returns how many.
+    /// Forgets addresses unused for longer than the site keeps them, and
+    /// rate-limit counters back at their full allowance; returns how many
+    /// addresses.
     pub async fn prune_ips(&self) -> Result<u64, JobError> {
+        moekura_db::rate_limits::prune(&self.db).await?;
         let days = settings::load(&self.db).await?.ip_history_days;
         let pruned = user_ips::prune(&self.db, days).await?;
         if pruned > 0 {

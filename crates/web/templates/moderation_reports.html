@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{{ t("mod-nav-reports") }} · {{ site.name }}{% endblock %}
+{% block content %}
+{% include "moderation_nav.html" %}
+<h1>{{ t("mod-nav-reports") }}</h1>
+<p class="hint">{{ t("mod-reports-hint") }}</p>
+{% if kinds | length > 1 %}
+<nav class="tabs" aria-label="{{ t('mod-reports-kinds') }}">
+  <a href="/moderation/reports"{% if not kind %} aria-current="page"{% endif %}>{{ t("any") }}</a>
+  {% for k in kinds %}<a href="/moderation/reports?kind={{ k }}"{% if kind == k %} aria-current="page"{% endif %}>{{ t("report-kind-" ~ k|replace("_", "-")) }}</a>{% endfor %}
+</nav>
+{% endif %}
+{% if items %}
+<ol class="history">
+  {% for item in items %}
+  <li>
+    <div class="history-head">
+      <strong>{% if item.url %}<a href="{{ item.url }}">{{ t("report-kind-" ~ item.kind|replace("_", "-")) }} #{{ item.id }}</a>{% else %}{{ t("report-kind-" ~ item.kind|replace("_", "-")) }} #{{ item.id }}{% endif %}</strong>
+      {% if item.owner %}<span class="hint">{{ t("by-link", url="/moderation/users/" ~ item.owner|urlencode, user=item.owner) }}</span>{% endif %}
+    </div>
+    <ul class="plain">
+      {% for r in item.reports %}<li>“{{ r.reason }}” <span class="hint">— {{ r.by or t("gone") }}, {{ r.when }}</span></li>{% endfor %}
+    </ul>
+    {% for text in item.texts %}
+    <p class="hint">{{ t("report-text-when", day=text.when) }}</p>
+    <div class="markup">{{ text.html }}</div>
+    {% endfor %}
+    <form method="post" action="/moderation/reports/{{ item.kind }}/{{ item.id }}/settle">
+      <label for="outcome-{{ item.kind }}-{{ item.id }}">{{ t("report-outcome") }} <span class="optional">{{ t("optional") }}</span></label>
+      <input id="outcome-{{ item.kind }}-{{ item.id }}" name="outcome" maxlength="2000">
+      <div class="actions">
+        <button type="submit" name="decision" value="uphold">{{ t("report-uphold") }}</button>
+        <button type="submit" name="decision" value="dismiss" class="secondary">{{ t("dismiss") }}</button>
+      </div>
+    </form>
+  </li>
+  {% endfor %}
+</ol>
+{% if more_url %}<nav class="pager"><a class="button" href="{{ more_url }}" rel="next">{{ t("more") }}</a></nav>{% endif %}
+{% else %}
+<p class="empty">{{ t("mod-reports-none") }}</p>
+{% endif %}
+{% endblock %}

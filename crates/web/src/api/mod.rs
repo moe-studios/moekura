@@ -162,7 +162,10 @@ fn api_router(max_upload_bytes: u64) -> OpenApiRouter<AppState> {
         .routes(routes!(users::me))
         .routes(routes!(moderation::approve))
         .routes(routes!(moderation::reject))
-        .routes(routes!(moderation::disapprove))
+        .routes(routes!(
+            moderation::disapprove,
+            moderation::withdraw_disapproval
+        ))
         .routes(routes!(moderation::appeal))
         .routes(routes!(moderation::delete))
         .routes(routes!(moderation::restore))

@@ -2,6 +2,7 @@
 {% from "site_icon.html" import site_icon %}
 {% block title %}{{ artist.title }} · {{ t("tag-nav-artists") }} · {{ site.name }}{% endblock %}
 {% block content %}
+{% from "report_form.html" import report_form %}
 {% include "tag_nav.html" %}
 <article class="wiki">
   <header class="wiki-head">
@@ -56,4 +57,5 @@
   {% endif %}
   {% endif %}
 </div>
+{% if can_report and not artist.deleted %}{{ report_form("artist", artist.id) }}{% endif %}
 {% endblock %}

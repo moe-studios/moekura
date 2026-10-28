@@ -59,6 +59,40 @@ impl PostReasons {
     }
 }
 
+/// Posts left waiting too long, as Danbooru deletes them: pending posts
+/// nobody approved, and flagged posts whose flags nobody dealt with, in
+/// that many days. 0 leaves them waiting.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StalePosts {
+    pub pending_days: u32,
+    pub flagged_days: u32,
+}
+
+/// The longest [`StalePosts`] wait.
+pub const MAX_STALE_DAYS: u32 = 365;
+
+impl StalePosts {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.pending_days > MAX_STALE_DAYS || self.flagged_days > MAX_STALE_DAYS {
+            return Err(format!(
+                "posts wait at most {MAX_STALE_DAYS} days before they're deleted"
+            ));
+        }
+        Ok(())
+    }
+
+    /// The reason a pending post deleted this way shows.
+    pub fn pending_reason(&self) -> String {
+        format!("Unapproved in {} days", self.pending_days)
+    }
+
+    /// The reason a flagged post deleted this way shows.
+    pub fn flagged_reason(&self) -> String {
+        format!("Flagged and not reviewed in {} days", self.flagged_days)
+    }
+}
+
 /// The reason given with a preset (`preset`) and free text (`text`): the
 /// preset, the text, or both as "preset: text".
 pub fn combine_reason(preset: &str, text: &str) -> String {
@@ -110,6 +144,136 @@ impl DisapprovalReason {
 
 /// The longest timed ban, in days; longer ones are until lifted.
 pub const MAX_BAN_DAYS: i64 = 3650;
+
+/// What a log entry is about besides a post or a user, by kind; stored by
+/// name with the thing's id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SubjectKind {
+    Comment,
+    ForumPost,
+    ForumTopic,
+    Dmail,
+    UserNote,
+    UserFeedback,
+    Pool,
+    Artist,
+    News,
+    WikiPage,
+    Note,
+}
+
+impl SubjectKind {
+    pub const ALL: [SubjectKind; 11] = [
+        SubjectKind::Comment,
+        SubjectKind::ForumPost,
+        SubjectKind::ForumTopic,
+        SubjectKind::Dmail,
+        SubjectKind::UserNote,
+        SubjectKind::UserFeedback,
+        SubjectKind::Pool,
+        SubjectKind::Artist,
+        SubjectKind::News,
+        SubjectKind::WikiPage,
+        SubjectKind::Note,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SubjectKind::Comment => "comment",
+            SubjectKind::ForumPost => "forum_post",
+            SubjectKind::ForumTopic => "forum_topic",
+            SubjectKind::Dmail => "dmail",
+            SubjectKind::UserNote => "user_note",
+            SubjectKind::UserFeedback => "user_feedback",
+            SubjectKind::Pool => "pool",
+            SubjectKind::Artist => "artist",
+            SubjectKind::News => "news",
+            SubjectKind::WikiPage => "wiki_page",
+            SubjectKind::Note => "note",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+}
+
+/// What members can report to staff, besides posts (flags) and comments
+/// (comment reports).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReportKind {
+    /// A private message, by its recipient.
+    Dmail,
+    ForumPost,
+    User,
+    WikiPage,
+    Pool,
+    Note,
+    Artist,
+    /// Feedback someone left on a user.
+    UserFeedback,
+}
+
+impl ReportKind {
+    pub const ALL: [ReportKind; 8] = [
+        ReportKind::Dmail,
+        ReportKind::ForumPost,
+        ReportKind::User,
+        ReportKind::WikiPage,
+        ReportKind::Pool,
+        ReportKind::Note,
+        ReportKind::Artist,
+        ReportKind::UserFeedback,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ReportKind::Dmail => "dmail",
+            ReportKind::ForumPost => "forum_post",
+            ReportKind::User => "user",
+            ReportKind::WikiPage => "wiki_page",
+            ReportKind::Pool => "pool",
+            ReportKind::Note => "note",
+            ReportKind::Artist => "artist",
+            ReportKind::UserFeedback => "user_feedback",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+
+    /// Who handles reports of this kind.
+    pub fn handled_by(self) -> crate::permissions::Permission {
+        use crate::permissions::Permission;
+        match self {
+            ReportKind::Dmail => Permission::ModerateMessages,
+            ReportKind::User | ReportKind::UserFeedback => Permission::BanUsers,
+            _ => Permission::ModerateComments,
+        }
+    }
+
+    /// How the log knows it, when it isn't a user (the log's user column).
+    pub fn subject(self) -> Option<SubjectKind> {
+        match self {
+            ReportKind::Dmail => Some(SubjectKind::Dmail),
+            ReportKind::ForumPost => Some(SubjectKind::ForumPost),
+            ReportKind::User => None,
+            ReportKind::WikiPage => Some(SubjectKind::WikiPage),
+            ReportKind::Pool => Some(SubjectKind::Pool),
+            ReportKind::Note => Some(SubjectKind::Note),
+            ReportKind::Artist => Some(SubjectKind::Artist),
+            ReportKind::UserFeedback => Some(SubjectKind::UserFeedback),
+        }
+    }
+}
+
+/// Most characters of a reported thing's text kept with a report.
+pub const SNAPSHOT_MAX_LEN: usize = 50_000;
+
+/// Days before someone may report the same thing again once their report
+/// was settled, and appeal or flag again once turned down.
+pub const REPORT_COOLDOWN_DAYS: i64 = 7;
 
 /// What an audit log entry records. Stored by name; renaming one would
 /// orphan old entries' labels, so only add.
@@ -174,10 +338,27 @@ pub enum ActionKind {
     TagCategoryUpdate,
     TagCategoryMove,
     TagCategoryDelete,
+    UserOwner,
+    UserNoteDelete,
+    ForumPostEdit,
+    ForumTopicEdit,
+    FlagCreate,
+    AppealCreate,
+    PostDisapprove,
+    FeedbackCreate,
+    FeedbackUpdate,
+    ReportCreate,
+    ReportSettle,
+    PostRemoveOldFile,
+    PostUndisapprove,
+    BanAppealCreate,
+    BanAppealGrant,
+    BanAppealDeny,
+    UserWarn,
 }
 
 impl ActionKind {
-    pub const ALL: [ActionKind; 59] = [
+    pub const ALL: [ActionKind; 76] = [
         ActionKind::PostApprove,
         ActionKind::PostReject,
         ActionKind::PostDelete,
@@ -237,6 +418,23 @@ impl ActionKind {
         ActionKind::TagCategoryUpdate,
         ActionKind::TagCategoryMove,
         ActionKind::TagCategoryDelete,
+        ActionKind::UserOwner,
+        ActionKind::UserNoteDelete,
+        ActionKind::ForumPostEdit,
+        ActionKind::ForumTopicEdit,
+        ActionKind::FlagCreate,
+        ActionKind::AppealCreate,
+        ActionKind::PostDisapprove,
+        ActionKind::FeedbackCreate,
+        ActionKind::FeedbackUpdate,
+        ActionKind::ReportCreate,
+        ActionKind::ReportSettle,
+        ActionKind::PostRemoveOldFile,
+        ActionKind::PostUndisapprove,
+        ActionKind::BanAppealCreate,
+        ActionKind::BanAppealGrant,
+        ActionKind::BanAppealDeny,
+        ActionKind::UserWarn,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -300,6 +498,23 @@ impl ActionKind {
             ActionKind::TagCategoryUpdate => "tag_category.update",
             ActionKind::TagCategoryMove => "tag_category.move",
             ActionKind::TagCategoryDelete => "tag_category.delete",
+            ActionKind::UserOwner => "user.owner",
+            ActionKind::UserNoteDelete => "user_note.delete",
+            ActionKind::ForumPostEdit => "forum_post.edit",
+            ActionKind::ForumTopicEdit => "forum_topic.edit",
+            ActionKind::FlagCreate => "flag.create",
+            ActionKind::AppealCreate => "appeal.create",
+            ActionKind::PostDisapprove => "post.disapprove",
+            ActionKind::FeedbackCreate => "user_feedback.create",
+            ActionKind::FeedbackUpdate => "user_feedback.update",
+            ActionKind::ReportCreate => "report.create",
+            ActionKind::ReportSettle => "report.settle",
+            ActionKind::PostRemoveOldFile => "post.remove_old_file",
+            ActionKind::PostUndisapprove => "post.undisapprove",
+            ActionKind::BanAppealCreate => "ban_appeal.create",
+            ActionKind::BanAppealGrant => "ban_appeal.grant",
+            ActionKind::BanAppealDeny => "ban_appeal.deny",
+            ActionKind::UserWarn => "user.warn",
         }
     }
 
@@ -365,11 +580,55 @@ impl ActionKind {
             ActionKind::TagCategoryUpdate => "renamed a tag category",
             ActionKind::TagCategoryMove => "reordered the tag categories",
             ActionKind::TagCategoryDelete => "deleted a tag category",
+            ActionKind::UserOwner => "handed the site's ownership to",
+            ActionKind::UserNoteDelete => "deleted a staff note about",
+            ActionKind::ForumPostEdit => "changed a forum post by",
+            ActionKind::ForumTopicEdit => "renamed or moved a forum topic by",
+            ActionKind::FlagCreate => "flagged post",
+            ActionKind::AppealCreate => "appealed post",
+            ActionKind::PostDisapprove => "passed on post",
+            ActionKind::FeedbackCreate => "left feedback on",
+            ActionKind::FeedbackUpdate => "changed feedback on",
+            ActionKind::ReportCreate => "made a report about",
+            ActionKind::ReportSettle => "settled reports about",
+            ActionKind::PostRemoveOldFile => "removed an earlier file of post",
+            ActionKind::PostUndisapprove => "took back passing on post",
+            ActionKind::BanAppealCreate => "appealed the ban of",
+            ActionKind::BanAppealGrant => "granted the ban appeal of",
+            ActionKind::BanAppealDeny => "turned down the ban appeal of",
+            ActionKind::UserWarn => "warned",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|k| k.as_str() == s)
+    }
+
+    /// Whether it's about what people posted (posts, comments, the forum,
+    /// tags, pools, artists, held writing and reports about them), not
+    /// about accounts, roles, settings or private messages: what staff
+    /// without the whole log may read.
+    pub fn is_content(self) -> bool {
+        let name = self.as_str();
+        [
+            "post.",
+            "flag.",
+            "appeal.",
+            "comment.",
+            "comment_report.",
+            "forum_topic.",
+            "forum_post.",
+            "held.",
+            "tag.",
+            "tag_relation.",
+            "tag_category.",
+            "bulk_update.",
+            "pool.",
+            "artist.",
+            "report.",
+        ]
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
     }
 }
 

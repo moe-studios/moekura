@@ -11,6 +11,7 @@
 | `moekura admin create-user NAME [--role ROLE] [--email E]` | creates an account; asks for the password, or reads one line from standard input |
 | `moekura admin create-user NAME --bot [--role ROLE]` | creates a [bot](bots.md), which has no password and uses API keys only |
 | `moekura admin set-role NAME ROLE` | changes someone's role |
+| `moekura admin set-owner NAME` | makes someone the site's [owner](roles.md#the-owner), who outranks every role, in place of the current one |
 | `moekura admin set-bot NAME [--off]` | makes an account a [bot](bots.md), ending its sessions and revoking its feed token, or with `--off` a person's again |
 | `moekura admin lift-network-ban ADDRESS_OR_RANGE` | lifts the [network bans](moderation.md#bans) covering an address, or overlapping a range, such as one that locks staff out |
 | `moekura admin create-invite [--uses N] [--expires-days D]` | makes an invite code, shown once |

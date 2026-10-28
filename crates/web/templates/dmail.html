@@ -8,7 +8,6 @@
     {% if dmail.sent %}{{ t("dmail-to-user", user=(("<a href=\"/users/" ~ dmail.to|urlencode ~ "\">" ~ dmail.to|e ~ "</a>")|safe if dmail.to else t("gone"))) }}{% else %}{{ t("dmail-from-user", user=(("<a href=\"/users/" ~ dmail.from|urlencode ~ "\">" ~ dmail.from|e ~ "</a>")|safe if dmail.from else t("gone"))) }}{% endif %}
     · {{ dmail.date }} {{ dmail.time }}
     {% if dmail.deleted %}· {{ t("status-deleted") }}{% endif %}
-    {% if dmail.reported %}· {{ t("dmail-reported") }}{% endif %}
   </p>
   <div class="markup">{{ dmail.html }}</div>
 </article>
@@ -24,15 +23,8 @@
   <form method="post" action="/users/{{ dmail.from }}/block"><input type="hidden" name="blocked" value="{{ '0' if blocked else '1' }}"><input type="hidden" name="back" value="{{ dmail.id }}"><button type="submit" class="secondary">{% if blocked %}{{ t("unblock-user", user=dmail.from) }}{% else %}{{ t("block-user", user=dmail.from) }}{% endif %}</button></form>
   {% endif %}
 </div>
-{% if not dmail.sent and not dmail.reported %}
-<details class="edit">
-  <summary>{{ t("report-to-staff") }}</summary>
-  <form method="post" action="{{ dmail.url }}/report">
-    <label for="report-reason">{{ t("report-whats-wrong") }}</label>
-    <input id="report-reason" name="reason" maxlength="1000" placeholder="{{ t('report-placeholder') }}">
-    <p class="hint">{{ t("dmail-report-hint") }}</p>
-    <button type="submit">{{ t("report") }}</button>
-  </form>
-</details>
+{% if not dmail.sent %}
+{% from "report_form.html" import report_form %}
+{{ report_form("dmail", dmail.id, hint=t("dmail-report-hint")) }}
 {% endif %}
 {% endblock %}

@@ -87,12 +87,14 @@ pub async fn create_deletion(
 }
 
 /// Records a purge of the deleted posts search `query` finds, or of
-/// posts `post_ids`, `total` of them; returns its id.
+/// posts `post_ids`, `total` of them; returns its id. Unless
+/// `override_locks`, posts whose status is locked are skipped.
 pub async fn create_purge(
     db: impl PgExecutor<'_>,
     creator_id: Option<i64>,
     query: Option<&str>,
     post_ids: Option<&[i64]>,
+    override_locks: bool,
     total: i64,
 ) -> sqlx::Result<i64> {
     let post_ids = post_ids.map(|ids| {
@@ -102,12 +104,13 @@ pub async fn create_purge(
         ids
     });
     sqlx::query_scalar(
-        "INSERT INTO post_batches (kind, creator_id, query, post_ids, total)
-         VALUES ('purge', $1, $2, $3, $4) RETURNING id",
+        "INSERT INTO post_batches (kind, creator_id, query, post_ids, override_locks, total)
+         VALUES ('purge', $1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(creator_id)
     .bind(query)
     .bind(post_ids)
+    .bind(override_locks)
     .bind(i32::try_from(total).unwrap_or(i32::MAX))
     .fetch_one(db)
     .await
@@ -253,26 +256,96 @@ pub async fn deleted_among(db: impl PgExecutor<'_>, ids: &[i64]) -> sqlx::Result
     .await
 }
 
-/// Records how purging post `post_id` for purge `batch` went, and logs it
-/// as the batch creator's when it was purged.
+/// Records how purging post `post_id` for purge `batch` went.
 pub async fn record_purge(
     db: &PgPool,
     batch: &PostBatch,
     post_id: i64,
     progress: Progress,
 ) -> sqlx::Result<()> {
+    // The purge itself logged the post.
+    advance(db, batch.id, progress, post_id).await
+}
+
+/// Which posts have waited too long: pending ones uploaded more than
+/// `pending_days` ago, and flagged ones whose oldest open flag is more
+/// than `flagged_days` old (0 for neither), at most `limit` of each,
+/// leaving out those whose status is locked.
+pub async fn stale(
+    db: impl PgExecutor<'_>,
+    pending_days: u32,
+    flagged_days: u32,
+    limit: i64,
+) -> sqlx::Result<(Vec<i64>, Vec<i64>)> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "(SELECT 'pending', id FROM posts
+          WHERE $1 > 0 AND status = 'pending' AND NOT purging
+            AND created_at < now() - make_interval(days => $1)
+            AND NOT 'status' = ANY(locks)
+          ORDER BY id LIMIT $3)
+         UNION ALL
+         (SELECT 'flagged', p.id FROM posts p
+          WHERE $2 > 0 AND p.status = 'flagged' AND NOT 'status' = ANY(p.locks)
+            AND (SELECT min(f.created_at) FROM post_flags f
+                 WHERE f.post_id = p.id AND f.status = 'open')
+                < now() - make_interval(days => $2)
+          ORDER BY p.id LIMIT $3)",
+    )
+    .bind(i32::try_from(pending_days).unwrap_or(i32::MAX))
+    .bind(i32::try_from(flagged_days).unwrap_or(i32::MAX))
+    .bind(limit)
+    .fetch_all(db)
+    .await?;
+    let of = |kind: &str| {
+        rows.iter()
+            .filter(|(k, _)| k == kind)
+            .map(|(_, id)| *id)
+            .collect()
+    };
+    Ok((of("pending"), of("flagged")))
+}
+
+/// Deletes post `id` for having waited too long in status `from`, as a
+/// deletion by nobody in particular, with `reason`, and tells its
+/// uploader; false if it was dealt with meanwhile.
+pub async fn expire(db: &PgPool, id: i64, from: PostStatus, reason: &str) -> sqlx::Result<bool> {
     let mut tx = db.begin().await?;
-    if progress.done > 0 {
-        mod_actions::record(
+    let Some(post) = posts::lock(&mut *tx, id)
+        .await?
+        .filter(|post| post.status == from && !post.is_locked(PostLock::Status))
+    else {
+        return Ok(false);
+    };
+    if !posts::set_status(&mut *tx, id, &[from], PostStatus::Deleted).await? {
+        return Ok(false);
+    }
+    if let Some(uploader) = post.uploader_id {
+        crate::notifications::create(
             &mut *tx,
-            NewAction::new(batch.creator_id, ActionKind::PostPurge)
-                .post(post_id)
-                .details(serde_json::json!({ "batch": batch.id })),
+            &[uploader],
+            crate::notifications::Kind::Moderation,
+            None,
+            &format!("Your post #{id} was deleted: “{reason}”"),
+            &format!("/posts/{id}"),
         )
         .await?;
     }
-    advance(&mut *tx, batch.id, progress, post_id).await?;
-    tx.commit().await
+    flags::resolve(&mut *tx, id, true, None).await?;
+    let kind = if from == PostStatus::Pending {
+        ActionKind::PostReject
+    } else {
+        ActionKind::PostDelete
+    };
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(None, kind)
+            .post(id)
+            .reason(reason)
+            .details(serde_json::json!({ "stale": true })),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(true)
 }
 
 /// Deletes posts `ids` (newest first) for deletion `batch`, as a single

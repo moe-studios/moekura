@@ -3,6 +3,7 @@
 {% block content %}
 {% include "moderation_nav.html" %}
 <h1>{{ t("mod-log-title") }}</h1>
+{% if not whole %}<p class="hint">{{ t("mod-log-content-only") }}</p>{% endif %}
 <form class="filters" method="get" action="/moderation/log">
   <div class="filter-field">
     <label for="log-action">{{ t("mod-log-action") }}</label>
@@ -24,6 +25,14 @@
     <input id="log-user" name="user" value="{{ query.user }}" size="12">
   </div>
   <div class="filter-field">
+    <label for="log-subject">{{ t("mod-log-subject") }}</label>
+    <select id="log-subject" name="subject">
+      <option value="">{{ t("any") }}</option>
+      {% for k in subjects %}<option value="{{ k }}"{% if query.subject == k %} selected{% endif %}>{{ t("subject-" ~ k|replace("_", "-")) }}</option>{% endfor %}
+    </select>
+    <input id="log-subject-id" name="subject_id" value="{{ query.subject_id }}" size="8" inputmode="numeric" aria-label="{{ t('mod-log-subject-id') }}">
+  </div>
+  <div class="filter-field">
     <label for="log-since">{{ t("from") }}</label>
     <input id="log-since" name="since" value="{{ query.since }}" type="date">
   </div>
@@ -42,6 +51,7 @@
     <strong>{{ e.actor or t("command-line") }}</strong> {{ t("action-" ~ e.action|replace(".", "_")) if e.known else e.action }}
     {% if e.post_id %}<a href="/posts/{{ e.post_id }}">#{{ e.post_id }}</a>{% endif %}
     {% if e.user %}<a href="/moderation/users/{{ e.user }}">{{ e.user }}</a>{% endif %}
+    {% if e.subject %}<span class="hint">({% if e.subject.url %}<a href="{{ e.subject.url }}">{{ t("subject-" ~ e.subject.kind|replace("_", "-")) }} #{{ e.subject.id }}</a>{% else %}{{ t("subject-" ~ e.subject.kind|replace("_", "-")) }} #{{ e.subject.id }}{% endif %}, <a href="{{ e.subject.log_url }}">{{ t("mod-log-subject-log") }}</a>)</span>{% endif %}
     {% if e.reason %}<div class="reason">“{{ e.reason }}”</div>{% endif %}
     {% if e.details %}<div class="hint">{% for d in e.details %}{{ d.key }}: {{ d.value }}{% if not loop.last %} · {% endif %}{% endfor %}</div>{% endif %}
     </div>

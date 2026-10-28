@@ -558,19 +558,20 @@ async fn admin_reset(
     let state = page.state();
     let db = state.db.primary();
     let user = users::by_name(db, &name).await?.ok_or(AppError::NotFound)?;
-    let site = state.site.get();
-    let rank = |role_id| site.role(role_id).map_or(0, |r| r.rank);
-    let me = page.current.user.as_ref().map(|u| u.id);
     // Like other changes to users: only below one's own rank, and not
     // oneself (that's what the settings page is for).
-    if Some(user.id) == me || rank(user.role_id) >= page.current.role.rank {
+    if !crate::ranks::outranks(&state.site.get(), &page.current, &user) {
         return Err(AppError::Forbidden);
     }
     let mut tx = db.begin().await?;
     if two_factor::disable(&mut tx, user.id).await? {
         mod_actions::record(
             &mut *tx,
-            NewAction::new(me, ActionKind::UserTwoFactorReset).user(user.id),
+            NewAction::new(
+                page.current.user.as_ref().map(|u| u.id),
+                ActionKind::UserTwoFactorReset,
+            )
+            .user(user.id),
         )
         .await?;
         tracing::info!(user_id = user.id, "two-factor login reset by staff");

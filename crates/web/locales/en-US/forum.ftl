@@ -3,6 +3,11 @@
 forum-nav-topics = Topics
 forum-nav-search = Search posts
 forum-post-edit-title = Edit post
+forum-post-history = history
+forum-post-history-title = History of forum post #{ $id }
+forum-post-history-hint = Each change keeps the text it replaced. Only staff see this page.
+forum-post-history-now = Now
+forum-post-history-replaced = replaced by { $user }
 forum-post-field = Post
 
 forum-topic-new-title = New topic

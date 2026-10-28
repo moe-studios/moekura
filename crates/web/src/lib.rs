@@ -45,6 +45,7 @@ mod invites;
 mod mass_edit;
 mod metatags;
 mod moderation;
+mod moderation_reports;
 mod name_changes;
 mod news;
 mod notes;
@@ -58,6 +59,7 @@ mod post_history;
 mod posts;
 mod previews;
 mod profiles;
+mod ranks;
 pub mod rate_limit;
 mod recent_changes;
 mod related_tags;
@@ -232,10 +234,12 @@ impl AppState {
             .clone()
             .map(|c| Arc::new(captcha::Captcha::new(c)));
         let passkeys = passkeys::Passkeys::new(&config.server.public_url).map(Arc::new);
-        let rate_limits = RateLimits::new(valkey).with_api_limit(
-            config.server.api_requests_per_minute,
-            config.server.api_burst,
-        );
+        let rate_limits = RateLimits::new(valkey)
+            .with_shared_db(db.primary().clone())
+            .with_api_limit(
+                config.server.api_requests_per_minute,
+                config.server.api_burst,
+            );
         let sources = Arc::new(sources::Sources::new(false, config.sources.clone()));
         Ok(Self {
             config: Arc::new(config),
@@ -337,6 +341,7 @@ pub(crate) fn all_routes(state: &AppState) -> Router<AppState> {
         .merge(commentary::routes())
         .merge(comments::routes())
         .merge(dmails::routes())
+        .merge(moderation_reports::routes())
         .merge(edit::routes())
         .merge(email::routes())
         .merge(explore::routes())

@@ -260,7 +260,7 @@ pub(crate) async fn delete(
 ) -> Result<StatusCode, AppError> {
     let (comment, _) = visible_comment(&state, &current, id).await?;
     check_author(&current, &comment)?;
-    comments::set_deleted(state.db.primary(), id, true).await?;
+    comments::delete(state.db.primary(), id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

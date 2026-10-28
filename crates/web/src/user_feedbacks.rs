@@ -12,7 +12,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::user_feedbacks::{self, CATEGORIES, Feedback, Filter};
@@ -44,12 +44,7 @@ pub fn routes() -> Router<AppState> {
 /// on someone else of lower rank.
 pub(crate) fn may_give(state: &AppState, current: &CurrentUser, user: &User) -> bool {
     current.can(Permission::GiveFeedback)
-        && current.user.as_ref().is_some_and(|me| me.id != user.id)
-        && state
-            .site
-            .get()
-            .role(user.role_id)
-            .is_some_and(|role| current.role.outranks(role))
+        && crate::ranks::outranks(&state.site.get(), current, user)
 }
 
 /// Whether `current` may delete or restore feedback `f`: staff who ban
@@ -61,7 +56,7 @@ pub(crate) fn may_moderate(state: &AppState, current: &CurrentUser, f: &Feedback
     let site = state.site.get();
     let below = |role_id: i32| {
         site.role(role_id)
-            .is_some_and(|role| current.role.outranks(role))
+            .is_some_and(|role| current.standing() > crate::ranks::Standing::Rank(role.rank))
     };
     current.can(Permission::BanUsers)
         && current.user.as_ref().is_some_and(|me| {
@@ -298,7 +293,17 @@ async fn create(
         Err(error) => return Err(error),
     };
     state.rate_limits.check_comment(me).await?;
-    user_feedbacks::create(state.db.primary(), user.id, me, &category, &body).await?;
+    let mut tx = state.db.primary().begin().await?;
+    let id = user_feedbacks::create(&mut *tx, user.id, me, &category, &body).await?;
+    mod_actions::record(
+        &mut *tx,
+        NewAction::new(Some(me), ActionKind::FeedbackCreate)
+            .user(user.id)
+            .subject(SubjectKind::UserFeedback, id)
+            .details(serde_json::json!({ "category": category, "body": body })),
+    )
+    .await?;
+    tx.commit().await?;
     let url = list_url(&user.name);
     crate::notifications::notify(
         state,
@@ -364,7 +369,24 @@ async fn update(
         }
         Err(error) => return Err(error),
     };
-    user_feedbacks::update(state.db.primary(), id, &category, &body).await?;
+    // The log keeps what it said before, as its history.
+    if (category.as_str(), body.as_str()) != (f.category.as_str(), f.body.as_str()) {
+        let mut tx = state.db.primary().begin().await?;
+        user_feedbacks::update(&mut *tx, id, &category, &body).await?;
+        mod_actions::record(
+            &mut *tx,
+            NewAction::new(f.creator_id, ActionKind::FeedbackUpdate)
+                .user(f.user_id)
+                .subject(SubjectKind::UserFeedback, id)
+                .details(serde_json::json!({
+                    "from": { "category": f.category, "body": f.body },
+                    "category": category,
+                    "body": body,
+                })),
+        )
+        .await?;
+        tx.commit().await?;
+    }
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to(&list_url(&f.user_name)),
@@ -407,6 +429,7 @@ async fn moderate(
                 },
             )
             .user(f.user_id)
+            .subject(SubjectKind::UserFeedback, id)
             .details(serde_json::json!({ "feedback_id": id, "category": f.category })),
         )
         .await?;
@@ -580,11 +603,18 @@ mod tests {
                 .status,
             StatusCode::NOT_FOUND
         );
-        let logged: String = sqlx::query_scalar("SELECT action FROM mod_actions")
-            .fetch_one(&pool)
+        let logged: Vec<String> = sqlx::query_scalar("SELECT action FROM mod_actions ORDER BY id")
+            .fetch_all(&pool)
             .await
             .unwrap();
-        assert_eq!(logged, "user_feedback.delete");
+        assert_eq!(
+            logged.first().map(String::as_str),
+            Some("user_feedback.create")
+        );
+        assert_eq!(
+            logged.last().map(String::as_str),
+            Some("user_feedback.delete")
+        );
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

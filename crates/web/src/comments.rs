@@ -13,10 +13,10 @@ use axum::{Form, Json, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::{ActionKind, REASON_MAX_LEN};
+use moekura_core::moderation::{ActionKind, REASON_MAX_LEN, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_core::posts::PostStatus;
-use moekura_db::comments::{self, Comment, Filter, ReportError};
+use moekura_db::comments::{self, Comment, Filter, ReportError, Status};
 use moekura_db::mod_actions::{self, NewAction};
 use moekura_db::posts::{self, Post};
 use moekura_db::users;
@@ -28,6 +28,7 @@ use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
 use crate::posts::{CommentDraft, Extra, render_post, visibility};
+use crate::ranks::Act;
 use crate::templates::url_value;
 
 /// Longest comment, in characters.
@@ -241,13 +242,13 @@ async fn comment_contexts(
     current: &CurrentUser,
     comments: &[Comment],
 ) -> Result<Vec<Value>, AppError> {
+    let ids: Vec<i64> = comments.iter().map(|c| c.id).collect();
+    let db = state.db.primary();
     let votes = match &current.user {
-        Some(user) => {
-            let ids: Vec<i64> = comments.iter().map(|c| c.id).collect();
-            comments::votes_of(state.db.primary(), user.id, &ids).await?
-        }
+        Some(user) => comments::votes_of(db, user.id, &ids).await?,
         None => Vec::new(),
     };
+    let warned = moekura_db::user_warnings::warned_among(db, SubjectKind::Comment, &ids).await?;
     Ok(comments
         .iter()
         .map(|c| {
@@ -255,13 +256,14 @@ async fn comment_contexts(
                 .iter()
                 .find(|(id, _)| *id == c.id)
                 .map_or(0, |(_, v)| *v);
-            comment_context(current, c, vote)
+            comment_context(current, c, vote, warned.contains(&c.id))
         })
         .collect())
 }
 
-/// A comment for templates; `vote` is the viewer's.
-fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value {
+/// A comment for templates; `vote` is the viewer's, and `warned` whether
+/// its writer was warned about it.
+fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16, warned: bool) -> Value {
     let me = current.user.as_ref().map(|u| u.id);
     let own = comment.creator_id.is_some() && comment.creator_id == me;
     let may_comment = current.can(Permission::Comment);
@@ -279,6 +281,8 @@ fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value
         created_iso => comment.created_at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
         edited => comment.edited_at.is_some(),
         deleted => comment.is_deleted,
+        // `deleted` by its writer, `hidden` by staff or `held` as spam.
+        status => comment.status.as_str(),
         score => comment.score,
         vote => vote,
         collapsed => comment.score <= COLLAPSE_AT,
@@ -289,7 +293,9 @@ fn comment_context(current: &CurrentUser, comment: &Comment, vote: i16) -> Value
         sticky => comment.is_sticky,
         can_stick => moderate && !comment.is_deleted,
         can_hide => moderate && !comment.is_deleted,
-        can_restore => moderate && comment.is_deleted,
+        can_restore => moderate && comment.status == Status::Hidden,
+        warned => warned,
+        can_warn => current.can(Permission::BanUsers) && !own && comment.creator_id.is_some(),
     }
 }
 
@@ -495,7 +501,7 @@ async fn edit(
 async fn delete(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
     let (comment, _) = visible_comment(page.state(), &page.current, id).await?;
     check_author(&page.current, &comment)?;
-    comments::set_deleted(page.state().db.primary(), id, true).await?;
+    comments::delete(page.state().db.primary(), id).await?;
     tracing::info!(comment = id, "comment deleted by its author");
     Ok(Redirect::to(&format!("/posts/{}#comments", comment.post_id)).into_response())
 }
@@ -596,6 +602,17 @@ pub(crate) async fn report_comment(
     if comment.is_deleted {
         return Err(AppError::NotFound);
     }
+    if comment.creator_id == Some(user.id) {
+        return Err(AppError::BadRequest(
+            "You can't report your own comment".into(),
+        ));
+    }
+    // Before the rate limit, so a refused repeat doesn't use it up.
+    if comments::has_open_report(state.db.primary(), id, user.id).await? {
+        return Err(AppError::BadRequest(
+            ReportError::AlreadyReported.to_string(),
+        ));
+    }
     state.rate_limits.check_report(user.id).await?;
     match comments::report(state.db.primary(), id, user.id, reason).await {
         Ok(()) => {}
@@ -628,6 +645,7 @@ fn comment_action(
 ) -> NewAction<'static> {
     let action = NewAction::new(actor, kind)
         .post(comment.post_id)
+        .subject(SubjectKind::Comment, comment.id)
         .details(serde_json::json!({ "comment_id": comment.id, "reports": reports }));
     match comment.creator_id {
         Some(author) => action.user(author),
@@ -653,12 +671,22 @@ pub(crate) async fn moderate(
         )));
     }
     let (comment, _) = visible_comment(state, current, id).await?;
+    let act = if hidden { Act::Against } else { Act::For };
+    crate::ranks::check_moderate(state, current, comment.creator_id, act).await?;
     let mut tx = state.db.primary().begin().await?;
-    if !comments::set_deleted(&mut *tx, id, hidden).await? {
-        return Err(AppError::BadRequest(if hidden {
-            "The comment is already hidden".into()
-        } else {
-            "The comment isn't hidden".into()
+    if !comments::set_hidden(&mut *tx, id, hidden).await? {
+        // Held writing is the spam queue's to settle, and what its writer
+        // deleted stays theirs.
+        let status = comments::by_id(&mut *tx, id)
+            .await?
+            .map_or(comment.status, |c| c.status);
+        return Err(AppError::BadRequest(match (status, hidden) {
+            (Status::Held, _) => {
+                "The comment is held as likely spam: approve or reject it under Moderation → Held for review".into()
+            }
+            (Status::Deleted, _) => "Its writer deleted the comment".into(),
+            (_, true) => "The comment is already hidden".into(),
+            (_, false) => "The comment isn't hidden".into(),
         }));
     }
     let reports = if hidden {
@@ -678,6 +706,15 @@ pub(crate) async fn moderate(
     .await?;
     tx.commit().await?;
     tracing::info!(comment = id, hidden, "comment moderated");
+    let told = match (hidden, reason) {
+        (true, "") => format!("Your comment on post #{} was hidden", comment.post_id),
+        (true, why) => format!(
+            "Your comment on post #{} was hidden: “{why}”",
+            comment.post_id
+        ),
+        (false, _) => format!("Your comment on post #{} was restored", comment.post_id),
+    };
+    crate::notifications::moderated(state, comment.creator_id, actor, &told, &url(&comment)).await;
     Ok(comment)
 }
 
@@ -740,6 +777,8 @@ pub(crate) async fn dismiss(
     current.require(Permission::ModerateComments)?;
     let actor = current.user.as_ref().map(|u| u.id);
     let (comment, _) = visible_comment(state, current, id).await?;
+    // Not about one's own comment, nor one of someone at or above them.
+    crate::ranks::check_moderate(state, current, comment.creator_id, Act::For).await?;
     let mut tx = state.db.primary().begin().await?;
     let dismissed = comments::resolve_reports(&mut *tx, id, false, actor).await?;
     if dismissed == 0 {
@@ -794,7 +833,15 @@ async fn report_queue(
             let reasons: Vec<Value> = reports
                 .iter()
                 .filter(|r| r.comment_id == c.id)
-                .map(|r| context! { by => r.creator_name, reason => r.reason })
+                .map(|r| {
+                    context! {
+                        by => r.creator_name,
+                        reason => r.reason,
+                        // What the comment said then, if it was changed since.
+                        then => (!r.snapshot.is_empty() && r.snapshot != c.body)
+                            .then(|| Value::from_safe_string(markup::render(&r.snapshot))),
+                    }
+                })
                 .collect();
             context! { comment => comment, reports => reasons }
         })
@@ -1273,6 +1320,170 @@ mod tests {
                 .body
                 .contains("id=\"new-comment\"")
         );
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn staff_moderate_only_comments_below_them(pool: PgPool) {
+        let app = app(&pool).await;
+        let post = post(&pool, "active").await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let comment = async |who: &str| -> i64 {
+            let response = app
+                .post_form(
+                    &format!("/posts/{post}/comments"),
+                    Some(who),
+                    &[],
+                    "body=Hello",
+                )
+                .await;
+            let location = response.location.unwrap();
+            location
+                .rsplit("#comment-")
+                .next()
+                .unwrap()
+                .parse()
+                .unwrap()
+        };
+        let mods = comment(&moderator).await;
+        let hide = app
+            .post_form(
+                &format!("/comments/{mods}/hide"),
+                Some(&janitor),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(hide.status, StatusCode::FORBIDDEN);
+        // Reports on their own comment are for others to settle.
+        app.post_form(
+            &format!("/comments/{mods}/report"),
+            Some(&alice),
+            &[],
+            "reason=rude",
+        )
+        .await;
+        let dismissed = app
+            .post(
+                &format!("/comments/{mods}/reports/dismiss"),
+                Some(&moderator),
+                &[],
+            )
+            .await;
+        assert_eq!(dismissed.status, StatusCode::FORBIDDEN);
+        // They may hide their own, but not bring it back.
+        let own = app
+            .post_form(
+                &format!("/comments/{mods}/hide"),
+                Some(&moderator),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(own.status, StatusCode::SEE_OTHER);
+        let back = app
+            .post(&format!("/comments/{mods}/restore"), Some(&moderator), &[])
+            .await;
+        assert_eq!(back.status, StatusCode::FORBIDDEN);
+        // A member's is fine; one its writer deleted stays deleted.
+        let alices = comment(&alice).await;
+        let hidden = app
+            .post_form(
+                &format!("/comments/{alices}/hide"),
+                Some(&janitor),
+                &[],
+                "reason=x",
+            )
+            .await;
+        assert_eq!(hidden.status, StatusCode::SEE_OTHER);
+        let told: String = sqlx::query_scalar(
+            "SELECT n.subject FROM notifications n JOIN users u ON u.id = n.user_id
+             WHERE u.name = 'alice' AND n.kind = 'moderation'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            told,
+            format!("Your comment on post #{post} was hidden: “x”")
+        );
+        let deleted = comment(&alice).await;
+        app.post(&format!("/comments/{deleted}/delete"), Some(&alice), &[])
+            .await;
+        let restore = app
+            .post(&format!("/comments/{deleted}/restore"), Some(&janitor), &[])
+            .await;
+        assert_eq!(restore.status, StatusCode::BAD_REQUEST);
+        assert!(restore.body.contains("writer deleted"), "{}", restore.body);
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn writers_are_warned_about_what_they_wrote(pool: PgPool) {
+        let app = TestApp::new(
+            test_state(&pool).await,
+            routes()
+                .merge(crate::posts::routes())
+                .merge(crate::user_moderation::routes()),
+        );
+        let post = post(&pool, "active").await;
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let bob = session_for(&pool, "bob", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let response = app
+            .post_form(
+                &format!("/posts/{post}/comments"),
+                Some(&alice),
+                &[],
+                "body=You+idiot",
+            )
+            .await;
+        let id: i64 = response
+            .location
+            .unwrap()
+            .rsplit("#comment-")
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let warn = format!("about=comment%3A{id}&reason=Be+civil");
+        // Those who can ban, about the writer's own words.
+        for who in [&janitor, &bob] {
+            let refused = app
+                .post_form("/users/alice/warn", Some(who), &[], &warn)
+                .await;
+            assert_eq!(refused.status, StatusCode::FORBIDDEN);
+        }
+        let wrong = app
+            .post_form("/users/bob/warn", Some(&moderator), &[], &warn)
+            .await;
+        assert_eq!(wrong.status, StatusCode::NOT_FOUND, "not bob's comment");
+        let warned = app
+            .post_form("/users/alice/warn", Some(&moderator), &[], &warn)
+            .await;
+        assert_eq!(warned.status, StatusCode::SEE_OTHER, "{}", warned.body);
+        let page = app.get(&format!("/posts/{post}"), Some(&bob)).await.body;
+        assert!(page.contains("Its writer was warned about this"), "{page}");
+        let told: String =
+            sqlx::query_scalar("SELECT subject FROM notifications WHERE kind = 'moderation'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            told,
+            format!("You were warned about your comment on post #{post}: “Be civil”")
+        );
+        let record = app
+            .get("/moderation/users/alice", Some(&moderator))
+            .await
+            .body;
+        assert!(record.contains("Be civil"), "{record}");
+        let logged: String = sqlx::query_scalar("SELECT action FROM mod_actions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logged, "user.warn");
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

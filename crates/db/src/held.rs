@@ -1,7 +1,7 @@
 //! Writing held for review as likely spam: comments, forum posts and
 //! messages, kept hidden with why until the staff approve or reject them.
 
-use sqlx::{PgExecutor, PgPool};
+use sqlx::{PgConnection, PgExecutor};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,8 +48,9 @@ pub struct Held {
     pub edited: bool,
 }
 
-/// Everything held, as one list: `$1` limits it, `$2` offsets it, and
-/// `$3`, if not null, picks one `kind` and `$4` one id.
+/// Everything held, as one list: `$1` limits it, `$2` offsets it, `$3`,
+/// if not null, picks one `kind` and `$4` one id, and `$5` leaves out
+/// messages unless true.
 const HELD: &str = "
     SELECT * FROM (
         SELECT 'comment' AS kind, c.id, c.creator_id, u.name::text AS creator_name, c.body,
@@ -57,30 +58,36 @@ const HELD: &str = "
                c.post_id AS parent_id, NULL::bigint AS recipient_id, NULL::text AS recipient_name,
                c.edited_at IS NOT NULL AS edited
         FROM comments c LEFT JOIN users u ON u.id = c.creator_id
-        WHERE c.held_reason IS NOT NULL
+        WHERE c.status = 'held'
         UNION ALL
         SELECT 'forum_post', p.id, p.creator_id, u.name::text, p.body, t.title, p.held_reason,
                p.created_at, p.topic_id, NULL, NULL, p.updated_at > p.created_at
         FROM forum_posts p JOIN forum_topics t ON t.id = p.topic_id
         LEFT JOIN users u ON u.id = p.creator_id
-        WHERE p.held_reason IS NOT NULL
+        WHERE p.status = 'held'
         UNION ALL
         SELECT 'dmail', d.id, d.from_id, u.name::text, d.body, d.title, d.held_reason,
                d.created_at, NULL, d.to_id, r.name::text, false
         FROM dmails d LEFT JOIN users u ON u.id = d.from_id LEFT JOIN users r ON r.id = d.to_id
-        WHERE d.held_reason IS NOT NULL
+        WHERE d.status = 'held'
     ) held
-    WHERE $3::text IS NULL OR (kind = $3 AND id = $4)
+    WHERE ($3::text IS NULL OR (kind = $3 AND id = $4)) AND ($5 OR kind <> 'dmail')
     ORDER BY created_at, id
     LIMIT $1 OFFSET $2";
 
-/// What's held, oldest first.
-pub async fn list(db: impl PgExecutor<'_>, offset: i64, limit: i64) -> sqlx::Result<Vec<Held>> {
+/// What's held, oldest first; messages only `with_dmails`.
+pub async fn list(
+    db: impl PgExecutor<'_>,
+    offset: i64,
+    limit: i64,
+    with_dmails: bool,
+) -> sqlx::Result<Vec<Held>> {
     sqlx::query_as(HELD)
         .bind(limit)
         .bind(offset)
         .bind(None::<&str>)
         .bind(0_i64)
+        .bind(with_dmails)
         .fetch_all(db)
         .await
 }
@@ -92,96 +99,107 @@ pub async fn get(db: impl PgExecutor<'_>, kind: Kind, id: i64) -> sqlx::Result<O
         .bind(0_i64)
         .bind(kind.as_str())
         .bind(id)
+        .bind(true)
         .fetch_optional(db)
         .await
 }
 
-pub async fn count(db: impl PgExecutor<'_>) -> sqlx::Result<i64> {
+/// How much is held; messages only `with_dmails`.
+pub async fn count(db: impl PgExecutor<'_>, with_dmails: bool) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM comments WHERE held_reason IS NOT NULL)
-              + (SELECT count(*) FROM forum_posts WHERE held_reason IS NOT NULL)
-              + (SELECT count(*) FROM dmails WHERE held_reason IS NOT NULL)",
+        "SELECT (SELECT count(*) FROM comments WHERE status = 'held')
+              + (SELECT count(*) FROM forum_posts WHERE status = 'held')
+              + CASE WHEN $1 THEN (SELECT count(*) FROM dmails WHERE status = 'held') ELSE 0 END",
     )
+    .bind(with_dmails)
     .fetch_one(db)
     .await
 }
 
 /// Lets a held item through, as if it had just been posted; false if it
-/// wasn't held (any more).
-pub async fn approve(db: &PgPool, kind: Kind, id: i64) -> sqlx::Result<bool> {
-    let mut tx = db.begin().await?;
-    let done = match kind {
-        Kind::Comment => {
-            sqlx::query(
-                "UPDATE comments SET is_deleted = false, held_reason = NULL
-                 WHERE id = $1 AND held_reason IS NOT NULL",
-            )
-            .bind(id)
-            .execute(&mut *tx)
-            .await?
-        }
+/// wasn't held (any more). Why it was held is kept. Call it in the
+/// transaction logging the decision.
+pub async fn approve(conn: &mut PgConnection, kind: Kind, id: i64) -> sqlx::Result<bool> {
+    let done = sqlx::query(match kind {
+        Kind::Comment => "UPDATE comments SET status = 'active' WHERE id = $1 AND status = 'held'",
         Kind::ForumPost => {
-            let done = sqlx::query(
-                "UPDATE forum_posts SET is_hidden = false, held_reason = NULL
-                 WHERE id = $1 AND held_reason IS NOT NULL",
-            )
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-            sqlx::query(
-                "UPDATE forum_topics SET is_deleted = false, is_held = false
-                 WHERE is_held AND id = (SELECT topic_id FROM forum_posts WHERE id = $1)",
-            )
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
-            done
+            "UPDATE forum_posts SET status = 'active' WHERE id = $1 AND status = 'held'"
         }
-        Kind::Dmail => {
-            sqlx::query(
-                "UPDATE dmails SET is_deleted = false, held_reason = NULL
-                 WHERE id = $1 AND held_reason IS NOT NULL",
-            )
-            .bind(id)
-            .execute(&mut *tx)
-            .await?
-        }
-    };
-    tx.commit().await?;
+        Kind::Dmail => "UPDATE dmails SET status = 'active' WHERE id = $1 AND status = 'held'",
+    })
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    if kind == Kind::ForumPost && done.rows_affected() == 1 {
+        // A topic held for its opening post comes out with it.
+        sqlx::query(
+            "UPDATE forum_topics SET is_deleted = false, is_held = false
+             WHERE is_held AND id = (SELECT topic_id FROM forum_posts WHERE id = $1)",
+        )
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    }
     Ok(done.rows_affected() == 1)
 }
 
-/// Keeps a held item hidden for good (a message never reaches its
-/// recipient); false if it wasn't held (any more).
+/// Keeps a held item from showing for good: comments and forum posts are
+/// hidden as staff hide them, and a message is kept but never reaches its
+/// recipient. False if it wasn't held (any more).
 pub async fn reject(db: impl PgExecutor<'_>, kind: Kind, id: i64) -> sqlx::Result<bool> {
     let sql = match kind {
-        Kind::Comment => {
-            "UPDATE comments SET held_reason = NULL WHERE id = $1 AND held_reason IS NOT NULL"
-        }
+        Kind::Comment => "UPDATE comments SET status = 'hidden' WHERE id = $1 AND status = 'held'",
         Kind::ForumPost => {
-            "UPDATE forum_posts SET held_reason = NULL WHERE id = $1 AND held_reason IS NOT NULL"
+            "UPDATE forum_posts SET status = 'hidden' WHERE id = $1 AND status = 'held'"
         }
-        Kind::Dmail => "DELETE FROM dmails WHERE id = $1 AND held_reason IS NOT NULL",
+        Kind::Dmail => "UPDATE dmails SET status = 'rejected' WHERE id = $1 AND status = 'held'",
     };
     let done = sqlx::query(sql).bind(id).execute(db).await?;
     Ok(done.rows_affected() == 1)
 }
 
-/// How many times `user_id` posted exactly `body` (comments, forum posts
-/// and messages sent) in the past day, or changed one to it.
+/// How many times `user_id` posted `body` (comments, forum posts and
+/// messages sent) in the past day, or changed one to it, counting texts
+/// the same when their letters and digits are, whatever the case, the
+/// spacing, the punctuation or the look-alike letters used.
 pub async fn repeats(db: impl PgExecutor<'_>, user_id: i64, body: &str) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "SELECT (SELECT count(*) FROM comments
-                 WHERE creator_id = $1 AND body = $2
-                   AND coalesce(edited_at, created_at) > now() - interval '1 day')
-              + (SELECT count(*) FROM forum_posts
-                 WHERE creator_id = $1 AND body = $2 AND updated_at > now() - interval '1 day')
-              + (SELECT count(*) FROM dmails
-                 WHERE owner_id = $1 AND from_id = $1 AND body = $2
-                   AND created_at > now() - interval '1 day')",
+        "WITH wanted AS (
+             SELECT regexp_replace(lower(normalize($2, NFKC)), '[^[:alnum:]]+', '', 'g') AS text)
+         SELECT (SELECT count(*) FROM comments, wanted
+                 WHERE creator_id = $1
+                   AND coalesce(edited_at, created_at) > now() - interval '1 day'
+                   AND regexp_replace(lower(normalize(body, NFKC)), '[^[:alnum:]]+', '', 'g')
+                       = wanted.text)
+              + (SELECT count(*) FROM forum_posts, wanted
+                 WHERE creator_id = $1 AND updated_at > now() - interval '1 day'
+                   AND regexp_replace(lower(normalize(body, NFKC)), '[^[:alnum:]]+', '', 'g')
+                       = wanted.text)
+              + (SELECT count(*) FROM dmails, wanted
+                 WHERE owner_id = $1 AND from_id = $1 AND created_at > now() - interval '1 day'
+                   AND regexp_replace(lower(normalize(body, NFKC)), '[^[:alnum:]]+', '', 'g')
+                       = wanted.text)",
     )
     .bind(user_id)
     .bind(body)
+    .fetch_one(db)
+    .await
+}
+
+/// How many comments, forum posts and uploads `user_id` has out, up to
+/// `cap`.
+pub async fn posts_out(db: impl PgExecutor<'_>, user_id: i64, cap: i64) -> sqlx::Result<i64> {
+    sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM (SELECT 1 FROM comments
+                                       WHERE creator_id = $1 AND status = 'active' LIMIT $2) c)
+              + (SELECT count(*) FROM (SELECT 1 FROM forum_posts
+                                       WHERE creator_id = $1 AND status = 'active' LIMIT $2) f)
+              + (SELECT count(*) FROM (SELECT 1 FROM posts
+                                       WHERE uploader_id = $1 AND status IN ('active', 'flagged')
+                                       LIMIT $2) p)",
+    )
+    .bind(user_id)
+    .bind(cap)
     .fetch_one(db)
     .await
 }
@@ -238,6 +256,14 @@ mod tests {
                 .edited
         );
         assert_eq!(repeats(&pool, alice, "Spam").await.unwrap(), 2);
+        // The same, written a little differently.
+        assert_eq!(repeats(&pool, alice, "  SPAM!!").await.unwrap(), 2);
+        assert_eq!(repeats(&pool, alice, "Ｓｐａｍ").await.unwrap(), 2);
+        assert_eq!(posts_out(&pool, alice, 5).await.unwrap(), 0, "all held");
+        comments::create(&pool, post, alice, "Fine", true)
+            .await
+            .unwrap();
+        assert_eq!(posts_out(&pool, alice, 5).await.unwrap(), 1);
 
         let category: i16 = sqlx::query_scalar("SELECT min(id) FROM forum_categories")
             .fetch_one(&pool)

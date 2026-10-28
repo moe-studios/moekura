@@ -11,7 +11,8 @@
       <p><a href="/posts/{{ row.comment.post_id }}">{{ t("post-number", id=row.comment.post_id) }}</a></p>
       {% with comment = row.comment %}{% include "comment.html" %}{% endwith %}
       <ul class="plain">
-        {% for r in row.reports %}<li>“{{ r.reason }}”{% if r.by %} <span class="hint">— {{ r.by }}</span>{% endif %}</li>{% endfor %}
+        {% for r in row.reports %}<li>“{{ r.reason }}”{% if r.by %} <span class="hint">— {{ r.by }}</span>{% endif %}
+          {% if r.then %}<details><summary>{{ t("report-text-then") }}</summary><div class="markup">{{ r.then }}</div></details>{% endif %}</li>{% endfor %}
       </ul>
       <div class="actions">
         <form method="post" action="/comments/{{ row.comment.id }}/reports/dismiss"><button type="submit" class="secondary">{{ t("dismiss") }}</button></form>

@@ -9,6 +9,7 @@ PostgreSQL:
 | `media.hash_pixels` | once, after the upgrade that added pixel hashes: hashes the pixels of earlier posts, for pixel-perfect duplicate warnings |
 | `tags.apply_relation` | re-tags existing posts when an alias or implication is approved |
 | `posts.purge` | removes a purged post and its files |
+| `posts.expire_stale` | hourly, deletes posts left waiting too long, when [Posts left waiting](moderation.md#posts-left-waiting) is set |
 | `ml.tag_post` | suggests tags for a post; only [`moekura tagger`](tagger.md) takes these |
 | `ml.tag_staged` | suggests tags for an uploaded file's post form, before it's posted; also only for the tagger |
 | `stats.refresh` | hourly, counts the figures for [stats and reports](moderation.md#stats-and-reports) |

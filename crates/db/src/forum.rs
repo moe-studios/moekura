@@ -5,6 +5,8 @@
 use sqlx::{PgExecutor, PgPool};
 use time::OffsetDateTime;
 
+pub use crate::writing::Status;
+
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct Category {
     pub id: i16,
@@ -33,6 +35,8 @@ pub struct Topic {
     pub is_sticky: bool,
     pub is_locked: bool,
     pub is_deleted: bool,
+    /// Deleted only because its opening post is held as likely spam.
+    pub is_held: bool,
     pub merged_into_id: Option<i64>,
     pub post_count: i32,
     pub last_posted_at: OffsetDateTime,
@@ -49,7 +53,7 @@ macro_rules! select_topics {
         concat!(
             "SELECT t.id, t.category_id, c.name AS category_name, t.creator_id,
                     cu.name::text AS creator_name, t.title, t.is_sticky, t.is_locked,
-                    t.is_deleted, t.merged_into_id, t.post_count, t.last_posted_at,
+                    t.is_deleted, t.is_held, t.merged_into_id, t.post_count, t.last_posted_at,
                     lu.name::text AS last_poster_name, t.created_at, t.updated_at,
                     ($1::bigint IS NOT NULL AND t.last_posted_at > greatest(
                         (SELECT v.read_at FROM forum_topic_visits v
@@ -132,7 +136,9 @@ pub struct Post {
     pub creator_name: Option<String>,
     pub updater_name: Option<String>,
     pub body: String,
+    /// Not active: hidden or held (see `status`).
     pub is_hidden: bool,
+    pub status: Status,
     pub score: i32,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
@@ -144,7 +150,7 @@ macro_rules! select_posts {
         concat!(
             "SELECT p.id, p.topic_id, t.title AS topic_title, p.creator_id,
                     cu.name::text AS creator_name, uu.name::text AS updater_name, p.body,
-                    p.is_hidden, p.score, p.created_at, p.updated_at
+                    p.is_hidden, p.status, p.score, p.created_at, p.updated_at
              FROM forum_posts p
              JOIN forum_topics t ON t.id = p.topic_id
              LEFT JOIN users cu ON cu.id = p.creator_id
@@ -249,7 +255,7 @@ pub async fn create_topic(
     Ok((topic, post))
 }
 
-/// Adds a post; when `held` (for review, with why), it's hidden until the
+/// Adds a post; when `held` (for review, with why), it's held until the
 /// staff approve it.
 pub async fn create_post(
     db: impl PgExecutor<'_>,
@@ -259,13 +265,17 @@ pub async fn create_post(
     held: Option<&str>,
 ) -> sqlx::Result<i64> {
     sqlx::query_scalar(
-        "INSERT INTO forum_posts (topic_id, creator_id, body, is_hidden, held_reason)
+        "INSERT INTO forum_posts (topic_id, creator_id, body, status, held_reason)
          VALUES ($1, $2, $3, $4, $5) RETURNING id",
     )
     .bind(topic_id)
     .bind(creator_id)
     .bind(body)
-    .bind(held.is_some())
+    .bind(if held.is_some() {
+        Status::Held
+    } else {
+        Status::Active
+    })
     .bind(held)
     .fetch_one(db)
     .await
@@ -282,7 +292,8 @@ pub async fn update_post(
 ) -> sqlx::Result<bool> {
     let done = sqlx::query(
         "UPDATE forum_posts SET body = $2, updater_id = $3, updated_at = now(),
-                is_hidden = is_hidden OR $4::text IS NOT NULL,
+                status = CASE WHEN $4::text IS NOT NULL AND status = 'active' THEN 'held'
+                              ELSE status END,
                 held_reason = coalesce($4, held_reason)
          WHERE id = $1",
     )
@@ -295,27 +306,47 @@ pub async fn update_post(
     Ok(done.rows_affected() > 0)
 }
 
-/// Hides or shows a post, which settles it if it was held; showing a held
-/// topic's opening post shows the topic too.
-pub async fn set_post_hidden(db: &PgPool, id: i64, hidden: bool) -> sqlx::Result<bool> {
-    let mut tx = db.begin().await?;
-    let topic: Option<i64> = sqlx::query_scalar(
-        "UPDATE forum_posts SET is_hidden = $2, held_reason = NULL WHERE id = $1 RETURNING topic_id",
+/// An earlier text of a forum post.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct Version {
+    pub body: String,
+    pub writer_name: Option<String>,
+    pub written_at: OffsetDateTime,
+    pub replacer_name: Option<String>,
+    pub replaced_at: OffsetDateTime,
+}
+
+/// Post `id`'s earlier texts, the latest first.
+pub async fn versions(db: impl PgExecutor<'_>, id: i64) -> sqlx::Result<Vec<Version>> {
+    sqlx::query_as(
+        "SELECT v.body, w.name::text AS writer_name, v.written_at,
+                r.name::text AS replacer_name, v.replaced_at
+         FROM forum_post_versions v
+         LEFT JOIN users w ON w.id = v.writer_id
+         LEFT JOIN users r ON r.id = v.replacer_id
+         WHERE v.post_id = $1 ORDER BY v.id DESC",
     )
     .bind(id)
-    .bind(hidden)
-    .fetch_optional(&mut *tx)
-    .await?;
-    if let (Some(topic), false) = (topic, hidden) {
-        sqlx::query(
-            "UPDATE forum_topics SET is_deleted = false, is_held = false WHERE id = $1 AND is_held",
-        )
-        .bind(topic)
-        .execute(&mut *tx)
+    .fetch_all(db)
+    .await
+}
+
+/// Hides an active post as staff, or (with `hidden` false) shows one staff
+/// hid; false if it wasn't. Neither touches what the spam filter holds:
+/// that's for the staff to approve or reject.
+pub async fn set_post_hidden(db: impl PgExecutor<'_>, id: i64, hidden: bool) -> sqlx::Result<bool> {
+    let (from, to) = if hidden {
+        (Status::Active, Status::Hidden)
+    } else {
+        (Status::Hidden, Status::Active)
+    };
+    let done = sqlx::query("UPDATE forum_posts SET status = $3 WHERE id = $1 AND status = $2")
+        .bind(id)
+        .bind(from)
+        .bind(to)
+        .execute(db)
         .await?;
-    }
-    tx.commit().await?;
-    Ok(topic.is_some())
+    Ok(done.rows_affected() == 1)
 }
 
 /// Changes a topic's title and category.
@@ -344,13 +375,19 @@ pub struct Flags {
     pub deleted: Option<bool>,
 }
 
+/// Changes a topic's flags; false if nothing changed. A topic held for
+/// its opening post can be deleted, but not brought back here: approving
+/// the post does that.
 pub async fn set_flags(db: impl PgExecutor<'_>, id: i64, flags: Flags) -> sqlx::Result<bool> {
     let done = sqlx::query(
         "UPDATE forum_topics SET is_sticky = coalesce($2, is_sticky),
                                  is_locked = coalesce($3, is_locked),
                                  is_deleted = coalesce($4, is_deleted),
                                  is_held = is_held AND $4 IS NULL, updated_at = now()
-         WHERE id = $1",
+         WHERE id = $1 AND NOT (is_held AND $4 IS FALSE)
+           AND (is_sticky, is_locked, is_deleted)
+               IS DISTINCT FROM (coalesce($2, is_sticky), coalesce($3, is_locked),
+                                 coalesce($4, is_deleted))",
     )
     .bind(id)
     .bind(flags.sticky)
@@ -362,13 +399,12 @@ pub async fn set_flags(db: impl PgExecutor<'_>, id: i64, flags: Flags) -> sqlx::
 }
 
 /// Moves topic `from`'s posts into topic `into`, then deletes `from`,
-/// remembering where they went.
-pub async fn merge(db: &PgPool, from: i64, into: i64) -> sqlx::Result<()> {
-    let mut tx = db.begin().await?;
+/// remembering where they went; call it in the transaction logging it.
+pub async fn merge(conn: &mut sqlx::PgConnection, from: i64, into: i64) -> sqlx::Result<()> {
     sqlx::query("UPDATE forum_posts SET topic_id = $2 WHERE topic_id = $1")
         .bind(from)
         .bind(into)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     sqlx::query(
         "UPDATE forum_topics SET is_deleted = true, merged_into_id = $2, updated_at = now()
@@ -376,9 +412,9 @@ pub async fn merge(db: &PgPool, from: i64, into: i64) -> sqlx::Result<()> {
     )
     .bind(from)
     .bind(into)
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
-    tx.commit().await
+    Ok(())
 }
 
 /// Sets `user_id`'s vote on a post: `1`, `-1`, or `0` to take it back.
@@ -578,6 +614,50 @@ mod tests {
     }
 
     #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn held_topics_come_out_only_by_approval(pool: PgPool) {
+        let alice = user(&pool, "alice").await;
+        let general = categories(&pool).await.unwrap()[0].id;
+        let (topic, first) = create_topic(
+            &pool,
+            general,
+            Some(alice),
+            "Buy",
+            "Cheap pills",
+            Some("words"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            post(&pool, first).await.unwrap().unwrap().status,
+            Status::Held
+        );
+        // Neither showing the post nor undeleting the topic lets it out.
+        assert!(!set_post_hidden(&pool, first, false).await.unwrap());
+        let undelete = Flags {
+            deleted: Some(false),
+            ..Flags::default()
+        };
+        assert!(!set_flags(&pool, topic, undelete).await.unwrap());
+        let found = super::topic(&pool, None, topic).await.unwrap().unwrap();
+        assert!(found.is_deleted);
+        let mut tx = pool.begin().await.unwrap();
+        assert!(
+            crate::held::approve(&mut tx, crate::held::Kind::ForumPost, first)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        let found = super::topic(&pool, None, topic).await.unwrap().unwrap();
+        assert!(!found.is_deleted);
+        assert_eq!(
+            post(&pool, first).await.unwrap().unwrap().status,
+            Status::Active
+        );
+        // Nothing to change: false.
+        assert!(!set_flags(&pool, topic, undelete).await.unwrap());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
     async fn topics_posts_votes_and_reading(pool: PgPool) {
         let alice = user(&pool, "alice").await;
         let bob = user(&pool, "bob").await;
@@ -655,6 +735,17 @@ mod tests {
             .await
             .unwrap();
         assert!(!post(&pool, first).await.unwrap().unwrap().is_hidden);
+        // Each change keeps the text it replaced.
+        let earlier = versions(&pool, first).await.unwrap();
+        assert_eq!(
+            earlier.iter().map(|v| v.body.as_str()).collect::<Vec<_>>(),
+            ["First post"]
+        );
+        assert_eq!(earlier[0].writer_name.as_deref(), Some("alice"));
+        assert_eq!(earlier[0].replacer_name.as_deref(), Some("alice"));
+        let replaced = versions(&pool, reply).await.unwrap();
+        assert_eq!(replaced[0].body, "A reply about cats");
+        assert_eq!(replaced[0].writer_name.as_deref(), Some("bob"));
         set_post_hidden(&pool, reply, true).await.unwrap();
         assert_eq!(
             super::topic(&pool, None, topic)
@@ -695,7 +786,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(searched.len(), 1);
-        merge(&pool, other, topic).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        merge(&mut tx, other, topic).await.unwrap();
+        tx.commit().await.unwrap();
         assert_eq!(
             super::topic(&pool, None, topic)
                 .await

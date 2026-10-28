@@ -1,0 +1,16 @@
+{# The fields of a form banning a user: reason, length, and what it
+   takes away (`ban_permissions`, from bans::durations' page). #}
+<label for="ban-reason">{{ t("reason") }}</label>
+<input id="ban-reason" name="reason" maxlength="2000" required>
+<label for="ban-days">{{ t("ban-for") }}</label>
+<select id="ban-days" name="days">
+  {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ t("ban-for-" ~ (d.days or "ever")) }}</option>{% endfor %}
+</select>
+<fieldset class="ban-kind">
+  <legend>{{ t("ban-kind") }}</legend>
+  <label class="choice"><input type="radio" name="kind" value="full" checked> {{ t("ban-kind-full") }}</label>
+  <label class="choice"><input type="radio" name="kind" value="partial"> {{ t("ban-kind-partial") }}</label>
+  <div class="choices">
+    {% for p in ban_permissions %}<label class="choice"><input type="checkbox" name="restrict" value="{{ p }}"> {{ t("permission-" ~ p) }}</label>{% endfor %}
+  </div>
+</fieldset>

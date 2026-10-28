@@ -29,8 +29,13 @@ pub async fn candidates(db: &PgPool, rules: &Rules) -> sqlx::Result<Vec<Candidat
                      ON m.post_id = p.id AND m.action = 'post.delete'
                  WHERE p.uploader_id = u.id AND p.status = 'deleted'
                    AND m.created_at > now() - interval '30 days'),
+                -- Only staff's: one contributor's word, as a peer of
+                -- those promoted, isn't enough to hold someone back.
                 (SELECT count(*) FROM user_feedbacks f
-                 WHERE f.user_id = u.id AND f.category = 'negative' AND NOT f.is_deleted)
+                 JOIN users w ON w.id = f.creator_id JOIN roles wr ON wr.id = w.role_id
+                 WHERE f.user_id = u.id AND f.category = 'negative' AND NOT f.is_deleted
+                   AND (w.is_owner OR wr.rank > (SELECT rank FROM roles
+                                                 WHERE system_key = 'contributor')))
          FROM users u JOIN roles r ON r.id = u.role_id
          WHERE r.system_key = 'member' AND u.status = 'active' AND NOT u.auto_promotion_blocked AND NOT u.is_bot
            AND u.created_at <= now() - make_interval(days => $1)
@@ -61,13 +66,19 @@ pub async fn candidates(db: &PgPool, rules: &Rules) -> sqlx::Result<Vec<Candidat
         .collect())
 }
 
-/// Moves `candidate` from Member to Contributor, if they're still a
-/// member, and logs it. Returns whether they were promoted.
+/// Moves `candidate` from Member to Contributor, if they're still an
+/// active member, unbanned and not kept from promotion (all of which may
+/// have changed since [`candidates`]), and logs it. Returns whether they
+/// were promoted.
 pub async fn promote(db: &PgPool, candidate: &Candidate) -> sqlx::Result<bool> {
     let mut tx = db.begin().await?;
     let promoted = sqlx::query(
         "UPDATE users SET role_id = (SELECT id FROM roles WHERE system_key = $2)
-         WHERE id = $1 AND role_id = (SELECT id FROM roles WHERE system_key = $3)",
+         WHERE id = $1 AND role_id = (SELECT id FROM roles WHERE system_key = $3)
+           AND status = 'active' AND NOT auto_promotion_blocked
+           AND NOT EXISTS (SELECT 1 FROM bans b WHERE b.user_id = users.id
+                           AND b.lifted_at IS NULL
+                           AND (b.expires_at IS NULL OR b.expires_at > now()))",
     )
     .bind(candidate.user_id)
     .bind(SystemRole::Contributor.key())
@@ -114,13 +125,22 @@ pub async fn status(
 }
 
 /// Keeps a user from (or allows) automatic promotion.
-pub async fn set_blocked(db: &PgPool, user_id: i64, blocked: bool) -> sqlx::Result<()> {
-    sqlx::query("UPDATE users SET auto_promotion_blocked = $2 WHERE id = $1")
-        .bind(user_id)
-        .bind(blocked)
-        .execute(db)
-        .await?;
-    Ok(())
+/// Keeps a user from automatic promotion or allows it again; false if
+/// that was so already.
+pub async fn set_blocked(
+    db: impl sqlx::PgExecutor<'_>,
+    user_id: i64,
+    blocked: bool,
+) -> sqlx::Result<bool> {
+    let done = sqlx::query(
+        "UPDATE users SET auto_promotion_blocked = $2
+         WHERE id = $1 AND auto_promotion_blocked <> $2",
+    )
+    .bind(user_id)
+    .bind(blocked)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected() == 1)
 }
 
 #[cfg(test)]
@@ -227,5 +247,42 @@ mod tests {
             .await
             .unwrap();
         assert!(candidates(&pool, &rules).await.unwrap().is_empty());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn peers_dont_hold_promotions_back_and_bans_do(pool: PgPool) {
+        let rules = Rules {
+            uploads: 1,
+            edits: 0,
+            account_days: 7,
+            max_recent_deletions: 0,
+            max_negative_feedback: 0,
+        };
+        let member = user(&pool, "member", "member", 10).await;
+        let peer = user(&pool, "peer", "contributor", 10).await;
+        uploads(&pool, member, 1, "active").await;
+        sqlx::query(
+            "INSERT INTO user_feedbacks (user_id, creator_id, category, body)
+             VALUES ($1, $2, 'negative', 'I dislike them')",
+        )
+        .bind(member)
+        .bind(peer)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let found = candidates(&pool, &rules).await.unwrap();
+        assert_eq!(
+            found.len(),
+            1,
+            "a contributor's feedback alone doesn't count"
+        );
+
+        // Banned after the list was made: not promoted.
+        sqlx::query("INSERT INTO bans (user_id, reason) VALUES ($1, 'spam')")
+            .bind(member)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(!promote(&pool, &found[0]).await.unwrap());
     }
 }

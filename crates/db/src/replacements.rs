@@ -28,6 +28,9 @@ pub struct Replacement {
     pub new_file_size: i64,
     pub new_storage_key: String,
     pub created_at: OffsetDateTime,
+    /// When the earlier file was removed for good, and by whom.
+    pub old_removed_at: Option<OffsetDateTime>,
+    pub old_remover_name: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -47,6 +50,8 @@ pub enum ReplaceError {
 /// storage keys (no longer used, unless the same file comes back).
 #[derive(Debug)]
 pub struct Replaced {
+    /// The replacement's id.
+    pub id: i64,
     pub old: Asset,
     pub old_variant_keys: Vec<String>,
 }
@@ -76,12 +81,13 @@ pub async fn replace(
     if let Some(other) = crate::media::post_with_sha256(&mut *conn, new.sha256).await? {
         return Err(ReplaceError::Duplicate(other));
     }
-    sqlx::query(
+    let id: i64 = sqlx::query_scalar(
         "INSERT INTO post_replacements
              (post_id, creator_id, reason, source,
               old_sha256, old_md5, old_media_type, old_width, old_height, old_file_size, old_storage_key,
               new_sha256, new_md5, new_media_type, new_width, new_height, new_file_size, new_storage_key)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+         RETURNING id",
     )
     .bind(new.post_id)
     .bind(creator_id)
@@ -101,7 +107,7 @@ pub async fn replace(
     .bind(new.height)
     .bind(new.file_size)
     .bind(new.storage_key)
-    .execute(&mut *conn)
+    .fetch_one(&mut *conn)
     .await?;
     let updated = sqlx::query(
         "UPDATE media_assets
@@ -141,6 +147,7 @@ pub async fn replace(
         .execute(&mut *conn)
         .await?;
     Ok(Replaced {
+        id,
         old,
         old_variant_keys,
     })
@@ -164,8 +171,10 @@ pub async fn list(
         "SELECT r.id, r.post_id, r.creator_id, u.name::text AS creator_name, r.reason, r.source,
                 r.old_md5, r.old_media_type, r.old_width, r.old_height, r.old_file_size,
                 r.old_storage_key, r.new_md5, r.new_media_type, r.new_width, r.new_height,
-                r.new_file_size, r.new_storage_key, r.created_at
+                r.new_file_size, r.new_storage_key, r.created_at, r.old_removed_at,
+                x.name::text AS old_remover_name
          FROM post_replacements r LEFT JOIN users u ON u.id = r.creator_id
+         LEFT JOIN users x ON x.id = r.old_remover_id
          WHERE ($1::bigint IS NULL OR r.post_id = $1) AND ($2::bigint IS NULL OR r.creator_id = $2)
          ORDER BY r.id DESC OFFSET $3 LIMIT $4",
     )
@@ -182,12 +191,46 @@ pub async fn list(
 pub async fn old_keys(db: impl PgExecutor<'_>, post_id: i64) -> sqlx::Result<Vec<String>> {
     sqlx::query_scalar(
         "SELECT DISTINCT r.old_storage_key FROM post_replacements r
-         WHERE r.post_id = $1
+         WHERE r.post_id = $1 AND r.old_removed_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM media_assets a WHERE a.storage_key = r.old_storage_key)",
     )
     .bind(post_id)
     .fetch_all(db)
     .await
+}
+
+/// Marks replacement `id`'s earlier file removed, by `remover_id`, and
+/// returns its storage key if nothing else uses it (another post, or a
+/// replacement of one, may have the same file): the caller deletes that.
+/// `None` if it was removed already or isn't post `post_id`'s.
+pub async fn remove_old(
+    conn: &mut PgConnection,
+    post_id: i64,
+    id: i64,
+    remover_id: Option<i64>,
+) -> sqlx::Result<Option<Option<String>>> {
+    let key: Option<String> = sqlx::query_scalar(
+        "UPDATE post_replacements SET old_removed_at = now(), old_remover_id = $3
+         WHERE id = $1 AND post_id = $2 AND old_removed_at IS NULL
+         RETURNING old_storage_key",
+    )
+    .bind(id)
+    .bind(post_id)
+    .bind(remover_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    let used: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM media_assets WHERE storage_key = $1)
+             OR EXISTS (SELECT 1 FROM post_replacements
+                        WHERE old_storage_key = $1 AND old_removed_at IS NULL)",
+    )
+    .bind(&key)
+    .fetch_one(&mut *conn)
+    .await?;
+    Ok(Some((!used).then_some(key)))
 }
 
 #[cfg(test)]

@@ -37,8 +37,9 @@ roles can't be deleted and keep their ranks.
 | Purge posts | removing deleted posts and their files for good |
 | Manage tags, aliases and implications | moving tags between categories, deprecating tags, deciding alias and implication requests; banning artists, and renaming, deleting or restoring a banned artist's entry |
 | See deleted posts | deleted posts and comments |
-| Hide comments and handle reports about them | hiding and restoring anyone's comments, and the reported comments queue |
-| Ban users and networks | |
+| Hide comments and forum posts, and handle reports about them | hiding and restoring anyone's comments and forum posts, the reported comments queue, writing held as spam, and reports about forum posts, wiki pages, pools, notes and artists |
+| Read reported and held private messages | private messages their recipients reported or the spam filter held, and settling them |
+| Ban users and networks | also reports about users and feedback |
 | Manage users | changing other users' roles and account status; any number and kind of invites |
 | Manage site settings and roles | also the admin pages for tag categories, news and webhooks |
 | Read the moderation log | |
@@ -51,7 +52,7 @@ The built-in roles and what they start with:
 | Member | 10 | Anonymous, plus Upload, Edit posts and tags, Comment, Favorite, Vote, Flag posts, Edit the wiki and artists, Create and edit pools, Edit notes, Send private messages |
 | Contributor | 20 | Member, plus Upload without approval, Leave feedback |
 | Janitor | 30 | Contributor, plus Approve posts, Delete and restore posts, Manage tags, See deleted posts, Hide comments |
-| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits, Replace posts' files, Invite people |
+| Moderator | 40 | Janitor, plus Ban users and networks, Read the moderation log, Mass edit tags, Lock posts, Undo a user's post edits, Replace posts' files, Invite people, Read reported and held private messages |
 | Admin | 50 | everything |
 
 ## Upload limits
@@ -89,10 +90,13 @@ enough. Every hour, members are promoted who have at least the set
 number of approved uploads and post edits, have been registered for the
 set number of days, and have had at most the set number of uploads
 deleted in the last 30 days and at most the set number of negative
-[feedback](../using/account.md#feedback) records. Defaults: 50 uploads,
-no edits needed, 30 days, no recent deletions, no negative feedback.
+[feedback](../using/account.md#feedback) records from staff (ranked
+above contributors: one contributor's word alone doesn't hold someone
+back). Defaults: 50 uploads, no edits needed, 30 days, no recent
+deletions, no negative feedback.
 
-Banned members and [bots](bots.md) aren't promoted. Staff who manage
+Banned members and [bots](bots.md) aren't promoted, including those
+banned or kept from promotion while the hourly check runs. Staff who manage
 users can keep someone from automatic promotion with **Never promote
 automatically** on their profile. Promotions are in the moderation log,
 and profiles say when someone was promoted.
@@ -105,6 +109,29 @@ them used, or see their addresses. The same goes for changing
 roles: you can give or take away only roles ranked below your own that
 grant nothing you lack, and never change your own role or status. That keeps a mistake, or a
 compromised account, from locking out the people above it.
+
+The same goes for what people wrote or uploaded: deleting, restoring,
+rejecting or purging a post, dismissing flags on it or deciding its
+appeal; hiding or restoring a comment or dismissing reports about it;
+hiding, editing, renaming, locking or deleting forum posts and topics; and
+approving or rejecting writing held as spam all need you to outrank its
+writer or uploader (or the account to be gone). Your own you may act
+against, such as deleting your own upload, but not settle in your own
+favour: you can't restore your own deleted upload, grant its appeal,
+dismiss flags or reports about your own work, or show your own hidden
+comment again. Approving your own pending upload is still allowed, as
+the queue explains. A refusal says which applies.
+
+### The owner
+
+Admins share the top rank, so on their own they can't act on each other.
+One account is the site's **owner**, who outranks every role: the owner
+can ban, rename or change the role of an admin, give the admin role, and
+moderate what admins wrote or uploaded. The first admin created with
+`moekura admin create-user` becomes the owner (on sites that had admins
+before, the oldest one did). Only the shell changes it:
+`moekura admin set-owner NAME` hands ownership to someone else, and the
+log records it.
 
 From the shell, `moekura admin set-role NAME ROLE` changes anyone's role,
 which is how you recover if the last admin loses access, and

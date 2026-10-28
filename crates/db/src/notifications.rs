@@ -14,6 +14,9 @@ pub enum Kind {
     Request,
     /// Feedback left on one's account.
     Feedback,
+    /// Something staff did to what one posted, or to one's account; the
+    /// subject says it all, and who did it isn't told.
+    Moderation,
 }
 
 impl Kind {
@@ -25,6 +28,7 @@ impl Kind {
             Kind::Forum => "forum",
             Kind::Request => "request",
             Kind::Feedback => "feedback",
+            Kind::Moderation => "moderation",
         }
     }
 }

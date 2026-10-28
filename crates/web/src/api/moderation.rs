@@ -4,7 +4,7 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::mod_actions::{self, Entry, Filter};
 use moekura_db::post_batches::{self, PostBatch};
@@ -64,7 +64,7 @@ pub(crate) async fn approve(
 
 /// Reject a pending post.
 ///
-/// Needs `approve_posts`. The post is deleted.
+/// Needs `approve_posts`, and a reason. The post is deleted.
 #[utoipa::path(
     post,
     path = "/posts/{id}/reject",
@@ -74,7 +74,8 @@ pub(crate) async fn approve(
     request_body = Reason,
     responses(
         (status = 200, body = ApiPost),
-        (status = 400, body = ErrorBody, description = "The post isn't pending"),
+        (status = 400, body = ErrorBody, description = "The post isn't pending, or no reason was given"),
+        (status = 403, body = ErrorBody, description = "The uploader ranks at or above you"),
     ),
 )]
 pub(crate) async fn reject(
@@ -151,6 +152,30 @@ pub(crate) async fn disapprove(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Take back a disapproval.
+///
+/// Needs `approve_posts`. Takes back your disapproval of the post, so it's
+/// in your approval queue again.
+#[utoipa::path(
+    delete,
+    path = "/posts/{id}/disapprove",
+    operation_id = "withdraw_disapproval",
+    tag = "moderation",
+    params(("id" = i64, Path, description = "Post number")),
+    responses(
+        (status = 204, description = "Taken back"),
+        (status = 400, body = ErrorBody, description = "You hadn't disapproved it"),
+    ),
+)]
+pub(crate) async fn withdraw_disapproval(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    crate::moderation::withdraw(&state, &current, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Delete a post.
 ///
 /// Needs `delete_posts`, and a reason, which the post shows in its place.
@@ -179,7 +204,9 @@ pub(crate) async fn delete(
 
 /// Restore a deleted post.
 ///
-/// Needs `delete_posts`.
+/// Needs `delete_posts`, and to outrank the uploader: not your own upload.
+/// A post deleted before anyone approved it (a rejected one, say) goes
+/// back to the approval queue as pending rather than active.
 #[utoipa::path(
     post,
     path = "/posts/{id}/restore",
@@ -189,6 +216,7 @@ pub(crate) async fn delete(
     responses(
         (status = 200, body = ApiPost),
         (status = 400, body = ErrorBody, description = "The post isn't deleted"),
+        (status = 403, body = ErrorBody, description = "Your own upload, or the uploader ranks at or above you"),
     ),
 )]
 pub(crate) async fn restore(
@@ -202,7 +230,8 @@ pub(crate) async fn restore(
 /// Purge a deleted post.
 ///
 /// Needs `purge_posts`. The post, its files and its history are removed
-/// for good by a background job shortly after.
+/// for good by a background job shortly after, which logs the purge once
+/// the post is gone. A post with an open appeal can't be purged.
 #[utoipa::path(
     post,
     path = "/posts/{id}/purge",
@@ -329,8 +358,9 @@ pub struct PurgeRequest {
 ///
 /// Needs `purge_posts`. Give either `query` or `post_ids`. The posts,
 /// their files and their history are removed for good by a background
-/// job, each as `purge_post` would; posts restored before it gets to them
-/// are skipped. Follow the progress with `get_post_batch`.
+/// job, each as `purge_post` would; posts restored or appealed before it
+/// gets to them, and those whose status is locked unless you have
+/// `lock_posts`, are skipped. Follow the progress with `get_post_batch`.
 #[utoipa::path(
     post,
     path = "/moderation/purge",
@@ -575,6 +605,8 @@ pub struct ApiBan {
     pub id: i64,
     pub user: String,
     pub reason: String,
+    /// What a partial ban takes away; `null` for a full ban.
+    pub restricts: Option<Vec<String>>,
     pub banner: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -635,6 +667,12 @@ pub(crate) async fn list_bans(
                 id: b.id,
                 user: b.user_name,
                 reason: b.reason,
+                restricts: b.restricts.map(|bits| {
+                    crate::bans::restricted_keys(bits)
+                        .into_iter()
+                        .map(String::from)
+                        .collect()
+                }),
                 banner: b.banner_name,
                 created_at: b.created_at,
                 expires_at: b.expires_at,
@@ -666,12 +704,18 @@ pub struct NewBan {
     reason: String,
     /// How long, in days; leave out for until lifted.
     days: Option<i64>,
+    /// Only these permissions (`upload`, `comment`, `vote`, …); leave out
+    /// to ban them from everything but looking around.
+    #[serde(default)]
+    restricts: Option<Vec<String>>,
 }
 
 /// Ban a user.
 ///
-/// Needs `ban_users` and a role ranked above the user's. Banned users can
-/// look around as visitors do, but can't change anything.
+/// Needs `ban_users` and a role ranked above the user's, and to have set
+/// (or outrank whoever set) any ban it replaces. Banned users can look
+/// around as visitors do, but can't change anything; with `restricts`,
+/// they lose only those permissions.
 #[utoipa::path(
     post,
     path = "/users/{name}/ban",
@@ -692,7 +736,12 @@ pub(crate) async fn ban_user(
 ) -> Result<StatusCode, AppError> {
     current.require(Permission::BanUsers)?;
     let expires_at = expiry(ban.days)?;
-    crate::bans::ban(&state, &current, &name, &ban.reason, expires_at).await?;
+    let restricts = ban
+        .restricts
+        .as_deref()
+        .map(crate::bans::restrictions)
+        .transpose()?;
+    crate::bans::ban(&state, &current, &name, &ban.reason, expires_at, restricts).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -825,6 +874,11 @@ pub struct LogParams {
     post_id: Option<i64>,
     /// Only actions on this user.
     user: Option<String>,
+    /// Only actions about this kind of thing (`comment`, `forum_post`,
+    /// `forum_topic`, `dmail`, …), with `subject_id`.
+    subject: Option<String>,
+    /// The comment's, forum post's, … number, with `subject`.
+    subject_id: Option<i64>,
     /// Entries older than this id: a previous page's `next_before`.
     before: Option<i64>,
     /// Entries from this day on (`YYYY-MM-DD`, UTC).
@@ -843,6 +897,10 @@ pub struct LogEntry {
     pub post_id: Option<i64>,
     /// The user acted on.
     pub user: Option<String>,
+    /// What else it was about (`comment`, `forum_post`, …), with
+    /// `subject_id`.
+    pub subject: Option<String>,
+    pub subject_id: Option<i64>,
     pub reason: String,
     /// Anything else recorded, depending on the action.
     #[schema(value_type = Object)]
@@ -864,7 +922,9 @@ const LOG_PAGE: i64 = 50;
 
 /// Read the moderation log.
 ///
-/// Needs `view_audit_log`.
+/// Needs `view_audit_log`; staff who approve, delete or moderate what
+/// people post (or manage tags) without it read only the entries about
+/// that: not those about accounts, roles, settings or private messages.
 #[utoipa::path(
     get,
     path = "/moderation/log",
@@ -873,7 +933,7 @@ const LOG_PAGE: i64 = 50;
     params(LogParams),
     responses(
         (status = 200, body = LogPage),
-        (status = 400, body = ErrorBody, description = "Unknown action"),
+        (status = 400, body = ErrorBody, description = "Unknown action or subject"),
         (status = 422, body = ErrorBody, description = "A date isn't `YYYY-MM-DD`"),
     ),
 )]
@@ -882,7 +942,7 @@ pub(crate) async fn log(
     current: CurrentUser,
     Query(params): Query<LogParams>,
 ) -> Result<Json<LogPage>, AppError> {
-    current.require(Permission::ViewAuditLog)?;
+    let whole = crate::moderation::log_access(&current)?;
     let db = state.reader(&current);
     let user_id = async |name: Option<&str>| -> Result<Option<i64>, AppError> {
         match name {
@@ -905,11 +965,26 @@ pub(crate) async fn log(
         })
     };
     let (since, until) = crate::moderation::day_span(day(&params.since)?, day(&params.until)?);
+    let subject = match (params.subject.as_deref(), params.subject_id) {
+        (None, None) => None,
+        (Some(kind), Some(id)) => Some((
+            SubjectKind::parse(kind)
+                .ok_or_else(|| AppError::BadRequest(format!("Unknown subject `{kind}`")))?,
+            id,
+        )),
+        _ => {
+            return Err(AppError::BadRequest(
+                "Give `subject` and `subject_id` together".into(),
+            ));
+        }
+    };
     let filter = Filter {
         action,
         actor_id: user_id(params.actor.as_deref()).await?,
         post_id: params.post_id,
         user_id: user_id(params.user.as_deref()).await?,
+        subject,
+        content_only: !whole,
         before: params.before,
         since,
         until,
@@ -927,6 +1002,8 @@ pub(crate) async fn log(
                 action: e.action,
                 post_id: e.post_id,
                 user: e.user_name,
+                subject: e.subject_kind,
+                subject_id: e.subject_id,
                 reason: e.reason,
                 details: e.details,
                 created_at: e.created_at,

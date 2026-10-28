@@ -69,7 +69,8 @@ pub struct Related {
 }
 
 /// Other accounts ranked below `below_rank` seen on the addresses
-/// `user_id` used, most recently seen first.
+/// `user_id` used, most recently seen first. The site's owner ranks as
+/// [`OWNER_RANK`].
 pub async fn related(
     db: impl PgExecutor<'_>,
     user_id: i64,
@@ -82,7 +83,8 @@ pub async fn related(
          JOIN user_ips o ON o.ip = mine.ip AND o.user_id <> mine.user_id
          JOIN users u ON u.id = o.user_id
          JOIN roles r ON r.id = u.role_id
-         WHERE mine.user_id = $1 AND r.rank < $2
+         WHERE mine.user_id = $1
+           AND CASE WHEN u.is_owner THEN 32767::smallint ELSE r.rank END < $2
          ORDER BY o.last_seen_at DESC LIMIT $3",
     )
     .bind(user_id)
@@ -92,11 +94,15 @@ pub async fn related(
     .await
 }
 
+/// How the site's owner ranks here: above every role.
+pub const OWNER_RANK: i16 = i16::MAX;
+
 /// The highest rank among accounts seen on an address in `network`, as
-/// recorded here or by a session still open; `None` if nobody was.
+/// recorded here or by a session still open; `None` if nobody was. The
+/// site's owner ranks as [`OWNER_RANK`].
 pub async fn top_rank_in(db: impl PgExecutor<'_>, network: IpNet) -> sqlx::Result<Option<i16>> {
     sqlx::query_scalar(
-        "SELECT max(r.rank) FROM (
+        "SELECT max(CASE WHEN u.is_owner THEN 32767::smallint ELSE r.rank END) FROM (
              SELECT user_id FROM user_ips WHERE ip <<= $1
              UNION
              SELECT user_id FROM sessions WHERE ip <<= $1 AND expires_at > now()
@@ -244,6 +250,16 @@ mod tests {
         assert_eq!(
             top_rank_in(&pool, range("203.0.113.7/32")).await.unwrap(),
             Some(member)
+        );
+        // The owner outranks every role.
+        sqlx::query("UPDATE users SET is_owner = true WHERE id = $1")
+            .bind(root)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            top_rank_in(&pool, range("203.0.113.0/24")).await.unwrap(),
+            Some(OWNER_RANK)
         );
         sqlx::query("UPDATE sessions SET expires_at = now() - interval '1 second'")
             .execute(&pool)

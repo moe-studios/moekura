@@ -64,6 +64,16 @@ impl Job for ApplyTagRelation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PurgePost {
     pub post_id: i64,
+    /// Who asked for it, for the log entry made once the post is gone.
+    #[serde(default)]
+    pub actor_id: Option<i64>,
+    /// Purge it even if its status is locked.
+    #[serde(default)]
+    pub override_locks: bool,
+    /// Log the purge when done. Purges queued by older versions were
+    /// logged when they were asked for.
+    #[serde(default)]
+    pub log: bool,
 }
 
 impl Job for PurgePost {
@@ -163,6 +173,16 @@ impl Job for ApplyBulkUpdate {
     /// Commands already applied are safe to repeat, but a failure is
     /// reported rather than retried endlessly.
     const MAX_ATTEMPTS: i32 = 2;
+}
+
+/// Delete posts left waiting too long in the queues, as the
+/// `stale_posts` site setting says; scheduled hourly.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpireStalePosts {}
+
+impl Job for ExpireStalePosts {
+    const KIND: &'static str = "posts.expire_stale";
+    const MAX_ATTEMPTS: i32 = 3;
 }
 
 /// Remove staged uploads nobody made into a post; scheduled hourly.

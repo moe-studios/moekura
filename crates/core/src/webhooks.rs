@@ -12,6 +12,7 @@ pub enum Event {
     PostCreated,
     PostApproved,
     PostDeleted,
+    PostRestored,
     PostFlagged,
     CommentCreated,
     UserRegistered,
@@ -21,10 +22,11 @@ pub enum Event {
 
 impl Event {
     /// The events a webhook can subscribe to.
-    pub const SUBSCRIBABLE: [Event; 6] = [
+    pub const SUBSCRIBABLE: [Event; 7] = [
         Event::PostCreated,
         Event::PostApproved,
         Event::PostDeleted,
+        Event::PostRestored,
         Event::PostFlagged,
         Event::CommentCreated,
         Event::UserRegistered,
@@ -35,6 +37,7 @@ impl Event {
             Event::PostCreated => "post.created",
             Event::PostApproved => "post.approved",
             Event::PostDeleted => "post.deleted",
+            Event::PostRestored => "post.restored",
             Event::PostFlagged => "post.flagged",
             Event::CommentCreated => "comment.created",
             Event::UserRegistered => "user.registered",
@@ -47,6 +50,7 @@ impl Event {
             Event::PostCreated => "A post is uploaded",
             Event::PostApproved => "A post is approved",
             Event::PostDeleted => "A post is deleted",
+            Event::PostRestored => "A deleted post is restored",
             Event::PostFlagged => "A post is flagged",
             Event::CommentCreated => "A comment is posted",
             Event::UserRegistered => "Someone registers",

@@ -236,21 +236,18 @@ pub(crate) fn render(
         banned => current.and_then(|c| c.ban.as_ref()).map(|ban| context! {
             reason => ban.reason,
             until => ban.expires_at.map(crate::dates::day),
+            restricts => ban.restricts.map(crate::bans::restricted_keys),
         }),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
+        // Reporting things to staff (messages are reported from their page).
+        can_report => current.is_some_and(|c| c.is_logged_in() && c.can(Permission::Flag)),
         can_purge => current.is_some_and(|c| c.can(Permission::PurgePosts)),
         can_admin => current.is_some_and(|c| {
             c.can(Permission::ManageSettings) || c.can(Permission::ManageUsers)
         }),
-        moderation_url => current.and_then(|c| {
-            if c.can(Permission::ApprovePosts) {
-                Some("/moderation/queue")
-            } else if c.can(Permission::ViewAuditLog) {
-                Some("/moderation/log")
-            } else {
-                None
-            }
-        }),
+        moderation_url => current
+            .filter(|c| crate::moderation::is_staff(c))
+            .map(|_| "/moderation"),
     };
     match crate::i18n::rendering_in(&notices.lang, || {
         state

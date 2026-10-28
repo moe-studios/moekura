@@ -243,6 +243,7 @@ async fn show(
         other_names => other_names.iter().map(|n| display_title(n)).collect::<Vec<_>>(),
         old_version => old_version,
         wiki => wiki_page.as_ref().map(|p| context! {
+            id => p.id,
             version => p.version,
             updater => p.updater_name,
             date => crate::dates::day(p.updated_at),

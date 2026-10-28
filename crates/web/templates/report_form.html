@@ -1,0 +1,16 @@
+{# Reporting something to staff: `kind` is a ReportKind name, `id` the
+   thing's number. Shown to those who may report (`can_report`). #}
+{% macro report_form(kind, id, hint="") %}
+<details class="edit report">
+  <summary>{{ t("report-to-staff") }}</summary>
+  <form method="post" action="/reports">
+    <input type="hidden" name="kind" value="{{ kind }}">
+    <input type="hidden" name="id" value="{{ id }}">
+    <input type="hidden" name="back" value="{{ path }}">
+    <label for="report-{{ kind }}-{{ id }}">{{ t("report-whats-wrong") }}</label>
+    <input id="report-{{ kind }}-{{ id }}" name="reason" maxlength="2000" required placeholder="{{ t('report-placeholder') }}">
+    {% if hint %}<p class="hint">{{ hint }}</p>{% endif %}
+    <button type="submit">{{ t("report") }}</button>
+  </form>
+</details>
+{% endmacro %}

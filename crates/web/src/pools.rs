@@ -9,7 +9,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_core::pools::{self as pool_names, Category, MAX_POSTS, PoolName, PostIdsError};
 use moekura_core::posts::PostStatus;
@@ -750,7 +750,9 @@ pub(crate) async fn set_deleted(
     };
     mod_actions::record(
         db,
-        NewAction::new(actor, kind).details(serde_json::json!({ "pool_id": id, "name": name })),
+        NewAction::new(actor, kind)
+            .subject(SubjectKind::Pool, i64::from(id))
+            .details(serde_json::json!({ "pool_id": id, "name": name })),
     )
     .await?;
     Ok(())

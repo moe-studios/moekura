@@ -11,8 +11,10 @@ program scales out:
 - store files in [S3-compatible storage](admin/storage.md) with a CDN in
   front;
 - with several web servers, point them at a shared Valkey
-  (`cache.backend = "valkey"`), so login and registration limits count
-  across all of them;
+  (`cache.backend = "valkey"`). Without it, login, registration, posting
+  and reporting limits are still counted across all of them, in the
+  database, but the API's per-request limit and cached search counts are
+  each server's own;
 - with several web servers, set `database.auto_migrate = false` and run
   `moekura migrate` when deploying.
 

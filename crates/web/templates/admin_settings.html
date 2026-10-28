@@ -176,6 +176,12 @@
       <textarea id="deletion_reasons" name="deletion_reasons" rows="4">{{ settings.post_reasons.deletion }}</textarea>
       <label for="flag_reasons">{{ t("as-reasons-flag") }}</label>
       <textarea id="flag_reasons" name="flag_reasons" rows="4">{{ settings.post_reasons.flag }}</textarea>
+      <h3>{{ t("as-stale") }}</h3>
+      <p class="hint">{{ t("as-stale-hint") }}</p>
+      <label for="stale_pending_days">{{ t("as-stale-pending") }}</label>
+      <input id="stale_pending_days" name="stale_pending_days" type="number" min="0" max="365" value="{{ settings.stale_posts.pending_days }}">
+      <label for="stale_flagged_days">{{ t("as-stale-flagged") }}</label>
+      <input id="stale_flagged_days" name="stale_flagged_days" type="number" min="0" max="365" value="{{ settings.stale_posts.flagged_days }}">
     </section>
     <section class="settings-section" id="as-spam" aria-labelledby="as-spam-heading">
       <h2 id="as-spam-heading">{{ t("as-spam") }}</h2>
@@ -203,6 +209,8 @@
       <p class="hint">{{ t("as-spam-hint") }}</p>
       <label for="spam_link_account_days">{{ t("as-spam-links") }}</label>
       <input id="spam_link_account_days" name="spam_link_account_days" type="number" min="0" value="{{ settings.spam_filter.link_account_days }}">
+      <label for="spam_link_min_posts">{{ t("as-spam-link-posts") }}</label>
+      <input id="spam_link_min_posts" name="spam_link_min_posts" type="number" min="0" value="{{ settings.spam_filter.link_min_posts }}">
       <label for="spam_max_repeats">{{ t("as-spam-repeats") }}</label>
       <input id="spam_max_repeats" name="spam_max_repeats" type="number" min="0" value="{{ settings.spam_filter.max_repeats }}">
       <label for="spam_words">{{ t("as-spam-words") }}</label>

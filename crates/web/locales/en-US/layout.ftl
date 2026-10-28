@@ -29,6 +29,8 @@ nav-register = Register
 
 banned = You are banned: { $reason }. You can look around but not post, edit or vote.
 banned-until = You are banned until { $until }: { $reason }. You can look around but not post, edit or vote.
+banned-partly = You are banned from some things: { $reason }. You can't: { $what }.
+banned-partly-until = You are banned from some things until { $until }: { $reason }. You can't: { $what }.
 
 news-label = Site news
 news-dismiss = Dismiss

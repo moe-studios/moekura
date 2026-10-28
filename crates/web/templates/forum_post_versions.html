@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ t("forum-post-history-title", id=id) }} · {{ t("nav-forum") }} · {{ site.name }}{% endblock %}
+{% block content %}
+<p class="back"><a href="/forum_posts/{{ id }}">« {{ topic }}</a></p>
+<h1>{{ t("forum-post-history-title", id=id) }}</h1>
+<p class="hint">{{ t("forum-post-history-hint") }}</p>
+<ol class="history">
+  <li>
+    <div class="history-head">
+      <strong>{{ t("forum-post-history-now") }}</strong>
+      <span class="hint">{{ current.date }} {{ current.time }}{% if current.by %} · {{ t("by-user", user=current.by) }}{% endif %}</span>
+    </div>
+    <div class="markup">{{ current.html }}</div>
+  </li>
+  {% for v in versions %}
+  <li>
+    <div class="history-head">
+      <span class="hint">{{ v.date }} {{ v.time }}{% if v.by %} · {{ t("by-user", user=v.by) }}{% endif %}{% if v.replaced_by %} · {{ t("forum-post-history-replaced", user=v.replaced_by) }}{% endif %}</span>
+    </div>
+    <div class="markup">{{ v.html }}</div>
+  </li>
+  {% endfor %}
+</ol>
+{% if not versions %}<p class="empty">{{ t("changes-none") }}</p>{% endif %}
+{% endblock %}

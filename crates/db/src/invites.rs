@@ -98,14 +98,21 @@ pub async fn create_within_quota(
 }
 
 /// Uses up one redemption of `code`, returning the invite's id, or `None`
-/// when the code is unknown, expired, revoked or used up. Run it in the
-/// same transaction as the account creation, then [`record_use`], so a
-/// failed signup doesn't consume the invite.
+/// when the code is unknown, expired, revoked or used up, or its maker
+/// is banned or no longer active (their invites stop working with them;
+/// those made from the shell have no maker). Run it in the same
+/// transaction as the account creation, then [`record_use`], so a failed
+/// signup doesn't consume the invite.
 pub async fn redeem(db: impl PgExecutor<'_>, code: &str) -> sqlx::Result<Option<i64>> {
     sqlx::query_scalar(
-        "UPDATE invites SET uses = uses + 1
+        "UPDATE invites i SET uses = uses + 1
          WHERE code_hash = $1 AND uses < max_uses AND revoked_at IS NULL
            AND (expires_at IS NULL OR expires_at > now())
+           AND (created_by IS NULL OR EXISTS (
+                   SELECT 1 FROM users u WHERE u.id = i.created_by AND u.status = 'active'
+                     AND NOT EXISTS (SELECT 1 FROM bans b WHERE b.user_id = u.id
+                                     AND b.lifted_at IS NULL
+                                     AND (b.expires_at IS NULL OR b.expires_at > now()))))
          RETURNING id",
     )
     .bind(&hash_token(code.trim())[..])
@@ -218,6 +225,39 @@ mod tests {
             .await
             .unwrap();
         sqlx::query("UPDATE invites SET expires_at = now() - interval '1 second'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(redeem(&pool, &code).await.unwrap().is_none());
+    }
+
+    #[sqlx::test(migrator = "crate::MIGRATOR")]
+    async fn banned_makers_codes_do_not_redeem(pool: PgPool) {
+        let maker: i64 = sqlx::query_scalar(
+            "INSERT INTO users (name, role_id) SELECT 'mod', id FROM roles WHERE system_key = 'moderator' RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let theirs = |uses| NewInvite {
+            created_by: Some(maker),
+            ..invite(uses, None)
+        };
+        let code = create(&pool, theirs(3)).await.unwrap();
+        assert!(redeem(&pool, &code).await.unwrap().is_some());
+        sqlx::query("INSERT INTO bans (user_id, reason) VALUES ($1, 'abuse')")
+            .bind(maker)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(redeem(&pool, &code).await.unwrap().is_none());
+        sqlx::query("UPDATE bans SET lifted_at = now()")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(redeem(&pool, &code).await.unwrap().is_some());
+        sqlx::query("UPDATE users SET status = 'deactivated' WHERE id = $1")
+            .bind(maker)
             .execute(&pool)
             .await
             .unwrap();

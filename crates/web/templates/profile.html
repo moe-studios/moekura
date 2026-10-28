@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ user.name }} · {{ site.name }}{% endblock %}
 {% block content %}
+{% from "report_form.html" import report_form %}
 <article class="profile">
   <header class="profile-header">
     <div class="profile-banner">{% if profile.banner %}<img src="{{ profile.banner }}" alt="" decoding="async">{% endif %}</div>
@@ -13,6 +14,7 @@
         {% if can_edit_profile %}<a class="button secondary" href="/settings/profile">{{ t("profile-edit") }}</a>{% endif %}
         {% if messages and messages.can_send and not messages.blocked %}<a class="button" href="/dmails/new?to={{ user.name|urlencode }}">{{ t("profile-send-message") }}</a>{% endif %}
         {% if feedback.can_give %}<a class="button secondary" href="/user_feedbacks/new?user={{ user.name|urlencode }}">{{ t("feedback-leave") }}</a>{% endif %}
+        {% if can_report and not (me and me.name == user.name) %}{{ report_form("user", user.id) }}{% endif %}
         {% if messages %}
         <form method="post" action="/users/{{ user.name }}/block"><input type="hidden" name="blocked" value="{{ '0' if messages.blocked else '1' }}"><button type="submit" class="secondary">{% if messages.blocked %}{{ t("unblock") }}{% else %}{{ t("profile-block") }}{% endif %}</button></form>
         {% endif %}
@@ -94,7 +96,7 @@
         </ul>
       </section>
       {% endif %}
-      {% if promotion.promoted or promotion.can_change or bans or can_ban or can_unban or can_rename or can_clear_profile %}
+      {% if promotion.promoted or promotion.can_change or bans or can_ban or can_unban or ban_locked or can_rename or can_clear_profile %}
       <section class="card profile-staff">
         <h2>{{ t("profile-staff") }}</h2>
         {% if promotion.promoted %}<p class="hint">{{ t("profile-promoted", day=promotion.promoted) }}</p>{% endif %}
@@ -110,21 +112,16 @@
         <ul class="plain">
           {% for b in bans %}
           <li><span class="status status-{{ 'open' if b.active else 'dismissed' }}">{{ t("status-active") if b.active else (t("ban-lifted") if b.lifted else t("news-state-expired")) }}</span>
-            {{ b.since }}{% if b.until %}–{{ b.until }}{% endif %}{% if b.by %} {{ t("by-user", user=b.by) }}{% endif %}: {{ b.reason }}</li>
+            {{ b.since }}{% if b.until %}–{{ b.until }}{% endif %}{% if b.by %} {{ t("by-user", user=b.by) }}{% endif %}{% if b.restricts %} · {{ t("ban-only") }} {% for p in b.restricts %}{{ t("permission-" ~ p) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}: {{ b.reason }}</li>
           {% endfor %}
         </ul>
         {% endif %}
         {% if can_ban %}
         <details class="edit">
-          <summary>{% if banned %}{{ t("ban-change") }}{% else %}{{ t("ban") }}{% endif %}</summary>
-          {% if banned %}<p class="hint">{{ t("ban-replaces") }}</p>{% endif %}
+          <summary>{% if is_banned %}{{ t("ban-change") }}{% else %}{{ t("ban") }}{% endif %}</summary>
+          {% if is_banned %}<p class="hint">{{ t("ban-replaces") }}</p>{% endif %}
           <form method="post" action="/users/{{ user.name }}/ban">
-            <label for="ban-reason">{{ t("reason") }}</label>
-            <input id="ban-reason" name="reason" maxlength="2000" required>
-            <label for="ban-days">{{ t("ban-for") }}</label>
-            <select id="ban-days" name="days">
-              {% for d in durations %}<option value="{{ d.days if d.days is not none else '' }}">{{ t("ban-for-" ~ (d.days or "ever")) }}</option>{% endfor %}
-            </select>
+            {% include "ban_fields.html" %}
             <button type="submit" class="danger">{{ t("ban-user", user=user.name) }}</button>
           </form>
         </details>
@@ -132,6 +129,7 @@
         {% if can_unban %}
         <form method="post" action="/users/{{ user.name }}/unban"><button type="submit">{{ t("ban-lift") }}</button></form>
         {% endif %}
+        {% if ban_locked %}<p class="hint">{{ t("ban-locked") }}</p>{% endif %}
         {% if can_rename %}
         <details class="edit">
           <summary>{{ t("rename") }}</summary>

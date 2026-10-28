@@ -81,9 +81,14 @@ when someone:
 - approves or rejects a request you made or voted on;
 - leaves [feedback](#feedback) on your account.
 
+You're also told when staff act on what you posted, without saying who:
+your upload is rejected, deleted or restored; your appeal is granted or
+turned down; your comment or forum post is hidden or restored; or
+writing of yours held for review is let through or turned away.
+
 Opening one marks it read and goes to what it's about; **Mark all read**
 clears the count. Nobody you've blocked from messaging you can notify
-you either. Read notifications are forgotten after 90 days.
+you either (staff's notices still reach you). Read notifications are forgotten after 90 days.
 
 ## Feedback
 
@@ -92,12 +97,15 @@ contributors and up, by default) can leave **positive**, **neutral** or
 **negative** feedback on someone ranked below them, with **Leave
 feedback** on their profile. Profiles count it, linking to the whole
 list at `/user_feedbacks?user=name`; anyone can read it, and the person
-it's about is notified. Its writer can edit it. Staff who can ban users
+it's about is notified. Its writer can edit it; writing and each change
+go in the moderation log, which keeps what it said before. Staff who can ban users
 can delete and restore it, which goes in the moderation log, if they
 outrank the person it's about and, unless they wrote it, its writer;
 deleted feedback comes back only from whoever deleted it or someone
-ranked above them. Negative feedback can keep a member from [automatic
-promotion](../admin/roles.md#automatic-promotion).
+ranked above them. Negative feedback from staff can keep a member from
+[automatic promotion](../admin/roles.md#automatic-promotion). Feedback
+can be reported to the staff who ban users, like anything else people
+write.
 
 ## Your name
 

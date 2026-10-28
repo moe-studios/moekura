@@ -2,11 +2,12 @@
 //! password guessing, signup floods and mail bombing; and for the APIs, as
 //! a whole, per client (`server.api_requests_per_minute`).
 //!
-//! Counters live in this process's memory, or in Valkey when
-//! `cache.backend = "valkey"`, so that several web servers share them.
-//! Both use the same algorithm (GCRA: a burst, then one more every
-//! period). If Valkey can't be reached, each server falls back to its own
-//! counters rather than refusing everyone.
+//! Counters live in Valkey when `cache.backend = "valkey"`, and otherwise
+//! in the database, so that several web servers share them; the API's
+//! limit, counted on every request, then stays in each server's memory.
+//! All use the same algorithm (GCRA: a burst, then one more every period).
+//! If Valkey or the database can't be reached, each server falls back to
+//! its own counters rather than refusing everyone.
 //!
 //! Addresses are counted by [`ip_bucket`] (IPv6 by its /64), and names
 //! and email addresses by a digest of a fixed size, so a client can't
@@ -222,6 +223,8 @@ pub struct RateLimits {
     /// Off when `server.api_requests_per_minute` is 0.
     api: Option<(Limit, InfoLimiter)>,
     valkey: Option<Valkey>,
+    /// Where counters are shared without Valkey.
+    db: Option<sqlx::PgPool>,
 }
 
 impl Default for RateLimits {
@@ -253,7 +256,16 @@ impl RateLimits {
             request_by_user: RateLimiter::keyed(quota(REQUEST_BY_USER)),
             api: None,
             valkey,
+            db: None,
         }
+    }
+
+    /// Shares the counters in the database `db` when there's no Valkey.
+    pub fn with_shared_db(mut self, db: sqlx::PgPool) -> Self {
+        if self.valkey.is_none() {
+            self.db = Some(db);
+        }
+        self
     }
 
     /// Limits API clients to `per_minute` requests a minute, `burst` at
@@ -526,13 +538,21 @@ impl RateLimits {
         key: &K,
         shared_key: &str,
     ) -> Result<(), AppError> {
+        let shared = format!("rate:{}:{shared_key}", limit.name);
         if let Some(valkey) = &self.valkey {
-            let key = format!("rate:{}:{shared_key}", limit.name);
-            match valkey.gcra(&key, limit.burst, limit.period).await {
+            match valkey.gcra(&shared, limit.burst, limit.period).await {
                 Ok(None) => return Ok(()),
                 Ok(Some(wait)) => return Err(too_many(wait)),
                 Err(error) => {
                     tracing::warn!(%error, "Valkey unavailable; rate limiting in this process only");
+                }
+            }
+        } else if let Some(db) = &self.db {
+            match moekura_db::rate_limits::gcra(db, &shared, limit.burst, limit.period).await {
+                Ok(None) => return Ok(()),
+                Ok(Some(wait)) => return Err(too_many(wait)),
+                Err(error) => {
+                    tracing::warn!(%error, "rate limits unavailable in the database; counting in this process only");
                 }
             }
         }
@@ -650,6 +670,20 @@ fn too_many(wait: Duration) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn servers_without_valkey_share_one_allowance(pool: sqlx::PgPool) {
+        let one = RateLimits::default().with_shared_db(pool.clone());
+        let other = RateLimits::default().with_shared_db(pool.clone());
+        for _ in 0..REPORT_BY_USER.burst {
+            assert!(one.check_report(7).await.is_ok());
+        }
+        assert!(matches!(
+            other.check_report(7).await,
+            Err(AppError::TooManyRequests { .. })
+        ));
+        assert!(other.check_report(8).await.is_ok());
+    }
 
     fn ip(last: u8) -> Option<IpAddr> {
         Some(IpAddr::from([198, 51, 100, last]))

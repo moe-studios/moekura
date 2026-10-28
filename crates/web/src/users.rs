@@ -65,23 +65,27 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
     } else {
         Vec::new()
     };
-    let can_ban = crate::bans::may_ban(page.state(), &page.current, &user);
     let banned = ban_history.iter().any(|b| b.active);
+    let may_ban = crate::bans::may_ban(page.state(), &page.current, &user);
+    // A ban set by someone ranked at or above them stays as it is.
+    let ban_locked = may_ban
+        && !crate::bans::may_change_bans(
+            page.state(),
+            &page.current,
+            &active_banners(&ban_history),
+        )
+        .await?;
+    let can_ban = may_ban && !ban_locked;
     let favorites = favorites::count_by_user(db, user.id).await?;
     let comments = moekura_db::comments::count_by_user(db, user.id).await?;
     let (promotion_blocked, promoted_at) = moekura_db::promotion::status(db, user.id).await?;
     let can_manage = page.current.can(Permission::ManageUsers)
-        && page
-            .state()
-            .site
-            .get()
-            .role(user.role_id)
-            .is_some_and(|r| page.current.role.outranks(r));
+        && crate::ranks::outranks(&page.state().site.get(), &page.current, &user);
     let own = page.current.user.as_ref().map(|u| u.id) == Some(user.id);
     let favorite_groups = moekura_db::favorite_groups::for_user(db, user.id, own)
         .await?
         .len();
-    let notes = crate::user_moderation::notes(page.state(), &page.current, user.id).await?;
+    let notes = crate::user_moderation::notes(page.state(), &page.current, &user).await?;
     let me = page.current.user.as_ref().map(|u| u.id);
     let messages = match me.filter(|&me| me != user.id) {
         Some(me) => Some(context! {
@@ -199,6 +203,7 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             recent_uploads => recent_uploads,
             recent_favorites => recent_favorites,
             user => context! {
+                id => user.id,
                 name => user.name,
                 role => role,
                 joined => crate::dates::day(user.created_at),
@@ -231,14 +236,24 @@ async fn profile(page: Page, Path(name): Path<String>) -> Result<Response, AppEr
             )),
             bans => ban_history.iter().map(crate::bans::ban_context).collect::<Vec<_>>(),
             can_ban => can_ban,
-            banned => banned,
+            ban_locked => ban_locked,
+            is_banned => banned,
             notes => notes,
-            record_url => crate::user_moderation::may_view(&page.current)
+            record_url => crate::user_moderation::may_view_user(page.state(), &page.current, &user)
                 .then(|| crate::templates::url_value(&crate::user_moderation::url(&user.name))),
             can_unban => can_ban && banned,
             durations => crate::bans::durations(),
+            ban_permissions => moekura_core::permissions::PARTIAL_BAN.map(|p| p.key()),
         },
     ))
+}
+
+/// Who set the bans in force among `bans`.
+pub(crate) fn active_banners(bans: &[moekura_db::bans::Ban]) -> Vec<Option<i64>> {
+    bans.iter()
+        .filter(|b| b.active)
+        .map(|b| b.banner_id)
+        .collect()
 }
 
 /// Months the profile's upload chart covers.
@@ -282,27 +297,24 @@ async fn set_auto_promotion(
     page.current.require(Permission::ManageUsers)?;
     let db = page.state().db.primary();
     let user = users::by_name(db, &name).await?.ok_or(AppError::NotFound)?;
-    let outranks = page
-        .state()
-        .site
-        .get()
-        .role(user.role_id)
-        .is_some_and(|r| page.current.role.outranks(r));
-    if !outranks {
+    if !crate::ranks::outranks(&page.state().site.get(), &page.current, &user) {
         return Err(AppError::Forbidden);
     }
     let blocked = form.blocked.is_some();
-    moekura_db::promotion::set_blocked(db, user.id, blocked).await?;
-    moekura_db::mod_actions::record(
-        db,
-        moekura_db::mod_actions::NewAction::new(
-            page.current.user.as_ref().map(|u| u.id),
-            moekura_core::moderation::ActionKind::UserStatus,
+    let mut tx = db.begin().await?;
+    if moekura_db::promotion::set_blocked(&mut *tx, user.id, blocked).await? {
+        moekura_db::mod_actions::record(
+            &mut *tx,
+            moekura_db::mod_actions::NewAction::new(
+                page.current.user.as_ref().map(|u| u.id),
+                moekura_core::moderation::ActionKind::UserStatus,
+            )
+            .user(user.id)
+            .details(serde_json::json!({ "auto_promotion_blocked": blocked })),
         )
-        .user(user.id)
-        .details(serde_json::json!({ "auto_promotion_blocked": blocked })),
-    )
-    .await?;
+        .await?;
+    }
+    tx.commit().await?;
     let back = format!(
         "/users/{}",
         url::form_urlencoded::byte_serialize(user.name.as_bytes()).collect::<String>()

@@ -92,14 +92,22 @@ impl CurrentUser {
     }
 
     pub(crate) fn for_user(user: User, ban: Option<ActiveBan>, site: &SiteSnapshot) -> Self {
-        // Banned users, and users whose role was deleted, keep only what
-        // visitors can do.
-        let role = match ban {
-            Some(_) => anonymous_role(site),
-            None => site
-                .role(user.role_id)
-                .cloned()
-                .unwrap_or_else(|| anonymous_role(site)),
+        // Users whose role was deleted keep only what visitors can do.
+        let role = site
+            .role(user.role_id)
+            .cloned()
+            .unwrap_or_else(|| anonymous_role(site));
+        let role = match &ban {
+            Some(ban) => match ban.restricts {
+                // A partial ban takes away only what it names.
+                Some(bits) => {
+                    let mut role = role;
+                    role.permissions = role.permissions.without(Permissions::from_db(bits));
+                    role
+                }
+                None => banned_role(role, site),
+            },
+            None => role,
         };
         let safe_mode =
             moekura_core::user_settings::UserSettings::from_json(&user.settings).safe_mode;
@@ -165,6 +173,19 @@ impl CurrentUser {
 #[cfg(test)]
 pub(crate) fn tests_support_visitor(state: &AppState) -> CurrentUser {
     CurrentUser::anonymous(&state.site.get())
+}
+
+/// What a banned user can still do: look around, as visitors may, and
+/// nothing else, whatever visitors are allowed besides. They rank as
+/// visitors too.
+fn banned_role(mut role: Role, site: &SiteSnapshot) -> Role {
+    let visitors = anonymous_role(site);
+    role.permissions = role
+        .permissions
+        .and(visitors.permissions)
+        .and(Permissions::of(&[Permission::ViewPosts]));
+    role.rank = visitors.rank;
+    role
 }
 
 fn anonymous_role(site: &SiteSnapshot) -> Role {

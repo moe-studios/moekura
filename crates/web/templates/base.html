@@ -78,7 +78,7 @@
       </nav>
     </div>
   </header>
-  {% if banned %}<div class="flash banned" role="status">{% if banned.until %}{{ t("banned-until", until=banned.until, reason=banned.reason) }}{% else %}{{ t("banned", reason=banned.reason) }}{% endif %}</div>{% endif %}
+  {% if banned %}<div class="flash banned" role="status">{% if banned.restricts %}{% set what %}{% for p in banned.restricts %}{{ t("permission-" ~ p) }}{% if not loop.last %}, {% endif %}{% endfor %}{% endset %}{% if banned.until %}{{ t("banned-partly-until", until=banned.until, reason=banned.reason, what=what) }}{% else %}{{ t("banned-partly", reason=banned.reason, what=what) }}{% endif %}{% elif banned.until %}{{ t("banned-until", until=banned.until, reason=banned.reason) }}{% else %}{{ t("banned", reason=banned.reason) }}{% endif %} <a href="/bans/appeal">{{ t("ban-appeal-link") }}</a></div>{% endif %}
   {% if flash %}<div class="flash" role="status">{{ flash }}</div>{% endif %}
   {% if news %}<aside class="news" aria-label="{{ t('news-label') }}">
     <div class="markup">{{ news.html }}</div>

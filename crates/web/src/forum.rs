@@ -9,7 +9,7 @@ use axum::{Form, Router};
 use axum_extra::extract::CookieJar;
 use minijinja::{Value, context};
 use moekura_core::markup;
-use moekura_core::moderation::ActionKind;
+use moekura_core::moderation::{ActionKind, SubjectKind};
 use moekura_core::permissions::Permission;
 use moekura_db::forum::{self, Flags, PostFilter, Topic, TopicFilter};
 use moekura_db::mod_actions::{self, NewAction};
@@ -20,6 +20,7 @@ use crate::auth::CurrentUser;
 use crate::error::AppError;
 use crate::flash::{self, Flash};
 use crate::pages::Page;
+use crate::ranks::Act;
 use crate::templates::url_value;
 
 /// Topics per page of the list.
@@ -43,6 +44,7 @@ pub fn routes() -> Router<AppState> {
         .route("/forum_posts", get(search))
         .route("/forum_posts/{id}", get(goto_post).post(edit_post))
         .route("/forum_posts/{id}/edit", get(edit_form))
+        .route("/forum_posts/{id}/versions", get(versions))
         .route("/forum_posts/{id}/vote", post(vote))
         .route("/forum_posts/{id}/hide", post(hide))
         .route("/forum_posts/{id}/unhide", post(unhide))
@@ -489,6 +491,9 @@ async fn show(
         forum::visit(db, me, id).await?;
     }
     let can_post = me.is_some() && page.current.can(Permission::Comment);
+    let ids: Vec<i64> = found.iter().map(|p| p.id).collect();
+    let warned = moekura_db::user_warnings::warned_among(db, SubjectKind::ForumPost, &ids).await?;
+    let can_warn = page.current.can(Permission::BanUsers);
     let posts: Vec<Value> = found
         .iter()
         .map(|p| {
@@ -499,6 +504,9 @@ async fn show(
                 updater => p.updater_name.as_ref().filter(|_| p.updated_at > p.created_at),
                 html => Value::from_safe_string(markup::render(&p.body)),
                 hidden => p.is_hidden,
+                held => p.status == forum::Status::Held,
+                warned => warned.contains(&p.id),
+                can_warn => can_warn && !mine && p.creator_id.is_some(),
                 score => p.score,
                 vote => votes.iter().find(|(post, _)| *post == p.id).map(|(_, s)| *s),
                 date => crate::dates::day(p.created_at),
@@ -551,8 +559,13 @@ async fn update_topic(
     let me = require_poster(&page.current)?;
     let topic = visible_topic(page.state(), &page.current, id).await?;
     let staff = moderates(&page.current);
-    if !(staff || (topic.creator_id == Some(me) && !topic.is_locked)) {
+    let own = topic.creator_id == Some(me);
+    if !(staff || (own && !topic.is_locked)) {
         return Err(AppError::Forbidden);
+    }
+    if !own {
+        crate::ranks::check_moderate(page.state(), &page.current, topic.creator_id, Act::Against)
+            .await?;
     }
     let title = clean_title(&form.title)?;
     let db = page.state().db.primary();
@@ -566,7 +579,24 @@ async fn update_topic(
     if form.category != topic.category_id {
         check_category(page.state(), &page.current, form.category).await?;
     }
-    forum::update_topic(db, id, &title, form.category).await?;
+    let mut tx = db.begin().await?;
+    forum::update_topic(&mut *tx, id, &title, form.category).await?;
+    // Staff changing someone else's topic is logged.
+    if !own && (title != topic.title || form.category != topic.category_id) {
+        let mut action = NewAction::new(Some(me), ActionKind::ForumTopicEdit)
+            .subject(SubjectKind::ForumTopic, id)
+            .details(serde_json::json!({
+                "topic_id": id,
+                "from": { "title": topic.title, "category": topic.category_name },
+                "title": title,
+                "category": categories.iter().find(|c| c.id == form.category).map(|c| &c.name),
+            }));
+        if let Some(creator) = topic.creator_id {
+            action = action.user(creator);
+        }
+        mod_actions::record(&mut *tx, action).await?;
+    }
+    tx.commit().await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&topic_url(id))).into_response())
 }
 
@@ -574,6 +604,8 @@ async fn update_topic(
 struct ModerateForm {
     /// `sticky`, `unsticky`, `lock`, `unlock`, `delete` or `undelete`.
     action: String,
+    #[serde(default)]
+    reason: String,
 }
 
 async fn moderate(
@@ -583,7 +615,8 @@ async fn moderate(
     Form(form): Form<ModerateForm>,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
-    visible_topic(page.state(), &page.current, id).await?;
+    let reason = crate::moderation::check_reason(&form.reason)?;
+    let topic = visible_topic(page.state(), &page.current, id).await?;
     let flags = match form.action.as_str() {
         "sticky" => Flags {
             sticky: Some(true),
@@ -611,17 +644,37 @@ async fn moderate(
         },
         _ => return Err(AppError::BadRequest("Unknown action.".into())),
     };
+    // Deleting or locking a topic goes against whoever started it.
+    let act = match (flags.deleted, flags.locked) {
+        (Some(true), _) | (_, Some(true)) => Some(Act::Against),
+        (Some(false), _) | (_, Some(false)) => Some(Act::For),
+        _ => None,
+    };
+    if let Some(act) = act {
+        crate::ranks::check_moderate(page.state(), &page.current, topic.creator_id, act).await?;
+    }
+    if flags.deleted == Some(false) && topic.is_held {
+        return Err(AppError::BadRequest(
+            "The topic's opening post is held as likely spam: approve it under Moderation → Held for review".into(),
+        ));
+    }
     let db = page.state().db.primary();
-    forum::set_flags(db, id, flags).await?;
-    mod_actions::record(
-        db,
-        NewAction::new(
-            page.current.user.as_ref().map(|u| u.id),
-            ActionKind::ForumTopicModerate,
+    let mut tx = db.begin().await?;
+    // Logged only when it changed something.
+    if forum::set_flags(&mut *tx, id, flags).await? {
+        mod_actions::record(
+            &mut *tx,
+            NewAction::new(
+                page.current.user.as_ref().map(|u| u.id),
+                ActionKind::ForumTopicModerate,
+            )
+            .subject(SubjectKind::ForumTopic, id)
+            .reason(reason)
+            .details(serde_json::json!({ "topic_id": id, "action": form.action })),
         )
-        .details(serde_json::json!({ "topic_id": id, "action": form.action })),
-    )
-    .await?;
+        .await?;
+    }
+    tx.commit().await?;
     let back = if form.action == "delete" {
         "/forum_topics".to_owned()
     } else {
@@ -645,7 +698,8 @@ async fn merge(
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
     let state = page.state();
-    visible_topic(state, &page.current, id).await?;
+    let topic = visible_topic(state, &page.current, id).await?;
+    crate::ranks::check_moderate(state, &page.current, topic.creator_id, Act::Against).await?;
     let into: i64 = form
         .into
         .trim()
@@ -660,17 +714,19 @@ async fn merge(
             "Merge into another topic that isn't deleted.".into(),
         ));
     }
-    let db = state.db.primary();
-    forum::merge(db, id, into).await?;
+    let mut tx = state.db.primary().begin().await?;
+    forum::merge(&mut tx, id, into).await?;
     mod_actions::record(
-        db,
+        &mut *tx,
         NewAction::new(
             page.current.user.as_ref().map(|u| u.id),
             ActionKind::ForumTopicMerge,
         )
+        .subject(SubjectKind::ForumTopic, id)
         .details(serde_json::json!({ "from": id, "into": into })),
     )
     .await?;
+    tx.commit().await?;
     Ok((
         flash::set(jar, Flash::Saved),
         Redirect::to(&topic_url(into)),
@@ -752,8 +808,13 @@ async fn editable_post(
         .await?
         .ok_or(AppError::NotFound)?;
     let topic = visible_topic(state, current, p.topic_id).await?;
-    if !(moderates(current) || (p.creator_id == Some(me) && !topic.is_locked && !p.is_hidden)) {
+    let own = p.creator_id == Some(me);
+    if !(moderates(current) || (own && !topic.is_locked && !p.is_hidden)) {
         return Err(AppError::Forbidden);
+    }
+    // Staff rewrite only what those ranked below them wrote.
+    if !own {
+        crate::ranks::check_moderate(state, current, p.creator_id, Act::Against).await?;
     }
     Ok(p)
 }
@@ -831,7 +892,20 @@ async fn save_edit(
         state.rate_limits.check_comment(me).await?;
         crate::held::check(state, current, body).await?
     };
-    forum::update_post(state.db.primary(), p.id, body, Some(me), held.as_deref()).await?;
+    let mut tx = state.db.primary().begin().await?;
+    forum::update_post(&mut *tx, p.id, body, Some(me), held.as_deref()).await?;
+    // Staff changing someone else's post is logged; its earlier text is
+    // kept either way.
+    if p.creator_id != Some(me) && body != p.body {
+        let mut action = NewAction::new(Some(me), ActionKind::ForumPostEdit)
+            .subject(SubjectKind::ForumPost, p.id)
+            .details(serde_json::json!({ "forum_post_id": p.id, "topic_id": p.topic_id }));
+        if let Some(creator) = p.creator_id {
+            action = action.user(creator);
+        }
+        mod_actions::record(&mut *tx, action).await?;
+    }
+    tx.commit().await?;
     if held.is_some() {
         tracing::info!(forum_post = p.id, "forum post edit held");
     }
@@ -867,38 +941,116 @@ async fn vote(
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct ReasonForm {
+    #[serde(default)]
+    reason: String,
+}
+
 async fn set_hidden(
     page: Page,
     jar: CookieJar,
     id: i64,
     hidden: bool,
+    reason: &str,
 ) -> Result<Response, AppError> {
     page.current.require(Permission::ModerateComments)?;
+    let reason = crate::moderation::check_reason(reason)?;
     let state = page.state();
     let db = state.db.primary();
     let p = forum::post(db, id).await?.ok_or(AppError::NotFound)?;
-    forum::set_post_hidden(db, id, hidden).await?;
+    visible_topic(state, &page.current, p.topic_id).await?;
+    let act = if hidden { Act::Against } else { Act::For };
+    crate::ranks::check_moderate(state, &page.current, p.creator_id, act).await?;
+    let mut tx = db.begin().await?;
+    if !forum::set_post_hidden(&mut *tx, id, hidden).await? {
+        // Held writing is the spam queue's to settle.
+        return Err(AppError::BadRequest(match (p.status, hidden) {
+            (forum::Status::Held, _) => {
+                "The post is held as likely spam: approve or reject it under Moderation → Held for review".into()
+            }
+            (_, true) => "The post is already hidden".into(),
+            (_, false) => "The post isn't hidden".into(),
+        }));
+    }
     let kind = if hidden {
         ActionKind::ForumPostHide
     } else {
         ActionKind::ForumPostUnhide
     };
     let mut action = NewAction::new(page.current.user.as_ref().map(|u| u.id), kind)
+        .subject(SubjectKind::ForumPost, id)
+        .reason(reason)
         .details(serde_json::json!({ "forum_post_id": id, "topic_id": p.topic_id }));
     if let Some(creator) = p.creator_id {
         action = action.user(creator);
     }
-    mod_actions::record(db, action).await?;
+    mod_actions::record(&mut *tx, action).await?;
+    tx.commit().await?;
+    let told = match (hidden, reason) {
+        (true, "") => format!("Your post in “{}” was hidden", p.topic_title),
+        (true, why) => format!("Your post in “{}” was hidden: “{why}”", p.topic_title),
+        (false, _) => format!("Your post in “{}” was restored", p.topic_title),
+    };
+    let actor = page.current.user.as_ref().map(|u| u.id);
+    crate::notifications::moderated(
+        state,
+        p.creator_id,
+        actor,
+        &told,
+        &format!("/forum_posts/{id}"),
+    )
+    .await;
     let location = post_location(state, &page.current, id).await?;
     Ok((flash::set(jar, Flash::Saved), Redirect::to(&location)).into_response())
 }
 
-async fn hide(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    set_hidden(page, jar, id, true).await
+async fn hide(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    set_hidden(page, jar, id, true, &form.reason).await
 }
 
-async fn unhide(page: Page, jar: CookieJar, Path(id): Path<i64>) -> Result<Response, AppError> {
-    set_hidden(page, jar, id, false).await
+/// A post's earlier texts, for staff.
+async fn versions(page: Page, Path(id): Path<i64>) -> Result<Response, AppError> {
+    page.current.require(Permission::ModerateComments)?;
+    let state = page.state();
+    let db = state.db.primary();
+    let p = forum::post(db, id).await?.ok_or(AppError::NotFound)?;
+    visible_topic(state, &page.current, p.topic_id).await?;
+    let earlier = forum::versions(db, id).await?;
+    Ok(page.render(
+        "forum_post_versions.html",
+        context! {
+            id => p.id,
+            topic => p.topic_title,
+            current => context! {
+                html => Value::from_safe_string(markup::render(&p.body)),
+                by => p.updater_name.as_ref().or(p.creator_name.as_ref()),
+                date => crate::dates::day(p.updated_at),
+                time => crate::dates::clock(p.updated_at),
+            },
+            versions => earlier.iter().map(|v| context! {
+                html => Value::from_safe_string(markup::render(&v.body)),
+                by => v.writer_name,
+                date => crate::dates::day(v.written_at),
+                time => crate::dates::clock(v.written_at),
+                replaced_by => v.replacer_name,
+            }).collect::<Vec<_>>(),
+        },
+    ))
+}
+
+async fn unhide(
+    page: Page,
+    jar: CookieJar,
+    Path(id): Path<i64>,
+    Form(form): Form<ReasonForm>,
+) -> Result<Response, AppError> {
+    set_hidden(page, jar, id, false, &form.reason).await
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1121,6 +1273,103 @@ mod tests {
         );
         let found = app.get("/forum_posts?body=same", None).await.body;
         assert!(found.contains("Same thing"), "{found}");
+    }
+
+    #[sqlx::test(migrator = "moekura_db::MIGRATOR")]
+    async fn staff_change_only_what_those_below_them_wrote(pool: PgPool) {
+        let app = TestApp::new(test_state(&pool).await, super::routes());
+        let alice = session_for(&pool, "alice", SystemRole::Member).await;
+        let janitor = session_for(&pool, "jan", SystemRole::Janitor).await;
+        let moderator = session_for(&pool, "mod", SystemRole::Moderator).await;
+        let general = moekura_db::forum::categories(&pool).await.unwrap()[0].id;
+        let start = async |who: &str, title: &str| {
+            let created = app
+                .post_form(
+                    "/forum_topics",
+                    Some(who),
+                    &[],
+                    &format!("category={general}&title={title}&body=Said+this"),
+                )
+                .await;
+            id_after(&created.location.unwrap(), "/forum_topics/")
+        };
+        let first_post = async |topic: i64| -> i64 {
+            sqlx::query_scalar("SELECT min(id) FROM forum_posts WHERE topic_id = $1")
+                .bind(topic)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+        let theirs = start(&moderator, "Rules").await;
+        let mods_post = first_post(theirs).await;
+        // A janitor can't rewrite, hide, rename or close a moderator's.
+        for (url, form) in [
+            (format!("/forum_posts/{mods_post}"), "body=Rewritten"),
+            (format!("/forum_posts/{mods_post}/hide"), ""),
+            (format!("/forum_topics/{theirs}"), "title=Mine&category=1"),
+            (format!("/forum_topics/{theirs}/moderate"), "action=lock"),
+        ] {
+            let response = app.post_form(&url, Some(&janitor), &[], form).await;
+            assert_eq!(response.status, StatusCode::FORBIDDEN, "{url}");
+        }
+
+        // A moderator changing a member's post and topic is logged, and
+        // the earlier text is kept.
+        let members = start(&alice, "Question").await;
+        let alices_post = first_post(members).await;
+        let edited = app
+            .post_form(
+                &format!("/forum_posts/{alices_post}"),
+                Some(&moderator),
+                &[],
+                "body=Cleaned+up",
+            )
+            .await;
+        assert_eq!(edited.status, StatusCode::SEE_OTHER, "{}", edited.body);
+        let renamed = app
+            .post_form(
+                &format!("/forum_topics/{members}"),
+                Some(&moderator),
+                &[],
+                &format!("title=A+question&category={general}"),
+            )
+            .await;
+        assert_eq!(renamed.status, StatusCode::SEE_OTHER, "{}", renamed.body);
+        let logged: Vec<String> = sqlx::query_scalar("SELECT action FROM mod_actions ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logged, ["forum_post.edit", "forum_topic.edit"]);
+        let history = app
+            .get(
+                &format!("/forum_posts/{alices_post}/versions"),
+                Some(&moderator),
+            )
+            .await;
+        assert!(history.body.contains("Said this"), "{}", history.body);
+        assert!(history.body.contains("replaced by mod"), "{}", history.body);
+        assert_eq!(
+            app.get(
+                &format!("/forum_posts/{alices_post}/versions"),
+                Some(&alice)
+            )
+            .await
+            .status,
+            StatusCode::FORBIDDEN
+        );
+        // Her own edits aren't moderation.
+        app.post_form(
+            &format!("/forum_posts/{alices_post}"),
+            Some(&alice),
+            &[],
+            "body=Mine+again",
+        )
+        .await;
+        let logged: i64 = sqlx::query_scalar("SELECT count(*) FROM mod_actions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(logged, 2);
     }
 
     #[sqlx::test(migrator = "moekura_db::MIGRATOR")]

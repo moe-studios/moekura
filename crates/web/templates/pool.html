@@ -2,6 +2,7 @@
 {% block title %}{{ pool.name }} · {{ t("nav-pools") }} · {{ site.name }}{% endblock %}
 {% block head %}{% include "preview_meta.html" %}{% endblock %}
 {% block content %}
+{% from "report_form.html" import report_form %}
 <p class="back"><a href="/pools">« {{ t("nav-pools") }}</a></p>
 <header class="wiki-head">
   <h1>{{ pool.name }}</h1>
@@ -30,6 +31,7 @@
   {% if next_url %}<a class="button" href="{{ next_url }}" rel="next">{{ t("next") }}</a>{% endif %}
 </nav>
 {% endif %}
+{% if can_report and not can_undelete %}{{ report_form("pool", pool.id) }}{% endif %}
 {% if can_delete %}
 <form method="post" action="{{ pool.url }}/delete"><button type="submit" class="danger" data-confirm="{{ t('pool-delete-confirm') }}">{{ t("pool-delete") }}</button></form>
 {% elif can_undelete %}

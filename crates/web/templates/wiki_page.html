@@ -2,6 +2,7 @@
 {% block title %}{{ title }} · {{ t("tag-nav-wiki") }} · {{ site.name }}{% endblock %}
 {% block head %}{% include "preview_meta.html" %}{% endblock %}
 {% block content %}
+{% from "report_form.html" import report_form %}
 {% include "tag_nav.html" %}
 <article class="wiki">
   <header class="wiki-head">
@@ -27,4 +28,5 @@
   </section>
   {% endif %}
 </article>
+{% if can_report and wiki %}{{ report_form("wiki_page", wiki.id) }}{% endif %}
 {% endblock %}

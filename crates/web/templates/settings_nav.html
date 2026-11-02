@@ -6,9 +6,11 @@
   <ul>
     {{ item("/settings", t("settings-nav-preferences")) }}
     {{ item("/settings/profile", t("nav-profile")) }}
+    {{ item("/settings/name", t("name-title")) }}
     {{ item("/settings/account", t("account-email-password")) }}
     {{ item("/settings/two-factor", t("login-code-title")) }}
-    {{ item("/settings/name", t("name-title")) }}
-    {{ item("/settings/api-keys", t("api-keys-title")) }}
+    {{ item("/settings/api-keys", t("api-keys-and-feeds")) }}
+    {{ item("/saved_searches", t("saved-title")) }}
+    {% if can_invite %}{{ item("/invites", t("invites-title")) }}{% endif %}
   </ul>
 </nav>

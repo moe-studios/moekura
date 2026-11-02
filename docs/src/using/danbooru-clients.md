@@ -3,8 +3,8 @@
 Moekura answers Danbooru's API too, so apps and tools made for Danbooru
 can use a Moekura site: point them at the site as if it were a Danbooru
 instance. Logged out, they see what visitors see. To log in, make an API
-key under **Settings → API keys** and give the app your name and the key
-(not your password).
+key under **Settings → API keys and feeds** and give the app your name
+and the key (not your password).
 
 ## gallery-dl
 

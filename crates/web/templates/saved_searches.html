@@ -1,7 +1,11 @@
 {% extends "base.html" %}
 {% block title %}{{ t("saved-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
+<div class="with-rail">
+{% include "settings_nav.html" %}
+<div class="settings">
 <h1>{{ t("saved-title") }}</h1>
+<section class="card settings-section">
 <p class="hint">{{ t("saved-hint") }}</p>
 {% if searches %}
 <p><a class="button" href="{{ all_url }}">{{ t("saved-all") }}</a>
@@ -35,14 +39,19 @@
 {% else %}
 <p class="empty">{{ t("saved-none") }}</p>
 {% endif %}
-<h2>{{ t("saved-new") }}</h2>
+</section>
+<section class="card settings-section" aria-labelledby="saved-new">
+<h2 id="saved-new">{{ t("saved-new") }}</h2>
 {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
-<form class="wiki-form" method="post" action="/saved_searches">
+<form method="post" action="/saved_searches">
   <label for="new-query">{{ t("search") }}</label>
   <input id="new-query" name="query" value="{{ form.query }}" required data-autocomplete="search" autocomplete="off" autocapitalize="none" spellcheck="false">
-  <label for="new-labels">{{ t("saved-labels") }} <span class="hint">{{ t("saved-labels-hint") }}</span></label>
+  <label for="new-labels">{{ t("saved-labels") }} <span class="optional">{{ t("saved-labels-hint") }}</span></label>
   <input id="new-labels" name="labels" value="{{ form.labels }}" autocomplete="off" spellcheck="false">
-  <button type="submit">{{ t("common-save") }}</button>
   <p class="hint">{{ t("saved-max", max=max) }}</p>
+  <button type="submit">{{ t("common-save") }}</button>
 </form>
+</section>
+</div>
+</div>
 {% endblock %}

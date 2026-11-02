@@ -147,6 +147,7 @@ permission-replace_posts = Replace posts' files
 permission-send_messages = Send private messages
 permission-give_feedback = Leave feedback on users of lower rank
 permission-invite_users = Invite people
+permission-moderate_messages = Read reported and held private messages
 
 not-banned = Not banned
 users-table = Users table

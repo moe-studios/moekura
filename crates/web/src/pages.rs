@@ -239,6 +239,8 @@ pub(crate) fn render(
             restricts => ban.restricts.map(crate::bans::restricted_keys),
         }),
         can_upload => current.is_some_and(|c| c.can(Permission::Upload)),
+        // The settings menu lists invites only for those who may make them.
+        can_invite => current.is_some_and(crate::invites::may_invite),
         // Reporting things to staff (messages are reported from their page).
         can_report => current.is_some_and(|c| c.is_logged_in() && c.can(Permission::Flag)),
         can_purge => current.is_some_and(|c| c.can(Permission::PurgePosts)),

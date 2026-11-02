@@ -1,11 +1,12 @@
 {% extends "base.html" %}
-{% block title %}{{ t("api-keys-title") }} · {{ site.name }}{% endblock %}
+{% block title %}{{ t("api-keys-and-feeds") }} · {{ site.name }}{% endblock %}
 {% block content %}
 <div class="with-rail">
 {% include "settings_nav.html" %}
 <div class="settings">
-<h1>{{ t("api-keys-title") }}</h1>
-<section class="card">
+<h1>{{ t("api-keys-and-feeds") }}</h1>
+<section class="card settings-section" aria-labelledby="api-keys">
+  <h2 id="api-keys">{{ t("api-keys-title") }}</h2>
   <p>{{ t("api-keys-intro", url=docs_url) }}</p>
   {% if created %}
   <div class="notice" role="status">
@@ -39,9 +40,7 @@
   {% else %}
   <p class="hint">{{ t("api-keys-none") }}</p>
   {% endif %}
-</section>
-<section class="card settings-section">
-  <h2>{{ t("api-keys-new") }}</h2>
+  <h3>{{ t("api-keys-new") }}</h3>
   {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
   <form method="post" action="/settings/api-keys">
     <label for="name">{{ t("account-name") }}</label>
@@ -52,14 +51,17 @@
       <option value="{{ d.value }}"{% if d.value == expires %} selected{% endif %}>{{ t("api-keys-expiry-" ~ d.value) }}</option>
       {% endfor %}
     </select>
-    <fieldset class="permissions">
+    {# The permissions to tick show once the key is to be limited. #}
+    <fieldset class="permissions key-access">
       <legend>{{ t("api-keys-access") }}</legend>
       <label class="choice"><input type="radio" name="access" value="all"{% if not limited %} checked{% endif %}> {{ t("api-keys-access-all") }}</label>
       <label class="choice"><input type="radio" name="access" value="some"{% if limited %} checked{% endif %}> {{ t("api-keys-access-some") }}</label>
-      <p class="hint">{{ t("api-keys-access-hint") }}</p>
-      {% for p in permissions %}
-      <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.ticked %} checked{% endif %}> {{ t("permission-" ~ p.key) }}</label>
-      {% endfor %}
+      <div class="permission-list">
+        <p class="hint">{{ t("api-keys-access-hint") }}</p>
+        {% for p in permissions %}
+        <label class="choice"><input type="checkbox" name="{{ p.key }}"{% if p.ticked %} checked{% endif %}> {{ t("permission-" ~ p.key) }}</label>
+        {% endfor %}
+      </div>
     </fieldset>
     {% if has_password %}
     <label for="key-password">{{ t("your-password") }}</label>
@@ -69,6 +71,25 @@
     {% endif %}
     <button type="submit">{{ t("api-keys-create") }}</button>
   </form>
+</section>
+<section class="card settings-section" aria-labelledby="feeds">
+  <h2 id="feeds">{{ t("settings-feeds") }}</h2>
+  <p>{{ t("settings-feeds-hint") }}</p>
+  <form method="post" action="/settings/feed-token">
+    <input type="hidden" name="action" value="new">
+    {% if has_password %}
+    <label for="feed-password">{{ t("your-password") }}</label>
+    <input id="feed-password" name="password" type="password" autocomplete="current-password" required>
+    {% else %}
+    <p class="hint">{{ t("confirm-fresh-login", minutes=fresh_login_minutes) }}</p>
+    {% endif %}
+    <button type="submit" class="secondary">{% if has_feed_token %}{{ t("settings-feed-token-new") }}{% else %}{{ t("settings-feed-token-make") }}{% endif %}</button>
+  </form>
+  {% if has_feed_token %}
+  <form class="inline feed-revoke" method="post" action="/settings/feed-token">
+    <button type="submit" name="action" value="revoke" class="secondary" data-confirm="{{ t('settings-feed-token-revoke-confirm') }}">{{ t("settings-feed-token-revoke") }}</button>
+  </form>
+  {% endif %}
 </section>
 </div>
 </div>

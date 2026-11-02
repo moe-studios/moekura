@@ -1420,7 +1420,7 @@ fieldset.permissions > .hint { grid-column: 1 / -1; margin: 0 0 4px; }
 /* Keys and dates keep to one line; the name and access take what's left,
    breaking names only between words when they can. */
 .api-keys td:not(:first-child, :nth-child(3)), .passkeys td:nth-child(2), .passkeys td:nth-child(3) { white-space: nowrap; }
-.api-keys td:first-child { overflow-wrap: break-word; }
+.api-keys td:first-child, .api-keys td:nth-child(3) { overflow-wrap: break-word; }
 .automatic-tags th[scope="row"] { text-align: start; font-weight: normal; }
 .automatic-tags th[scope="row"] label { font-weight: normal; margin: 0; }
 .automatic-tags td input { width: 100%; }
@@ -1629,10 +1629,31 @@ fieldset.permissions > .hint { grid-column: 1 / -1; margin: 0 0 4px; }
 
 .settings-section { display: flex; flex-direction: column; scroll-margin-top: 16px; }
 .settings-section h3 { margin: 24px 0 0; font-size: var(--text-md); }
+/* Switches under the field they qualify, or alone in their section: a
+   plain stack, no box around it. */
+.checks { display: flex; flex-direction: column; gap: 6px; margin: 12px 0 0; }
+.settings-section > h2 + .checks { margin-top: 8px; }
+/* A long label wraps clear of its box. */
+.checks label.choice, .key-access label.choice { padding-left: calc(1.05rem + 8px); text-indent: calc(-1.05rem - 8px); }
+.settings-section > .hint + .table-scroll { margin-top: 12px; }
+/* A rarely used field, closed until it has a value. */
+.disclosure { margin: 14px 0 0; }
+.disclosure > summary { width: fit-content; font-weight: 600; cursor: pointer; }
+.disclosure > summary::marker { color: var(--muted); }
+.disclosure[open] > summary { margin-bottom: 4px; }
+.disclosure > textarea { display: block; width: 100%; }
+/* A new API key's access: the permissions to tick appear under the
+   choice to limit it, only once it is chosen. */
+fieldset.key-access { display: flex; flex-direction: column; gap: 6px; }
+.key-access .permission-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr)); gap: 6px 16px; margin: 4px 0 0 calc(1.05rem + 8px); }
+.key-access .permission-list > .hint { grid-column: 1 / -1; margin: 0 0 4px; }
+.key-access:has(input[name="access"][value="all"]:checked) .permission-list { display: none; }
+.feed-revoke { margin-top: 12px; }
 
 /* A page with a rail: the settings pages' own menu, or a long page's
    parts, in a column beside it; above it as a strip of tabs on narrow
-   screens. Each entry carries a paint chip, filled for the current one. */
+   screens. The current entry carries a filled paint chip; the others keep
+   its room, outlined only under the pointer. */
 .with-rail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 48px; }
 .with-rail > * { min-width: 0; }
 .rail ul { list-style: none; margin: 0; padding: 0; }
@@ -1644,7 +1665,8 @@ fieldset.permissions > .hint { grid-column: 1 / -1; margin: 0 0 4px; }
   .with-rail { grid-template-columns: 12rem minmax(0, 720px); justify-content: center; align-items: start; }
   .with-rail.wide { grid-template-columns: 12rem minmax(0, 1fr); }
   .rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; scrollbar-width: thin; margin-top: 8px; }
-  .rail a::before { content: ""; width: 8px; height: 8px; flex: none; border: 1px solid var(--rule); border-radius: 2px; }
+  .rail a::before { content: ""; width: 8px; height: 8px; flex: none; border: 1px solid transparent; border-radius: 2px; }
+  .rail a:hover::before { border-color: var(--rule); }
   .rail a[aria-current] { background: var(--tint); }
   .rail a[aria-current]::before { border-color: var(--accent); background: var(--accent); }
 }

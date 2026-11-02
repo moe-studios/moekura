@@ -86,8 +86,8 @@
 
 <section class="card">
   <h2>{{ t("uploads") }}</h2>
-  <p><a href="{{ uploads_url }}">{{ t("upload-count", count=uploads.total) }}</a>:
-    {% for c in uploads.counts %}{{ c.count }} {{ t("status-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+  <p><a href="{{ uploads_url }}">{{ t("upload-count", count=uploads.total) }}</a>{% if uploads.total %}:
+    {% for c in uploads.counts if c.count %}{{ c.count }} {{ t("status-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %}{% endif %}</p>
   {% if deletions %}
   <h3>{{ t("recently-deleted") }}</h3>
   <ul class="plain">
@@ -125,7 +125,7 @@
 <section class="card">
   <h2>{{ t("mod-nav-flags") }}</h2>
   <p>{{ t("flags-received", count=flags_received.total) }}
-    ({% for c in flags_received.counts %}{{ c.count }} {{ t("status-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+    {% if flags_received.total %}({% for c in flags_received.counts if c.count %}{{ c.count }} {{ t("status-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %}){% endif %}</p>
   {% if recent_flags %}
   <ul class="plain">
     {% for f in recent_flags %}
@@ -135,17 +135,17 @@
   </ul>
   {% endif %}
   <p>{{ t("flags-filed", count=flags_filed.total) }}
-    ({% for c in flags_filed.counts %}{{ c.count }} {{ t("status-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+    {% if flags_filed.total %}({% for c in flags_filed.counts if c.count %}{{ c.count }} {{ t("status-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %}){% endif %}</p>
   {% if disapprovals.total %}
   <p>{{ t("disapprovals", count=disapprovals.total) }}
-    ({% for c in disapprovals.counts %}{{ c.count }} {{ t("disapproval-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+    {% if disapprovals.total %}({% for c in disapprovals.counts if c.count %}{{ c.count }} {{ t("disapproval-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %}){% endif %}</p>
   {% endif %}
 </section>
 
 <section class="card">
   <h2>{{ t("nav-comments") }}</h2>
   <p>{{ t("comment-reports", count=reports.total) }}
-    ({% for c in reports.counts %}{{ c.count }} {{ t("status-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %})</p>
+    {% if reports.total %}({% for c in reports.counts if c.count %}{{ c.count }} {{ t("status-" ~ c.status) }}{% if not loop.last %} · {% endif %}{% endfor %}){% endif %}</p>
   {% if hidden %}
   <h3>{{ t("hidden-comments") }}</h3>
   <ul class="plain">

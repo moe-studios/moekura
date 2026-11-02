@@ -16,7 +16,6 @@ tc-tags = { $count ->
 }
 tc-built-in = Danbooru's
 tc-name = Name
-tc-name-fixed = Danbooru's categories keep their names.
 tc-name-hint = Lowercase letters, digits and underscores, and not already how tag names start (<code>name:…</code>). A category can be deleted once no tag is in it.
 tc-label = Label
 tc-up = Move up
@@ -147,6 +146,7 @@ permission-replace_posts = Replace posts' files
 permission-send_messages = Send private messages
 permission-give_feedback = Leave feedback on users of lower rank
 permission-invite_users = Invite people
+permission-moderate_messages = Read reported and held private messages
 
 not-banned = Not banned
 users-table = Users table
@@ -307,6 +307,7 @@ as-default-theme = Default theme
 as-default-theme-hint = For visitors, and users who haven't picked one. To add a theme, put <code>themes/&lt;name&gt;.css</code> in the <code>static_override</code> directory and restart.
 as-tagger = Tagger
 as-no-tagger = The tagger isn't set up (<code>[tagger]</code> in the server configuration), so these only matter once it is.
+as-set-ahead = Set them now anyway
 as-tagger-hint = How sure the tagger must be, in percent, to suggest a tag of each category. Categories left blank use General's.
 as-tagger-auto = Add suggested tags to posts when the tagger is at least this sure, as the <code>{ $account }</code> account
 as-tagger-percent = Percent sure

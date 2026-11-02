@@ -128,8 +128,8 @@ account-unlink = Unlink
 account-sso-no-password = Your account has no password: you log in through the provider.
 account-sso-link-intro = Link your account to log in with <em>{ $provider }</em> instead of your password.
 account-link = Link
-account-tfa-intro = Ask for a code from an authenticator app too when logging in. <a href="/settings/two-factor">Two-factor login settings</a>
 api-keys-title = API keys
+api-keys-and-feeds = API keys and feeds
 api-keys-intro = Scripts and apps use API keys to act as you through the <a href="{ $url }">API</a>. Send one as <code>Authorization: Bearer &lt;key&gt;</code>. A key can do everything you can unless you limit it, so keep it secret, and revoke it if it leaks.
 api-keys-created = Your new key <strong>{ $name }</strong>. Copy it now: it won't be shown again.
 api-keys-table = API keys table
@@ -161,7 +161,6 @@ settings-mode-dark = Dark
 settings-blacklist = Blacklist
 settings-blacklist-hint = Posts matching a line are hidden. One rule per line; every term on a line must match: <code>tag</code>, <code>-tag</code>, <code>rating:e,q</code>.
 settings-blur = Blur blacklisted posts instead of leaving them out
-settings-display = Display
 settings-safe-mode = Safe mode: only show general-rated posts
 settings-original = Show original images on post pages, not resized ones
 settings-show-deleted = Include deleted posts in searches
@@ -175,19 +174,16 @@ settings-language = Language
 settings-language-browser = Your browser's
 settings-custom-css = Custom CSS
 settings-custom-css-hint = Applied after the site's styles, on every page, for you alone.
-settings-api-keys = <a href="/settings/api-keys">API keys</a> let scripts and apps use the site as you.
-settings-invites = <a href="/invites">Invites</a> let people sign up when it takes an invite code.
 settings-feeds = Feeds
 settings-feeds-hint = Search results and comments have Atom feeds (the <em>Feed</em> link beside results). On a private site, feed readers need your feed token: it lets them read feeds as you, and nothing else.
 settings-feed-token-new = Make a new feed token
 settings-feed-token-make = Make a feed token
 settings-feed-token-revoke-confirm = Revoke your feed token? Feed readers using it stop working.
 settings-feed-token-revoke = Revoke it
-settings-saved-searches = <a href="/saved_searches">Saved searches</a>, to see the newest posts of several searches together.
 
 ## Sections of the settings page.
 settings-nav-preferences = Preferences
 settings-section-browsing = Browsing
 settings-section-appearance = Appearance
 settings-section-region = Language and time
-settings-section-account = Your account
+settings-section-notifications = Notifications

@@ -442,7 +442,11 @@ async fn feed_token(
         }
         "revoke" => {
             feeds::set_token(db, user.id, None).await?;
-            Ok((flash::set(jar, Flash::Saved), Redirect::to("/settings")).into_response())
+            Ok((
+                flash::set(jar, Flash::Saved),
+                Redirect::to("/settings/api-keys"),
+            )
+                .into_response())
         }
         _ => Err(AppError::BadRequest("Unknown action".into())),
     }
@@ -556,7 +560,7 @@ mod tests {
             .unwrap();
         let app = TestApp::new(
             test_state(&pool).await,
-            routes().merge(crate::users::routes()),
+            routes().merge(crate::api_keys::routes()),
         );
         let alice = session_for(&pool, "alice", SystemRole::Member).await;
         post(&pool, &["cat"], "e").await;
@@ -578,7 +582,7 @@ mod tests {
             .unwrap()
             .to_owned();
         assert!(
-            app.get("/settings", Some(&alice))
+            app.get("/settings/api-keys", Some(&alice))
                 .await
                 .body
                 .contains("Revoke it")
@@ -624,11 +628,11 @@ mod tests {
     async fn new_tokens_take_the_password_and_a_session(pool: PgPool) {
         let app = TestApp::new(
             test_state(&pool).await,
-            routes().merge(crate::users::routes()),
+            routes().merge(crate::api_keys::routes()),
         );
         let (bob, session) = crate::test_support::member(&pool, "bob", "bob@example.com").await;
         assert!(
-            app.get("/settings", Some(&session))
+            app.get("/settings/api-keys", Some(&session))
                 .await
                 .body
                 .contains("id=\"feed-password\"")
@@ -679,7 +683,7 @@ mod tests {
     async fn without_a_password_a_token_takes_a_fresh_login(pool: PgPool) {
         let app = TestApp::new(
             test_state(&pool).await,
-            routes().merge(crate::users::routes()),
+            routes().merge(crate::api_keys::routes()),
         );
         // Made through single sign-on, logged in a while ago.
         let session = session_for(&pool, "bob", SystemRole::Member).await;
@@ -691,7 +695,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let settings = app.get("/settings", Some(&session)).await;
+        let settings = app.get("/settings/api-keys", Some(&session)).await;
         assert!(!settings.body.contains("id=\"feed-password\""));
         assert!(
             settings.body.contains("within 10 minutes"),

@@ -67,6 +67,7 @@ async fn render(
     let db = page.state().db.primary();
     let now = OffsetDateTime::now_utc();
     let has_password = moekura_db::users::has_password(db, user.id).await?;
+    let has_feed_token = moekura_db::feeds::has_token(db, user.id).await?;
     let mine = page.current.role.permissions;
     let keys: Vec<Value> = api_keys::list(db, user.id)
         .await?
@@ -100,6 +101,7 @@ async fn render(
         "api_keys.html",
         context! {
             keys => keys,
+            has_feed_token => has_feed_token,
             created => created.map(|(name, key)| context! { name => name, key => key }),
             error => error,
             name => form.map(|f| f.name.clone()).unwrap_or_default(),

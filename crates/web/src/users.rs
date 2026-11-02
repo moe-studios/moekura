@@ -326,26 +326,13 @@ async fn settings_form(page: Page) -> Result<Response, AppError> {
     let user = page.current.user.as_ref().ok_or(AppError::Unauthorized)?;
     let settings = UserSettings::from_json(&user.settings);
     let blacklist = crate::blacklist::text_for(page.state(), &page.current);
-    let has_feed_token = moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
-    let has_password = users::has_password(page.state().db.primary(), user.id).await?;
-    Ok(render_settings(
-        &page,
-        &settings,
-        &blacklist,
-        has_feed_token,
-        has_password,
-        None,
-    ))
+    Ok(render_settings(&page, &settings, &blacklist, None))
 }
 
-/// `has_password`: whether the user has one to confirm a new feed token
-/// with.
 fn render_settings(
     page: &Page,
     settings: &UserSettings,
     blacklist: &str,
-    has_feed_token: bool,
-    has_password: bool,
     error: Option<String>,
 ) -> Response {
     let max = page.state().search_config().max_per_page;
@@ -360,10 +347,6 @@ fn render_settings(
         context! {
             error => error,
             blacklist => blacklist,
-            has_feed_token => has_feed_token,
-            has_password => has_password,
-            fresh_login_minutes => crate::auth::FRESH_LOGIN.as_secs() / 60,
-            can_invite => crate::invites::may_invite(&page.current),
             per_page => settings.per_page,
             default_per_page => page.state().search_config().per_page,
             per_page_choices => PER_PAGE_CHOICES.iter().filter(|&&n| n <= max).collect::<Vec<_>>(),
@@ -501,17 +484,7 @@ async fn save_settings(
         Ok(_) => None,
     };
     if let Some(error) = error {
-        let has_feed_token =
-            moekura_db::feeds::has_token(page.state().db.primary(), user.id).await?;
-        let has_password = users::has_password(page.state().db.primary(), user.id).await?;
-        return Ok(render_settings(
-            &page,
-            &settings,
-            &blacklist,
-            has_feed_token,
-            has_password,
-            Some(error),
-        ));
+        return Ok(render_settings(&page, &settings, &blacklist, Some(error)));
     }
     users::set_settings(
         page.state().db.primary(),

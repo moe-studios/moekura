@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}{{ t("invites-title") }} · {{ site.name }}{% endblock %}
 {% block content %}
-<p class="back"><a href="/settings">« {{ t("nav-settings") }}</a></p>
+<div class="with-rail">
+{% include "settings_nav.html" %}
+<div class="settings">
 <h1>{{ t("invites-title") }}</h1>
-{% if not invite_mode %}<p class="hint">{{ t("invites-not-needed") }}</p>{% endif %}
 {% if created %}
 <div class="notice" role="status">
   <p>{{ t("invites-created") }}</p>
@@ -11,27 +12,8 @@
   <p>{{ t("invites-link", link=created.link) }}</p>
 </div>
 {% endif %}
-<section class="card medium">
-  <h2>{{ t("invites-new") }}</h2>
-  {% if manager %}
-  <p class="hint">{{ t("invites-unlimited") }}</p>
-  {% else %}
-  <p class="hint">{{ t("invites-quota", quota=quota, days=quota_days, remaining=remaining) }}</p>
-  {% endif %}
-  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
-  <form method="post" action="/invites">
-    {% if manager %}
-    <label for="uses">{{ t("invites-uses") }}</label>
-    <input id="uses" name="uses" type="number" min="1" max="{{ max_uses }}" value="{{ form.uses }}" required>
-    {% endif %}
-    <label for="expires_days">{{ t("invites-days") }}</label>
-    <input id="expires_days" name="expires_days" type="number" min="{{ 0 if manager else 1 }}" max="{{ max_days }}" value="{{ form.expires_days }}" required>
-    {% if manager %}<p class="hint">{{ t("invites-days-hint") }}</p>{% endif %}
-    <label for="note">{{ t("invites-note") }} <span class="optional">{{ t("optional") }}</span></label>
-    <input id="note" name="note" value="{{ form.note }}" maxlength="{{ note_max }}" placeholder="{{ t('invites-note-placeholder') }}">
-    <button type="submit">{{ t("invites-make") }}</button>
-  </form>
-</section>
+<section class="card settings-section">
+{% if not invite_mode %}<p class="hint">{{ t("invites-not-needed") }}</p>{% endif %}
 {% if invites %}
 <div class="table-scroll" tabindex="0" role="region" aria-label="{{ t('invites-table') }}">
 <table class="tag-table">
@@ -59,6 +41,30 @@
 </nav>
 {% endif %}
 {% else %}
-<p class="empty">{{ t("invites-none") }}</p>
+<p class="hint">{{ t("invites-none") }}</p>
 {% endif %}
+</section>
+<section class="card settings-section" aria-labelledby="invites-new">
+  <h2 id="invites-new">{{ t("invites-new") }}</h2>
+  {% if manager %}
+  <p class="hint">{{ t("invites-unlimited") }}</p>
+  {% else %}
+  <p class="hint">{{ t("invites-quota", quota=quota, days=quota_days, remaining=remaining) }}</p>
+  {% endif %}
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" action="/invites">
+    {% if manager %}
+    <label for="uses">{{ t("invites-uses") }}</label>
+    <input id="uses" name="uses" type="number" min="1" max="{{ max_uses }}" value="{{ form.uses }}" required>
+    {% endif %}
+    <label for="expires_days">{{ t("invites-days") }}</label>
+    <input id="expires_days" name="expires_days" type="number" min="{{ 0 if manager else 1 }}" max="{{ max_days }}" value="{{ form.expires_days }}" required>
+    {% if manager %}<p class="hint">{{ t("invites-days-hint") }}</p>{% endif %}
+    <label for="note">{{ t("invites-note") }} <span class="optional">{{ t("optional") }}</span></label>
+    <input id="note" name="note" value="{{ form.note }}" maxlength="{{ note_max }}" placeholder="{{ t('invites-note-placeholder') }}">
+    <button type="submit">{{ t("invites-make") }}</button>
+  </form>
+</section>
+</div>
+</div>
 {% endblock %}

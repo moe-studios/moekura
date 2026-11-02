@@ -9,7 +9,8 @@ Apps made for Danbooru can use the site too; see [Danbooru apps](using/danbooru-
 
 ## Authenticating
 
-Create a key under **Settings → API keys** and send it with each request:
+Create a key under **Settings → API keys and feeds** and send it with
+each request:
 
 ```sh
 curl -H "Authorization: Bearer mka_…" https://booru.example.com/api/v1/me

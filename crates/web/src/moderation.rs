@@ -1407,14 +1407,7 @@ async fn overview(page: Page) -> Result<Response, AppError> {
     .into_iter()
     .flatten()
     .collect();
-    Ok(page.render(
-        "moderation_overview.html",
-        context! {
-            queues => queues,
-            can_log => log_access(current).is_ok(),
-            can_ban => current.can(Permission::BanUsers),
-        },
-    ))
+    Ok(page.render("moderation_overview.html", context! { queues => queues }))
 }
 
 /// Whether `current` reads the whole log (true) or, as staff who act on
@@ -2024,7 +2017,7 @@ mod tests {
         let page = app.get("/moderation", Some(&janitor)).await.body;
         assert!(
             page.contains(
-                "href=\"/moderation/queue\">Pending posts</a> <span class=\"count-badge\">2</span>"
+                "href=\"/moderation/queue\"><span>Pending posts</span><span class=\"count-badge\">2</span>"
             ),
             "{page}"
         );

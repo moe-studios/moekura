@@ -31,12 +31,12 @@
   <form method="post" action="{{ action }}" enctype="multipart/form-data" class="logo-form">
     <label for="{{ field }}">{{ t("as-" ~ name) }}</label>
     {% if url %}<p><img class="logo-preview" src="{{ url }}" alt="{{ t('as-' ~ name ~ '-alt') }}" height="48"></p>{% endif %}
-    <input id="{{ field }}" name="{{ field }}" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif">
-    <p class="hint">{{ t("as-" ~ name ~ "-hint") }}</p>
-    <div class="actions">
+    <div class="file-row">
+      <input id="{{ field }}" name="{{ field }}" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif" aria-describedby="{{ field }}-hint">
       <button type="submit" class="secondary">{{ t("as-" ~ name ~ "-upload") }}</button>
       {% if url %}<button type="submit" class="secondary" name="remove" value="1">{{ t("as-" ~ name ~ "-remove") }}</button>{% endif %}
     </div>
+    <p class="hint" id="{{ field }}-hint">{{ t("as-" ~ name ~ "-hint") }}</p>
   </form>
   {% endmacro %}
   <section class="card settings-section" id="as-branding" aria-labelledby="as-branding-heading">
@@ -56,15 +56,22 @@
       <label for="site_description">{{ t("description") }}</label>
       <textarea id="site_description" name="site_description" rows="2" maxlength="300">{{ settings.site_description }}</textarea>
       <p class="hint">{{ t("as-description-hint") }}</p>
-      <label for="rules">{{ t("rules-title") }}</label>
-      <textarea id="rules" name="rules" rows="8">{{ settings.rules }}</textarea>
-      <p class="hint">{{ t("as-rules-hint") }}</p>
-      <label for="terms_of_service">{{ t("terms-title") }}</label>
-      <textarea id="terms_of_service" name="terms_of_service" rows="8">{{ settings.terms_of_service }}</textarea>
-      <p class="hint">{{ t("as-terms-hint") }}</p>
-      <label for="privacy_policy">{{ t("privacy-title") }}</label>
-      <textarea id="privacy_policy" name="privacy_policy" rows="8">{{ settings.privacy_policy }}</textarea>
-      <p class="hint">{{ t("as-privacy-hint") }}</p>
+      {# The site's own pages: closed until opened, as they're seldom edited. #}
+      <details class="disclosure">
+        <summary id="rules-label">{{ t("rules-title") }}</summary>
+        <textarea id="rules" name="rules" rows="12" aria-labelledby="rules-label" aria-describedby="rules-hint">{{ settings.rules }}</textarea>
+        <p class="hint" id="rules-hint">{{ t("as-rules-hint") }}</p>
+      </details>
+      <details class="disclosure">
+        <summary id="terms_of_service-label">{{ t("terms-title") }}</summary>
+        <textarea id="terms_of_service" name="terms_of_service" rows="12" aria-labelledby="terms_of_service-label" aria-describedby="terms_of_service-hint">{{ settings.terms_of_service }}</textarea>
+        <p class="hint" id="terms_of_service-hint">{{ t("as-terms-hint") }}</p>
+      </details>
+      <details class="disclosure">
+        <summary id="privacy_policy-label">{{ t("privacy-title") }}</summary>
+        <textarea id="privacy_policy" name="privacy_policy" rows="12" aria-labelledby="privacy_policy-label" aria-describedby="privacy_policy-hint">{{ settings.privacy_policy }}</textarea>
+        <p class="hint" id="privacy_policy-hint">{{ t("as-privacy-hint") }}</p>
+      </details>
       <label for="footer_links">{{ t("as-footer-links") }}</label>
       <textarea id="footer_links" name="footer_links" rows="3" spellcheck="false" placeholder="Discord https://discord.gg/…">{{ settings.footer_links }}</textarea>
       <p class="hint">{{ t("as-footer-links-hint") }}</p>
@@ -88,20 +95,20 @@
       <p class="hint">{{ t("as-invite-quota-hint") }}</p>
       <label class="choice"><input type="checkbox" name="email_verification"{% if settings.email_verification %} checked{% endif %}> {{ t("as-email-verification") }}</label>
       {% if not mail_enabled %}<p class="hint">{{ t("as-no-mail") }}</p>{% endif %}
-      <fieldset class="limits">
+      <fieldset class="limits reveal">
         <legend>{{ t("auto-promotion") }}</legend>
-        <label class="choice"><input type="checkbox" name="auto_promotion"{% if settings.auto_promotion %} checked{% endif %}> {{ t("as-promote") }}</label>
-        <label for="promotion_uploads">{{ t("as-promote-uploads") }}</label>
-        <input id="promotion_uploads" name="promotion_uploads" type="number" min="0" value="{{ settings.promotion.uploads }}">
-        <label for="promotion_edits">{{ t("as-promote-edits") }}</label>
-        <input id="promotion_edits" name="promotion_edits" type="number" min="0" value="{{ settings.promotion.edits }}">
-        <label for="promotion_account_days">{{ t("as-promote-days") }}</label>
-        <input id="promotion_account_days" name="promotion_account_days" type="number" min="0" value="{{ settings.promotion.account_days }}">
-        <label for="promotion_max_recent_deletions">{{ t("as-promote-deletions") }}</label>
-        <input id="promotion_max_recent_deletions" name="promotion_max_recent_deletions" type="number" min="0" value="{{ settings.promotion.max_recent_deletions }}">
-        <label for="promotion_max_negative_feedback">{{ t("as-promote-feedback") }}</label>
-        <input id="promotion_max_negative_feedback" name="promotion_max_negative_feedback" type="number" min="0" value="{{ settings.promotion.max_negative_feedback }}">
-        <p class="hint">{{ t("as-promote-hint") }}</p>
+        <label class="choice"><input type="checkbox" class="switch" name="auto_promotion"{% if settings.auto_promotion %} checked{% endif %}> {{ t("as-promote") }}</label>
+        <div class="revealed">
+          <div class="field-grid">
+            {% for field, label in [("uploads", "as-promote-uploads"), ("edits", "as-promote-edits"), ("account_days", "as-promote-days"), ("max_recent_deletions", "as-promote-deletions"), ("max_negative_feedback", "as-promote-feedback")] %}
+            <div>
+              <label for="promotion_{{ field }}">{{ t(label) }}</label>
+              <input id="promotion_{{ field }}" name="promotion_{{ field }}" type="number" min="0" value="{{ settings.promotion[field] }}">
+            </div>
+            {% endfor %}
+          </div>
+          <p class="hint">{{ t("as-promote-hint") }}</p>
+        </div>
       </fieldset>
     </section>
     <section class="settings-section" id="as-uploads" aria-labelledby="as-uploads-heading">
@@ -110,9 +117,10 @@
       <label class="choice"><input type="checkbox" name="upload_limit_scaling"{% if settings.upload_limit_scaling %} checked{% endif %}> {{ t("as-limit-scaling") }}</label>
       <p class="hint">{{ t("as-limits-hint") }}</p>
       <label class="choice"><input type="checkbox" name="request_tags"{% if settings.request_tags %} checked{% endif %}> {{ t("as-request-tags") }}</label>
-      <fieldset class="group">
+      <fieldset class="group reveal">
         <legend>{{ t("as-automatic-tags") }}</legend>
-        <label class="choice"><input type="checkbox" name="automatic_tags"{% if settings.automatic_tags.enabled %} checked{% endif %}> {{ t("as-automatic-tags-on") }}</label>
+        <label class="choice"><input type="checkbox" class="switch" name="automatic_tags"{% if settings.automatic_tags.enabled %} checked{% endif %}> {{ t("as-automatic-tags-on") }}</label>
+        <div class="revealed">
         <p class="hint">{{ t("as-automatic-tags-hint") }}</p>
         <div class="table-scroll" role="region" aria-label="{{ t('as-automatic-tags') }}" tabindex="0">
         <table class="automatic-tags">
@@ -127,6 +135,7 @@
           </tbody>
         </table>
         </div>
+        </div>
       </fieldset>
       <fieldset class="group">
         <legend>{{ t("as-banned-artists") }}</legend>
@@ -137,7 +146,10 @@
     </section>
     <section class="settings-section" id="as-tagger" aria-labelledby="as-tagger-heading">
       <h2 id="as-tagger-heading">{{ t("as-tagger") }}</h2>
-      {% if not tagger_enabled %}<p class="hint">{{ t("as-no-tagger") }}</p>{% endif %}
+      {% if not tagger_enabled %}<p class="hint">{{ t("as-no-tagger") }}</p>
+      <details class="disclosure">
+      <summary>{{ t("as-set-ahead") }}</summary>
+      {% endif %}
       <p class="hint">{{ t("as-tagger-hint") }}</p>
       <div class="field-grid">
         {% for category in settings.tagger.thresholds %}
@@ -147,17 +159,22 @@
         </div>
         {% endfor %}
       </div>
-      <label class="choice"><input type="checkbox" name="tagger_auto_apply"{% if settings.tagger.auto_apply %} checked{% endif %}> {{ t("as-tagger-auto", account=tagger_account) }}</label>
-      <label for="tagger_auto_threshold">{{ t("as-tagger-percent") }}</label>
-      <input id="tagger_auto_threshold" name="tagger_auto_threshold" type="number" min="1" max="100" value="{{ settings.tagger.auto_threshold }}">
-      <label class="choice"><input type="checkbox" name="tagger_auto_rating"{% if settings.tagger.auto_rating %} checked{% endif %}> {{ t("as-tagger-rating") }}</label>
+      <div class="reveal">
+        <label class="choice"><input type="checkbox" class="switch" name="tagger_auto_apply"{% if settings.tagger.auto_apply %} checked{% endif %}> {{ t("as-tagger-auto", account=tagger_account) }}</label>
+        <div class="revealed">
+          <label for="tagger_auto_threshold">{{ t("as-tagger-percent") }}</label>
+          <input id="tagger_auto_threshold" name="tagger_auto_threshold" type="number" min="1" max="100" value="{{ settings.tagger.auto_threshold }}">
+          <label class="choice"><input type="checkbox" name="tagger_auto_rating"{% if settings.tagger.auto_rating %} checked{% endif %}> {{ t("as-tagger-rating") }}</label>
+        </div>
+      </div>
       <label for="tagger_new_uploader_blocked">{{ t("as-tagger-blocked") }}</label>
       <textarea id="tagger_new_uploader_blocked" name="tagger_new_uploader_blocked" rows="3" autocapitalize="none" spellcheck="false">{{ settings.tagger.new_uploader_blocked }}</textarea>
       <p class="hint">{{ t("as-tagger-blocked-hint") }}</p>
+      {% if not tagger_enabled %}</details>{% endif %}
     </section>
     <section class="settings-section" id="as-visitors" aria-labelledby="as-visitors-heading">
       <h2 id="as-visitors-heading">{{ t("as-section-visitors") }}</h2>
-      <fieldset class="group">
+      <fieldset class="ratings">
         <legend>{{ t("as-visitor-ratings") }}</legend>
         {% for code in ["g", "s", "q", "e"] %}
         <label class="choice"><input type="checkbox" name="visitor_rating_{{ code }}"{% if code in settings.visitor_ratings %} checked{% endif %}> {{ t("rating-" ~ code) }}</label>
@@ -178,10 +195,16 @@
       <textarea id="flag_reasons" name="flag_reasons" rows="4">{{ settings.post_reasons.flag }}</textarea>
       <h3>{{ t("as-stale") }}</h3>
       <p class="hint">{{ t("as-stale-hint") }}</p>
-      <label for="stale_pending_days">{{ t("as-stale-pending") }}</label>
-      <input id="stale_pending_days" name="stale_pending_days" type="number" min="0" max="365" value="{{ settings.stale_posts.pending_days }}">
-      <label for="stale_flagged_days">{{ t("as-stale-flagged") }}</label>
-      <input id="stale_flagged_days" name="stale_flagged_days" type="number" min="0" max="365" value="{{ settings.stale_posts.flagged_days }}">
+      <div class="field-grid">
+        <div>
+          <label for="stale_pending_days">{{ t("as-stale-pending") }}</label>
+          <input id="stale_pending_days" name="stale_pending_days" type="number" min="0" max="365" value="{{ settings.stale_posts.pending_days }}">
+        </div>
+        <div>
+          <label for="stale_flagged_days">{{ t("as-stale-flagged") }}</label>
+          <input id="stale_flagged_days" name="stale_flagged_days" type="number" min="0" max="365" value="{{ settings.stale_posts.flagged_days }}">
+        </div>
+      </div>
     </section>
     <section class="settings-section" id="as-spam" aria-labelledby="as-spam-heading">
       <h2 id="as-spam-heading">{{ t("as-spam") }}</h2>
@@ -195,10 +218,14 @@
       <p class="hint">{{ t("as-domains-hint") }}</p>
       <fieldset class="group">
         <legend>{{ t("as-captcha") }}</legend>
-        {% if not captcha_enabled %}<p class="hint">{{ t("as-no-captcha") }}</p>{% endif %}
+        {% if not captcha_enabled %}<p class="hint">{{ t("as-no-captcha") }}</p>
+        <details class="disclosure">
+        <summary>{{ t("as-set-ahead") }}</summary>
+        {% endif %}
         <label class="choice"><input type="checkbox" name="captcha_sign_up"{% if settings.captcha.sign_up %} checked{% endif %}> {{ t("as-captcha-sign-up") }}</label>
         <label for="captcha_comment_account_days">{{ t("as-captcha-comments") }}</label>
         <input id="captcha_comment_account_days" name="captcha_comment_account_days" type="number" min="0" value="{{ settings.captcha.comment_account_days }}">
+        {% if not captcha_enabled %}</details>{% endif %}
       </fieldset>
       <label for="spam_filter_mode">{{ t("as-spam-filter") }}</label>
       <select id="spam_filter_mode" name="spam_filter_mode">

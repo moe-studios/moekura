@@ -10,7 +10,7 @@
 <section class="card role" id="category-{{ category.id }}" aria-labelledby="category-{{ category.id }}-heading">
   {# The name, then moving and deleting it, on one line. #}
   <div class="card-head">
-    <h2 id="category-{{ category.id }}-heading"><span class="tag-{{ category.name }}">{{ category.label }}</span> <span class="optional">{{ t("tc-id", id=category.id) }} · {{ t("tc-tags", count=category.tag_count) }}{% if category.built_in %} · {{ t("tc-built-in") }}{% endif %}</span></h2>
+    <h2 id="category-{{ category.id }}-heading"><span class="tag-{{ category.name }}">{{ category.label }}</span> <span class="optional">{% if category.built_in %}<code>{{ category.name }}</code> · {% endif %}{{ t("tc-id", id=category.id) }} · {{ t("tc-tags", count=category.tag_count) }}{% if category.built_in %} · {{ t("tc-built-in") }}{% endif %}</span></h2>
     <div class="actions">
       {% if not category.first %}
       <form method="post" action="/admin/tag-categories/{{ category.id }}/move">
@@ -31,19 +31,20 @@
       {% endif %}
     </div>
   </div>
-  <form method="post" action="/admin/tag-categories/{{ category.id }}">
-    <div class="field-grid">
-      <div>
-        <label for="category-name-{{ category.id }}">{{ t("tc-name") }}</label>
-        <input id="category-name-{{ category.id }}" name="name" value="{{ category.name }}" maxlength="{{ name_max }}" pattern="[a-z][a-z0-9_]*" required{% if category.built_in %} readonly aria-describedby="category-fixed-{{ category.id }}"{% endif %}>
-        {% if category.built_in %}<p class="hint" id="category-fixed-{{ category.id }}">{{ t("tc-name-fixed") }}</p>{% endif %}
-      </div>
-      <div>
-        <label for="category-label-{{ category.id }}">{{ t("tc-label") }}</label>
-        <input id="category-label-{{ category.id }}" name="label" value="{{ category.label }}" maxlength="{{ label_max }}" required>
-      </div>
+  <form class="field-row" method="post" action="/admin/tag-categories/{{ category.id }}">
+    {% if category.built_in %}
+    <input type="hidden" name="name" value="{{ category.name }}">
+    {% else %}
+    <div>
+      <label for="category-name-{{ category.id }}">{{ t("tc-name") }}</label>
+      <input id="category-name-{{ category.id }}" name="name" value="{{ category.name }}" maxlength="{{ name_max }}" pattern="[a-z][a-z0-9_]*" required>
     </div>
-    <button type="submit">{{ t("save-thing", name=category.label) }}</button>
+    {% endif %}
+    <div>
+      <label for="category-label-{{ category.id }}">{{ t("tc-label") }}</label>
+      <input id="category-label-{{ category.id }}" name="label" value="{{ category.label }}" maxlength="{{ label_max }}" required>
+    </div>
+    <button type="submit" class="secondary">{{ t("save-thing", name=category.label) }}</button>
   </form>
 </section>
 {% endfor %}

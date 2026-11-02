@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "reason_fields.html" import reason_fields %}
+{% from "icons.html" import icon %}
 {% block title %}{{ t("mod-nav-queue") }} · {{ site.name }}{% endblock %}
 {% block content %}
 {% include "moderation_nav.html" %}
@@ -46,20 +47,28 @@
         {% for d in p.disapprovals %}<li><span class="status status-dismissed">{{ t("disapproved") }}</span> {{ t("by-user", user=d.by) }}: {{ t("disapproval-reason-" ~ d.reason) if d.known else d.reason }}{% if d.message %} — “{{ d.message }}”{% endif %}</li>{% endfor %}
       </ul>
       {% endif %}
+      {# Approving takes one press; rejecting and disapproving ask why, so
+         their fields open under the row only when chosen. #}
       <div class="actions">
         <form method="post" action="/posts/{{ p.id }}/approve"><button type="submit">{{ t("approve") }}</button></form>
-        <form class="reject" method="post" action="/posts/{{ p.id }}/reject">
-          {{ reason_fields("reject-" ~ p.id, reasons.deletion, t("reason-reject-post", id=p.id), compact=true) }}
-          <button type="submit" class="secondary">{{ t("reject") }}</button>
-        </form>
-        <form class="reject" method="post" action="/posts/{{ p.id }}/disapprove">
-          <select name="reason" aria-label="{{ t('disapprove-why', id=p.id) }}" required>
-            <option value="" disabled selected>{{ t("disapprove-choose") }}</option>
-            {% for r in disapproval_reasons %}<option value="{{ r.name }}">{{ t("disapproval-reason-" ~ r.name) }}</option>{% endfor %}
-          </select>
-          <input name="message" placeholder="{{ t('disapprove-note') }}" maxlength="2000" aria-label="{{ t('disapprove-note-post', id=p.id) }}">
-          <button type="submit" class="secondary">{{ t("disapprove") }}</button>
-        </form>
+        <details class="inline review-more">
+          <summary>{{ t("reject") }}{{ icon("chevron") }}</summary>
+          <form class="reject" method="post" action="/posts/{{ p.id }}/reject">
+            {{ reason_fields("reject-" ~ p.id, reasons.deletion, t("reason-reject-post", id=p.id), compact=true) }}
+            <button type="submit" class="secondary">{{ t("reject") }}</button>
+          </form>
+        </details>
+        <details class="inline review-more">
+          <summary>{{ t("disapprove") }}{{ icon("chevron") }}</summary>
+          <form class="reject" method="post" action="/posts/{{ p.id }}/disapprove">
+            <select name="reason" aria-label="{{ t('disapprove-why', id=p.id) }}" required>
+              <option value="" disabled selected>{{ t("disapprove-choose") }}</option>
+              {% for r in disapproval_reasons %}<option value="{{ r.name }}">{{ t("disapproval-reason-" ~ r.name) }}</option>{% endfor %}
+            </select>
+            <input name="message" placeholder="{{ t('disapprove-note') }}" maxlength="2000" aria-label="{{ t('disapprove-note-post', id=p.id) }}">
+            <button type="submit" class="secondary">{{ t("disapprove") }}</button>
+          </form>
+        </details>
       </div>
     </div>
   </li>

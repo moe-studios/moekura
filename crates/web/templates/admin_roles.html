@@ -16,7 +16,12 @@
 {% for role in roles %}
 <section class="card role" id="role-{{ role.id }}" aria-labelledby="role-{{ role.id }}-heading">
   <h2 id="role-{{ role.id }}-heading">{{ role.name }} <span class="optional">{% if role.editable and not role.custom %}{{ t("roles-built-in", rank=role.rank) }}{% else %}{{ t("roles-rank", rank=role.rank) }}{% endif %}</span></h2>
+  {# What the role can do at a glance; its form opens on demand. #}
+  <p class="hint">{% for p in role.permissions if p.granted %}{{ t("permission-" ~ p.key) }}{% if not loop.last %} · {% endif %}{% else %}{{ t("none") }}{% endfor %}</p>
+  {% if role.pending_limit is not none or role.daily_limit is not none %}<p class="hint">{{ t("roles-limits-label") }} {% if role.pending_limit is not none %}{{ t("roles-pending", count=role.pending_limit) }}{% endif %}{% if role.pending_limit is not none and role.daily_limit is not none %}, {% endif %}{% if role.daily_limit is not none %}{{ t("roles-daily", count=role.daily_limit) }}{% endif %}</p>{% endif %}
   {% if role.editable %}
+  <details class="edit role-edit">
+  <summary>{{ t("edit-thing", name=role.name) }}</summary>
   <form method="post" action="/admin/roles/{{ role.id }}">
     <div class="field-grid">
       <div>
@@ -63,9 +68,7 @@
     </form>
   </details>
   {% endif %}
-  {% else %}
-  <p class="hint">{% for p in role.permissions if p.granted %}{{ t("permission-" ~ p.key) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
-  {% if role.pending_limit is not none or role.daily_limit is not none %}<p class="hint">{{ t("roles-limits-label") }} {% if role.pending_limit is not none %}{{ t("roles-pending", count=role.pending_limit) }}{% endif %}{% if role.pending_limit is not none and role.daily_limit is not none %}, {% endif %}{% if role.daily_limit is not none %}{{ t("roles-daily", count=role.daily_limit) }}{% endif %}</p>{% endif %}
+  </details>
   {% endif %}
 </section>
 {% endfor %}

@@ -87,6 +87,7 @@ test("a private site keeps visitors out", async ({ page, browser }) => {
   await logIn(page, admin.name, admin.password);
   const setVisitorsCanView = async (allowed: boolean) => {
     await page.goto("/admin/roles");
+    await page.getByText("Edit Anonymous", { exact: true }).click();
     const anonymous = page.locator("form").filter({ has: page.locator('input[name=name][value="Anonymous"]') });
     await anonymous.locator("input[name=view_posts]").setChecked(allowed);
     await anonymous.getByRole("button", { name: "Save Anonymous" }).click();

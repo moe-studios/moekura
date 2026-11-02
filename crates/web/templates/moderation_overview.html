@@ -4,12 +4,13 @@
 {% include "moderation_nav.html" %}
 <h1>{{ t("nav-moderation") }}</h1>
 <p class="hint">{{ t("mod-overview-hint") }}</p>
+{# Each queue on its own ruled line, what waits in it at the far end: a
+   badge when something does, a quiet nought when nothing does. #}
 {% if queues %}
-<ul class="plain mod-overview">
+<ul class="link-list mod-overview">
   {% for q in queues %}
-  <li><a href="{{ q.url }}">{{ t("mod-overview-" ~ q.name) }}</a> <span class="count-badge{% if not q.count %} empty{% endif %}">{{ q.count }}</span></li>
+  <li><a href="{{ q.url }}"><span>{{ t("mod-overview-" ~ q.name) }}</span>{% if q.count %}<span class="count-badge">{{ q.count }}</span>{% else %}<span class="count-none">0</span>{% endif %}</a></li>
   {% endfor %}
 </ul>
 {% endif %}
-<p>{% if can_log %}<a href="/moderation/log">{{ t("mod-nav-log") }}</a>{% endif %}{% if can_ban %} · <a href="/moderation/bans">{{ t("mod-nav-bans") }}</a>{% endif %}</p>
 {% endblock %}

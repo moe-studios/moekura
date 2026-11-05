@@ -118,7 +118,7 @@ utoipa = { version = "6.0.0", features = ["macros", "time", "axum_extras", "pres
 utoipa-axum = "0.3.0"
 # Passkeys (WebAuthn). Its signature checks use the system's OpenSSL;
 # tests use OpenSSL directly to play the authenticator.
-webauthn-rs = { version = "0.5.5", features = ["conditional-ui", "danger-allow-state-serialisation"] }
+webauthn-rs = { version = "0.6.2", features = ["conditional-ui", "danger-allow-state-serialisation"] }
 openssl = "0.10.81"
 
 [workspace.lints.rust]

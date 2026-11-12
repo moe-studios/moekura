@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM docker.io/library/rust:1.98-trixie AS chef
+FROM docker.io/library/rust:1.99-trixie AS chef
 ARG CARGO_CHEF_VERSION=0.1.78
 RUN cargo install cargo-chef --locked --version "${CARGO_CHEF_VERSION}"
 WORKDIR /src
